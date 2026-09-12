@@ -1,6 +1,20 @@
 # Docker Rules
 
-All services must run through docker-compose.
+All services must run through docker-compose and use docker desktop.
+
+---
+
+Always use Docker Desktop (the default docker context).
+
+Never override DOCKER_HOST to point at another daemon
+(e.g. the native dockerd socket).
+
+Never run a second copy of the stack on another daemon:
+duplicate stacks fight over host ports (5432/8000/3000)
+and diverge (separate images, volumes, databases).
+
+If a port is already in use, find and stop the overlapping
+container/stack first — never remap host ports to dodge it.
 
 ---
 

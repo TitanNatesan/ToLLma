@@ -27,4 +27,5 @@ COPY tests/ ./tests/
 
 EXPOSE 8000
 
-CMD ["uvicorn", "tollms.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Development startup: apply migrations, then serve with hot reload.
+CMD ["sh", "-c", "alembic upgrade heads && exec uvicorn tollms.main:app --host 0.0.0.0 --port 8000 --reload"]

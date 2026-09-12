@@ -1,4 +1,4 @@
-"""SQLAlchemy base model: UUID PK + created_at / updated_at on every table."""
+"""Shared columns: UUID PK, timestamps, soft-delete (database.md business tables)."""
 
 import uuid
 from datetime import datetime
@@ -20,3 +20,11 @@ class TimestampedModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class SoftDeleteMixin:
+    __abstract__ = True
+
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

@@ -9,6 +9,11 @@ from sqlalchemy import engine_from_config, pool
 from tollms.core.config import get_settings
 from tollms.db.base import Base
 
+# Import models so autogenerate sees all tables.
+import tollms.modules.conversations.models  # noqa: F401
+import tollms.modules.models.models  # noqa: F401
+import tollms.modules.providers.models  # noqa: F401
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

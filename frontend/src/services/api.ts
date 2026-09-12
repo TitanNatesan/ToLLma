@@ -1,4 +1,13 @@
-import type { HealthResponse } from "@/types";
+import type {
+  AIModel,
+  ChatMessage,
+  Conversation,
+  HealthResponse,
+  Provider,
+  StreamDone,
+  UsageTotals,
+  ValidationResult,
+} from "@/types";
 
 // Server components resolve BACKEND_URL (service name); client components
 // fall back to NEXT_PUBLIC_API_URL (host-mapped port for the browser).
@@ -6,11 +15,24 @@ function apiBase(): string {
   return process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`GET ${path} failed with ${res.status}`);
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${apiBase()}${path}`, {
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+  if (res.status === 204) return undefined as T;
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`${init?.method ?? "GET"} ${path} -> ${res.status} ${body.slice(0, 200)}`);
+  }
   return res.json() as Promise<T>;
 }
+
+const get = <T,>(path: string) => req<T>(path);
+const post = <T,>(path: string, body: unknown) => req<T>(path, { method: "POST", body: JSON.stringify(body) });
+const patch = <T,>(path: string, body: unknown) => req<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+const del = <T,>(path: string) => req<T>(path, { method: "DELETE" });
 
 export function getLiveness(): Promise<HealthResponse> {
   return get<HealthResponse>("/health");
@@ -19,3 +41,99 @@ export function getLiveness(): Promise<HealthResponse> {
 export function getReadiness(): Promise<HealthResponse> {
   return get<HealthResponse>("/health/ready");
 }
+
+// --- Providers ---
+export const listProviders = () => get<Provider[]>("/api/v1/providers");
+export const createProvider = (body: { name: string; provider_type: string; credentials: Record<string, unknown> }) =>
+  post<Provider>("/api/v1/providers", body);
+export const updateProvider = (id: string, body: Record<string, unknown>) => patch<Provider>(`/api/v1/providers/${id}`, body);
+export const deleteProvider = (id: string) => del<void>(`/api/v1/providers/${id}`);
+export const validateProvider = (id: string) => post<ValidationResult>(`/api/v1/providers/${id}/validate`, {});
+
+// --- Models ---
+export const listModels = (params?: { provider_id?: string; search?: string; capability?: string }) => {
+  const q = new URLSearchParams();
+  if (params?.provider_id) q.set("provider_id", params.provider_id);
+  if (params?.search) q.set("search", params.search);
+  if (params?.capability) q.set("capability", params.capability);
+  const s = q.toString();
+  return get<AIModel[]>(`/api/v1/models${s ? `?${s}` : ""}`);
+};
+export const createModel = (body: Record<string, unknown>) => post<AIModel>("/api/v1/models", body);
+export const updateModel = (id: string, body: Record<string, unknown>) => patch<AIModel>(`/api/v1/models/${id}`, body);
+export const deleteModel = (id: string) => del<void>(`/api/v1/models/${id}`);
+
+// --- Conversations ---
+export const listConversations = (search?: string) =>
+  get<Conversation[]>(`/api/v1/conversations${search ? `?search=${encodeURIComponent(search)}` : ""}`);
+export const getConversation = (id: string) => get<Conversation>(`/api/v1/conversations/${id}`);
+export const createConversation = (body: { title?: string; provider_id?: string | null; model_id?: string | null }) =>
+  post<Conversation>("/api/v1/conversations", body);
+export const renameConversation = (id: string, title: string) =>
+  patch<Conversation>(`/api/v1/conversations/${id}`, { title });
+export const deleteConversation = (id: string) => del<void>(`/api/v1/conversations/${id}`);
+export const getUsage = (id: string) => get<UsageTotals>(`/api/v1/conversations/${id}/usage`);
+
+// --- Gateway streaming (client-side; ReadableStream for stop/abort support) ---
+export interface StreamCallbacks {
+  signal: AbortSignal;
+  onMeta?: (conversationId: string) => void;
+  onDelta: (text: string) => void;
+  onDone: (done: StreamDone) => void;
+  onError: (message: string) => void;
+}
+
+export async function streamChat(
+  body: { provider_id: string; model_id: string; conversation_id?: string | null; message: string },
+  cb: StreamCallbacks,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/api/v1/gateway/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: cb.signal,
+    });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") return;
+    cb.onError(e instanceof Error ? e.message : "request failed");
+    return;
+  }
+  if (!res.ok || !res.body) {
+    cb.onError(`stream failed with ${res.status}`);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        let event: Record<string, unknown>;
+        try {
+          event = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+        if (typeof event.delta === "string") cb.onDelta(event.delta);
+        else if (typeof event.conversation_id === "string") cb.onMeta?.(event.conversation_id);
+        else if (event.done) cb.onDone(event as unknown as StreamDone);
+        else if (typeof event.error === "string") cb.onError(event.error);
+      }
+    }
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") cb.onError(e instanceof Error ? e.message : "stream failed");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export type { ChatMessage };

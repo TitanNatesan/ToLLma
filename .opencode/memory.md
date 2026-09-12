@@ -62,3 +62,25 @@ Verification:
 - Tested missing environment variables: correctly outputs clean error block listing missing variables (`SECRET_KEY`, `POSTGRES_DB`, etc.).
 - Pytest suite: all 4 tests passed in backend container (`tests/test_config.py`, `tests/test_health.py`).
 - Runtime verification: backend `/health` and `/health/ready` endpoints return 200 OK.
+
+## 2026-09-13 - ToLLms V1 gateway + chat (Docker Desktop only)
+
+Requirement: complete local-first AI gateway and chat app, runnable entirely through docker-compose on Docker Desktop.
+Implemented: provider registry (7 types, Fernet-encrypted credentials, masked responses, live validation),
+model registry (pricing/capabilities/endpoint types, search+filter), 7 gateway adapters behind BaseProviderAdapter
+(OpenAI chat+responses, Anthropic, Gemini, Vertex, Bedrock via boto3, OpenAI-compatible Custom), unified gateway
+(JSON chat + SSE stream, usage/cost persistence, per-1M pricing), conversations/messages/usage APIs, Next.js chat UI
+(sidebar, streaming markdown with highlight, stop/regenerate/retry, provider+model selectors, usage summary),
+provider/model/conversation/settings pages, pytest (11) + vitest (5) + Playwright (9 scenarios, mock LLM server).
+Rules: docker.md now mandates Docker Desktop only (no DOCKER_HOST overrides, no second stacks, no port remaps);
+compose gained backend extra_hosts (host.docker.internal) and frontend_next volume (host-owned .next broke
+Turbopack writes through Desktop file sharing).
+Incidents fixed: killed overlapping native-dockerd stack holding 5432/8000/3000; Desktop postgres volume held a
+foreign 28-table schema (backed up to /tmp/opencode/tollms-desktop-backup-20260913.sql, volume reset, V1 schema
+auto-migrated on startup); fixed UI race where id-change fetch overwrote post-stream data (queries pause while
+streaming); metadata_/alias collision (SQLAlchemy reserves `metadata`); stale node_modules volumes shadow new deps.
+Verification: pytest 11/11, vitest 5/5, Playwright 9/9 serial, tsc+eslint clean, `next build` success, alembic at
+head fb3312981ccc with 16 indexes, all containers healthy.
+Deviations: no Vercel AI SDK (custom SSE carries usage/cost envelopes it lacks); shadcn-style local ui components
+instead of full shadcn+radix (same API shape, no extra deps); usage/cost stored per assistant message (no separate
+table); frontend kept under src/.
