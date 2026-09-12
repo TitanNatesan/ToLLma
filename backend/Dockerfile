@@ -4,15 +4,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_LINK_MODE=copy \
     PATH="/opt/venv/bin:$PATH"
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+# First install dependencies only (cached until pyproject.toml or uv.lock change)
+COPY pyproject.toml README.md uv.lock* ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --group dev --no-install-project
+
+# Copy source and install project package
 COPY src/ ./src/
-RUN uv sync --group dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --group dev
 
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
