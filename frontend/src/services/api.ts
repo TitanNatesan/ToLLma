@@ -13,6 +13,11 @@ import type {
 // Server components resolve BACKEND_URL (service name); client components
 // fall back to NEXT_PUBLIC_API_URL (host-mapped port for the browser).
 function apiBase(): string {
+  if (typeof window !== "undefined") {
+    if (window.location.hostname && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+      return `${window.location.protocol}//${window.location.hostname}:8000`;
+    }
+  }
   return process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 }
 

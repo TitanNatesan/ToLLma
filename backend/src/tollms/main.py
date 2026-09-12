@@ -26,9 +26,15 @@ def create_app() -> FastAPI:
     )
     logger = logging.getLogger(__name__)
     app = FastAPI(title=settings.project_name, debug=settings.debug)
+    cors_origins = list(settings.cors_origins)
+    if settings.environment == "local":
+        for o in ("http://127.0.0.1:3000", "http://172.17.0.1:3000"):
+            if o not in cors_origins:
+                cors_origins.append(o)
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

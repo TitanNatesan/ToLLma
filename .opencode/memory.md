@@ -124,3 +124,32 @@ Verification:
 - Zero `OPTIONS` preflights for GET requests.
 - Backend pytest test suite: 11/11 tests passed.
 - Frontend linting & typechecking: `npm run lint && npx tsc --noEmit` passed with 0 errors.
+
+## 2026-09-13 - Bedrock converse inference profile resolution & reasoning support
+
+Requirement: validate credentials for Bedrock provider 'dedede', diagnose and fix Claude Haiku 4.5 failure in the chat page, and ensure the requested models (Claude Haiku 4.5, Claude Sonnet 4.6, MiniMax M2.5, DeepSeek-R1) are available and accessible via the chat page.
+Root causes identified:
+1. In AWS Bedrock, Anthropic Claude 3.5/4.5/4.6 models and DeepSeek-R1 cannot be invoked via on-demand throughput using raw foundation model IDs (e.g. `anthropic.claude-haiku-4-5-20251001-v1:0`, `deepseek.r1-v1:0`); AWS Bedrock returns `ValidationException: Invocation of model ID ... with on-demand throughput isn't supported. Retry your request with the ID or ARN of an inference profile that contains this model.` AWS requires cross-region inference profile IDs (e.g. `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `us.deepseek.r1-v1:0`).
+2. Bedrock model discovery only queried `list_foundation_models`, omitting cross-region inference profiles from `list_inference_profiles`.
+3. Models with `bedrock/` prefix (e.g. `bedrock/minimax.minimax-m2.5`) were rejected by AWS API as invalid identifiers.
+4. Reasoning models (DeepSeek-R1, MiniMax M2.5) emit `reasoningContent` events in ConverseStream which were previously ignored by delta extraction.
+Implemented:
+1. `backend/src/tollms/modules/gateway/adapters/bedrock.py`:
+   - Added `resolve_bedrock_model_id`: strips `bedrock/` prefix, preserves routing prefixes (`us.`, `eu.`, `apac.`, `global.`), and automatically maps foundation models requiring inference profiles to regional cross-region profiles based on region config.
+   - Enhanced `_stream_events`: added dynamic retry handler on `ValidationException` when Bedrock prompts for inference profile ARN/ID.
+   - Enhanced `chat_stream`: added `<think>` tag streaming encapsulation for `reasoningContent` events alongside standard `text` deltas.
+   - Enhanced `discover_models`: combines active inference profiles (`list_inference_profiles`) and foundation models (`list_foundation_models`).
+2. `backend/tests/test_bedrock.py`: added unit tests covering model ID normalization and inference profile routing.
+3. Registered and activated all 4 models under provider `dedede` in Postgres database.
+4. `frontend/src/services/api.ts` & `backend/src/tollms/main.py`: updated local dynamic host detection and CORS for flexible container/host access.
+Verification:
+- Direct AWS API validation: verified credentials against AWS Bedrock APIs (`list_foundation_models` and `list_inference_profiles` both 200 OK).
+- Invocations verified on all 4 models:
+  * `us.anthropic.claude-haiku-4-5-20251001-v1:0` (and `anthropic.claude-haiku-4-5-20251001-v1:0`) -> 200 OK, full stream.
+  * `us.anthropic.claude-sonnet-4-6` (and `anthropic.claude-sonnet-4-6`) -> 200 OK, full stream.
+  * `minimax.minimax-m2.5` (and `bedrock/minimax.minimax-m2.5`) -> 200 OK, full stream with reasoning.
+  * `us.deepseek.r1-v1:0` (and `deepseek.r1-v1:0`) -> 200 OK, full stream with reasoning.
+- Gateway endpoint verification: tested `/api/v1/gateway/stream` for all 4 models; all returned 200 OK.
+- End-to-end browser verification via browser subagent: loaded UI, selected `dedede (BEDROCK_CONVERSE)` and `Claude Haiku 4.5`, typed message and verified streamed assistant response and usage calculation in UI.
+- Pytest suite: 17/17 tests passing.
+- Frontend linting & typechecking: 0 errors.

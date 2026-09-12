@@ -10,6 +10,26 @@ from tollms.modules.gateway.adapters.base import BaseProviderAdapter, ChatMessag
 logger = logging.getLogger(__name__)
 
 
+def resolve_bedrock_model_id(model_id: str, region: str) -> str:
+    """Normalize model ID for AWS Bedrock, ensuring cross-region inference profiles are used where required."""
+    # Strip framework prefixes such as 'bedrock/'
+    if model_id.startswith("bedrock/"):
+        model_id = model_id[len("bedrock/"):]
+
+    # If already prefixed with a cross-region routing prefix, return as is
+    if any(model_id.startswith(p) for p in ("us.", "eu.", "apac.", "global.", "crce.")):
+        return model_id
+
+    reg = region.lower()
+    prefix = "us" if reg.startswith("us-") else ("eu" if reg.startswith("eu-") else ("apac" if reg.startswith("ap-") else "us"))
+
+    # Models that require an inference profile for on-demand invocation
+    if model_id.startswith("anthropic.claude-") or model_id.startswith("deepseek."):
+        return f"{prefix}.{model_id}"
+
+    return model_id
+
+
 class BedrockAdapter(BaseProviderAdapter):
     endpoint_type = "converse"
 
@@ -44,17 +64,41 @@ class BedrockAdapter(BaseProviderAdapter):
         if self._check_config() is not None:
             return []
         try:
-            resp = await asyncio.to_thread(self._mgmt_client().list_foundation_models)
-            return [
-                DiscoveredModel(model_id=s["modelId"], name=s.get("modelName", s["modelId"]), endpoint_type=self.endpoint_type)
-                for s in resp.get("modelSummaries", [])
-                if s.get("modelId")
-            ]
+            mgmt = self._mgmt_client()
+            models_res = await asyncio.to_thread(mgmt.list_foundation_models)
+            profiles_res = await asyncio.to_thread(mgmt.list_inference_profiles)
+
+            discovered: dict[str, DiscoveredModel] = {}
+
+            # 1. Active cross-region inference profiles (supported for on-demand converse)
+            for p in profiles_res.get("inferenceProfileSummaries", []):
+                if p.get("status") == "ACTIVE" and p.get("inferenceProfileId"):
+                    pid = p["inferenceProfileId"]
+                    name = p.get("inferenceProfileName", pid)
+                    discovered[pid] = DiscoveredModel(
+                        model_id=pid,
+                        name=name,
+                        endpoint_type=self.endpoint_type,
+                    )
+
+            # 2. Foundation models
+            for s in models_res.get("modelSummaries", []):
+                mid = s.get("modelId")
+                if mid and mid not in discovered:
+                    discovered[mid] = DiscoveredModel(
+                        model_id=mid,
+                        name=s.get("modelName", mid),
+                        endpoint_type=self.endpoint_type,
+                    )
+
+            return list(discovered.values())
         except Exception:
             logger.exception("bedrock discovery failed")
             return []
+
     def _stream_events(self, payload: dict):
         import boto3
+        from botocore.exceptions import ClientError
 
         client = boto3.client(
             "bedrock-runtime",
@@ -62,29 +106,64 @@ class BedrockAdapter(BaseProviderAdapter):
             aws_secret_access_key=self.credentials["secret_key"],
             region_name=self.credentials["region"],
         )
-        return client.converse_stream(**payload)["stream"]
+        try:
+            return client.converse_stream(**payload)["stream"]
+        except ClientError as e:
+            msg = str(e)
+            if "on-demand throughput isn't supported" in msg or "inference profile" in msg:
+                reg = self.credentials.get("region", "us-east-1").lower()
+                prefix = "us" if reg.startswith("us-") else ("eu" if reg.startswith("eu-") else ("apac" if reg.startswith("ap-") else "us"))
+                cur_id = payload.get("modelId", "")
+                if not any(cur_id.startswith(p) for p in ("us.", "eu.", "apac.", "global.", "crce.")):
+                    retry_id = f"{prefix}.{cur_id}"
+                    logger.info("Retrying Bedrock converse_stream with inference profile %s", retry_id)
+                    retry_payload = {**payload, "modelId": retry_id}
+                    return client.converse_stream(**retry_payload)["stream"]
+            raise
 
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         system = [{"text": m.content} for m in messages if m.role == "system"]
-        rest = [{"role": "user" if m.role == "user" else "assistant", "content": [{"text": m.content}]} for m in messages if m.role != "system"]
-        payload: dict = {"modelId": self.model_id, "messages": rest}
+        rest = [
+            {"role": "user" if m.role == "user" else "assistant", "content": [{"text": m.content}]}
+            for m in messages
+            if m.role != "system"
+        ]
+        resolved_model_id = resolve_bedrock_model_id(self.model_id, self.credentials.get("region", "us-east-1"))
+        payload: dict = {"modelId": resolved_model_id, "messages": rest}
         if system:
             payload["system"] = system
         try:
             stream = await asyncio.to_thread(self._stream_events, payload)
+            in_reasoning = False
             for event in stream:
                 if "contentBlockDelta" in event:
-                    text = (event["contentBlockDelta"].get("delta") or {}).get("text", "")
-                    if text:
+                    delta_obj = event["contentBlockDelta"].get("delta") or {}
+                    reasoning = (delta_obj.get("reasoningContent") or {}).get("text")
+                    text = delta_obj.get("text")
+                    if reasoning:
+                        if not in_reasoning:
+                            yield StreamChunk(delta="<think>\n")
+                            in_reasoning = True
+                        yield StreamChunk(delta=reasoning)
+                    elif text:
+                        if in_reasoning:
+                            yield StreamChunk(delta="\n</think>\n\n")
+                            in_reasoning = False
                         yield StreamChunk(delta=text)
+                elif "contentBlockStop" in event:
+                    if in_reasoning:
+                        yield StreamChunk(delta="\n</think>\n\n")
+                        in_reasoning = False
                 elif "metadata" in event:
-                    usage = (event["metadata"].get("usage")) or {}
+                    usage = event["metadata"].get("usage") or {}
                     if usage.get("totalTokens"):
                         yield StreamChunk(
                             prompt_tokens=usage.get("inputTokens"),
                             completion_tokens=usage.get("outputTokens"),
                             total_tokens=usage.get("totalTokens"),
                         )
+            if in_reasoning:
+                yield StreamChunk(delta="\n</think>\n\n")
         except Exception as e:
             logger.exception("bedrock stream failed")
             raise RuntimeError(f"streaming failed: {e}") from e
