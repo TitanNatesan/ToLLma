@@ -8,7 +8,7 @@ import { Select } from "@/components/ui";
 export function SelectorBar() {
   const { providerId, modelId, activeConversationId, setProvider, setModel } = useChatStore();
   const { data: providers } = useProviders();
-  const { data: models } = useModels(providerId ?? undefined);
+  const { data: models } = useModels(providerId ?? undefined, undefined, { enabled: !!providerId });
   const { data: usage } = useUsage(activeConversationId);
 
   return (

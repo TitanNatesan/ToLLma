@@ -15,16 +15,45 @@ function apiBase(): string {
   return process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 }
 
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public statusText: string,
+    public data: unknown,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const res = await fetch(`${apiBase()}${path}`, {
     cache: "no-store",
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers,
   });
   if (res.status === 204) return undefined as T;
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`${init?.method ?? "GET"} ${path} -> ${res.status} ${body.slice(0, 200)}`);
+    let data: unknown = body;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      // not JSON
+    }
+    const method = init?.method ?? "GET";
+    throw new ApiError(
+      res.status,
+      res.statusText,
+      data,
+      `${method} ${path} -> ${res.status} ${body.slice(0, 200)}`,
+    );
   }
   return res.json() as Promise<T>;
 }

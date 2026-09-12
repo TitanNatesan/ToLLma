@@ -13,10 +13,18 @@ import type { ChatMessage } from "@/types";
 
 export default function Home() {
   const { providerId, modelId, activeConversationId, streaming, setConversation, setStreaming } = useChatStore();
-  const { data: conversation } = useConversation(activeConversationId);
+  const { data: conversation, error: convError } = useConversation(activeConversationId);
   const mutations = useConversationMutations();
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!convError) return;
+    const status = (convError as { status?: number })?.status;
+    if (status === 404 || convError.message?.includes(" 404 ")) {
+      setConversation(null);
+    }
+  }, [convError, setConversation]);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);

@@ -34,10 +34,11 @@ export function useProviderMutations() {
   };
 }
 
-export function useModels(providerId?: string, search?: string) {
+export function useModels(providerId?: string, search?: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["models", providerId ?? "", search ?? ""],
     queryFn: () => listModels({ provider_id: providerId || undefined, search: search || undefined }),
+    enabled: options?.enabled ?? true,
   });
 }
 

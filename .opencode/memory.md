@@ -84,3 +84,25 @@ head fb3312981ccc with 16 indexes, all containers healthy.
 Deviations: no Vercel AI SDK (custom SSE carries usage/cost envelopes it lacks); shadcn-style local ui components
 instead of full shadcn+radix (same API shape, no extra deps); usage/cost stored per assistant message (no separate
 table); frontend kept under src/.
+
+## 2026-09-13 - Frontend request flood & CORS optimization fix
+
+Requirement: professional and stable fix for excessive HTTP request loops and CORS preflight storms hitting the backend on page load/refresh.
+Root causes identified:
+1. `localStorage` persisted `activeConversationId` via Zustand store; when database was reset or conversation was deleted, TanStack Query received 404 and executed exponential backoff retries without clearing the dead ID.
+2. `frontend/src/services/api.ts` unconditionally injected `Content-Type: application/json` on all HTTP requests including `GET`, turning simple requests into non-simple requests and forcing the browser to issue an `OPTIONS` preflight for every query.
+3. In `frontend/src/app/components/SelectorBar.tsx`, `useModels` executed before provider selection or hydration, causing a redundant unparameterized fetch of all models (`GET /api/v1/models`).
+4. Backend `CORSMiddleware` lacked `max_age`, meaning any legitimate preflights were never cached by the browser.
+5. TanStack Query `defaultOptions` lacked 4xx client-error rejection in retry logic and had short stale time.
+Implemented:
+1. Updated `frontend/src/services/api.ts`: introduced typed `ApiError` class and conditionally set `Content-Type: application/json` only when `init?.body` is present.
+2. Updated `frontend/src/lib/query.tsx`: configured `staleTime: 30s`, disabled `refetchOnWindowFocus`, and implemented custom retry policy to immediately stop retrying on 4xx client errors (401, 403, 404).
+3. Updated `frontend/src/app/page.tsx`: attached 404 cleanup effect to reset `setConversation(null)` and purge dead IDs from `localStorage` upon 404 response.
+4. Updated `frontend/src/hooks/useRegistry.ts` and `frontend/src/app/components/SelectorBar.tsx`: added optional options to `useModels` and guarded execution with `enabled: !!providerId`.
+5. Updated `backend/src/tollms/main.py`: added `max_age=86400` to `CORSMiddleware`.
+Verification:
+- Tested with browser subagent on frontend: verified 200 OK, full DOM hydration, zero console errors, zero uncaught exceptions.
+- Inspected backend container logs: request volume on page load reduced from 20+ requests (burst of preflights and retried 404s) down to exactly 3 simple GET requests (`/providers`, `/conversations`, `/models?provider_id=...`).
+- Zero `OPTIONS` preflights for GET requests.
+- Backend pytest test suite: 11/11 tests passed.
+- Frontend linting & typechecking: `npm run lint && npx tsc --noEmit` passed with 0 errors.
