@@ -1,29 +1,85 @@
 """Application configuration. All values come from the environment / .env."""
 
 from functools import lru_cache
+from typing import Any
 
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+class ConfigurationError(RuntimeError):
+    """Raised when required environment configuration is missing or invalid."""
 
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=(".env", "../.env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    def __init__(self, **values: Any) -> None:
+        try:
+            super().__init__(**values)
+        except ValidationError as exc:
+            missing_fields: list[str] = []
+            invalid_fields: list[str] = []
+            for error in exc.errors():
+                loc = error.get("loc", [""])[0]
+                field_name = str(loc).upper()
+                if error.get("type") == "missing":
+                    missing_fields.append(field_name)
+                else:
+                    msg = error.get("msg", "invalid value")
+                    invalid_fields.append(f"{field_name} ({msg})")
+
+            details: list[str] = []
+            if missing_fields:
+                details.append(
+                    "Missing required environment variable(s):\n    "
+                    + "\n    ".join(f"- {f}" for f in missing_fields)
+                )
+            if invalid_fields:
+                details.append(
+                    "Invalid environment variable(s):\n    "
+                    + "\n    ".join(f"- {f}" for f in invalid_fields)
+                )
+
+            details_text = "\n\n".join(details)
+            raise ConfigurationError(
+                f"\n{'=' * 72}\n"
+                f"APPLICATION CONFIGURATION ERROR\n"
+                f"{'-' * 72}\n"
+                f"{details_text}\n\n"
+                f"Please ensure all required variables are set in your environment or .env file.\n"
+                f"Refer to .env.example for required configuration.\n"
+                f"{'=' * 72}"
+            ) from None
+
+    # Application metadata
     project_name: str = "ToLLms"
     environment: str = "local"
     debug: bool = True
 
+    # Server configuration
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
     api_v1_prefix: str = "/api/v1"
 
+    # Security (Required: must be provided via environment or .env)
+    secret_key: str
+
+    # CORS
     backend_cors_origins: str = "http://localhost:3000"
 
-    postgres_db: str = "tollms"
-    postgres_user: str = "postgres"
-    postgres_password: str = "postgres"
-    postgres_host: str = "postgres"
-    postgres_port: int = 5432
+    # PostgreSQL (Required: must be provided via environment or .env)
+    postgres_db: str
+    postgres_user: str
+    postgres_password: str
+    postgres_host: str
+    postgres_port: int
 
+    # Logging
     log_level: str = "INFO"
 
     @property

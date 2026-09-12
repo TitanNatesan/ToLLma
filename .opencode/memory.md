@@ -47,3 +47,18 @@ Verification:
 - All services healthy (postgres, backend, frontend).
 - Backend /health, /health/ready and frontend /health, / endpoints return 200 OK.
 - pytest passes 2/2 in backend container.
+
+## 2026-09-12 - Strict required environment variable validation
+
+Requirement: remove default values for required configuration (credentials, secrets, DB connection parameters) and throw a clear, human-readable error specifying any missing required environment variables.
+Implemented:
+1. Updated [backend/src/tollms/core/config.py](file:///home/ond/Projects/ToLLms/backend/src/tollms/core/config.py):
+   - Removed hardcoded defaults from required credentials: `postgres_db`, `postgres_user`, `postgres_password`, `postgres_host`, `postgres_port`, and added required `secret_key`.
+   - Maintained safe non-sensitive defaults for app metadata and flags (`project_name`, `environment`, `debug`, `backend_host`, `backend_port`, `api_v1_prefix`, `backend_cors_origins`, `log_level`).
+   - Implemented `ConfigurationError` and intercepted Pydantic's `ValidationError` in `Settings.__init__` to output a formatted error message listing exact missing environment variables in uppercase and referencing `.env.example`.
+   - Updated `SettingsConfigDict` to check `env_file=(".env", "../.env")` so tests and scripts run seamlessly from both repo root and `backend/`.
+2. Created [backend/tests/test_config.py](file:///home/ond/Projects/ToLLms/backend/tests/test_config.py) to test successful loading with valid variables and verify that missing variables raise `ConfigurationError` with the formatted message.
+Verification:
+- Tested missing environment variables: correctly outputs clean error block listing missing variables (`SECRET_KEY`, `POSTGRES_DB`, etc.).
+- Pytest suite: all 4 tests passed in backend container (`tests/test_config.py`, `tests/test_health.py`).
+- Runtime verification: backend `/health` and `/health/ready` endpoints return 200 OK.
