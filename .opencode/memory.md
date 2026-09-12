@@ -85,6 +85,24 @@ Deviations: no Vercel AI SDK (custom SSE carries usage/cost envelopes it lacks);
 instead of full shadcn+radix (same API shape, no extra deps); usage/cost stored per assistant message (no separate
 table); frontend kept under src/.
 
+## 2026-09-13 - V1 simplification: 2 pages, discovery, shadcn
+
+Requirement: Chat + Providers only; validation status persistence; model discovery; models managed inside
+provider detail; shadcn component library.
+Implemented (backend): standardized adapter interface validate_credentials()/discover_models()/chat_stream() for
+all 7 adapters (validation moved out of deleted providers/utils.py into adapters); providers gained
+validation_status/validation_message/last_validated_at (migration 7cfe0553987b, server_default for existing rows);
+POST /providers/{id}/discover upserts discovered models idempotently (discovered flag in metadata);
+validate endpoint persists results. Tests: 16 passed (adapter validate/discover via MockTransport, factory covers
+all 7 types, persistence + idempotency).
+Implemented (frontend): shadcn/ui proper — cva variants, Radix Slot/Switch, sonner Toaster, Card parts;
+chat settings panel (provider/model selects, model details, live usage), empty states with CTAs; providers
+master-detail with embedded model management (full manual-add form, enable/disable switches, validate/discover
+with toasts); deleted /models /conversations /settings /api-test (kept /health).
+Playwright rewritten to 8 scenarios, 9/9 serial on Desktop (mock /models returns 2 models for discovery).
+Fixes: stale Desktop node_modules volume; UI refresh race already covered; spec scoping to details section.
+Verification: pytest 16/16, vitest 5/5, Playwright 9/9, tsc+eslint clean, next build success (routes: /, /providers, /health).
+
 ## 2026-09-13 - Frontend request flood & CORS optimization fix
 
 Requirement: professional and stable fix for excessive HTTP request loops and CORS preflight storms hitting the backend on page load/refresh.

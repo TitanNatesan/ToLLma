@@ -2,6 +2,7 @@ import type {
   AIModel,
   ChatMessage,
   Conversation,
+  DiscoveryResult,
   HealthResponse,
   Provider,
   StreamDone,
@@ -78,6 +79,7 @@ export const createProvider = (body: { name: string; provider_type: string; cred
 export const updateProvider = (id: string, body: Record<string, unknown>) => patch<Provider>(`/api/v1/providers/${id}`, body);
 export const deleteProvider = (id: string) => del<void>(`/api/v1/providers/${id}`);
 export const validateProvider = (id: string) => post<ValidationResult>(`/api/v1/providers/${id}/validate`, {});
+export const discoverProviderModels = (id: string) => post<DiscoveryResult>(`/api/v1/providers/${id}/discover`, {});
 
 // --- Models ---
 export const listModels = (params?: { provider_id?: string; search?: string; capability?: string }) => {

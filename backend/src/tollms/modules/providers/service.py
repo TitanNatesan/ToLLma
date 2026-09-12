@@ -1,18 +1,20 @@
-"""Provider registry: CRUD + credential encryption/masking + validation."""
+"""Provider registry: CRUD + credential encryption/masking + validation + discovery."""
 
 import json
 import logging
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tollms.core.crypto import decrypt, encrypt, mask
 from tollms.core.exceptions import NotFoundError
+from tollms.modules.gateway.factory import build_adapter
+from tollms.modules.models.models import AIModel, EndpointType
 from tollms.modules.providers.models import Provider
-from tollms.modules.providers.schemas import ProviderCreate, ProviderUpdate
-from tollms.modules.providers.utils import validate_credentials
+from tollms.modules.providers.schemas import DiscoveryResult, ProviderCreate, ProviderUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +86,64 @@ def delete_provider(db: Session, provider_id: uuid.UUID) -> None:
     logger.info("provider soft-deleted: %s", provider.id)
 
 
-def validate_provider(db: Session, provider_id: uuid.UUID) -> tuple[bool, str, float]:
+async def validate_provider(
+    db: Session, provider_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None = None
+) -> tuple[bool, str, float]:
+    """Validate via the adapter and persist the result on the provider."""
     provider = get_provider(db, provider_id)
-    valid, message, latency = validate_credentials(provider.provider_type, decrypted_credentials(provider))
+    adapter = build_adapter(provider, None, decrypted_credentials(provider), transport)
+    try:
+        valid, message, latency = await adapter.validate_credentials()
+    except Exception as e:
+        logger.exception("provider %s validation crashed", provider.id)
+        valid, message, latency = False, f"validation failed: {e}", 0
+    provider.validation_status = "valid" if valid else "invalid"
+    provider.validation_message = message
+    provider.last_validated_at = datetime.now(timezone.utc)
+    db.commit()
     logger.info("provider %s validation: valid=%s (%s)", provider.id, valid, message)
     return valid, message, latency
+
+
+async def discover_provider_models(
+    db: Session, provider_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None = None
+) -> DiscoveryResult:
+    """Fetch models from the provider and store the ones we don't have yet."""
+    from tollms.modules.models.service import list_models as _list  # avoid import cycle at module load
+
+    provider = get_provider(db, provider_id)
+    adapter = build_adapter(provider, None, decrypted_credentials(provider), transport)
+    try:
+        discovered = await adapter.discover_models()
+    except Exception as e:
+        logger.exception("provider %s discovery crashed", provider.id)
+        return DiscoveryResult(provider_id=provider.id, discovered=[], created=0, message=f"discovery failed: {e}")
+    existing = {m.model_id for m in _list(db, provider_id=provider.id)}
+    created = 0
+    for d in discovered:
+        if d.model_id in existing:
+            continue
+        try:
+            endpoint = EndpointType(d.endpoint_type)
+        except ValueError:
+            endpoint = EndpointType.CHAT_COMPLETIONS
+        db.add(
+            AIModel(
+                provider_id=provider.id,
+                model_id=d.model_id,
+                name=d.name,
+                endpoint_type=endpoint,
+                context_window=d.context_window,
+                max_output_tokens=d.max_output_tokens,
+                metadata_={"discovered": True},
+            )
+        )
+        created += 1
+    db.commit()
+    logger.info("provider %s discovery: %s found, %s created", provider.id, len(discovered), created)
+    return DiscoveryResult(
+        provider_id=provider.id,
+        discovered=[d.model_id for d in discovered],
+        created=created,
+        message=f"{len(discovered)} found, {created} added",
+    )

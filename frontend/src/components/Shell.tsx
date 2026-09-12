@@ -4,13 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { QueryProvider } from "@/lib/query";
 import { cn } from "@/lib/utils";
+import { Toaster } from "@/components/ui";
 
 const NAV = [
   { href: "/", label: "Chat" },
   { href: "/providers", label: "Providers" },
-  { href: "/models", label: "Models" },
-  { href: "/conversations", label: "Conversations" },
-  { href: "/settings", label: "Settings" },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -37,6 +35,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </nav>
       </header>
       {children}
+      <Toaster />
     </QueryProvider>
   );
 }

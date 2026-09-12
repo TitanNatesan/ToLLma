@@ -27,8 +27,18 @@ export interface Provider {
   credentials_masked: Record<string, string>;
   metadata: Record<string, unknown>;
   is_active: boolean;
+  validation_status: "unknown" | "valid" | "invalid";
+  validation_message: string | null;
+  last_validated_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DiscoveryResult {
+  provider_id: string;
+  discovered: string[];
+  created: number;
+  message: string;
 }
 
 export interface ValidationResult {

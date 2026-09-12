@@ -32,6 +32,9 @@ class ProviderRead(BaseModel):
     # `metadata` is reserved on SQLAlchemy models; the column attribute is `metadata_`.
     metadata_: dict[str, Any] = Field(alias="metadata")
     is_active: bool
+    validation_status: str = "unknown"
+    validation_message: str | None = None
+    last_validated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -42,3 +45,10 @@ class ValidationResult(BaseModel):
     valid: bool
     message: str
     latency_ms: float
+
+
+class DiscoveryResult(BaseModel):
+    provider_id: uuid.UUID
+    discovered: list[str]
+    created: int
+    message: str

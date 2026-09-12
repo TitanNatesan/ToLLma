@@ -8,7 +8,7 @@ export async function startMockLLM(port = 4899): Promise<string> {
   server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.url?.startsWith("/models")) {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ data: [{ id: "mock-model" }] }));
+      res.end(JSON.stringify({ data: [{ id: "mock-disc-a" }, { id: "mock-disc-b" }] }));
       return;
     }
     if (req.url === "/chat/completions" && req.method === "POST") {

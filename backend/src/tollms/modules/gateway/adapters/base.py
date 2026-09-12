@@ -32,6 +32,17 @@ class ChatResult:
 
 
 @dataclass
+class DiscoveredModel:
+    """Normalized model discovery entry. endpoint_type matches EndpointType values."""
+
+    model_id: str
+    name: str
+    endpoint_type: str = "chat_completions"
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+
+
+@dataclass
 class BaseProviderAdapter:
     credentials: dict
     model_id: str
@@ -44,6 +55,14 @@ class BaseProviderAdapter:
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         raise NotImplementedError
         yield  # make it an async generator for type checkers
+
+    async def validate_credentials(self) -> tuple[bool, str, float]:
+        """Live credential check. Returns (valid, message, latency_ms). Never raises."""
+        raise NotImplementedError
+
+    async def discover_models(self) -> list[DiscoveredModel]:
+        """List models available to these credentials. Never raises."""
+        raise NotImplementedError
 
     async def chat(self, messages: list[ChatMessage]) -> ChatResult:
         """Non-streaming convenience built on chat_stream. No duplicate logic."""

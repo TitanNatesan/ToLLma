@@ -14,7 +14,7 @@ from tollms.modules.providers.models import Provider, ProviderType
 
 def build_adapter(
     provider: Provider,
-    model: AIModel,
+    model: AIModel | None,
     credentials: dict,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> BaseProviderAdapter:
@@ -36,4 +36,4 @@ def build_adapter(
             cls = CustomAdapter
         case _:
             raise ProviderError(f"unsupported provider type {provider.provider_type}")
-    return cls(credentials=credentials, model_id=model.model_id, transport=transport)
+    return cls(credentials=credentials, model_id=model.model_id if model else "", transport=transport)

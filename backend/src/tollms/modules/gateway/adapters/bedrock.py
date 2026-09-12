@@ -2,14 +2,57 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 
-from tollms.modules.gateway.adapters.base import BaseProviderAdapter, ChatMessage, StreamChunk
+from tollms.modules.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk
 
 logger = logging.getLogger(__name__)
 
 
 class BedrockAdapter(BaseProviderAdapter):
+    endpoint_type = "converse"
+
+    def _check_config(self) -> str | None:
+        missing = [k for k in ("access_key", "secret_key", "region") if not self.credentials.get(k)]
+        if missing:
+            return f"missing fields: {', '.join(missing)}"
+        return None
+
+    def _mgmt_client(self):
+        import boto3
+
+        return boto3.client(
+            "bedrock",
+            aws_access_key_id=self.credentials["access_key"],
+            aws_secret_access_key=self.credentials["secret_key"],
+            region_name=self.credentials["region"],
+        )
+
+    async def validate_credentials(self) -> tuple[bool, str, float]:
+        if (err := self._check_config()) is not None:
+            return False, err, 0
+        start = time.monotonic()
+        try:
+            await asyncio.to_thread(self._mgmt_client().list_foundation_models)
+            return True, "credentials valid", (time.monotonic() - start) * 1000
+        except Exception as e:
+            logger.exception("bedrock validation failed")
+            return False, f"bedrock rejected credentials: {e}", (time.monotonic() - start) * 1000
+
+    async def discover_models(self) -> list[DiscoveredModel]:
+        if self._check_config() is not None:
+            return []
+        try:
+            resp = await asyncio.to_thread(self._mgmt_client().list_foundation_models)
+            return [
+                DiscoveredModel(model_id=s["modelId"], name=s.get("modelName", s["modelId"]), endpoint_type=self.endpoint_type)
+                for s in resp.get("modelSummaries", [])
+                if s.get("modelId")
+            ]
+        except Exception:
+            logger.exception("bedrock discovery failed")
+            return []
     def _stream_events(self, payload: dict):
         import boto3
 

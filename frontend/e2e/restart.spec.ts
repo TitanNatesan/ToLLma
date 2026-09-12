@@ -1,4 +1,4 @@
-// Scenario 10: full stack restart preserves all data.
+// Scenario 8: full stack restart preserves providers, models, conversations.
 import { execSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
 import { startMockLLM } from "./mock-server";
@@ -24,13 +24,13 @@ async function waitFor(url: string, timeoutMs: number): Promise<void> {
   }
 }
 
-test("restart docker stack, data persists", async ({ page, request }) => {
+test("restart docker stack, providers + models + conversations persist", async ({ page, request }) => {
   const stamp = Date.now();
   const { id: providerId } = await apiCreateProvider(`pw-xprov-${stamp}`);
-  await apiCreateModel(providerId, `pw-xmodel-${stamp}`);
+  const { id: modelId } = await apiCreateModel(providerId, `pw-xmodel-${stamp}`);
   const chat = await (
     await request.post(`${API}/api/v1/gateway/chat`, {
-      data: { provider_id: providerId, model_id: (await apiCreateModel(providerId, `pw-xmodel2-${stamp}`)).id, message: `survive restart ${stamp}` },
+      data: { provider_id: providerId, model_id: modelId, message: `survive restart ${stamp}` },
     })
   ).json();
   expect(chat.content).toContain("Hello");
@@ -42,9 +42,16 @@ test("restart docker stack, data persists", async ({ page, request }) => {
   await waitFor("http://localhost:8000/health", 120000);
   await waitFor("http://localhost:3000/", 120000);
 
-  // UI + API show the pre-restart data.
+  // Conversation UI + API show the pre-restart data.
   await page.goto("/");
   await expect(page.getByRole("complementary").getByRole("button", { name: `survive restart ${stamp}` })).toBeVisible({ timeout: 60000 });
   const conv = await (await request.get(`${API}/api/v1/conversations/${chat.conversation_id}`)).json();
   expect(conv.messages).toHaveLength(2);
+
+  // Provider + model persist with validation status intact.
+  await page.goto("/providers");
+  await page.locator("section[aria-label='Provider list']").getByText(`pw-xprov-${stamp}`).click();
+  await expect(page.locator("section[aria-label='Provider details']").getByText(`pw-xmodel-${stamp}`).first()).toBeVisible({ timeout: 30000 });
+  const providers = await (await request.get(`${API}/api/v1/providers`)).json();
+  expect(providers.some((p: { id: string }) => p.id === providerId)).toBe(true);
 });

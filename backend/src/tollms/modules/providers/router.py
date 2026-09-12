@@ -7,7 +7,13 @@ from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
 from tollms.modules.providers import service
-from tollms.modules.providers.schemas import ProviderCreate, ProviderRead, ProviderUpdate, ValidationResult
+from tollms.modules.providers.schemas import (
+    DiscoveryResult,
+    ProviderCreate,
+    ProviderRead,
+    ProviderUpdate,
+    ValidationResult,
+)
 
 router = APIRouter(prefix="/api/v1/providers", tags=["providers"])
 
@@ -20,6 +26,9 @@ def _read(p) -> ProviderRead:
         credentials_masked=service.masked_credentials(p),
         metadata_=p.metadata_,
         is_active=p.is_active,
+        validation_status=p.validation_status,
+        validation_message=p.validation_message,
+        last_validated_at=p.last_validated_at,
         created_at=p.created_at,
         updated_at=p.updated_at,
     )
@@ -51,6 +60,11 @@ def delete(provider_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
 
 
 @router.post("/{provider_id}/validate", response_model=ValidationResult)
-def validate(provider_id: uuid.UUID, db: Session = Depends(get_db)) -> ValidationResult:
-    valid, message, latency = service.validate_provider(db, provider_id)
+async def validate(provider_id: uuid.UUID, db: Session = Depends(get_db)) -> ValidationResult:
+    valid, message, latency = await service.validate_provider(db, provider_id)
     return ValidationResult(valid=valid, message=message, latency_ms=latency)
+
+
+@router.post("/{provider_id}/discover", response_model=DiscoveryResult)
+async def discover(provider_id: uuid.UUID, db: Session = Depends(get_db)) -> DiscoveryResult:
+    return await service.discover_provider_models(db, provider_id)

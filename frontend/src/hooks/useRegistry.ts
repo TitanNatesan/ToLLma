@@ -6,6 +6,7 @@ import {
   createProvider,
   deleteModel,
   deleteProvider,
+  discoverProviderModels,
   listModels,
   listProviders,
   updateModel,
@@ -30,7 +31,8 @@ export function useProviderMutations() {
       onSuccess: invalidate,
     }),
     remove: useMutation({ mutationFn: deleteProvider, onSuccess: invalidate }),
-    validate: useMutation({ mutationFn: validateProvider }),
+    validate: useMutation({ mutationFn: validateProvider, onSuccess: invalidate }),
+    discover: useMutation({ mutationFn: discoverProviderModels, onSuccess: invalidate }),
   };
 }
 

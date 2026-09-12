@@ -1,9 +1,10 @@
 """Provider registry table."""
 
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,5 +37,8 @@ class Provider(SoftDeleteMixin, TimestampedModel):
     credentials_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    validation_status: Mapped[str] = mapped_column(String(16), default="unknown", nullable=False)
+    validation_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     models: Mapped[list["AIModel"]] = relationship(back_populates="provider")
