@@ -246,3 +246,40 @@ export interface SyncRun {
   error_details: string[];
 }
 
+export type MatchType = "provider_specific" | "global" | "fallback";
+
+export interface DraftDiscoveredModel {
+  model_id: string;
+  name: string;
+  endpoint_type: string;
+  context_window: number | null;
+  max_output_tokens: number | null;
+}
+
+export interface DraftValidation {
+  valid: boolean;
+  message: string;
+  latency_ms: number;
+  discovered: DraftDiscoveredModel[];
+}
+
+export interface MappedModel {
+  model_id: string;
+  match_type: MatchType;
+  repository_model_key: string | null;
+  suggested: Record<string, string | number | boolean | null>;
+  repository_match: Record<string, string | null>;
+}
+
+export interface RegisterResult {
+  provider: Provider;
+  models_created: number;
+  match_stats: Record<MatchType, number>;
+}
+
+export interface ResyncResult {
+  applied: Record<string, string>;
+  pricing_changed: boolean;
+  pricing_applied: boolean;
+}
+

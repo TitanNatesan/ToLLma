@@ -1,23 +1,27 @@
-// Scenario 1: provider creation + persistence (detail view included).
+// Scenario 1: wizard registration + persistence (nothing saved before step 5).
 import { expect, test } from "@playwright/test";
-import { MOCK_URL } from "./helpers";
+import { API, MOCK_URL, wizardRegister } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
   await startMockLLM();
 });
 
-test("create + persist provider", async ({ page }) => {
+test("wizard registers only on finish, then persists", async ({ page, request }) => {
   const name = `pw-prov-${Date.now()}`;
   await page.goto("/providers");
   await page.getByTestId("add-provider").click();
   await page.getByTestId("provider-name").fill(name);
   await page.getByTestId("provider-type").selectOption("CUSTOM");
-  await page.getByTestId("cred-base_url").fill(MOCK_URL);
-  await page.getByTestId("save-provider").click();
+  // Abandon at step 1: nothing may be persisted.
+  await page.keyboard.press("Escape");
+  const list = await (await request.get(`${API}/api/v1/providers`)).json();
+  expect(list.some((p: { name: string }) => p.name === name)).toBe(false);
 
-  // Detail view opens for the new provider (save auto-selects it).
-  await expect(page.getByTestId("provider-detail")).toContainText(name, { timeout: 15000 });
+  await wizardRegister(page, { name, type: "CUSTOM", baseUrl: MOCK_URL });
+
+  // Detail view opens for the new provider (registration auto-selects it).
+  await expect(page.getByTestId("provider-detail")).toContainText(name);
 
   // Reload -> persists (database, not just client state).
   await page.reload();

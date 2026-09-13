@@ -3,11 +3,15 @@ import type {
   ChatMessage,
   Conversation,
   DiscoveryResult,
+  DraftValidation,
   HealthResponse,
+  MappedModel,
   Provider,
+  RegisterResult,
   RepositoryLookup,
   RepositoryModelPage,
   RepositoryStats,
+  ResyncResult,
   StreamDone,
   SyncRun,
   UsageTotals,
@@ -89,6 +93,9 @@ export const updateProvider = (id: string, body: Record<string, unknown>) => pat
 export const deleteProvider = (id: string) => del<void>(`/api/v1/providers/${id}`);
 export const validateProvider = (id: string) => post<ValidationResult>(`/api/v1/providers/${id}/validate`, {});
 export const discoverProviderModels = (id: string) => post<DiscoveryResult>(`/api/v1/providers/${id}/discover`, {});
+export const draftValidateProvider = (body: { provider_type: string; credentials: Record<string, unknown> }) =>
+  post<DraftValidation>("/api/v1/providers/draft-validate", body);
+export const registerProvider = (body: Record<string, unknown>) => post<RegisterResult>("/api/v1/providers/register", body);
 
 // --- Models ---
 export const listModels = (params?: { provider_id?: string; search?: string; capability?: string }) => {
@@ -102,6 +109,10 @@ export const listModels = (params?: { provider_id?: string; search?: string; cap
 export const createModel = (body: Record<string, unknown>) => post<AIModel>("/api/v1/models", body);
 export const updateModel = (id: string, body: Record<string, unknown>) => patch<AIModel>(`/api/v1/models/${id}`, body);
 export const deleteModel = (id: string) => del<void>(`/api/v1/models/${id}`);
+export const bulkUpdateModels = (ids: string[], changes: Record<string, unknown>) =>
+  patch<{ updated: number }>("/api/v1/models/bulk", { ids, patch: changes });
+export const resyncModel = (id: string, includePricing = false) =>
+  post<ResyncResult>(`/api/v1/models/${id}/resync${includePricing ? "?include_pricing=true" : ""}`, {});
 export const lookupRepositoryModel = (query: string, providerHint?: string) => {
   const q = new URLSearchParams({ query });
   if (providerHint) q.set("provider_hint", providerHint);
@@ -129,6 +140,8 @@ export const getRepositoryStats = () => get<RepositoryStats>("/api/v1/model-repo
 export const syncRepository = () => post<SyncRun>("/api/v1/model-repository/sync", {});
 export const getRepositorySyncHistory = (limit = 20) =>
   get<SyncRun[]>(`/api/v1/model-repository/sync-history?limit=${limit}`);
+export const mapDiscoveredModels = (body: { provider_type?: string; base_url?: string; model_ids: string[] }) =>
+  post<{ mapped: MappedModel[] }>("/api/v1/model-repository/map", body);
 
 // --- Conversations ---
 export const listConversations = (search?: string) =>

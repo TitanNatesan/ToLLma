@@ -1,0 +1,335 @@
+"use client";
+
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button, Card, CardContent, Field, GhostButton, Input, Select } from "@/components/ui";
+import { lookupRepositoryModel } from "@/services/api";
+import type { AIModel, EndpointType } from "@/types";
+
+export const ENDPOINTS: EndpointType[] = [
+  "responses",
+  "chat_completions",
+  "messages",
+  "converse",
+];
+
+export const CAPS: Array<[string, string]> = [
+  ["supports_text", "text"],
+  ["supports_vision", "vision"],
+  ["supports_audio_input", "audio-in"],
+  ["supports_audio_output", "audio-out"],
+  ["supports_image_generation", "img-gen"],
+  ["supports_tool_calling", "tools"],
+  ["supports_reasoning", "reasoning"],
+  ["supports_streaming", "streaming"],
+];
+
+export interface ModelFormState {
+  name: string;
+  model_id: string;
+  endpoint_type: EndpointType;
+  input_price: string;
+  output_price: string;
+  cache_read_price: string;
+  cache_write_price: string;
+  context_window: string;
+  max_output_tokens: string;
+  description: string;
+  release_date: string;
+  repository_model_key: string;
+  caps: Record<string, boolean>;
+}
+
+export const EMPTY_MODEL_FORM: ModelFormState = {
+  name: "",
+  model_id: "",
+  endpoint_type: "chat_completions",
+  input_price: "0",
+  output_price: "0",
+  cache_read_price: "0",
+  cache_write_price: "0",
+  context_window: "",
+  max_output_tokens: "",
+  description: "",
+  release_date: "",
+  repository_model_key: "",
+  caps: { supports_text: true, supports_streaming: true },
+};
+
+export function ModelForm({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  initial: ModelFormState;
+  onSubmit: (f: ModelFormState) => void;
+  onCancel: () => void;
+}) {
+  const [form, setForm] = useState(initial);
+  const [repoQuery, setRepoQuery] = useState("");
+  const [importing, setImporting] = useState(false);
+  const set = (k: keyof ModelFormState, v: string) =>
+    setForm((f) => ({ ...f, [k]: v }));
+
+  async function importFromRepository() {
+    const q = repoQuery.trim() || form.model_id.trim();
+    if (!q) {
+      toast.error("Enter a model ID to search the repository");
+      return;
+    }
+    setImporting(true);
+    try {
+      const { entry, suggested } = await lookupRepositoryModel(q);
+      const str = (v: unknown, fallback = "") =>
+        v === null || v === undefined ? fallback : String(v);
+      const endpoint = (
+        ["responses", "chat_completions", "messages", "converse"] as string[]
+      ).includes(str(suggested.endpoint_type))
+        ? (suggested.endpoint_type as EndpointType)
+        : "chat_completions";
+      setForm((f) => ({
+        ...f,
+        name: str(suggested.name, f.name),
+        model_id: str(suggested.model_id, f.model_id),
+        endpoint_type: endpoint,
+        input_price: str(suggested.input_price, "0"),
+        output_price: str(suggested.output_price, "0"),
+        cache_read_price: str(suggested.cache_read_price, "0"),
+        cache_write_price: str(suggested.cache_write_price, "0"),
+        context_window: str(suggested.context_window),
+        max_output_tokens: str(suggested.max_output_tokens),
+        description: str(suggested.description),
+        release_date: str(suggested.release_date),
+        repository_model_key: entry.model_key,
+        caps: Object.fromEntries(
+          CAPS.map(([k]) => [k, !!(suggested as Record<string, unknown>)[k]]),
+        ),
+      }));
+      toast.success(`Imported ${entry.display_name ?? entry.model_key} from repository`);
+    } catch {
+      toast.error("No repository match — enter details manually");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <Card data-testid="model-form" className="shadow-lg border-zinc-300 dark:border-zinc-700">
+      <CardContent className="flex flex-col gap-3 p-4">
+        <div className="flex gap-2">
+          <Input
+            placeholder="Search Model Intelligence Repository…"
+            value={repoQuery}
+            onChange={(e) => setRepoQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void importFromRepository()}
+            data-testid="madd-repo-search"
+          />
+          <Button
+            onClick={() => void importFromRepository()}
+            disabled={importing}
+            data-testid="madd-repo-import"
+            className="shrink-0 text-xs"
+          >
+            {importing ? "Importing…" : "Import"}
+          </Button>
+        </div>
+        {form.repository_model_key && (
+          <p className="text-xs text-zinc-500 font-mono" data-testid="madd-repo-key">
+            Linked to repository: {form.repository_model_key} (edits are overrides)
+          </p>
+        )}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Model name">
+            <Input
+              value={form.name}
+              onChange={(e) => set("name", e.target.value)}
+              data-testid="madd-name"
+            />
+          </Field>
+          <Field label="Model ID">
+            <Input
+              value={form.model_id}
+              onChange={(e) => set("model_id", e.target.value)}
+              data-testid="madd-model-id"
+            />
+          </Field>
+          <Field label="Endpoint type">
+            <Select
+              value={form.endpoint_type}
+              onChange={(e) => set("endpoint_type", e.target.value)}
+              data-testid="madd-endpoint"
+            >
+              {ENDPOINTS.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Description">
+            <Input
+              value={form.description}
+              onChange={(e) => set("description", e.target.value)}
+              data-testid="madd-description"
+            />
+          </Field>
+          <Field label="Input $/1M">
+            <Input
+              value={form.input_price}
+              onChange={(e) => set("input_price", e.target.value)}
+              data-testid="madd-input-price"
+            />
+          </Field>
+          <Field label="Output $/1M">
+            <Input
+              value={form.output_price}
+              onChange={(e) => set("output_price", e.target.value)}
+              data-testid="madd-output-price"
+            />
+          </Field>
+          <Field label="Cache read $/1M">
+            <Input
+              value={form.cache_read_price}
+              onChange={(e) => set("cache_read_price", e.target.value)}
+              data-testid="madd-cache-read"
+            />
+          </Field>
+          <Field label="Cache write $/1M">
+            <Input
+              value={form.cache_write_price}
+              onChange={(e) => set("cache_write_price", e.target.value)}
+              data-testid="madd-cache-write"
+            />
+          </Field>
+          <Field label="Context window">
+            <Input
+              value={form.context_window}
+              onChange={(e) => set("context_window", e.target.value)}
+              data-testid="madd-context"
+            />
+          </Field>
+          <Field label="Max output tokens">
+            <Input
+              value={form.max_output_tokens}
+              onChange={(e) => set("max_output_tokens", e.target.value)}
+              data-testid="madd-max-tokens"
+            />
+          </Field>
+          <Field label="Release date">
+            <Input
+              type="date"
+              value={form.release_date}
+              onChange={(e) => set("release_date", e.target.value)}
+              data-testid="madd-release"
+            />
+          </Field>
+        </div>
+        <fieldset>
+          <legend className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+            Capabilities
+          </legend>
+          <div className="mt-1 flex flex-wrap gap-3">
+            {CAPS.map(([key, label]) => (
+              <label key={key} className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  checked={!!form.caps[key]}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      caps: { ...f.caps, [key]: e.target.checked },
+                    }))
+                  }
+                  data-testid={`madd-cap-${key}`}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="flex gap-2 pt-2">
+          <Button
+            onClick={() => onSubmit(form)}
+            disabled={!form.name.trim() || !form.model_id.trim()}
+            data-testid="madd-save"
+            className="text-xs"
+          >
+            Save model
+          </Button>
+          <GhostButton onClick={onCancel} className="text-xs">
+            Cancel
+          </GhostButton>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function toPayload(providerId: string, f: ModelFormState): Record<string, unknown> {
+  const caps = Object.fromEntries(CAPS.map(([k]) => [k, !!f.caps[k]]));
+  return {
+    provider_id: providerId,
+    name: f.name.trim(),
+    model_id: f.model_id.trim(),
+    endpoint_type: f.endpoint_type,
+    input_price: f.input_price || "0",
+    output_price: f.output_price || "0",
+    cache_read_price: f.cache_read_price || "0",
+    cache_write_price: f.cache_write_price || "0",
+    context_window: f.context_window ? Number(f.context_window) : null,
+    max_output_tokens: f.max_output_tokens ? Number(f.max_output_tokens) : null,
+    description: f.description || null,
+    release_date: f.release_date || null,
+    ...(f.repository_model_key ? { repository_model_key: f.repository_model_key } : {}),
+    ...caps,
+  };
+}
+
+export function fromModel(m: AIModel): ModelFormState {
+  return {
+    ...EMPTY_MODEL_FORM,
+    name: m.name,
+    model_id: m.model_id,
+    endpoint_type: m.endpoint_type,
+    input_price: m.input_price,
+    output_price: m.output_price,
+    cache_read_price: m.cache_read_price,
+    cache_write_price: m.cache_write_price,
+    context_window: m.context_window?.toString() ?? "",
+    max_output_tokens: m.max_output_tokens?.toString() ?? "",
+    description: m.description ?? "",
+    release_date: m.release_date ?? "",
+    repository_model_key: m.repository_model_key ?? "",
+    caps: Object.fromEntries(CAPS.map(([k]) => [k, (m as unknown as Record<string, boolean>)[k]])),
+  };
+}
+
+/** Build a ModelFormState from a repository map suggestion (wizard + import flows). */
+export function fromSuggested(
+  suggested: Record<string, unknown>,
+  repositoryModelKey: string,
+): ModelFormState {
+  const str = (v: unknown, fallback = "") =>
+    v === null || v === undefined ? fallback : String(v);
+  const endpoint = (["responses", "chat_completions", "messages", "converse"] as string[]).includes(
+    str(suggested.endpoint_type),
+  )
+    ? (suggested.endpoint_type as EndpointType)
+    : "chat_completions";
+  return {
+    ...EMPTY_MODEL_FORM,
+    name: str(suggested.name),
+    model_id: str(suggested.model_id),
+    endpoint_type: endpoint,
+    input_price: str(suggested.input_price, "0"),
+    output_price: str(suggested.output_price, "0"),
+    cache_read_price: str(suggested.cache_read_price, "0"),
+    cache_write_price: str(suggested.cache_write_price, "0"),
+    context_window: str(suggested.context_window),
+    max_output_tokens: str(suggested.max_output_tokens),
+    description: str(suggested.description),
+    release_date: str(suggested.release_date),
+    repository_model_key: repositoryModelKey,
+    caps: Object.fromEntries(CAPS.map(([k]) => [k, !!suggested[k]])),
+  };
+}

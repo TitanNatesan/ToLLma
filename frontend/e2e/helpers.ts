@@ -48,3 +48,36 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
   await expect(page.getByTestId("send-button")).toBeEnabled();
   await page.getByTestId("send-button").click();
 }
+
+/**
+ * Full 5-step wizard registration against the mock LLM (CUSTOM, base_url only).
+ * Pass onlyModelIds to register a subset (deselects everything else first).
+ */
+export async function wizardRegister(
+  page: Page,
+  opts: { name: string; type?: string; baseUrl?: string; onlyModelIds?: string[] },
+): Promise<void> {
+  await page.goto("/providers");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByTestId("add-provider").click();
+  await page.getByTestId("provider-name").fill(opts.name);
+  if (opts.type) await page.getByTestId("provider-type").selectOption(opts.type);
+  await page.getByTestId("wiz-next").click();
+  if (opts.baseUrl) await page.getByTestId("cred-base_url").fill(opts.baseUrl);
+  await page.getByTestId("wiz-next").click();
+  await page.getByTestId("wiz-validate").click();
+  await expect(page.getByTestId("wiz-validation-result")).toContainText("Validation successful", {
+    timeout: 20000,
+  });
+  await page.getByTestId("wiz-next").click();
+  await expect(page.getByTestId("wizard-step-4")).toBeVisible({ timeout: 20000 });
+  if (opts.onlyModelIds) {
+    await page.getByTestId("wiz-deselect-filtered").click();
+    for (const id of opts.onlyModelIds) await page.getByTestId(`wiz-select-${id}`).check();
+  }
+  await page.getByTestId("wiz-next").click();
+  await expect(page.getByTestId("wizard-step-5")).toBeVisible();
+  await page.getByTestId("wiz-register").click();
+  await expect(page.getByTestId("provider-detail")).toContainText(opts.name, { timeout: 15000 });
+}

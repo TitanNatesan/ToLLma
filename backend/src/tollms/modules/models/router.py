@@ -65,9 +65,29 @@ def get(model_id: uuid.UUID, db: Session = Depends(get_db)) -> ModelRead:
     return _read(service.get_model(db, model_id))
 
 
+@router.patch("/bulk", response_model=dict)
+def bulk_update(data: dict, db: Session = Depends(get_db)) -> dict:
+    """Apply one patch to many models. Body: {ids: [...], patch: {ModelUpdate fields}}."""
+    ids = [uuid.UUID(i) for i in data.get("ids", [])]
+    updated = service.bulk_update_models(db, ids, ModelUpdate(**data.get("patch", {})))
+    return {"updated": updated}
+
+
 @router.patch("/{model_id}", response_model=ModelRead)
 def update(model_id: uuid.UUID, data: ModelUpdate, db: Session = Depends(get_db)) -> ModelRead:
     return _read(service.update_model(db, model_id, data))
+
+
+@router.post("/{model_id}/resync", response_model=dict)
+def resync(model_id: uuid.UUID, include_pricing: bool = False, db: Session = Depends(get_db)) -> dict:
+    """Refresh a linked model from its repository entry.
+
+    Pricing is only applied with include_pricing=true — user overrides are never
+    silently overwritten.
+    """
+    result = service.resync_model(db, model_id, include_pricing=include_pricing)
+    result["applied"] = {k: str(v) for k, v in result["applied"].items()}
+    return result
 
 
 @router.delete("/{model_id}", status_code=204)

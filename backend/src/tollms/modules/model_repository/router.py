@@ -73,6 +73,24 @@ def trigger_sync(db: Session = Depends(get_db)) -> SyncRunRead:
     return SyncRunRead.model_validate(service.run_sync(db))
 
 
+@router.post("/map", response_model=dict)
+def map_models(body: dict, db: Session = Depends(get_db)) -> dict:
+    """Map discovered model ids to repository entries.
+
+    Body: {provider_type?, base_url?, model_ids: [...]}.
+    """
+    from tollms.modules.model_repository.mapping import map_models as _map
+
+    return {
+        "mapped": _map(
+            db,
+            [str(m) for m in body.get("model_ids", [])],
+            provider_type=body.get("provider_type"),
+            base_url=body.get("base_url"),
+        )
+    }
+
+
 @router.get("/sync-history", response_model=list[SyncRunRead])
 def get_sync_history(limit: int = 20, db: Session = Depends(get_db)) -> list[SyncRunRead]:
     return [SyncRunRead.model_validate(r) for r in service.sync_history(db, limit)]

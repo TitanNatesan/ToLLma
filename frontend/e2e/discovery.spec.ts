@@ -1,28 +1,20 @@
-// Scenarios 3 + 4: automatic model discovery + manual model creation.
+// Scenarios 3 + 4: wizard model selection + manual model creation.
 import { expect, test } from "@playwright/test";
-import { MOCK_URL } from "./helpers";
+import { MOCK_URL, wizardRegister } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
   await startMockLLM();
 });
 
-test("discover models then add one manually", async ({ page }) => {
+test("wizard registers selected models, then add one manually", async ({ page }) => {
   const name = `pw-disc-${Date.now()}`;
-  await page.goto("/providers");
-  await page.getByTestId("add-provider").click();
-  await page.getByTestId("provider-name").fill(name);
-  await page.getByTestId("provider-type").selectOption("CUSTOM");
-  await page.getByTestId("cred-base_url").fill(MOCK_URL);
-  await page.getByTestId("save-provider").click();
+  // Register only mock-disc-a through the wizard (mock offers a + b).
+  await wizardRegister(page, { name, type: "CUSTOM", baseUrl: MOCK_URL, onlyModelIds: ["mock-disc-a"] });
 
-  // Save auto-discovers from the mock's /models endpoint.
-  const detail = page.getByTestId("provider-detail");
   const section = page.locator("section[aria-label='Provider details']");
-  await expect(detail).toContainText(name, { timeout: 15000 });
-  await expect(page.locator("[data-testid^='discover-result']")).toContainText("2 found, 2 added", { timeout: 20000 });
   await expect(section.getByText("mock-disc-a").first()).toBeVisible();
-  await expect(section.getByText("mock-disc-b").first()).toBeVisible();
+  await expect(section.getByText("mock-disc-b")).not.toBeVisible();
 
   // Manual creation with full fields.
   const manual = `pw-manual-${Date.now()}`;
@@ -36,7 +28,7 @@ test("discover models then add one manually", async ({ page }) => {
   await page.getByTestId("madd-save").click();
   await expect(section.getByText(manual).first()).toBeVisible();
 
-  // Reload -> discovered + manual models persist.
+  // Reload -> wizard + manual models persist.
   await page.reload();
   await page.locator("section[aria-label='Provider list']").getByText(name).click();
   const reloaded = page.locator("section[aria-label='Provider details']");

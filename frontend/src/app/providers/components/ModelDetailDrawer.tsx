@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Badge,
@@ -10,6 +11,7 @@ import {
   Switch,
 } from "@/components/ui";
 import { useModelMutations } from "@/hooks/useRegistry";
+import { resyncModel } from "@/services/api";
 import type { AIModel, Provider } from "@/types";
 import {
   Activity,
@@ -20,6 +22,7 @@ import {
   DollarSign,
   Layers,
   Pencil,
+  RefreshCw,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -52,6 +55,8 @@ export function ModelDetailDrawer({
   onEdit,
 }: ModelDetailDrawerProps) {
   const mm = useModelMutations();
+  const queryClient = useQueryClient();
+  const [syncing, setSyncing] = useState<string | null>(null);
 
   if (!model) return null;
 
@@ -70,6 +75,22 @@ export function ModelDetailDrawer({
     toast.success(`Model ${model.name} deleted`);
     onClose();
   };
+
+  async function handleResync(includePricing: boolean) {
+    setSyncing(includePricing ? "pricing" : "meta");
+    try {
+      const res = await resyncModel(model!.id, includePricing);
+      await queryClient.invalidateQueries({ queryKey: ["models"] });
+      const n = Object.keys(res.applied).length;
+      toast.success(n > 0 ? `Synced ${n} field${n === 1 ? "" : "s"} from repository` : "Already in sync with repository", {
+        description: !includePricing && res.pricing_changed ? "Repository pricing differs — use Sync pricing to apply it." : undefined,
+      });
+    } catch (e) {
+      toast.error("Sync failed", { description: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setSyncing(null);
+    }
+  }
 
   return (
     <DetailPanel
@@ -251,6 +272,29 @@ export function ModelDetailDrawer({
               <p className="mt-1 text-[11px] text-zinc-500">
                 Linked to canonical repository intelligence. Custom edits serve as provider overrides.
               </p>
+              <div className="mt-2 flex gap-1.5">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 text-[11px]"
+                  disabled={syncing !== null}
+                  onClick={() => void handleResync(false)}
+                  data-testid="model-sync"
+                >
+                  <RefreshCw className={`size-3 ${syncing === "meta" ? "animate-spin" : ""}`} />
+                  Sync metadata
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-[11px]"
+                  disabled={syncing !== null}
+                  onClick={() => void handleResync(true)}
+                  data-testid="model-sync-pricing"
+                >
+                  Sync pricing
+                </Button>
+              </div>
             </div>
           </div>
         )}

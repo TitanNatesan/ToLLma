@@ -1,7 +1,8 @@
 """Provider request/response models. Credentials never leave the server unmasked."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -52,3 +53,66 @@ class DiscoveryResult(BaseModel):
     discovered: list[str]
     created: int
     message: str
+
+
+class DraftValidate(BaseModel):
+    provider_type: ProviderType
+    credentials: dict[str, Any]
+
+
+class DraftDiscoveredModel(BaseModel):
+    model_id: str
+    name: str
+    endpoint_type: str
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+
+
+class DraftValidationResult(BaseModel):
+    valid: bool
+    message: str
+    latency_ms: float
+    discovered: list[DraftDiscoveredModel] = Field(default_factory=list)
+
+
+class RegisterModelItem(BaseModel):
+    model_id: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    endpoint_type: str = "chat_completions"
+    repository_model_key: str | None = None
+    repository_match: dict[str, Any] | None = None
+    input_price: Decimal = Decimal("0")
+    output_price: Decimal = Decimal("0")
+    cache_read_price: Decimal = Decimal("0")
+    cache_write_price: Decimal = Decimal("0")
+    supports_text: bool = True
+    supports_vision: bool = False
+    supports_audio_input: bool = False
+    supports_audio_output: bool = False
+    supports_image_generation: bool = False
+    supports_tool_calling: bool = False
+    supports_reasoning: bool = False
+    supports_streaming: bool = True
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    release_date: date | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class ProviderRegister(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    provider_type: ProviderType
+    description: str | None = None
+    credentials: dict[str, Any]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    validation_status: str | None = None
+    validation_message: str | None = None
+    models: list[RegisterModelItem] = Field(default_factory=list)
+
+
+class RegisterResult(BaseModel):
+    provider: ProviderRead
+    models_created: int
+    match_stats: dict[str, int]

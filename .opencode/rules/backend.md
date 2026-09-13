@@ -4,7 +4,7 @@ Every API module must be self-contained.
 
 Example:
 
-auth/
+api/auth/
 
 ├── __init__.py
 ├── router.py

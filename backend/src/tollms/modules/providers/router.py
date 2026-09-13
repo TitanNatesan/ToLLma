@@ -9,9 +9,14 @@ from tollms.core.deps import get_db
 from tollms.modules.providers import service
 from tollms.modules.providers.schemas import (
     DiscoveryResult,
+    DraftDiscoveredModel,
+    DraftValidate,
+    DraftValidationResult,
     ProviderCreate,
     ProviderRead,
+    ProviderRegister,
     ProviderUpdate,
+    RegisterResult,
     ValidationResult,
 )
 
@@ -57,6 +62,36 @@ def update(provider_id: uuid.UUID, data: ProviderUpdate, db: Session = Depends(g
 @router.delete("/{provider_id}", status_code=204)
 def delete(provider_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
     service.delete_provider(db, provider_id)
+
+
+@router.post("/draft-validate", response_model=DraftValidationResult)
+async def draft_validate(data: DraftValidate) -> DraftValidationResult:
+    """Validate credentials without persisting anything (wizard step 3)."""
+    valid, message, latency, discovered = await service.draft_validate(data.provider_type, data.credentials)
+    return DraftValidationResult(
+        valid=valid,
+        message=message,
+        latency_ms=latency,
+        discovered=[
+            DraftDiscoveredModel(
+                model_id=d.model_id,
+                name=d.name,
+                endpoint_type=d.endpoint_type,
+                context_window=d.context_window,
+                max_output_tokens=d.max_output_tokens,
+            )
+            for d in discovered
+        ],
+    )
+
+
+@router.post("/register", response_model=RegisterResult, status_code=201)
+def register(data: ProviderRegister, db: Session = Depends(get_db)) -> RegisterResult:
+    """Atomic wizard registration (step 5): provider + selected models or nothing."""
+    provider, models, match_stats = service.register_provider(db, data)
+    return RegisterResult(
+        provider=_read(provider), models_created=len(models), match_stats=match_stats
+    )
 
 
 @router.post("/{provider_id}/validate", response_model=ValidationResult)

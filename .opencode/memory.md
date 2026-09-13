@@ -326,6 +326,41 @@ Verification: pytest 31/31; live sync done twice (4276 created, then idempotent 
 Not done (out of scope / next): extra free sources (HF/Ollama listings — no stable key-less JSON found);
 fuzzy version-date key matching; discovery-time auto-enrichment of provider models.
 
+## 2026-09-13 - Provider registration & discovery wizard (5-step, persist-only-at-finish)
+
+Requirement: Vercel/Stripe-style onboarding — info -> credentials -> validation -> discovery/selection ->
+summary; provider persisted only after step 5; 4-priority mapping; per-model edit; bulk edit; resync.
+Note: HEAD already contained a wizard visual shell (persist-first, no step nav) from a concurrent
+refactor (5c93f82); it was completed into the spec'd flow instead of rebuilt. Tree collision on
+providers/page.tsx resolved by restoring HEAD and extracting shared ModelForm.
+Implemented (backend):
+- model_repository/mapping.py: detect_providers_from_url (groq/openrouter/deepseek/mistral/together/
+  fireworks/ollama/localhost/litellm/azure), map_one/map_models with provider_specific/global/fallback
+  + repository_match meta (match_type, source_url, repository_version, last_synced_at). POST /map.
+- providers: POST /draft-validate (temporary adapter, validate+discover, nothing persisted),
+  POST /register (atomic provider+models, unique-name 422, validation stamp, server-side match_stats),
+  ensure_unique_name (ilike, excludes self on update); migration c4d8e6a2f5b1 partial unique index on
+  live provider names.
+- models: create_model gains repository_match + commit flags; POST /{id}/resync (non-pricing fields;
+  prices only with include_pricing=true, never silent overwrite); PATCH /bulk (prices/caps/endpoint/
+  active, skips missing).
+Implemented (frontend): ProviderWizardModal is now a real stepped flow — draft autosave/restore
+(localStorage, key-remount, steps<=2), Back nav, draft-validate, auto-map on step 4 (search/match/cap/
+price filters, select-filtered/deselect-filtered, per-model edit drawer reusing shared ModelForm,
+bulk endpoint+price bar), step-5 summary (counts + "Matched provider/global/unknown" stats) + atomic
+register with query invalidation; edit mode keeps direct save. Shared components/ModelForm.tsx
+extracted from page. ModelDetailDrawer gained Sync metadata/pricing buttons; provider toolbar gained
+Sync models (bulk non-pricing resync of linked models).
+Tests: test_wizard.py (5: draft no-persist, mapping priorities+URL detection, atomic register+stats+
+dup-name, resync pricing guard, bulk); rewrote providers/validation/discovery specs to the wizard flow
+(incl. "nothing saved before step 5" assertion); new wizard.spec.ts (map/edit/bulk/summary/API match
+metadata + sync/resync buttons).
+Verification: pytest 36/36; Playwright 37 passed; vitest 5/5; tsc+eslint clean; next build success.
+Deviations: no separate provider_models/links tables — models.repository_model_key + metadata.
+repository_match store the same relations (no duplication); no TanStack Virtual/Table/RHF/Zod —
+discovered sets are tens of rows, server-paginated repo search stays in the catalog modal; no model
+tags field; provider "Sync models" applies non-pricing resync with toast summary (no 3-way merge UI).
+
 ## 2026-09-13 - ToLLma V1 Complete Product UX & UI Redesign (Unified AI Workspace)
 
 Requirement: redesign ToLLma from a collection of disconnected CRUD screens into a cohesive, high-density AI workspace comparable to ChatGPT, Claude, Cursor, and Linear; preserve ToLLma's provider-centric architecture while unifying navigation, layout system, component architecture, state management, and design system.

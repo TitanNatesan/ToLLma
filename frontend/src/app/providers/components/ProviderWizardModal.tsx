@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Badge,
@@ -14,18 +15,31 @@ import {
   Textarea,
 } from "@/components/ui";
 import { CREDENTIAL_FIELDS, PROVIDER_TYPES } from "@/app/providers/fields";
-import { useProviderMutations } from "@/hooks/useRegistry";
+import { useProviders, useProviderMutations } from "@/hooks/useRegistry";
 import { useChatStore } from "@/store/chat";
-import type { Provider, ProviderType } from "@/types";
+import {
+  draftValidateProvider,
+  mapDiscoveredModels,
+  registerProvider,
+} from "@/services/api";
+import type {
+  DraftValidation,
+  MappedModel,
+  MatchType,
+  Provider,
+  ProviderType,
+} from "@/types";
+import { EMPTY_MODEL_FORM, ModelForm, fromSuggested, toPayload, type ModelFormState } from "./ModelForm";
 import {
   Check,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Cpu,
-  HelpCircle,
   KeyRound,
   Layers,
   Loader2,
+  Pencil,
   Sparkles,
   XCircle,
 } from "lucide-react";
@@ -84,149 +98,225 @@ const PROVIDER_METAS: Record<
   },
 };
 
+const STEP_LABELS = ["1. Provider Type", "2. Credentials", "3. Validation", "4. Models", "5. Finish"];
+const DRAFT_KEY = "tollma-wizard-draft";const MATCH_BADGE: Record<MatchType, string> = {
+  provider_specific: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  global: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
+  fallback: "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+};
+const CAP_FILTERS: Array<[string, string]> = [
+  ["supports_text", "text"],
+  ["supports_vision", "vision"],
+  ["supports_audio_input", "audio-in"],
+  ["supports_audio_output", "audio-out"],
+  ["supports_image_generation", "img-gen"],
+  ["supports_tool_calling", "tools"],
+  ["supports_reasoning", "reasoning"],
+  ["supports_streaming", "streaming"],
+];
+
+interface Draft {
+  name: string;
+  type: ProviderType;
+  description: string;
+  creds: Record<string, string>;
+  step: number;
+}
+
+function loadDraft(): Draft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as Draft) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ProviderWizardModal({
   open,
   onClose,
   editingProvider,
   onSaved,
 }: ProviderWizardModalProps) {
+  const { data: providers = [] } = useProviders();
   const pm = useProviderMutations();
+  const queryClient = useQueryClient();
   const { setSelectedProviderId } = useChatStore();
-
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
-  const [name, setName] = useState(editingProvider?.name ?? "");
-  const [type, setType] = useState<ProviderType>(
-    editingProvider?.provider_type ?? "OPENAI_CHAT",
-  );
-  const [creds, setCreds] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [validationResult, setValidationResult] = useState<{
-    valid: boolean;
-    latency_ms: number;
-    message?: string;
-  } | null>(null);
-  const [discoveryResult, setDiscoveryResult] = useState<{
-    discovered: string[];
-    created: number;
-    message: string;
-  } | null>(null);
-  const [savedProvider, setSavedProvider] = useState<Provider | null>(null);
-
-  // Initialize or reset
-  const handleOpenChange = (isOpen: boolean) => {
-    if (!isOpen) {
-      onClose();
-      // reset after close animation
-      setTimeout(() => {
-        setStep(1);
-        setName("");
-        setType("OPENAI_CHAT");
-        setCreds({});
-        setValidationResult(null);
-        setDiscoveryResult(null);
-        setSavedProvider(null);
-      }, 200);
-    }
-  };
-
   const isEditing = !!editingProvider;
 
-  // Complete creation or direct save
-  async function handleSave() {
-    setBusy(true);
-    const credentials = Object.fromEntries(
-      Object.entries(creds).filter(([, v]) => v !== ""),
-    );
+  // Fresh mount per open (parent remounts via key): initializers restore the draft.
+  const [step, setStep] = useState(() => {
+    if (isEditing) return 1;
+    const d = loadDraft();
+    return d?.step && d.step <= 2 ? d.step : 1;
+  });
+  const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (loadDraft()?.name ?? "")));
+  const [type, setType] = useState<ProviderType>(() =>
+    isEditing ? (editingProvider?.provider_type ?? "OPENAI_CHAT") : (loadDraft()?.type ?? "OPENAI_CHAT"),
+  );
+  const [description, setDescription] = useState(() => (isEditing ? "" : (loadDraft()?.description ?? "")));
+  const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing ? {} : (loadDraft()?.creds ?? {})));
+  const [busy, setBusy] = useState(false);
+  const [validation, setValidation] = useState<DraftValidation | null>(null);
+  const [mapped, setMapped] = useState<MappedModel[] | null>(null);
+  const [mapping, setMapping] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [forms, setForms] = useState<Record<string, ModelFormState>>({});
+  const [search, setSearch] = useState("");
+  const [matchFilter, setMatchFilter] = useState<"ALL" | MatchType>("ALL");
+  const [capFilter, setCapFilter] = useState("ALL");
+  const [priceFilter, setPriceFilter] = useState<"ALL" | "PRICED" | "FREE">("ALL");
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [bulkEndpoint, setBulkEndpoint] = useState("");
+  const [bulkIn, setBulkIn] = useState("");
+  const [bulkOut, setBulkOut] = useState("");
 
+  // Auto-save draft progress (steps 1-2 carry the draft; nothing persisted server-side).
+  useEffect(() => {
+    if (!open || isEditing || step > 2) return;
     try {
-      let saved: Provider;
-      if (isEditing) {
-        saved = await pm.update.mutateAsync({
-          id: editingProvider.id,
-          body: {
-            name,
-            ...(Object.keys(credentials).length ? { credentials } : {}),
-          },
-        });
-        toast.success("Provider updated");
-      } else {
-        saved = await pm.create.mutateAsync({
-          name: name.trim() || `${type} Provider`,
-          provider_type: type,
-          credentials,
-        });
-        toast.success("Provider created");
-      }
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, type, description, creds, step }));
+    } catch {
+      /* storage full/blocked: draft stays in memory */
+    }
+  }, [open, isEditing, name, type, description, creds, step]);
 
-      setSavedProvider(saved);
-      setSelectedProviderId(saved.id);
-
-      let discMsg: string | undefined;
-
-      // Auto-validate
-      try {
-        const valRes = await pm.validate.mutateAsync(saved.id);
-        setValidationResult({
-          valid: valRes.valid,
-          latency_ms: valRes.latency_ms,
-          message: valRes.message,
-        });
-
-        if (valRes.valid) {
-          // Auto-discover
-          const discRes = await pm.discover.mutateAsync(saved.id);
-          setDiscoveryResult(discRes);
-          discMsg = discRes.message;
-        }
-      } catch {
-        // Validation/discovery failure non-blocking for creation
-      }
-
-      onSaved?.(saved, discMsg);
-      handleOpenChange(false);
-    } catch (e) {
-      toast.error("Save failed", {
-        description: e instanceof Error ? e.message : "Error saving provider",
+  async function runMapping() {
+    if (!validation?.valid || mapping) return;
+    setMapping(true);
+    try {
+      const res = await mapDiscoveredModels({
+        provider_type: type,
+        base_url: creds.base_url || undefined,
+        model_ids: validation.discovered.map((d) => d.model_id),
       });
+      setMapped(res.mapped);
+      setForms(Object.fromEntries(res.mapped.map((m) => [m.model_id, fromSuggested(m.suggested, m.repository_model_key ?? "")])));
+      setSelected(new Set(res.mapped.map((m) => m.model_id)));
+    } catch (e) {
+      toast.error("Model mapping failed", { description: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setMapping(false);
+    }
+  }
+
+  const nameTaken = providers.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+  const requiredCreds = (CREDENTIAL_FIELDS[type] ?? []).filter(([, spec]) => !spec.optional);
+  const credsReady = requiredCreds.every(([key]) => (creds[key] ?? "").trim() !== "");
+
+  const filtered = useMemo(() => {
+    if (!mapped) return [];
+    const q = search.trim().toLowerCase();
+    return mapped.filter((m) => {
+      if (matchFilter !== "ALL" && m.match_type !== matchFilter) return false;
+      if (capFilter !== "ALL" && !(m.suggested[capFilter] as boolean)) return false;
+      if (priceFilter !== "ALL") {
+        const priced = parseFloat(String(m.suggested.input_price ?? "0")) > 0 || parseFloat(String(m.suggested.output_price ?? "0")) > 0;
+        if (priceFilter === "PRICED" && !priced) return false;
+        if (priceFilter === "FREE" && priced) return false;
+      }
+      if (q && !(m.model_id.toLowerCase().includes(q) || String(m.suggested.name ?? "").toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [mapped, search, matchFilter, capFilter, priceFilter]);
+
+  const matchStats = useMemo(() => {
+    const stats: Record<MatchType, number> = { provider_specific: 0, global: 0, fallback: 0 };
+    for (const m of mapped ?? []) if (selected.has(m.model_id)) stats[m.match_type] += 1;
+    return stats;
+  }, [mapped, selected]);
+
+  function toggle(id: string) {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function applyBulk() {
+    if (selected.size === 0) return;
+    setForms((prev) => {
+      const next = { ...prev };
+      for (const id of selected) {
+        const f = next[id];
+        if (!f) continue;
+        next[id] = {
+          ...f,
+          endpoint_type: (bulkEndpoint as ModelFormState["endpoint_type"]) || f.endpoint_type,
+          input_price: bulkIn !== "" ? bulkIn : f.input_price,
+          output_price: bulkOut !== "" ? bulkOut : f.output_price,
+        };
+      }
+      return next;
+    });
+    toast.success(`Bulk update applied to ${selected.size} models`);
+  }
+
+  async function runValidation() {
+    setBusy(true);
+    try {
+      const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      const res = await draftValidateProvider({ provider_type: type, credentials });
+      setValidation(res);
+      if (res.valid) toast.success(`Credentials valid — ${res.discovered.length} models found`);
+      else toast.error("Validation failed", { description: res.message });
+    } catch (e) {
+      toast.error("Validation error", { description: e instanceof Error ? e.message : "Error" });
     } finally {
       setBusy(false);
     }
   }
 
-  // Live validate credentials before finish
-  async function testValidation() {
-    // If not created yet, create or validate
-    if (!savedProvider) {
-      await handleSave();
-    } else {
-      setBusy(true);
+  async function handleRegister() {
+    if (!mapped) return;
+    setBusy(true);
+    try {
+      const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      const matchById = Object.fromEntries(mapped.map((m) => [m.model_id, m]));
+      const models = [...selected].map((id) => {
+        const { provider_id: _omit, ...rest } = toPayload("wizard", forms[id] ?? fromSuggested(matchById[id].suggested, matchById[id].repository_model_key ?? ""));
+        return { ...rest, repository_match: matchById[id].repository_match };
+      });
+      const res = await registerProvider({
+        name: name.trim(),
+        provider_type: type,
+        description: description.trim() || undefined,
+        credentials,
+        validation_status: "valid",
+        validation_message: validation?.message ?? "validated in wizard",
+        models,
+      });
       try {
-        const valRes = await pm.validate.mutateAsync(savedProvider.id);
-        setValidationResult({
-          valid: valRes.valid,
-          latency_ms: valRes.latency_ms,
-          message: valRes.message,
-        });
-        if (valRes.valid) {
-          toast.success("Credentials valid");
-        } else {
-          toast.error("Credentials invalid", { description: valRes.message });
-        }
-      } catch (e) {
-        toast.error("Validation error", {
-          description: e instanceof Error ? e.message : "Error",
-        });
-      } finally {
-        setBusy(false);
+        localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        /* ignore */
       }
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await queryClient.invalidateQueries({ queryKey: ["models"] });
+      setSelectedProviderId(res.provider.id);
+      toast.success(`Provider registered with ${res.models_created} models`);
+      onSaved?.(res.provider, `${res.models_created} models registered`);
+      onClose();
+    } catch (e) {
+      toast.error("Registration failed", { description: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setBusy(false);
     }
   }
 
+  function close() {
+    onClose();
+  }
+
+  const canNext1 = name.trim() !== "" && !nameTaken;
+  const canNext2 = credsReady;
+
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl p-0 overflow-hidden shadow-2xl">
+    <Dialog open={open} onOpenChange={(o) => !o && close()}>
+      <DialogContent className="max-w-3xl p-0 overflow-hidden shadow-2xl">
         <div data-testid="provider-form" className="flex flex-col">
-          {/* Header & Step progress */}
           <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60">
             <div className="flex items-center justify-between">
               <div>
@@ -234,259 +324,431 @@ export function ProviderWizardModal({
                   {isEditing ? "Edit Provider" : "Add Provider Connection"}
                 </h2>
                 <p className="text-xs text-zinc-500">
-                  Configure an LLM provider and discover its available models
+                  {isEditing
+                    ? "Update provider settings"
+                    : "Provider is only registered after step 5 — nothing is saved before that"}
                 </p>
               </div>
               <Badge variant="outline" className="text-xs font-mono">
-                Step {step} of 5
+                Step {isEditing ? 1 : step} of 5
               </Badge>
             </div>
-
-            {/* Stepper tabs */}
             {!isEditing && (
               <div className="mt-3 flex items-center justify-between text-[11px] font-medium text-zinc-400">
-                <span className={cn(step === 1 && "text-zinc-900 dark:text-zinc-100 font-semibold")}>
-                  1. Provider Type
-                </span>
-                <ChevronRight className="size-3 text-zinc-300 dark:text-zinc-700" />
-                <span className={cn(step === 2 && "text-zinc-900 dark:text-zinc-100 font-semibold")}>
-                  2. Credentials
-                </span>
-                <ChevronRight className="size-3 text-zinc-300 dark:text-zinc-700" />
-                <span className={cn(step === 3 && "text-zinc-900 dark:text-zinc-100 font-semibold")}>
-                  3. Validation
-                </span>
-                <ChevronRight className="size-3 text-zinc-300 dark:text-zinc-700" />
-                <span className={cn(step === 4 && "text-zinc-900 dark:text-zinc-100 font-semibold")}>
-                  4. Models
-                </span>
-                <ChevronRight className="size-3 text-zinc-300 dark:text-zinc-700" />
-                <span className={cn(step === 5 && "text-zinc-900 dark:text-zinc-100 font-semibold")}>
-                  5. Finish
-                </span>
+                {STEP_LABELS.map((label, i) => (
+                  <span key={label} className="flex items-center gap-2">
+                    <span className={cn(step === i + 1 && "text-zinc-900 dark:text-zinc-100 font-semibold")}>
+                      {label}
+                    </span>
+                    {i < STEP_LABELS.length - 1 && <ChevronRight className="size-3 text-zinc-300 dark:text-zinc-700" />}
+                  </span>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Body Content */}
-          <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto">
-            {/* Hidden/Synced select so automated tests calling page.getByTestId("provider-type").selectOption(...) continue to work 100% */}
-            <div className="flex items-center gap-2">
-              <Field label="Provider Name">
-                <Input
-                  value={name}
-                  placeholder={`e.g. Production ${type}`}
-                  onChange={(e) => setName(e.target.value)}
-                  data-testid="provider-name"
-                  autoFocus
-                />
-              </Field>
-
-              <div className="w-1/2">
-                <Field label="Provider Type">
-                  <Select
-                    value={type}
-                    onChange={(e) => setType(e.target.value as ProviderType)}
-                    data-testid="provider-type"
-                    disabled={isEditing}
-                  >
-                    {PROVIDER_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {PROVIDER_METAS[t]?.name ?? t}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-            </div>
-
-            {/* Step 1: Provider Type Cards */}
-            {step === 1 && !isEditing && (
-              <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  Select Provider Platform
-                </label>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {PROVIDER_TYPES.map((t) => {
-                    const meta = PROVIDER_METAS[t];
-                    const isSelected = type === t;
-                    return (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setType(t)}
-                        className={cn(
-                          "flex flex-col items-start p-3 rounded-lg border text-left transition-all",
-                          isSelected
-                            ? "border-zinc-800 bg-zinc-900 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900 shadow-sm"
-                            : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700",
-                        )}
-                      >
-                        <div className="flex items-center justify-between w-full">
-                          <span className="font-semibold text-xs">{meta.name}</span>
-                          {isSelected && <Check className="size-3.5" />}
-                        </div>
-                        <span
-                          className={cn(
-                            "text-[10px] mt-1 line-clamp-2",
-                            isSelected
-                              ? "text-zinc-300 dark:text-zinc-600"
-                              : "text-zinc-500",
-                          )}
-                        >
-                          {meta.subtitle}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Step 2: Dynamic Credentials Fields */}
-            {(step === 2 || isEditing || step === 1) && (
-              <div className="space-y-3 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                    Authentication & Credentials
-                  </span>
-                  <span className="text-[11px] text-zinc-400">
-                    Keys are stored encrypted on your server
-                  </span>
-                </div>
-
-                <div className="space-y-3">
-                  {CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
-                    <Field
-                      key={fieldKey}
-                      label={spec.label + (spec.optional ? " (optional)" : "")}
-                    >
-                      {spec.multiline ? (
-                        <Textarea
-                          rows={3}
-                          value={creds[fieldKey] ?? ""}
-                          onChange={(e) =>
-                            setCreds({ ...creds, [fieldKey]: e.target.value })
-                          }
-                          data-testid={`cred-${fieldKey}`}
-                          placeholder={spec.secret ? "••••••••••••••••" : ""}
-                        />
-                      ) : (
+          <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto" data-testid="wizard-step-body">
+            {isEditing ? (
+              <EditBody
+                name={name}
+                setName={setName}
+                type={type}
+                creds={creds}
+                setCreds={setCreds}
+                busy={busy}
+                onSave={() => void handleEditSave()}
+              />
+            ) : (
+              <>
+                {step === 1 && (
+                  <div className="space-y-4" data-testid="wizard-step-1">
+                    <div className="flex items-center gap-2">
+                      <Field label="Provider Name">
                         <Input
-                          type={spec.secret ? "password" : "text"}
-                          value={creds[fieldKey] ?? ""}
-                          onChange={(e) =>
-                            setCreds({ ...creds, [fieldKey]: e.target.value })
-                          }
-                          data-testid={`cred-${fieldKey}`}
-                          placeholder={spec.secret ? "••••••••••••••••" : ""}
+                          value={name}
+                          placeholder={`e.g. Production ${type}`}
+                          onChange={(e) => setName(e.target.value)}
+                          data-testid="provider-name"
+                          autoFocus
                         />
-                      )}
-                    </Field>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Validation status */}
-            {(step === 3 || step === 5) && validationResult && (
-              <div
-                className={cn(
-                  "p-3 rounded-lg border text-xs flex items-start gap-2.5",
-                  validationResult.valid
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200"
-                    : "border-red-200 bg-red-50 text-red-900 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200",
-                )}
-              >
-                {validationResult.valid ? (
-                  <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" />
-                ) : (
-                  <XCircle className="size-4 text-red-600 shrink-0 mt-0.5" />
-                )}
-                <div>
-                  <div className="font-semibold">
-                    {validationResult.valid
-                      ? `Credentials verified (${validationResult.latency_ms.toFixed(0)}ms)`
-                      : "Validation failed"}
-                  </div>
-                  {validationResult.message && (
-                    <div className="text-[11px] opacity-80 mt-0.5">
-                      {validationResult.message}
+                      </Field>
+                      <div className="w-1/2">
+                        <Field label="Provider Type">
+                          <Select
+                            value={type}
+                            onChange={(e) => setType(e.target.value as ProviderType)}
+                            data-testid="provider-type"
+                          >
+                            {PROVIDER_TYPES.map((t) => (
+                              <option key={t} value={t}>
+                                {PROVIDER_METAS[t]?.name ?? t}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                      </div>
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
+                    {nameTaken && name.trim() && (
+                      <p className="text-xs text-red-500">A provider with this name already exists.</p>
+                    )}
+                    <Field label="Description (optional)">
+                      <Input
+                        value={description}
+                        placeholder="e.g. Team production key"
+                        onChange={(e) => setDescription(e.target.value)}
+                        data-testid="provider-description"
+                      />
+                    </Field>
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                        Select Provider Platform
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {PROVIDER_TYPES.map((t) => {
+                          const meta = PROVIDER_METAS[t];
+                          const isSelected = type === t;
+                          return (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => setType(t)}
+                              className={cn(
+                                "flex flex-col items-start p-3 rounded-lg border text-left transition-all",
+                                isSelected
+                                  ? "border-zinc-800 bg-zinc-900 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900 shadow-sm"
+                                  : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700",
+                              )}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <span className="font-semibold text-xs">{meta.name}</span>
+                                {isSelected && <Check className="size-3.5" />}
+                              </div>
+                              <span className={cn("text-[10px] mt-1 line-clamp-2", isSelected ? "text-zinc-300 dark:text-zinc-600" : "text-zinc-500")}>
+                                {meta.subtitle}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-            {/* Step 4: Discovered models feedback */}
-            {(step === 4 || step === 5) && discoveryResult && (
-              <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-200 text-xs">
-                <div className="flex items-center gap-2 font-semibold">
-                  <Sparkles className="size-4 text-blue-600 shrink-0" />
-                  <span>Model Discovery</span>
-                </div>
-                <div className="mt-1 text-[11px] opacity-80">
-                  {discoveryResult.message}
-                </div>
-                {discoveryResult.discovered.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {discoveryResult.discovered.slice(0, 8).map((m) => (
-                      <span
-                        key={m}
-                        className="rounded bg-white/80 dark:bg-black/40 px-1.5 py-0.5 text-[10px] font-mono"
-                      >
-                        {m}
+                {step === 2 && (
+                  <div className="space-y-3" data-testid="wizard-step-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                        Authentication & Credentials
                       </span>
+                      <span className="text-[11px] text-zinc-400">Keys are stored encrypted on your server</span>
+                    </div>
+                    {CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
+                      <Field key={fieldKey} label={spec.label + (spec.optional ? " (optional)" : "")}>
+                        {spec.multiline ? (
+                          <Textarea
+                            rows={3}
+                            value={creds[fieldKey] ?? ""}
+                            onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
+                            data-testid={`cred-${fieldKey}`}
+                            placeholder={spec.secret ? "••••••••••••••••" : ""}
+                          />
+                        ) : (
+                          <Input
+                            type={spec.secret ? "password" : "text"}
+                            value={creds[fieldKey] ?? ""}
+                            onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
+                            data-testid={`cred-${fieldKey}`}
+                            placeholder={spec.secret ? "••••••••••••••••" : ""}
+                          />
+                        )}
+                      </Field>
                     ))}
-                    {discoveryResult.discovered.length > 8 && (
-                      <span className="text-[10px] text-zinc-500">
-                        +{discoveryResult.discovered.length - 8} more
-                      </span>
+                  </div>
+                )}
+
+                {step === 3 && (
+                  <div className="space-y-3" data-testid="wizard-step-3">
+                    <p className="text-xs text-zinc-500">
+                      Credentials are tested with a temporary adapter — nothing is saved yet.
+                    </p>
+                    <Button onClick={() => void runValidation()} disabled={busy} data-testid="wiz-validate">
+                      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
+                      <span className="ml-1.5">Validate credentials</span>
+                    </Button>
+                    {validation && (
+                      <div
+                        className={cn(
+                          "p-3 rounded-lg border text-xs flex items-start gap-2.5",
+                          validation.valid
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200"
+                            : "border-red-200 bg-red-50 text-red-900 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200",
+                        )}
+                        data-testid="wiz-validation-result"
+                      >
+                        {validation.valid ? <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="size-4 text-red-600 shrink-0 mt-0.5" />}
+                        <div>
+                          <div className="font-semibold">
+                            {validation.valid
+                              ? `Validation successful — ${validation.discovered.length} models discovered (${validation.latency_ms.toFixed(0)}ms)`
+                              : "Validation failed"}
+                          </div>
+                          {validation.message && <div className="text-[11px] opacity-80 mt-0.5">{validation.message}</div>}
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
-              </div>
-            )}
-          </div>
 
-          {/* Footer Actions */}
-          <div className="border-t border-zinc-200 px-6 py-3 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-between">
-            <GhostButton onClick={() => handleOpenChange(false)} type="button">
-              {step === 5 ? "Close" : "Cancel"}
-            </GhostButton>
-
-            <div className="flex items-center gap-2">
-              {step < 5 ? (
-                <>
-                  {/* Primary Save Button - keeping data-testid="save-provider" */}
-                  <Button
-                    onClick={handleSave}
-                    disabled={!name.trim() || busy}
-                    data-testid="save-provider"
-                    className="gap-1.5"
-                  >
-                    {busy ? (
-                      <>
-                        <Loader2 className="size-3.5 animate-spin" />
-                        <span>Saving…</span>
-                      </>
+                {step === 4 && (
+                  <div className="space-y-3" data-testid="wizard-step-4">
+                    {mapping || !mapped ? (
+                      <p className="text-xs text-zinc-500 flex items-center gap-2">
+                        <Loader2 className="size-3.5 animate-spin" /> Mapping discovered models against the repository…
+                      </p>
                     ) : (
                       <>
-                        <span>Save Provider</span>
-                        <ChevronRight className="size-3.5" />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Input
+                            placeholder="Search models…"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            data-testid="wiz-model-search"
+                            className="max-w-48 text-xs"
+                          />
+                          <Select value={matchFilter} onChange={(e) => setMatchFilter(e.target.value as typeof matchFilter)} data-testid="wiz-match-filter" className="max-w-40 text-xs">
+                            <option value="ALL">All matches</option>
+                            <option value="provider_specific">Provider-specific</option>
+                            <option value="global">Global</option>
+                            <option value="fallback">Unknown</option>
+                          </Select>
+                          <Select value={capFilter} onChange={(e) => setCapFilter(e.target.value)} data-testid="wiz-cap-filter" className="max-w-36 text-xs">
+                            <option value="ALL">All caps</option>
+                            {CAP_FILTERS.map(([k, label]) => (
+                              <option key={k} value={k}>{label}</option>
+                            ))}
+                          </Select>
+                          <Select value={priceFilter} onChange={(e) => setPriceFilter(e.target.value as typeof priceFilter)} data-testid="wiz-price-filter" className="max-w-32 text-xs">
+                            <option value="ALL">Any price</option>
+                            <option value="PRICED">Priced</option>
+                            <option value="FREE">Free</option>
+                          </Select>
+                          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map((m) => m.model_id)))} data-testid="wiz-select-filtered" className="text-xs">
+                            Select filtered ({filtered.length})
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => setSelected((s) => { const n = new Set(s); for (const m of filtered) n.delete(m.model_id); return n; })} data-testid="wiz-deselect-filtered" className="text-xs">
+                            Deselect filtered
+                          </Button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 p-2 dark:border-zinc-800" data-testid="wiz-bulk-bar">
+                            <span className="text-[11px] text-zinc-500">Bulk edit {selected.size} selected:</span>
+                            <Select value={bulkEndpoint} onChange={(e) => setBulkEndpoint(e.target.value)} data-testid="wiz-bulk-endpoint" className="max-w-40 text-xs">
+                              <option value="">Endpoint…</option>
+                              <option value="responses">responses</option>
+                              <option value="chat_completions">chat_completions</option>
+                              <option value="messages">messages</option>
+                              <option value="converse">converse</option>
+                            </Select>
+                            <Input value={bulkIn} onChange={(e) => setBulkIn(e.target.value)} placeholder="In $/1M" data-testid="wiz-bulk-in" className="max-w-28 text-xs" />
+                            <Input value={bulkOut} onChange={(e) => setBulkOut(e.target.value)} placeholder="Out $/1M" data-testid="wiz-bulk-out" className="max-w-28 text-xs" />
+                            <Button size="sm" variant="secondary" onClick={applyBulk} disabled={selected.size === 0} data-testid="wiz-bulk-apply" className="text-xs">
+                              Apply
+                            </Button>
+                        </div>
+
+                        <p className="text-xs text-zinc-500" data-testid="wiz-selection-count">
+                          {selected.size} of {mapped.length} models selected
+                        </p>
+                        <div className="flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
+                          {filtered.map((m) => {
+                            const f = forms[m.model_id];
+                            const checked = selected.has(m.model_id);
+                            return (
+                              <div
+                                key={m.model_id}
+                                className={cn("flex items-start gap-2 rounded-lg border p-2 text-xs", checked ? "border-zinc-300 dark:border-zinc-600" : "border-zinc-200 opacity-70 dark:border-zinc-800")}
+                                data-testid={`wiz-model-${m.model_id}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggle(m.model_id)}
+                                  data-testid={`wiz-select-${m.model_id}`}
+                                  className="mt-1"
+                                  aria-label={`Select ${m.model_id}`}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <Cpu className="size-3.5 shrink-0 text-zinc-400" />
+                                    <span className="truncate font-medium">{String(f?.name || m.suggested.name || m.model_id)}</span>
+                                    <span className={cn("rounded px-1 py-0.5 text-[10px] font-medium", MATCH_BADGE[m.match_type])} data-testid={`wiz-match-${m.model_id}`}>
+                                      {m.match_type === "provider_specific" ? "provider" : m.match_type}
+                                    </span>
+                                  </div>
+                                  <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
+                                    {m.model_id}
+                                    {f?.context_window ? ` · ctx ${Number(f.context_window).toLocaleString()}` : ""}
+                                    {f?.max_output_tokens ? ` · max ${Number(f.max_output_tokens).toLocaleString()}` : ""}
+                                    {` · in $${f?.input_price ?? 0}/1M · out $${f?.output_price ?? 0}/1M`}
+                                  </div>
+                                </div>
+                                <Button size="sm" variant="ghost" onClick={() => setEditingModelId(m.model_id)} data-testid={`wiz-edit-${m.model_id}`} title="Edit model" className="h-7 w-7 p-0">
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                              </div>
+                            );
+                          })}
+                          {filtered.length === 0 && <p className="text-xs text-zinc-400">No models match the filters.</p>}
+                        </div>
                       </>
                     )}
-                  </Button>
-                </>
-              ) : (
-                <Button onClick={() => handleOpenChange(false)}>
-                  Done
+                  </div>
+                )}
+
+                {step === 5 && (
+                  <div className="space-y-3 text-xs" data-testid="wizard-step-5">
+                    <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                      <p className="font-semibold text-sm">{name || "(unnamed)"} <span className="font-normal text-zinc-500">· {type}</span></p>
+                      <p className="mt-1 text-zinc-500">
+                        Validation: {validation?.valid ? `valid (${validation.latency_ms.toFixed(0)}ms)` : "not validated"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800" data-testid="wiz-summary-models">
+                      <p className="font-semibold">{selected.size} models selected</p>
+                      <p className="mt-1 text-zinc-500" data-testid="wiz-summary-matches">
+                        Matched provider models: {matchStats.provider_specific} · Matched global models: {matchStats.global} · Unknown models: {matchStats.fallback}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="border-t border-zinc-200 px-6 py-3 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-between">
+            <GhostButton onClick={close} type="button">
+              {step === 5 && !isEditing ? "Close" : "Cancel"}
+            </GhostButton>
+            <div className="flex items-center gap-2">
+              {!isEditing && step > 1 && (
+                <Button variant="ghost" onClick={() => setStep((s) => Math.max(1, s - 1))} data-testid="wiz-back" className="gap-1">
+                  <ChevronLeft className="size-3.5" /> Back
+                </Button>
+              )}
+              {!isEditing && step === 1 && (
+                <Button onClick={() => setStep(2)} disabled={!canNext1} data-testid="wiz-next" className="gap-1">
+                  Next <ChevronRight className="size-3.5" />
+                </Button>
+              )}
+              {!isEditing && step === 2 && (
+                <Button onClick={() => { setValidation(null); setStep(3); }} disabled={!canNext2} data-testid="wiz-next" className="gap-1">
+                  Next <ChevronRight className="size-3.5" />
+                </Button>
+              )}
+              {!isEditing && step === 3 && (
+                <Button onClick={() => { setMapped(null); setStep(4); void runMapping(); }} disabled={!validation?.valid || busy} data-testid="wiz-next" className="gap-1">
+                  Next <ChevronRight className="size-3.5" />
+                </Button>
+              )}
+              {!isEditing && step === 4 && (
+                <Button onClick={() => setStep(5)} disabled={selected.size === 0 || mapping} data-testid="wiz-next" className="gap-1">
+                  Review <ChevronRight className="size-3.5" />
+                </Button>
+              )}
+              {!isEditing && step === 5 && (
+                <Button onClick={() => void handleRegister()} disabled={busy || selected.size === 0} data-testid="wiz-register" className="gap-1.5">
+                  {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Layers className="size-3.5" />}
+                  Register {selected.size} model{selected.size === 1 ? "" : "s"}
                 </Button>
               )}
             </div>
           </div>
         </div>
       </DialogContent>
+
+      {editingModelId && (
+        <Dialog open onOpenChange={(o) => !o && setEditingModelId(null)}>
+          <DialogContent className="max-w-2xl p-4" data-testid="wiz-edit-drawer">
+            <ModelForm
+              initial={editingModelId && forms[editingModelId] ? forms[editingModelId] : EMPTY_MODEL_FORM}
+              onSubmit={(f) => {
+                setForms((prev) => ({ ...prev, [editingModelId]: f }));
+                setEditingModelId(null);
+                toast.success("Model updated — saved on registration");
+              }}
+              onCancel={() => setEditingModelId(null)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </Dialog>
+  );
+
+  async function handleEditSave() {
+    // Edit mode keeps the direct-save path (provider already exists).
+    if (!editingProvider) return;
+    setBusy(true);
+    try {
+      const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      const saved = await pm.update.mutateAsync({
+        id: editingProvider.id,
+        body: { name, ...(Object.keys(credentials).length ? { credentials } : {}) },
+      });
+      toast.success("Provider updated");
+      onSaved?.(saved);
+      onClose();
+    } catch (e) {
+      toast.error("Save failed", { description: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+}
+
+function EditBody({
+  name,
+  setName,
+  type,
+  creds,
+  setCreds,
+  busy,
+  onSave,
+}: {
+  name: string;
+  setName: (v: string) => void;
+  type: ProviderType;
+  creds: Record<string, string>;
+  setCreds: (v: Record<string, string>) => void;
+  busy: boolean;
+  onSave: () => void;
+}) {
+  return (
+    <div className="space-y-3" data-testid="wizard-edit-body">
+      <Field label="Provider Name">
+        <Input value={name} onChange={(e) => setName(e.target.value)} data-testid="provider-name" />
+      </Field>
+      {CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
+        <Field key={fieldKey} label={spec.label + (spec.optional ? " (optional)" : "")}>
+          {spec.multiline ? (
+            <Textarea
+              rows={3}
+              value={creds[fieldKey] ?? ""}
+              onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
+              data-testid={`cred-${fieldKey}`}
+            />
+          ) : (
+            <Input
+              type={spec.secret ? "password" : "text"}
+              value={creds[fieldKey] ?? ""}
+              onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
+              data-testid={`cred-${fieldKey}`}
+            />
+          )}
+        </Field>
+      ))}
+      <Button onClick={onSave} disabled={!name.trim() || busy} data-testid="save-provider">
+        Save Provider
+      </Button>
+    </div>
   );
 }
