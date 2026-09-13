@@ -14,7 +14,6 @@ from tollms.core.exceptions import NotFoundError, ProviderError, ValidationError
 from tollms.modules.conversations.models import Role
 from tollms.modules.conversations.service import (
     add_message,
-    calc_cost,
     create_conversation,
     get_conversation,
     list_messages,
@@ -22,8 +21,10 @@ from tollms.modules.conversations.service import (
 )
 from tollms.modules.conversations.schemas import ConversationCreate
 from tollms.modules.gateway.adapters.base import ChatMessage, ChatResult
+from tollms.modules.gateway.costing import CostBreakdown, UsageTokens, calculate, prices_for_model
 from tollms.modules.gateway.factory import build_adapter
 from tollms.modules.gateway.schemas import ChatRequest, ChatResponse
+from tollms.modules.model_repository.service import find_for_model
 from tollms.modules.models.service import get_model
 from tollms.modules.providers.service import decrypted_credentials, get_provider
 
@@ -57,15 +58,29 @@ def _history(db: Session, conv_id: uuid.UUID | None, system: str | None) -> tupl
 
 
 def _finalize_usage(
-    model, history_text: str, result: ChatResult
-) -> tuple[tuple[int, int, int], tuple[Decimal, Decimal, Decimal], bool]:
+    db: Session, provider, model, history_text: str, result: ChatResult
+) -> tuple[UsageTokens, int, CostBreakdown, bool]:
+    """Estimate missing tokens, then price via CostCalculationService.
+
+    Repository pricing wins per-field (per-token, scaled); model prices fill gaps.
+    Returns (tokens, total_tokens, breakdown, estimated).
+    """
     estimated = False
     prompt, completion = result.prompt_tokens, result.completion_tokens
     if not prompt and not completion:
         prompt, completion = _estimate_tokens(history_text), _estimate_tokens(result.text)
         estimated = True
     total = result.total_tokens or (prompt + completion)
-    return (prompt, completion, total), calc_cost(model, prompt, completion), estimated
+    tokens = UsageTokens(
+        prompt=prompt,
+        completion=completion,
+        cache_read=result.cache_read_tokens or 0,
+        cache_write=result.cache_write_tokens or 0,
+        reasoning=result.reasoning_tokens or 0,
+    )
+    repo = find_for_model(db, provider.provider_type.value, model.model_id)
+    breakdown = calculate(tokens, prices_for_model(model, repo))
+    return tokens, total, breakdown, estimated
 
 
 async def run_chat(
@@ -94,11 +109,18 @@ async def run_chat(
         logger.info("gateway chat: provider=%s model=%s conv=%s", provider.provider_type, model.model_id, conv_id)
         result = await adapter.chat(history)
         latency_ms = (time.monotonic() - start) * 1000
-        usage, cost, estimated = _finalize_usage(model, "".join(m.content for m in history), result)
+        tokens, total, breakdown, estimated = _finalize_usage(
+            db, provider, model, "".join(m.content for m in history), result
+        )
+        usage = (tokens.prompt, tokens.completion, total)
+        cost = breakdown.legacy_triplet()
+        extra_usage = (tokens.cache_read, tokens.cache_write, tokens.reasoning)
+        extra_cost = (breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost)
         add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id)
         assistant = add_message(
             db, conv_id, Role.ASSISTANT, result.text,
-            provider_id=provider.id, model_id=model.id, usage=usage, cost=cost, latency_ms=latency_ms,
+            provider_id=provider.id, model_id=model.id, usage=usage, cost=cost,
+            extra_usage=extra_usage, extra_cost=extra_cost, latency_ms=latency_ms,
         )
         touch(db, conv)
         logger.info(
@@ -108,7 +130,11 @@ async def run_chat(
         return ChatResponse(
             conversation_id=conv_id, message_id=assistant.id, content=result.text,
             prompt_tokens=usage[0], completion_tokens=usage[1], total_tokens=usage[2],
+            cache_read_tokens=tokens.cache_read, cache_write_tokens=tokens.cache_write,
+            reasoning_tokens=tokens.reasoning,
             input_cost=cost[0], output_cost=cost[1], total_cost=cost[2],
+            cache_read_cost=breakdown.cache_read_cost, cache_write_cost=breakdown.cache_write_cost,
+            reasoning_cost=breakdown.reasoning_cost,
             usage_estimated=estimated, latency_ms=latency_ms,
         )
     except (NotFoundError, ValidationError):
@@ -148,6 +174,12 @@ async def run_stream(
                 result.completion_tokens = chunk.completion_tokens
             if chunk.total_tokens is not None:
                 result.total_tokens = chunk.total_tokens
+            if chunk.cache_read_tokens is not None:
+                result.cache_read_tokens = chunk.cache_read_tokens
+            if chunk.cache_write_tokens is not None:
+                result.cache_write_tokens = chunk.cache_write_tokens
+            if chunk.reasoning_tokens is not None:
+                result.reasoning_tokens = chunk.reasoning_tokens
             if chunk.delta:
                 yield f"data: {json.dumps({'delta': chunk.delta})}\n\n"
     except Exception as e:
@@ -156,14 +188,21 @@ async def run_stream(
     result.text = "".join(parts)
     latency_ms = (time.monotonic() - start) * 1000
     if result.text:
-        usage, cost, estimated = _finalize_usage(model, "".join(m.content for m in history), result)
+        tokens, total, breakdown, estimated = _finalize_usage(
+            db, provider, model, "".join(m.content for m in history), result
+        )
+        usage = (tokens.prompt, tokens.completion, total)
+        cost = breakdown.legacy_triplet()
         add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id)
         assistant = add_message(
             db, conv_id, Role.ASSISTANT, result.text,
-            provider_id=provider.id, model_id=model.id, usage=usage, cost=cost, latency_ms=latency_ms,
+            provider_id=provider.id, model_id=model.id, usage=usage, cost=cost,
+            extra_usage=(tokens.cache_read, tokens.cache_write, tokens.reasoning),
+            extra_cost=(breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost),
+            latency_ms=latency_ms,
         )
         touch(db, conv)
         logger.info("gateway stream done: conv=%s tokens=%s/%s cost=%s", conv_id, usage[0], usage[1], cost[2])
-        yield f"data: {json.dumps({'done': True, 'message_id': str(assistant.id), 'usage': {'prompt_tokens': usage[0], 'completion_tokens': usage[1], 'total_tokens': usage[2]}, 'cost': {'input_cost': str(cost[0]), 'output_cost': str(cost[1]), 'total_cost': str(cost[2])}, 'usage_estimated': estimated, 'latency_ms': latency_ms})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'message_id': str(assistant.id), 'usage': {'prompt_tokens': usage[0], 'completion_tokens': usage[1], 'total_tokens': usage[2], 'cache_read_tokens': tokens.cache_read, 'cache_write_tokens': tokens.cache_write, 'reasoning_tokens': tokens.reasoning}, 'cost': {'input_cost': str(cost[0]), 'output_cost': str(cost[1]), 'total_cost': str(cost[2]), 'cache_read_cost': str(breakdown.cache_read_cost), 'cache_write_cost': str(breakdown.cache_write_cost), 'reasoning_cost': str(breakdown.reasoning_cost)}, 'usage_estimated': estimated, 'latency_ms': latency_ms})}\n\n"
     else:
         yield f"data: {json.dumps({'done': True, 'empty': True})}\n\n"

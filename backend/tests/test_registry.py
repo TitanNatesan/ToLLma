@@ -37,7 +37,10 @@ def test_conversation_lifecycle_and_usage(client: TestClient, provider_factory, 
     usage = client.get(f"/api/v1/conversations/{cid}/usage").json()
     assert usage == {
         "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
         "input_cost": "0", "output_cost": "0", "total_cost": "0",
+        "cache_read_cost": "0", "cache_write_cost": "0", "reasoning_cost": "0",
+        "by_model": [], "by_provider": [],
     }
 
     assert client.delete(f"/api/v1/conversations/{cid}").status_code == 204

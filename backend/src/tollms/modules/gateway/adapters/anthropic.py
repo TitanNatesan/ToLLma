@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from tollms.modules.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk
+from tollms.modules.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk, usage_extras
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +79,23 @@ class AnthropicAdapter(BaseProviderAdapter):
                     if etype == "message_start":
                         usage = ((event.get("message") or {}).get("usage")) or {}
                         if usage.get("input_tokens"):
-                            yield StreamChunk(prompt_tokens=usage["input_tokens"])
+                            extras = usage_extras(usage)
+                            yield StreamChunk(
+                                prompt_tokens=usage["input_tokens"],
+                                cache_read_tokens=extras["cache_read_tokens"],
+                                cache_write_tokens=extras["cache_write_tokens"],
+                            )
                     elif etype == "content_block_delta":
                         if (event.get("delta") or {}).get("type") == "text_delta":
                             yield StreamChunk(delta=event["delta"].get("text", ""))
                     elif etype == "message_delta":
                         usage = event.get("usage") or {}
                         if usage.get("output_tokens"):
-                            yield StreamChunk(completion_tokens=usage["output_tokens"])
+                            extras = usage_extras(usage)
+                            yield StreamChunk(
+                                completion_tokens=usage["output_tokens"],
+                                reasoning_tokens=extras["reasoning_tokens"],
+                            )
         except RuntimeError:
             raise
         except Exception as e:

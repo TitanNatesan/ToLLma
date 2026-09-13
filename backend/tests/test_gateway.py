@@ -69,6 +69,9 @@ def test_stream_emits_deltas_then_done(db: Session, provider_factory, model_fact
     assert deltas == "Hello world"
     final = events[-1]
     assert final["done"] is True
-    assert final["usage"] == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    assert final["usage"] == {
+        "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
+    }
     messages = list_messages(db, uuid.UUID(events[0]["conversation_id"]))
     assert len(messages) == 2

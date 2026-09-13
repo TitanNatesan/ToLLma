@@ -16,8 +16,10 @@ class RepositoryModelRead(BaseModel):
     family: str | None
     provider: str
     provider_model_id: str
+    vendor: str | None
     endpoint_type: str
     description: str | None
+    documentation_url: str | None
     release_date: date | None
     is_active: bool
     is_deprecated: bool
@@ -48,9 +50,11 @@ class RepositoryModelRead(BaseModel):
     cache_read_cost: Decimal | None
     cache_write_cost: Decimal | None
     image_input_cost: Decimal | None
+    image_output_cost: Decimal | None
     audio_input_cost: Decimal | None
     audio_output_cost: Decimal | None
     video_input_cost: Decimal | None
+    video_output_cost: Decimal | None
     reasoning_cost: Decimal | None
     # `metadata` is reserved on SQLAlchemy models; the column attribute is `metadata_`.
     metadata_: dict[str, Any] = Field(alias="metadata")
@@ -66,6 +70,11 @@ class RepositoryModelPage(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class RepositoryLookupRead(BaseModel):
+    entry: RepositoryModelRead
+    suggested: dict[str, Any]
 
 
 class LastSyncRead(BaseModel):

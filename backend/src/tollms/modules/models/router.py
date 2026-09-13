@@ -35,6 +35,7 @@ def _read(m) -> ModelRead:
         context_window=m.context_window,
         max_output_tokens=m.max_output_tokens,
         release_date=m.release_date,
+        repository_model_key=m.repository_model_key,
         metadata=m.metadata_,
         is_active=m.is_active,
         created_at=m.created_at,

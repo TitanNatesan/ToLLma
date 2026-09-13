@@ -5,12 +5,13 @@ capabilities, and limits. Populated by ModelRepositorySyncService from
 external sources (LiteLLM, OpenRouter); never edited by hand.
 """
 
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 
@@ -34,8 +35,10 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     family: Mapped[str | None] = mapped_column(String(128), nullable=True)
     provider: Mapped[str] = mapped_column(String(128), nullable=False)
     provider_model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     endpoint_type: Mapped[str] = mapped_column(String(64), default="chat_completions", nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    documentation_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_deprecated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -69,15 +72,42 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     cache_read_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     cache_write_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     image_input_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
+    image_output_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     audio_input_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     audio_output_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     video_input_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
+    video_output_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     reasoning_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
 
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
     # Full per-source raw payloads, keyed by source name. New upstream fields
     # land here automatically — no migration needed when sources evolve.
     raw_source_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+    sources_: Mapped[list["RepositorySource"]] = relationship(
+        back_populates="repository_entry", cascade="all, delete-orphan"
+    )
+
+
+class RepositorySource(TimestampedModel):
+    """Per-source attribution for a repository entry. Rebuilt on every sync."""
+
+    __tablename__ = "model_repository_sources"
+    __table_args__ = (
+        UniqueConstraint("source_name", "source_model_id", name="uq_repo_sources_name_model"),
+        Index("ix_repo_sources_repo", "model_repository_id"),
+        Index("ix_repo_sources_created", "created_at"),
+    )
+
+    source_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_repository_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("model_repository.id", ondelete="CASCADE"), nullable=False
+    )
+    source_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+    repository_entry: Mapped["RepositoryModel"] = relationship(back_populates="sources_")
 
 
 class SyncRun(TimestampedModel):

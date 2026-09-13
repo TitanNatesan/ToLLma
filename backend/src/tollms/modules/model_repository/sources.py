@@ -13,11 +13,14 @@ from typing import Any
 
 import httpx
 
+from tollms.modules.model_repository.canonical import split_canonical
+
 logger = logging.getLogger(__name__)
 
 LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
 _FETCH_TIMEOUT = 60.0
+_FETCH_ATTEMPTS = 2
 
 
 def _cost(value: Any) -> Decimal | None:
@@ -59,8 +62,10 @@ class NormalizedModel:
     family: str | None = None
     provider: str = "unknown"
     provider_model_id: str = ""
+    vendor: str | None = None
     endpoint_type: str = "chat_completions"
     description: str | None = None
+    documentation_url: str | None = None
     release_date: date | None = None
     caps: dict[str, bool] = field(default_factory=dict)
     context_window: int | None = None
@@ -73,23 +78,27 @@ class NormalizedModel:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-def _split_key(full_key: str, fallback_provider: str = "unknown") -> tuple[str, str, str]:
-    """Return (model_key, provider, provider_model_id) for a/b style keys.
+def _fetch_with_retry(url: str) -> dict[str, Any]:
+    """GET JSON with one retry. Raises on persistent failure (caller records it)."""
+    last: Exception | None = None
+    for attempt in range(1, _FETCH_ATTEMPTS + 1):
+        try:
+            with httpx.Client(timeout=_FETCH_TIMEOUT) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise ValueError(f"{url} payload is not a JSON object")
+                return data
+        except Exception as e:
+            last = e
+            logger.warning("fetch %s attempt %s failed: %s", url, attempt, e)
+    raise last or RuntimeError(f"fetch failed: {url}")
 
-    Routing prefixes recurse: ``openrouter/anthropic/x`` is the same model
-    as ``anthropic/x`` from the OpenRouter source, so it canonicalizes there.
-    """
-    name = full_key.strip()
-    if "/" in name:
-        provider, _, rest = name.partition("/")
-        provider = provider.strip().lower() or fallback_provider
-        if provider == "openrouter" and "/" in rest:
-            return _split_key(rest, fallback_provider)
-    else:
-        provider, rest = fallback_provider, name
-    provider_model_id = rest.strip()
-    key = f"{provider}/{provider_model_id}".lower()
-    return key, provider, provider_model_id
+
+def _split_key(full_key: str, fallback_provider: str = "unknown") -> tuple[str, str, str]:
+    """Return (model_key, provider, provider_model_id) for a/b style keys."""
+    return split_canonical(full_key, fallback_provider)
 
 
 class LiteLLMSourceAdapter:
@@ -98,13 +107,7 @@ class LiteLLMSourceAdapter:
     name = "litellm"
 
     def fetch(self) -> dict[str, Any]:
-        with httpx.Client(timeout=_FETCH_TIMEOUT) as client:
-            response = client.get(LITELLM_URL)
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, dict):
-                raise ValueError("litellm payload is not a JSON object")
-            return data
+        return _fetch_with_retry(LITELLM_URL)
 
     def normalize(self, data: dict[str, Any]) -> list[NormalizedModel]:
         out: list[NormalizedModel] = []
@@ -173,13 +176,7 @@ class OpenRouterSourceAdapter:
     name = "openrouter"
 
     def fetch(self) -> dict[str, Any]:
-        with httpx.Client(timeout=_FETCH_TIMEOUT) as client:
-            response = client.get(OPENROUTER_URL)
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, dict):
-                raise ValueError("openrouter payload is not a JSON object")
-            return data
+        return _fetch_with_retry(OPENROUTER_URL)
 
     def normalize(self, data: dict[str, Any]) -> list[NormalizedModel]:
         models = data.get("data")

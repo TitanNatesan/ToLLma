@@ -21,6 +21,9 @@ class StreamChunk:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 @dataclass
@@ -29,6 +32,9 @@ class ChatResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
 
 
 @dataclass
@@ -76,6 +82,12 @@ class BaseProviderAdapter:
                 usage.completion_tokens = chunk.completion_tokens
             if chunk.total_tokens is not None:
                 usage.total_tokens = chunk.total_tokens
+            if chunk.cache_read_tokens is not None:
+                usage.cache_read_tokens = chunk.cache_read_tokens
+            if chunk.cache_write_tokens is not None:
+                usage.cache_write_tokens = chunk.cache_write_tokens
+            if chunk.reasoning_tokens is not None:
+                usage.reasoning_tokens = chunk.reasoning_tokens
         usage.text = "".join(parts)
         return usage
 
@@ -89,3 +101,35 @@ def sse_data_lines(text: str) -> list[str]:
             if payload and payload != "[DONE]":
                 out.append(payload)
     return out
+
+
+def _as_int(value) -> int | None:
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def usage_extras(usage: dict) -> dict[str, int | None]:
+    """Cache/reasoning tokens across OpenAI/Anthropic/Gemini usage shapes. Never raises."""
+    try:
+        prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+        completion_details = (
+            usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+        )
+        return {
+            "cache_read_tokens": _as_int(
+                usage.get("cache_read_input_tokens")
+                or usage.get("cachedContentTokenCount")
+                or prompt_details.get("cached_tokens")
+            ),
+            "cache_write_tokens": _as_int(usage.get("cache_creation_input_tokens")),
+            "reasoning_tokens": _as_int(
+                usage.get("thoughtsTokenCount") or completion_details.get("reasoning_tokens")
+            ),
+        }
+    except Exception:
+        logger.exception("usage extras extraction failed")
+        return {"cache_read_tokens": None, "cache_write_tokens": None, "reasoning_tokens": None}

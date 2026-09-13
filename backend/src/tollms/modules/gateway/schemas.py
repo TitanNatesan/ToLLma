@@ -21,8 +21,14 @@ class ChatResponse(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
     input_cost: Decimal
     output_cost: Decimal
     total_cost: Decimal
+    cache_read_cost: Decimal = Decimal(0)
+    cache_write_cost: Decimal = Decimal(0)
+    reasoning_cost: Decimal = Decimal(0)
     usage_estimated: bool
     latency_ms: float

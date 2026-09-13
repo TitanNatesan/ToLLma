@@ -34,5 +34,8 @@ test("repository search, filter, pagination", async ({ request }) => {
 test("repository sync history shape", async ({ request }) => {
   const history = await (await request.get(`${API}/api/v1/model-repository/sync-history`)).json();
   expect(history.length).toBeGreaterThan(0);
-  expect(history[0].models_created).toBeGreaterThan(0);
+  // Latest run may be an idempotent re-sync (0 created); assert it ran clean.
+  expect(history[0].status).toBe("done");
+  expect(history[0].errors_count).toBe(0);
+  expect(history.some((r: { models_created: number }) => r.models_created > 0)).toBe(true);
 });

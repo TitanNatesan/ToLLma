@@ -162,9 +162,39 @@ export function IntelligencePanel() {
                 <StatRow label="Prompt" value={<span data-testid="usage-prompt">{usage.prompt_tokens.toLocaleString()}</span>} />
                 <StatRow label="Completion" value={<span data-testid="usage-completion">{usage.completion_tokens.toLocaleString()}</span>} />
                 <StatRow label="Total" value={<span data-testid="usage-total">{usage.total_tokens.toLocaleString()} tok</span>} />
+                {(usage.reasoning_tokens > 0 || usage.cache_read_tokens > 0) && (
+                  <StatRow
+                    label="Reason / Cache"
+                    value={`${usage.reasoning_tokens.toLocaleString()} / ${usage.cache_read_tokens.toLocaleString()}`}
+                  />
+                )}
                 <StatRow label="Cost" value={<span data-testid="usage-cost">{formatCost(usage.total_cost)}</span>} />
                 <StatRow label="In / Out" value={`${formatCost(usage.input_cost)} / ${formatCost(usage.output_cost)}`} />
               </div>
+              {usage.by_provider.length > 0 && (
+                <div className="flex flex-col gap-1.5" data-testid="usage-by-provider">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">By provider</p>
+                  {usage.by_provider.map((b) => (
+                    <StatRow
+                      key={b.provider_id ?? "none"}
+                      label={b.provider_name ?? "unknown"}
+                      value={`${b.total_tokens.toLocaleString()} tok · ${formatCost(b.total_cost)}`}
+                    />
+                  ))}
+                </div>
+              )}
+              {usage.by_model.length > 0 && (
+                <div className="flex flex-col gap-1.5" data-testid="usage-by-model">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">By model</p>
+                  {usage.by_model.map((b) => (
+                    <StatRow
+                      key={b.model_id ?? "none"}
+                      label={b.model_name ?? "unknown"}
+                      value={`${b.total_tokens.toLocaleString()} tok · ${formatCost(b.total_cost)}`}
+                    />
+                  ))}
+                </div>
+              )}
             </Section>
           )}
 

@@ -48,7 +48,23 @@ def list_models(
 def create_model(db: Session, data: ModelCreate) -> AIModel:
     get_provider(db, data.provider_id)  # validates provider exists
     payload = data.model_dump()
-    payload["metadata_"] = payload.pop("metadata")
+    metadata = payload.pop("metadata")
+    if data.repository_model_key:
+        # Snapshot original repository values; current columns are user overrides.
+        from tollms.modules.model_repository.service import lookup as _lookup  # avoid cycle at load
+
+        entry = _lookup(db, data.repository_model_key)
+        if entry is not None and entry.model_key == data.repository_model_key:
+            metadata["repository_snapshot"] = {
+                "model_key": entry.model_key,
+                "name": entry.display_name or entry.provider_model_id,
+                "endpoint_type": entry.endpoint_type,
+                "input_price": str(entry.input_cost or 0),
+                "output_price": str(entry.output_cost or 0),
+                "context_window": entry.context_window,
+                "max_output_tokens": entry.max_output_tokens,
+            }
+    payload["metadata_"] = metadata
     model = AIModel(**payload)
     db.add(model)
     db.commit()

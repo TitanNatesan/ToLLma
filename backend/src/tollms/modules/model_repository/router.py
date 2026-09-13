@@ -6,8 +6,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
+from tollms.core.exceptions import NotFoundError
 from tollms.modules.model_repository import service
 from tollms.modules.model_repository.schemas import (
+    RepositoryLookupRead,
     RepositoryModelPage,
     RepositoryModelRead,
     RepositoryStatsRead,
@@ -53,6 +55,16 @@ def list_models(
 @router.get("/models/{entry_id}", response_model=RepositoryModelRead)
 def get_model(entry_id: uuid.UUID, db: Session = Depends(get_db)) -> RepositoryModelRead:
     return _read(service.get_entry(db, entry_id))
+
+
+@router.get("/lookup", response_model=RepositoryLookupRead)
+def lookup_model(
+    query: str, provider_hint: str | None = None, db: Session = Depends(get_db)
+) -> RepositoryLookupRead:
+    entry = service.lookup(db, query, provider_hint)
+    if entry is None:
+        raise NotFoundError(f"no repository match for {query!r}")
+    return RepositoryLookupRead(entry=_read(entry), suggested=service.suggest_payload(entry))
 
 
 @router.post("/sync", response_model=SyncRunRead)

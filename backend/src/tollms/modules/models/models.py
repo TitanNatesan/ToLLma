@@ -30,6 +30,7 @@ class AIModel(SoftDeleteMixin, TimestampedModel):
         Index("ix_models_provider", "provider_id"),
         Index("ix_models_active", "is_active"),
         Index("ix_models_created", "created_at"),
+        Index("ix_models_repo_key", "repository_model_key"),
     )
 
     provider_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("providers.id"), nullable=False)
@@ -55,6 +56,10 @@ class AIModel(SoftDeleteMixin, TimestampedModel):
     context_window: Mapped[int | None] = mapped_column(nullable=True)
     max_output_tokens: Mapped[int | None] = mapped_column(nullable=True)
     release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Canonical key of the source repository entry this model was imported from
+    # (null for hand-entered models). Current values are user overrides; the
+    # original repository values are snapshotted in metadata_["repository_snapshot"].
+    repository_model_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

@@ -10,8 +10,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from tollms.core.exceptions import NotFoundError
 from tollms.modules.conversations.models import Conversation, Message, Role
-from tollms.modules.conversations.schemas import ConversationCreate, UsageTotals
+from tollms.modules.conversations.schemas import (
+    ConversationCreate,
+    ModelUsageBreakdown,
+    ProviderUsageBreakdown,
+    UsageTotals,
+)
 from tollms.modules.models.models import AIModel
+from tollms.modules.providers.models import Provider
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +110,8 @@ def add_message(
     model_id: uuid.UUID | None = None,
     usage: tuple[int, int, int] | None = None,
     cost: tuple[Decimal, Decimal, Decimal] | None = None,
+    extra_usage: tuple[int, int, int] | None = None,
+    extra_cost: tuple[Decimal, Decimal, Decimal] | None = None,
     latency_ms: float | None = None,
 ) -> Message:
     msg = Message(
@@ -118,6 +126,10 @@ def add_message(
         msg.prompt_tokens, msg.completion_tokens, msg.total_tokens = usage
     if cost is not None:
         msg.input_cost, msg.output_cost, msg.total_cost = cost
+    if extra_usage is not None:
+        msg.cache_read_tokens, msg.cache_write_tokens, msg.reasoning_tokens = extra_usage
+    if extra_cost is not None:
+        msg.cache_read_cost, msg.cache_write_cost, msg.reasoning_cost = extra_cost
     db.add(msg)
     db.commit()
     db.refresh(msg)
@@ -136,23 +148,78 @@ def list_messages(db: Session, conversation_id: uuid.UUID) -> list[Message]:
 
 def usage_totals(db: Session, conversation_id: uuid.UUID) -> UsageTotals:
     get_conversation(db, conversation_id)
+    scope = [Message.conversation_id == conversation_id, Message.is_deleted.is_(False)]
     row = db.execute(
         select(
             func.coalesce(func.sum(Message.prompt_tokens), 0),
             func.coalesce(func.sum(Message.completion_tokens), 0),
             func.coalesce(func.sum(Message.total_tokens), 0),
+            func.coalesce(func.sum(Message.cache_read_tokens), 0),
+            func.coalesce(func.sum(Message.cache_write_tokens), 0),
+            func.coalesce(func.sum(Message.reasoning_tokens), 0),
             func.coalesce(func.sum(Message.input_cost), 0),
             func.coalesce(func.sum(Message.output_cost), 0),
             func.coalesce(func.sum(Message.total_cost), 0),
-        ).where(Message.conversation_id == conversation_id, Message.is_deleted.is_(False))
+            func.coalesce(func.sum(Message.cache_read_cost), 0),
+            func.coalesce(func.sum(Message.cache_write_cost), 0),
+            func.coalesce(func.sum(Message.reasoning_cost), 0),
+        ).where(*scope)
     ).one()
+    by_model = [
+        ModelUsageBreakdown(
+            model_id=r[0], model_name=r[1] or "unknown model",
+            prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
+            total_tokens=int(r[4]), total_cost=r[5],
+        )
+        for r in db.execute(
+            select(
+                Message.model_id, AIModel.name,
+                func.coalesce(func.sum(Message.prompt_tokens), 0),
+                func.coalesce(func.sum(Message.completion_tokens), 0),
+                func.coalesce(func.sum(Message.total_tokens), 0),
+                func.coalesce(func.sum(Message.total_cost), 0),
+            )
+            .outerjoin(AIModel, AIModel.id == Message.model_id)
+            .where(*scope)
+            .group_by(Message.model_id, AIModel.name)
+            .order_by(func.coalesce(func.sum(Message.total_cost), 0).desc())
+        )
+    ]
+    by_provider = [
+        ProviderUsageBreakdown(
+            provider_id=r[0], provider_name=r[1] or "unknown provider",
+            prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
+            total_tokens=int(r[4]), total_cost=r[5],
+        )
+        for r in db.execute(
+            select(
+                Message.provider_id, Provider.name,
+                func.coalesce(func.sum(Message.prompt_tokens), 0),
+                func.coalesce(func.sum(Message.completion_tokens), 0),
+                func.coalesce(func.sum(Message.total_tokens), 0),
+                func.coalesce(func.sum(Message.total_cost), 0),
+            )
+            .outerjoin(Provider, Provider.id == Message.provider_id)
+            .where(*scope)
+            .group_by(Message.provider_id, Provider.name)
+            .order_by(func.coalesce(func.sum(Message.total_cost), 0).desc())
+        )
+    ]
     return UsageTotals(
         prompt_tokens=int(row[0]),
         completion_tokens=int(row[1]),
         total_tokens=int(row[2]),
-        input_cost=row[3],
-        output_cost=row[4],
-        total_cost=row[5],
+        cache_read_tokens=int(row[3]),
+        cache_write_tokens=int(row[4]),
+        reasoning_tokens=int(row[5]),
+        input_cost=row[6],
+        output_cost=row[7],
+        total_cost=row[8],
+        cache_read_cost=row[9],
+        cache_write_cost=row[10],
+        reasoning_cost=row[11],
+        by_model=by_model,
+        by_provider=by_provider,
     )
 
 

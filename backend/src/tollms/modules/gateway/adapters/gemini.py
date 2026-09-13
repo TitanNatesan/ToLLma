@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from tollms.modules.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk
+from tollms.modules.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk, usage_extras
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +93,13 @@ class GeminiAdapter(BaseProviderAdapter):
                         yield StreamChunk(delta=text)
                     meta = item.get("usageMetadata") or {}
                     if meta.get("totalTokenCount"):
+                        extras = usage_extras(meta)
                         yield StreamChunk(
                             prompt_tokens=meta.get("promptTokenCount"),
                             completion_tokens=meta.get("candidatesTokenCount"),
                             total_tokens=meta.get("totalTokenCount"),
+                            cache_read_tokens=extras["cache_read_tokens"],
+                            reasoning_tokens=extras["reasoning_tokens"],
                         )
         except RuntimeError:
             raise
@@ -216,10 +219,13 @@ class VertexAdapter(BaseProviderAdapter):
                         yield StreamChunk(delta=text)
                     meta = item.get("usageMetadata") or {}
                     if meta.get("totalTokenCount"):
+                        extras = usage_extras(meta)
                         yield StreamChunk(
                             prompt_tokens=meta.get("promptTokenCount"),
                             completion_tokens=meta.get("candidatesTokenCount"),
                             total_tokens=meta.get("totalTokenCount"),
+                            cache_read_tokens=extras["cache_read_tokens"],
+                            reasoning_tokens=extras["reasoning_tokens"],
                         )
         except RuntimeError:
             raise

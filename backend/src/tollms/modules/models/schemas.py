@@ -27,6 +27,7 @@ class ModelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     endpoint_type: EndpointType
+    repository_model_key: str | None = Field(default=None, max_length=255)
     input_price: Decimal = Decimal("0")
     output_price: Decimal = Decimal("0")
     cache_read_price: Decimal = Decimal("0")
@@ -91,6 +92,7 @@ class ModelRead(BaseModel):
     context_window: int | None
     max_output_tokens: int | None
     release_date: date | None
+    repository_model_key: str | None
     # `metadata` is reserved on SQLAlchemy models; the column attribute is `metadata_`.
     metadata_: dict[str, Any] = Field(alias="metadata")
     is_active: bool

@@ -6,6 +6,7 @@ import { CREDENTIAL_FIELDS, PROVIDER_TYPES } from "@/app/providers/fields";
 import { CheckCircle2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Field, GhostButton, Input, Select, Switch, Textarea } from "@/components/ui";
 import { useModelMutations, useModels, useProviderMutations, useProviders } from "@/hooks/useRegistry";
+import { lookupRepositoryModel } from "@/services/api";
 import type { AIModel, EndpointType, Provider, ProviderType } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +50,7 @@ interface ModelFormState {
   max_output_tokens: string;
   description: string;
   release_date: string;
+  repository_model_key: string;
   caps: Record<string, boolean>;
 }
 
@@ -64,15 +66,73 @@ const EMPTY_MODEL_FORM: ModelFormState = {
   max_output_tokens: "",
   description: "",
   release_date: "",
+  repository_model_key: "",
   caps: { supports_text: true, supports_streaming: true },
 };
 
 function ModelForm({ initial, onSubmit, onCancel }: { initial: ModelFormState; onSubmit: (f: ModelFormState) => void; onCancel: () => void }) {
   const [form, setForm] = useState(initial);
+  const [repoQuery, setRepoQuery] = useState("");
+  const [importing, setImporting] = useState(false);
   const set = (k: keyof ModelFormState, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function importFromRepository() {
+    const q = repoQuery.trim() || form.model_id.trim();
+    if (!q) {
+      toast.error("Enter a model ID to search the repository");
+      return;
+    }
+    setImporting(true);
+    try {
+      const { entry, suggested } = await lookupRepositoryModel(q);
+      const str = (v: unknown, fallback = "") => (v === null || v === undefined ? fallback : String(v));
+      const endpoint = (["responses", "chat_completions", "messages", "converse"] as string[]).includes(str(suggested.endpoint_type))
+        ? (suggested.endpoint_type as EndpointType)
+        : "chat_completions";
+      setForm((f) => ({
+        ...f,
+        name: str(suggested.name, f.name),
+        model_id: str(suggested.model_id, f.model_id),
+        endpoint_type: endpoint,
+        input_price: str(suggested.input_price, "0"),
+        output_price: str(suggested.output_price, "0"),
+        cache_read_price: str(suggested.cache_read_price, "0"),
+        cache_write_price: str(suggested.cache_write_price, "0"),
+        context_window: str(suggested.context_window),
+        max_output_tokens: str(suggested.max_output_tokens),
+        description: str(suggested.description),
+        release_date: str(suggested.release_date),
+        repository_model_key: entry.model_key,
+        caps: Object.fromEntries(CAPS.map(([k]) => [k, !!(suggested as Record<string, unknown>)[k]])),
+      }));
+      toast.success(`Imported ${entry.display_name ?? entry.model_key} from repository`);
+    } catch {
+      toast.error("No repository match — enter details manually");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <Card data-testid="model-form">
       <CardContent className="flex flex-col gap-3">
+        <div className="flex gap-2">
+          <Input
+            placeholder="Search Model Intelligence Repository…"
+            value={repoQuery}
+            onChange={(e) => setRepoQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void importFromRepository()}
+            data-testid="madd-repo-search"
+          />
+          <Button onClick={() => void importFromRepository()} disabled={importing} data-testid="madd-repo-import">
+            {importing ? "Importing…" : "Import"}
+          </Button>
+        </div>
+        {form.repository_model_key && (
+          <p className="text-xs text-zinc-500" data-testid="madd-repo-key">
+            Linked to repository: {form.repository_model_key} (edits are overrides)
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Model name">
             <Input value={form.name} onChange={(e) => set("name", e.target.value)} data-testid="madd-name" />
@@ -154,6 +214,7 @@ function toPayload(providerId: string, f: ModelFormState): Record<string, unknow
     max_output_tokens: f.max_output_tokens ? Number(f.max_output_tokens) : null,
     description: f.description || null,
     release_date: f.release_date || null,
+    ...(f.repository_model_key ? { repository_model_key: f.repository_model_key } : {}),
     ...caps,
   };
 }
@@ -172,6 +233,7 @@ function fromModel(m: AIModel): ModelFormState {
     max_output_tokens: m.max_output_tokens?.toString() ?? "",
     description: m.description ?? "",
     release_date: m.release_date ?? "",
+    repository_model_key: m.repository_model_key ?? "",
     caps: Object.fromEntries(CAPS.map(([k]) => [k, (m as unknown as Record<string, boolean>)[k]])),
   };
 }

@@ -69,6 +69,7 @@ export interface AIModel {
   context_window: number | null;
   max_output_tokens: number | null;
   release_date: string | null;
+  repository_model_key: string | null;
   metadata: Record<string, unknown>;
   is_active: boolean;
   created_at: string;
@@ -86,9 +87,15 @@ export interface ChatMessage {
   prompt_tokens: number | null;
   completion_tokens: number | null;
   total_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  reasoning_tokens: number | null;
   input_cost: string | null;
   output_cost: string | null;
   total_cost: string | null;
+  cache_read_cost: string | null;
+  cache_write_cost: string | null;
+  reasoning_cost: string | null;
   latency_ms: number | null;
   created_at: string;
 }
@@ -104,13 +111,46 @@ export interface Conversation {
   messages: ChatMessage[];
 }
 
+export interface UsageBreakdown {
+  model_id?: string | null;
+  provider_id?: string | null;
+  model_name?: string;
+  provider_name?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_cost: string;
+}
+
 export interface UsageTotals {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
   input_cost: string;
   output_cost: string;
   total_cost: string;
+  cache_read_cost: string;
+  cache_write_cost: string;
+  reasoning_cost: string;
+  by_model: UsageBreakdown[];
+  by_provider: UsageBreakdown[];
+}
+
+export interface RepositoryLookup {
+  entry: {
+    model_key: string;
+    display_name: string | null;
+    provider: string;
+    provider_model_id: string;
+    description: string | null;
+    context_window: number | null;
+    input_cost: string | null;
+    output_cost: string | null;
+  };
+  suggested: Record<string, string | number | boolean | null>;
 }
 
 export interface StreamDone {

@@ -291,3 +291,37 @@ Verification: pytest 23/23; live POST /sync -> done, 4276 created, 0 errors (~60
 (+0 ~4023 -0 err=0, 4023 active / 177 providers); Playwright repo spec 3/3; tsc + eslint clean.
 Deviations: POST /sync returns 200 not 202 (blocks ~60s; honest status); no new frontend page and no
 provider-discovery enrichment yet — repository stands alone behind APIs (see next steps).
+
+## 2026-09-13 - Model Intelligence phase 2 (authoritative repo integration)
+
+Requirement: repository becomes authoritative for pricing/capabilities/limits/costs across provider
+registration, chat, usage, cost, and UI; canonical matching; source tracking; manual+scheduled sync.
+Implemented (backend):
+- Migration b7e2d9f4a1c3: repo += vendor/documentation_url/image_output_cost/video_output_cost;
+  new model_repository_sources (source_name/url/model_id/repo FK/payload, sync-owned full rewrite);
+  messages += cache_read/write/reasoning tokens + costs; models += repository_model_key (indexed).
+- canonical.py (ModelCanonicalizationService): separator-unifying canonicalize(); merge groups + existing
+  matching use canonical form (no row churn); openrouter/ recursion kept. Cross-source merges 87 -> 283.
+- costing.py (CostCalculationService): UsageTokens/PriceSet(per-1M)/CostBreakdown pure calculate();
+  reasoning bills at output rate unless explicit; prices_for_model() merges repo (per-token x1M) over model.
+- Adapters (openai chat+responses, anthropic, gemini/vertex) extract cache/reasoning via shared
+  usage_extras(); StreamChunk/ChatResult extended; gateway _finalize_usage resolves repo entry via
+  find_for_model (provider_type hints + canonical fallback) and persists extras; ChatResponse + SSE done
+  envelope extended.
+- conversations: add_message extra_usage/extra_cost; usage_totals += cache/reasoning sums + by_model/
+  by_provider breakdowns (joined names, cost-desc).
+- Provider integration: models carry repository_model_key + metadata.repository_snapshot (originals;
+  columns are overrides); GET /model-repository/lookup returns entry + suggested per-1M payload.
+- Scheduler: adapter fetch retry (2 attempts) + APScheduler misfire/coalesce already sane; manual POST
+  /sync returns full run (superset of started/processed/id).
+Implemented (frontend): MessageView shows model · provider, usage tooltip (cache/reasoning), in/out cost
+tooltip + testids; IntelligencePanel adds Reason/Cache row + By provider/By model breakdowns; provider
+model form has repository search + one-click Import (fills, links key, toast; manual fallback).
+Tests: test_intelligence.py (8: canonical merge, source rewrite, lookup/suggest incl. exact-id ranking fix
+for "gpt-4o" which first matched azure/eu/..., cost math, repo-priced chat with cache tokens, snapshot,
+fallback); e2e/intelligence.spec.ts (import, chat cost/analytics, manual sync); fixed order-dependence in
+old repository.spec.ts (latest run may be idempotent 0-created).
+Verification: pytest 31/31; live sync done twice (4276 created, then idempotent +0 ~4023 -0); Playwright
+34 passed + 1 pre-existing skip; vitest 5/5; tsc + eslint clean; next build success.
+Not done (out of scope / next): extra free sources (HF/Ollama listings — no stable key-less JSON found);
+fuzzy version-date key matching; discovery-time auto-enrichment of provider models.

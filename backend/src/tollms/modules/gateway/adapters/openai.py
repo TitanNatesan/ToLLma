@@ -11,6 +11,7 @@ from tollms.modules.gateway.adapters.base import (
     DiscoveredModel,
     StreamChunk,
     sse_data_lines,
+    usage_extras,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,11 +88,14 @@ class OpenAIChatAdapter(BaseProviderAdapter):
                         except json.JSONDecodeError:
                             continue
                         if text or usage:
+                            extras = usage_extras(usage)
                             yield StreamChunk(
                                 delta=text,
                                 prompt_tokens=usage.get("prompt_tokens"),
                                 completion_tokens=usage.get("completion_tokens"),
                                 total_tokens=usage.get("total_tokens"),
+                                cache_read_tokens=extras["cache_read_tokens"],
+                                reasoning_tokens=extras["reasoning_tokens"],
                             )
         except RuntimeError:
             raise
@@ -132,10 +136,13 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
                         yield StreamChunk(delta=event.get("delta", ""))
                     elif event.get("type") == "response.completed":
                         usage = (event.get("response") or {}).get("usage") or {}
+                        extras = usage_extras(usage)
                         yield StreamChunk(
                             prompt_tokens=usage.get("input_tokens"),
                             completion_tokens=usage.get("output_tokens"),
                             total_tokens=usage.get("total_tokens"),
+                            cache_read_tokens=extras["cache_read_tokens"],
+                            reasoning_tokens=extras["reasoning_tokens"],
                         )
         except RuntimeError:
             raise

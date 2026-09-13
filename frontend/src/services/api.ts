@@ -5,6 +5,7 @@ import type {
   DiscoveryResult,
   HealthResponse,
   Provider,
+  RepositoryLookup,
   StreamDone,
   UsageTotals,
   ValidationResult,
@@ -98,6 +99,8 @@ export const listModels = (params?: { provider_id?: string; search?: string; cap
 export const createModel = (body: Record<string, unknown>) => post<AIModel>("/api/v1/models", body);
 export const updateModel = (id: string, body: Record<string, unknown>) => patch<AIModel>(`/api/v1/models/${id}`, body);
 export const deleteModel = (id: string) => del<void>(`/api/v1/models/${id}`);
+export const lookupRepositoryModel = (query: string) =>
+  get<RepositoryLookup>(`/api/v1/model-repository/lookup?query=${encodeURIComponent(query)}`);
 
 // --- Conversations ---
 export const listConversations = (search?: string) =>

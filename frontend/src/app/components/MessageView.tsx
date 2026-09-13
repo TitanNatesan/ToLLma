@@ -19,6 +19,7 @@ import {
 import { MermaidBlock } from "./MermaidBlock";
 import type { ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
+import { useModels, useProviders } from "@/hooks/useRegistry";
 import { cn } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 
@@ -170,7 +171,23 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
   const isUser = message.role === "user";
   const msg = message as ChatMessage;
   const costStr = formatCost(msg.total_cost ?? null);
+  const inCostStr = formatCost(msg.input_cost ?? null);
+  const outCostStr = formatCost(msg.output_cost ?? null);
   const latencyStr = formatLatency(msg.latency_ms ?? null);
+  const { data: models } = useModels(undefined, undefined, { enabled: !isUser });
+  const { data: providers } = useProviders();
+  const modelName = !isUser ? models?.find((m) => m.id === msg.model_id)?.name : null;
+  const providerName = !isUser ? providers?.find((p) => p.id === msg.provider_id)?.name : null;
+  const usageTitle = [
+    `in: ${msg.prompt_tokens ?? 0}`,
+    `out: ${msg.completion_tokens ?? 0}`,
+    msg.cache_read_tokens ? `cache-read: ${msg.cache_read_tokens}` : null,
+    msg.cache_write_tokens ? `cache-write: ${msg.cache_write_tokens}` : null,
+    msg.reasoning_tokens ? `reasoning: ${msg.reasoning_tokens}` : null,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+  const costTitle = [`in: ${inCostStr ?? "$0"}`, `out: ${outCostStr ?? "$0"}`].join(" / ");
 
   return (
     <motion.div
@@ -204,12 +221,21 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
           <time dateTime={message.created_at} title={message.created_at}>
             {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </time>
+          {!isUser && (modelName || providerName) && (
+            <span data-testid="message-model" title={`${providerName ?? ""} / ${modelName ?? ""}`}>
+              {[modelName, providerName].filter(Boolean).join(" · ")}
+            </span>
+          )}
           {!isUser && msg.total_tokens != null && (
-            <span title={`in: ${msg.prompt_tokens} / out: ${msg.completion_tokens}`}>
+            <span data-testid="message-usage" title={usageTitle}>
               {msg.total_tokens.toLocaleString()} tok
             </span>
           )}
-          {!isUser && costStr && <span>{costStr}</span>}
+          {!isUser && costStr && (
+            <span data-testid="message-cost" title={costTitle}>
+              {costStr}
+            </span>
+          )}
           {!isUser && latencyStr && <span>{latencyStr}</span>}
         </div>
 
