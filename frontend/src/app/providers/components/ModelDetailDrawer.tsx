@@ -14,6 +14,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
+import { stripTrailingZeros } from "@/lib/utils";
 
 interface ModelDetailDrawerProps {
   model: AIModel | null;
@@ -52,7 +53,7 @@ export function ModelDetailDrawer({
   function fmtPrice(val: string): string {
     const n = parseFloat(val);
     if (isNaN(n) || n === 0) return "$0";
-    return `$${val}/1M`;
+    return `$${stripTrailingZeros(val)}/1M`;
   }
 
   async function handleDelete() {

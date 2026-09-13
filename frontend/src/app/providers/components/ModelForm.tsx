@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button, Card, CardContent, Field, GhostButton, Input, Select } from "@/components/ui";
+import { Button, Card, CardContent, Checkbox, Field, GhostButton, Input, Select } from "@/components/ui";
 import { lookupRepositoryModel } from "@/services/api";
 import type { AIModel, EndpointType } from "@/types";
+import { stripTrailingZeros } from "@/lib/utils";
 
 export const ENDPOINTS: EndpointType[] = [
   "responses",
@@ -82,20 +83,23 @@ export function ModelForm({
       const { entry, suggested } = await lookupRepositoryModel(q);
       const str = (v: unknown, fallback = "") =>
         v === null || v === undefined ? fallback : String(v);
-      const endpoint = (
-        ["responses", "chat_completions", "messages", "converse"] as string[]
-      ).includes(str(suggested.endpoint_type))
-        ? (suggested.endpoint_type as EndpointType)
-        : "chat_completions";
-      setForm((f) => ({
-        ...f,
-        name: str(suggested.name, f.name),
-        model_id: str(suggested.model_id, f.model_id),
-        endpoint_type: endpoint,
-        input_price: str(suggested.input_price, "0"),
-        output_price: str(suggested.output_price, "0"),
-        cache_read_price: str(suggested.cache_read_price, "0"),
-        cache_write_price: str(suggested.cache_write_price, "0"),
+      setForm((f) => {
+        const isSpecialized = f.endpoint_type && f.endpoint_type !== "chat_completions";
+        const repoEndpoint = (
+          ["responses", "chat_completions", "messages", "converse"] as string[]
+        ).includes(str(suggested.endpoint_type))
+          ? (suggested.endpoint_type as EndpointType)
+          : f.endpoint_type;
+        const endpoint = isSpecialized && repoEndpoint === "chat_completions" ? f.endpoint_type : repoEndpoint;
+        return {
+          ...f,
+          name: str(suggested.name, f.name),
+          model_id: str(suggested.model_id, f.model_id),
+          endpoint_type: endpoint,
+          input_price: stripTrailingZeros(suggested.input_price, f.input_price),
+          output_price: stripTrailingZeros(suggested.output_price, f.output_price),
+          cache_read_price: stripTrailingZeros(suggested.cache_read_price, f.cache_read_price),
+          cache_write_price: stripTrailingZeros(suggested.cache_write_price, f.cache_write_price),
         context_window: str(suggested.context_window),
         max_output_tokens: str(suggested.max_output_tokens),
         description: str(suggested.description),
@@ -104,7 +108,8 @@ export function ModelForm({
         caps: Object.fromEntries(
           CAPS.map(([k]) => [k, !!(suggested as Record<string, unknown>)[k]]),
         ),
-      }));
+      };
+    });
       toast.success(`Imported ${entry.display_name ?? entry.model_key} from repository`);
     } catch {
       toast.error("No repository match — enter details manually");
@@ -225,25 +230,23 @@ export function ModelForm({
           </Field>
         </div>
         <fieldset>
-          <legend className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+          <legend className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
             Capabilities
           </legend>
-          <div className="mt-1 flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-x-4 gap-y-2.5 rounded-lg border border-zinc-200/80 bg-zinc-50/50 p-2.5 dark:border-zinc-800/80 dark:bg-zinc-900/30">
             {CAPS.map(([key, label]) => (
-              <label key={key} className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={!!form.caps[key]}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      caps: { ...f.caps, [key]: e.target.checked },
-                    }))
-                  }
-                  data-testid={`madd-cap-${key}`}
-                />
-                {label}
-              </label>
+              <Checkbox
+                key={key}
+                label={label}
+                checked={!!form.caps[key]}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    caps: { ...f.caps, [key]: e.target.checked },
+                  }))
+                }
+                data-testid={`madd-cap-${key}`}
+              />
             ))}
           </div>
         </fieldset>
@@ -291,10 +294,10 @@ export function fromModel(m: AIModel): ModelFormState {
     name: m.name,
     model_id: m.model_id,
     endpoint_type: m.endpoint_type,
-    input_price: m.input_price,
-    output_price: m.output_price,
-    cache_read_price: m.cache_read_price,
-    cache_write_price: m.cache_write_price,
+    input_price: stripTrailingZeros(m.input_price, "0"),
+    output_price: stripTrailingZeros(m.output_price, "0"),
+    cache_read_price: stripTrailingZeros(m.cache_read_price, "0"),
+    cache_write_price: stripTrailingZeros(m.cache_write_price, "0"),
     context_window: m.context_window?.toString() ?? "",
     max_output_tokens: m.max_output_tokens?.toString() ?? "",
     description: m.description ?? "",
@@ -308,23 +311,28 @@ export function fromModel(m: AIModel): ModelFormState {
 export function fromSuggested(
   suggested: Record<string, unknown>,
   repositoryModelKey: string,
+  defaultEndpointType?: EndpointType,
 ): ModelFormState {
   const str = (v: unknown, fallback = "") =>
     v === null || v === undefined ? fallback : String(v);
-  const endpoint = (["responses", "chat_completions", "messages", "converse"] as string[]).includes(
-    str(suggested.endpoint_type),
-  )
-    ? (suggested.endpoint_type as EndpointType)
-    : "chat_completions";
+  const endpointCandidate = str(suggested.endpoint_type);
+  const validEndpoints: EndpointType[] = ["responses", "chat_completions", "messages", "converse"];
+  let endpoint: EndpointType = defaultEndpointType || "chat_completions";
+  if (validEndpoints.includes(endpointCandidate as EndpointType)) {
+    endpoint = endpointCandidate as EndpointType;
+  }
+  if (defaultEndpointType && defaultEndpointType !== "chat_completions" && endpoint === "chat_completions") {
+    endpoint = defaultEndpointType;
+  }
   return {
     ...EMPTY_MODEL_FORM,
     name: str(suggested.name),
     model_id: str(suggested.model_id),
     endpoint_type: endpoint,
-    input_price: str(suggested.input_price, "0"),
-    output_price: str(suggested.output_price, "0"),
-    cache_read_price: str(suggested.cache_read_price, "0"),
-    cache_write_price: str(suggested.cache_write_price, "0"),
+    input_price: stripTrailingZeros(suggested.input_price, "0"),
+    output_price: stripTrailingZeros(suggested.output_price, "0"),
+    cache_read_price: stripTrailingZeros(suggested.cache_read_price, "0"),
+    cache_write_price: stripTrailingZeros(suggested.cache_write_price, "0"),
     context_window: str(suggested.context_window),
     max_output_tokens: str(suggested.max_output_tokens),
     description: str(suggested.description),

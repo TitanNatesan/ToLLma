@@ -77,6 +77,17 @@ def _repository_version(db: Session) -> str | None:
         return None
 
 
+PROVIDER_DEFAULT_ENDPOINTS: dict[str, str] = {
+    "BEDROCK_CONVERSE": "converse",
+    "ANTHROPIC_MESSAGES": "messages",
+    "OPENAI_RESPONSES": "responses",
+    "OPENAI_CHAT": "chat_completions",
+    "GEMINI": "chat_completions",
+    "VERTEX_AI": "chat_completions",
+    "CUSTOM": "chat_completions",
+}
+
+
 def map_one(
     db: Session,
     model_id: str,
@@ -85,16 +96,22 @@ def map_one(
     base_url: str | None = None,
 ) -> dict[str, Any]:
     """Map one discovered model id. Returns match_type + suggested payload."""
+    default_endpoint = PROVIDER_DEFAULT_ENDPOINTS.get((provider_type or "").upper())
     tail = canonicalize(model_id).split("/")[-1]
     hints = (*PROVIDER_HINTS.get((provider_type or "").upper(), ()), *detect_providers_from_url(base_url))
     for hint in hints:
         entry = lookup(db, f"{hint}/{model_id}")
         if entry is not None and entry.provider == hint:
-            return _mapped(entry, db, model_id, "provider_specific", base_url)
+            return _mapped(entry, db, model_id, "provider_specific", base_url, default_endpoint=default_endpoint)
     entry = lookup(db, model_id)
     if entry is not None:
-        return _mapped(entry, db, model_id, "global", base_url)
-    suggested = {**FALLBACK_SUGGESTED, "model_id": model_id, "name": model_id}
+        return _mapped(entry, db, model_id, "global", base_url, default_endpoint=default_endpoint)
+    suggested = {
+        **FALLBACK_SUGGESTED,
+        "model_id": model_id,
+        "name": model_id,
+        "endpoint_type": default_endpoint or "chat_completions",
+    }
     return {
         "model_id": model_id,
         "match_type": "fallback",
@@ -105,10 +122,17 @@ def map_one(
 
 
 def _mapped(
-    entry: RepositoryModel, db: Session, model_id: str, match_type: str, base_url: str | None
+    entry: RepositoryModel,
+    db: Session,
+    model_id: str,
+    match_type: str,
+    base_url: str | None,
+    default_endpoint: str | None = None,
 ) -> dict[str, Any]:
     suggested = suggest_payload(entry)
     suggested["model_id"] = model_id  # discovered id wins; repo id stays in the key
+    if default_endpoint:
+        suggested["endpoint_type"] = default_endpoint
     return {
         "model_id": model_id,
         "match_type": match_type,
@@ -137,6 +161,7 @@ def map_models(
 ) -> list[dict[str, Any]]:
     """Map many ids. Never raises per-item: failures degrade to fallback."""
     out = []
+    default_endpoint = PROVIDER_DEFAULT_ENDPOINTS.get((provider_type or "").upper())
     for model_id in model_ids:
         try:
             out.append(map_one(db, model_id, provider_type=provider_type, base_url=base_url))
@@ -147,7 +172,12 @@ def map_models(
                     "model_id": model_id,
                     "match_type": "fallback",
                     "repository_model_key": None,
-                    "suggested": {**FALLBACK_SUGGESTED, "model_id": model_id, "name": model_id},
+                    "suggested": {
+                        **FALLBACK_SUGGESTED,
+                        "model_id": model_id,
+                        "name": model_id,
+                        "endpoint_type": default_endpoint or "chat_completions",
+                    },
                     "repository_match": _match_meta(db, "fallback", base_url, model_id),
                 }
             )

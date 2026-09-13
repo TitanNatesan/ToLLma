@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Button, CapabilityBadge, DetailPanel } from "@/components/ui";
 import { useModelMutations } from "@/hooks/useRegistry";
-import type { AIModel, DiscoveredModelInfo, MatchType } from "@/types";
+import type { AIModel, DiscoveredModelInfo, EndpointType, MatchType } from "@/types";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, fmtPrice, stripTrailingZeros } from "@/lib/utils";
 import {
   CAPS,
   ModelForm,
@@ -31,9 +31,11 @@ const MATCH_LABEL: Record<MatchType, string> = {
   fallback: "No repository match",
 };
 
-function fmtCtx(v: number | null): string {
-  if (!v) return "Unspecified";
-  return v >= 1000 ? `${(v / 1000).toFixed(0)}k tokens` : `${v} tokens`;
+function fmtCtx(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "Unspecified";
+  const num = typeof v === "number" ? v : parseInt(String(v), 10);
+  if (isNaN(num) || num <= 0) return "Unspecified";
+  return num >= 1000 ? `${(num / 1000).toLocaleString()}k tokens` : `${num.toLocaleString()} tokens`;
 }
 
 export function RegisterModelDrawer({
@@ -47,16 +49,30 @@ export function RegisterModelDrawer({
   const mm = useModelMutations();
   const [step, setStep] = useState(initialStep);
 
+  useEffect(() => {
+    if (open) {
+      setStep(initialStep);
+    }
+  }, [open, initialStep, info?.model_id]);
+
   if (!info) return null;
 
   const suggested = info.suggested ?? {};
+  const ctxWindow =
+    info.context_window ??
+    (suggested.context_window !== undefined && suggested.context_window !== null
+      ? suggested.context_window
+      : null);
+  const maxOutput =
+    info.max_output_tokens ??
+    (suggested.max_output_tokens !== undefined && suggested.max_output_tokens !== null
+      ? suggested.max_output_tokens
+      : null);
+
   const activeCaps = CAPS.map(([k]) => k).filter(
     (k) => (suggested as Record<string, unknown>)[k] === true,
   );
-  const price = (v: unknown) => {
-    const n = typeof v === "string" || typeof v === "number" ? parseFloat(String(v)) : NaN;
-    return isNaN(n) || n === 0 ? "$0" : `$${String(v)}`;
-  };
+  const price = (v: unknown) => fmtPrice(v);
 
   async function handleSave(form: Parameters<typeof toPayload>[1]) {
     try {
@@ -121,8 +137,8 @@ export function RegisterModelDrawer({
                 ["Model ID", info.model_id],
                 ["Name", info.name],
                 ["Endpoint type", info.endpoint_type],
-                ["Context window", fmtCtx(info.context_window)],
-                ["Max output", fmtCtx(info.max_output_tokens)],
+                ["Context window", fmtCtx(ctxWindow)],
+                ["Max output", fmtCtx(maxOutput)],
               ].map(([k, v]) => (
                 <div key={k} className="flex items-center justify-between p-2.5">
                   <span className="text-zinc-500">{k}</span>
@@ -160,6 +176,14 @@ export function RegisterModelDrawer({
                   <span className="text-[10px] text-zinc-400">Output / 1M</span>
                   <div className="font-semibold">{price(suggested.output_price)}</div>
                 </div>
+                <div className="rounded border border-zinc-100 p-2 dark:border-zinc-800">
+                  <span className="text-[10px] text-zinc-400">Context Window</span>
+                  <div className="font-semibold">{fmtCtx(ctxWindow)}</div>
+                </div>
+                <div className="rounded border border-zinc-100 p-2 dark:border-zinc-800">
+                  <span className="text-[10px] text-zinc-400">Max Output</span>
+                  <div className="font-semibold">{fmtCtx(maxOutput)}</div>
+                </div>
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {activeCaps.map((cap) => (
@@ -176,11 +200,27 @@ export function RegisterModelDrawer({
             <ModelForm
               key={info.model_id}
               initial={fromSuggested(
-                suggested as Record<string, unknown>,
+                {
+                  ...suggested,
+                  input_price: stripTrailingZeros(suggested.input_price, "0"),
+                  output_price: stripTrailingZeros(suggested.output_price, "0"),
+                  cache_read_price: stripTrailingZeros(suggested.cache_read_price, "0"),
+                  cache_write_price: stripTrailingZeros(suggested.cache_write_price, "0"),
+                  endpoint_type: info.endpoint_type || (suggested.endpoint_type as string) || "chat_completions",
+                  context_window: ctxWindow ?? suggested.context_window,
+                  max_output_tokens: maxOutput ?? suggested.max_output_tokens,
+                } as Record<string, unknown>,
                 info.repository_model_key ?? "",
+                (info.endpoint_type as EndpointType) || "chat_completions",
               )}
               onSubmit={(f) => void handleSave(f)}
-              onCancel={onClose}
+              onCancel={() => {
+                if (initialStep === 2) {
+                  onClose();
+                } else {
+                  setStep(1);
+                }
+              }}
             />
           </div>
         )}
@@ -192,8 +232,13 @@ export function RegisterModelDrawer({
               variant="ghost"
               size="sm"
               className="gap-1 text-xs"
-              disabled={step === 0}
-              onClick={() => setStep((s) => s - 1)}
+              onClick={() => {
+                if (step === 0) {
+                  onClose();
+                } else {
+                  setStep((s) => s - 1);
+                }
+              }}
               data-testid="reg-back"
             >
               <ArrowLeft className="size-3.5" /> Back
@@ -212,3 +257,4 @@ export function RegisterModelDrawer({
     </DetailPanel>
   );
 }
+

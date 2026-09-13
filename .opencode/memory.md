@@ -497,3 +497,137 @@ Verification:
 - Backend Pytest suite: 36/36 passed.
 - Playwright tests (`e2e/wizard.spec.ts` & `e2e/providers.spec.ts`): 3/3 passed.
 - Visual browser verification: Verified in browser that the Step badge is single-line and vertically centered, "Provider Name" is full-width, and the platform cards grid cleanly handles provider type selection without any duplicate dropdown.
+
+## 2026-09-13 - Regional Model Scope Badges & Registration Drawer UX Fixes
+
+Requirements:
+1. Provider Wizard (Step 4 & Step 5): Differentiate regional models (e.g. AWS Bedrock `us.*` cross-region inference profiles) from global models so they display a distinct `US` badge rather than showing `global` on everything. Add "US specific" filter option.
+2. Register Model Overlay Side Panel (`RegisterModelDrawer`): Fix Back button so it works immediately (instead of being disabled on step 0), and populate Context Window and Max Output from repository intelligence instead of showing "Unspecified".
+
+Implemented Solution:
+1. `frontend/src/app/providers/components/ProviderWizardModal.tsx`:
+   - Added `getModelScope` helper to detect regional inference profiles (`US`, `EU`, `APAC`) and global/provider/fallback scopes.
+   - Updated model cards in Step 4 and Step 5 to render accurate regional badges (e.g. bold blue `US` badge for `us.anthropic...`, sky `global` badge for `global.anthropic...`).
+   - Added `US specific`, `EU specific`, and `APAC specific` filter options to `matchFilter` select and updated filter logic.
+   - Enhanced Step 5 summary stats with US model breakdown.
+2. `frontend/src/app/providers/components/RegisterModelDrawer.tsx`:
+   - Fixed Back button: Removed `disabled={step === 0}`. Clicking Back on Step 0 now closes the drawer (`onClose()`), while on Step 1 it returns to Step 0 (`setStep(0)`).
+   - Added `useEffect` to synchronize drawer step with `initialStep` whenever the drawer opens or target model changes.
+   - Context Window & Max Output: Resolved `info.context_window ?? suggested.context_window` and `info.max_output_tokens ?? suggested.max_output_tokens`. Updated `fmtCtx` to safely handle strings and numbers.
+   - Added Context Window and Max Output to Step 1 (Repository intelligence) summary grid.
+3. `backend/src/tollms/api/providers/service.py`:
+   - Updated `discover_provider_models`: When provider SDK returns `context_window: None` or `max_output_tokens: None` (as AWS Bedrock `list_inference_profiles` does), automatically populates them from repository intelligence `match["suggested"]`.
+4. `frontend/src/app/providers/page.tsx`:
+   - Available models list and context filter fallback to `m.suggested.context_window` if `m.context_window` is not set.
+
+Verification:
+- TypeScript (`tsc --noEmit`): 0 errors.
+- Vitest unit tests (`scope.test.ts`, `api.test.ts`, `utils.test.ts`): 11/11 passed.
+- Backend Pytest suite: 35/35 passed.
+- Backend endpoint verification: Tested `POST /api/v1/providers/{id}/discover` via curl against active Bedrock provider; verified that `us.anthropic.claude-opus-4-1...` returns `context_window: 200000` and `max_output_tokens: 32000`.
+- Playwright E2E suite (`discovery.spec.ts` & `wizard.spec.ts`): 2/2 passed.
+
+## 2026-09-13 - Endpoint Type Alignment: Available Models Panel vs Configuration Panel
+
+Requirement:
+In the Available Models panel, models showed the `converse` badge (the actual Bedrock Converse API endpoint), but when opening the registration drawer configuration panel, the Endpoint Type dropdown was defaulting to `chat_completions`. Resolve this conflict across both the registration drawer, provider wizard, and discovery backend.
+
+Root Cause:
+1. `backend/src/tollms/api/providers/service.py`: In `discover_provider_models`, `suggested` was populated from the repository catalog match (`LiteLLM`/`OpenRouter`), which defaults to `chat_completions`. While `d.model_id` and `d.name` were overridden with provider values, `suggested["endpoint_type"]` was not set to `d.endpoint_type` (`converse`).
+2. `frontend/src/app/providers/components/RegisterModelDrawer.tsx`: `fromSuggested` was invoked using only `suggested`, which contained `"chat_completions"` from the repository lookup rather than `info.endpoint_type` (`"converse"`).
+3. `frontend/src/app/providers/components/ModelForm.tsx`: `fromSuggested` did not accept or prioritize a provider's native endpoint type when the repository match defaulted to generic `chat_completions`.
+4. `frontend/src/app/providers/components/ProviderWizardModal.tsx`: When initializing mapped forms and registering models, fallback endpoint resolution did not default to `PROVIDER_DEFAULT_ENDPOINTS[type]`.
+
+Implemented Solution:
+1. `backend/src/tollms/services/model_repository/mapping.py`:
+   - Added `PROVIDER_DEFAULT_ENDPOINTS` mapping:
+     * `BEDROCK_CONVERSE` -> `converse`
+     * `ANTHROPIC_MESSAGES` -> `messages`
+     * `OPENAI_RESPONSES` -> `responses`
+     * `OPENAI_CHAT`, `GEMINI`, `VERTEX_AI`, `CUSTOM` -> `chat_completions`
+   - Updated `map_one` and `_mapped` to set `suggested["endpoint_type"] = default_endpoint` when mapping models for a specific provider type.
+2. `backend/src/tollms/api/providers/service.py`:
+   - In `discover_provider_models`: Set `suggested["endpoint_type"] = d.endpoint_type`, `suggested["context_window"] = ctx`, and `suggested["max_output_tokens"] = max_out`.
+3. `frontend/src/app/providers/fields.ts`:
+   - Exported `PROVIDER_DEFAULT_ENDPOINTS: Record<ProviderType, EndpointType>`.
+4. `frontend/src/app/providers/components/ModelForm.tsx`:
+   - Updated `fromSuggested` to accept optional `defaultEndpointType?: EndpointType`. If `defaultEndpointType` is provided (e.g. `converse` for Bedrock) and the suggestion is generic `chat_completions`, it prioritizes `defaultEndpointType`.
+   - Updated `importFromRepository` to preserve specialized endpoint types (`converse`, `messages`, `responses`) when importing catalog updates.
+5. `frontend/src/app/providers/components/RegisterModelDrawer.tsx`:
+   - Passes `endpoint_type: info.endpoint_type || suggested.endpoint_type` and `info.endpoint_type` as `defaultEndpointType` to `fromSuggested`. Ensures existing cached discovery records also instantly display `converse` in the configuration panel.
+6. `frontend/src/app/providers/components/ProviderWizardModal.tsx`:
+   - Uses `PROVIDER_DEFAULT_ENDPOINTS[type]` and discovered endpoint when populating model forms and constructing registration payloads.
+   - Updates Step 5 model summary badge to show `f?.endpoint_type ?? PROVIDER_DEFAULT_ENDPOINTS[type]`.
+
+Verification:
+- TypeScript (`tsc --noEmit`): 0 errors.
+- Vitest unit tests: 15/15 passed (`endpoint.test.ts`, `scope.test.ts`, `api.test.ts`, `utils.test.ts`).
+- Backend Pytest suite: 36/36 passed (including new `test_bedrock_converse_discovery_sets_converse_endpoint`).
+- Discovery API verification: Refreshed discovery on the active Bedrock Converse provider (`POST /api/v1/providers/{id}/discover`); verified `sample.endpoint_type == "converse"` and `sample.suggested.endpoint_type == "converse"`.
+
+---
+
+## 2026-09-13 - UI Redesign, Unwanted Trailing Zero Stripping, Edit Step Label Fix, Modern Typography & Project Logo Integration
+
+### Requirements Completed:
+1. **Checkbox & Dropdown Modern UI**:
+   - Replaced raw OS `<input type="checkbox">` and `<select>` with custom, beautifully styled accessible components in `frontend/src/components/ui/primitives.tsx`.
+   - `Checkbox` component includes custom borders, rounded corners, dark/light styling, and `Check` icon from `lucide-react`.
+   - `Select` component features `appearance-none`, custom pointer-events-none `ChevronDown` SVG icon, right padding, and `sizeVariant` ("default" | "sm").
+2. **Strip Down Unwanted Zeros**:
+   - Implemented `stripTrailingZeros` in `frontend/src/lib/utils.ts` and unit tested it in `utils.test.ts`.
+   - Cleaned pricing values across `ModelForm.tsx`, `RegisterModelDrawer.tsx`, `ProviderWizardModal.tsx`, `ModelDetailDrawer.tsx`, and `providers/page.tsx` (`1.000000000000` -> `1`, `0.100000000000` -> `0.1`).
+   - Cleaned discovery pricing fields in `backend/src/tollms/api/providers/service.py` while preserving backend test compatibility.
+3. **Provider Edit Modal Step Label Fix**:
+   - Conditioned `Step {step} of 5` badge and step indicator track on `!isEditing` in `ProviderWizardModal.tsx` so edit mode displays a clean "Edit Provider" header without multi-step wizard badges.
+4. **Modern Typography**:
+   - Replaced default fonts in `layout.tsx` and `globals.css` with `Inter` (`--font-sans`) and `JetBrains_Mono` (`--font-mono`).
+5. **Project Logo Integration (`/tollma.png`)**:
+   - Replaced the placeholder "T" square in `TopBar.tsx` with `/tollma.png`.
+   - Embedded `/tollma.png` prominently in the chat welcome empty state in `app/page.tsx`.
+   - Added `/tollma.png` to the footer of `CommandPalette.tsx`.
+   - Configured `icons` in `app/layout.tsx` metadata to use `/tollma.png` as the application favicon and Apple touch icon.
+
+### Files Modified:
+- `frontend/src/components/ui/primitives.tsx`
+- `frontend/src/lib/utils.ts`
+- `frontend/src/lib/utils.test.ts`
+- `frontend/src/app/providers/components/ModelForm.tsx`
+- `frontend/src/app/providers/components/RegisterModelDrawer.tsx`
+- `frontend/src/app/providers/components/ProviderWizardModal.tsx`
+- `frontend/src/app/providers/components/ModelDetailDrawer.tsx`
+- `frontend/src/app/providers/page.tsx`
+- `frontend/src/app/layout.tsx`
+- `frontend/src/app/globals.css`
+- `frontend/src/components/ui/TopBar.tsx`
+- `frontend/src/app/page.tsx`
+- `frontend/src/components/ui/CommandPalette.tsx`
+- `backend/src/tollms/api/providers/service.py`
+- `backend/src/tollms/services/model_repository/lookup.py`
+
+### Verification:
+- `npx tsc --noEmit`: 0 errors.
+- `npm test`: 17/17 passed (4 test files: `utils.test.ts`, `endpoint.test.ts`, `scope.test.ts`, `api.test.ts`).
+- `docker exec tollms-backend pytest`: 36/36 passed in 7.55s.
+
+---
+
+## 2026-09-13: Logo Scoping and Font Modernization (Space Grotesk)
+
+### Requirements Completed:
+1. **Conversation Page Logo Removal**:
+   - Removed `/tollma.png` from the empty chat state in `frontend/src/app/page.tsx`, restoring the clean `Sparkles` icon badge and typography.
+   - Kept `/tollma.png` exclusively in the persistent top navigation bar (`frontend/src/components/ui/TopBar.tsx`), with dark-mode drop shadow and screen-reader label.
+2. **Font Family Selection (Space Grotesk)**:
+   - Configured `Space_Grotesk` via `next/font/google` in `frontend/src/app/layout.tsx` mapped to `--font-sans` with `display: swap`.
+   - Preserved `JetBrains_Mono` for `--font-mono` across code and monospaced badges.
+   - Clean, geometric, non-cursive typographic aesthetic.
+
+### Files Modified:
+- `frontend/src/app/page.tsx`
+- `frontend/src/app/layout.tsx`
+
+### Verification:
+- `npx tsc --noEmit`: 0 errors.
+- `npm test`: 17/17 passed.
+- `docker exec tollms-backend pytest`: 36/36 passed in 4.16s.

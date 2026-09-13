@@ -34,3 +34,13 @@ export const CREDENTIAL_FIELDS: Record<ProviderType, Array<[string, { label: str
     ["extra_headers", { label: "Extra headers (JSON)", multiline: true, optional: true }],
   ],
 };
+
+export const PROVIDER_DEFAULT_ENDPOINTS: Record<ProviderType, import("@/types").EndpointType> = {
+  OPENAI_RESPONSES: "responses",
+  OPENAI_CHAT: "chat_completions",
+  ANTHROPIC_MESSAGES: "messages",
+  GEMINI: "chat_completions",
+  VERTEX_AI: "chat_completions",
+  BEDROCK_CONVERSE: "converse",
+  CUSTOM: "chat_completions",
+};

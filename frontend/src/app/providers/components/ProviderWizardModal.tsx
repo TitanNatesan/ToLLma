@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   DialogContent,
   Field,
@@ -14,7 +15,8 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
-import { CREDENTIAL_FIELDS, PROVIDER_TYPES } from "@/app/providers/fields";
+import { fmtPrice } from "@/lib/utils";
+import { CREDENTIAL_FIELDS, PROVIDER_DEFAULT_ENDPOINTS, PROVIDER_TYPES } from "@/app/providers/fields";
 import { useProviders, useProviderMutations } from "@/hooks/useRegistry";
 import { useChatStore } from "@/store/chat";
 import {
@@ -24,6 +26,7 @@ import {
 } from "@/services/api";
 import type {
   DraftValidation,
+  EndpointType,
   MappedModel,
   MatchType,
   Provider,
@@ -387,8 +390,30 @@ export function ProviderWizardModal({
         base_url: creds.base_url || undefined,
         model_ids: validation.discovered.map((d) => d.model_id),
       });
+      const discMap = new Map(validation.discovered.map((d) => [d.model_id, d]));
+      const defaultEndpoint = PROVIDER_DEFAULT_ENDPOINTS[type] || "chat_completions";
       setMapped(res.mapped);
-      setForms(Object.fromEntries(res.mapped.map((m) => [m.model_id, fromSuggested(m.suggested, m.repository_model_key ?? "")])));
+      setForms(
+        Object.fromEntries(
+          res.mapped.map((m) => {
+            const disc = discMap.get(m.model_id);
+            const endpoint = (disc?.endpoint_type as EndpointType) || defaultEndpoint;
+            return [
+              m.model_id,
+              fromSuggested(
+                {
+                  ...m.suggested,
+                  endpoint_type: endpoint,
+                  context_window: disc?.context_window ?? m.suggested.context_window,
+                  max_output_tokens: disc?.max_output_tokens ?? m.suggested.max_output_tokens,
+                },
+                m.repository_model_key ?? "",
+                endpoint,
+              ),
+            ];
+          }),
+        ),
+      );
       setSelected(new Set(res.mapped.map((m) => m.model_id)));
     } catch (e) {
       toast.error("Model mapping failed", { description: e instanceof Error ? e.message : "Error" });
@@ -507,8 +532,24 @@ export function ProviderWizardModal({
     try {
       const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
       const matchById = Object.fromEntries(mapped.map((m) => [m.model_id, m]));
+      const defaultEndpoint = PROVIDER_DEFAULT_ENDPOINTS[type] || "chat_completions";
       const models = [...selected].map((id) => {
-        const { provider_id: _omit, ...rest } = toPayload("wizard", forms[id] ?? fromSuggested(matchById[id].suggested, matchById[id].repository_model_key ?? ""));
+        const disc = validation?.discovered?.find((d) => d.model_id === id);
+        const endpoint = (disc?.endpoint_type as EndpointType) || defaultEndpoint;
+        const { provider_id: _omit, ...rest } = toPayload(
+          "wizard",
+          forms[id] ??
+            fromSuggested(
+              {
+                ...matchById[id].suggested,
+                endpoint_type: endpoint,
+                context_window: disc?.context_window ?? matchById[id].suggested.context_window,
+                max_output_tokens: disc?.max_output_tokens ?? matchById[id].suggested.max_output_tokens,
+              },
+              matchById[id].repository_model_key ?? "",
+              endpoint,
+            ),
+        );
         return { ...rest, repository_match: matchById[id].repository_match };
       });
       const res = await registerProvider({
@@ -571,9 +612,11 @@ export function ProviderWizardModal({
                     : "Provider is only registered after step 5 — nothing is saved before that"}
                 </p>
               </div>
-              <Badge variant="outline" className="text-xs font-mono shrink-0 whitespace-nowrap px-2.5 py-1">
-                Step {isEditing ? 1 : step} of 5
-              </Badge>
+              {!isEditing && (
+                <Badge variant="outline" className="text-xs font-mono shrink-0 whitespace-nowrap px-2.5 py-1">
+                  Step {step} of 5
+                </Badge>
+              )}
             </div>
             {!isEditing && (
               <div className="mt-3 flex items-center justify-between text-[11px] font-medium text-zinc-400">
@@ -825,12 +868,11 @@ export function ProviderWizardModal({
                                 className={cn("flex items-start gap-2 rounded-lg border p-2 text-xs", checked ? "border-zinc-300 dark:border-zinc-600" : "border-zinc-200 opacity-70 dark:border-zinc-800")}
                                 data-testid={`wiz-model-${m.model_id}`}
                               >
-                                <input
-                                  type="checkbox"
+                                <Checkbox
                                   checked={checked}
                                   onChange={() => toggle(m.model_id)}
                                   data-testid={`wiz-select-${m.model_id}`}
-                                  className="mt-1"
+                                  className="mt-0.5"
                                   aria-label={`Select ${m.model_id}`}
                                 />
                                 <div className="min-w-0 flex-1">
@@ -849,7 +891,7 @@ export function ProviderWizardModal({
                                     {m.model_id}
                                     {f?.context_window ? ` · ctx ${Number(f.context_window).toLocaleString()}` : ""}
                                     {f?.max_output_tokens ? ` · max ${Number(f.max_output_tokens).toLocaleString()}` : ""}
-                                    {` · in $${f?.input_price ?? 0}/1M · out $${f?.output_price ?? 0}/1M`}
+                                    {` · in ${fmtPrice(f?.input_price)}/1M · out ${fmtPrice(f?.output_price)}/1M`}
                                   </div>
                                 </div>
                                 <Button size="sm" variant="ghost" onClick={() => setEditingModelId(m.model_id)} data-testid={`wiz-edit-${m.model_id}`} title="Edit model" className="h-7 w-7 p-0">
@@ -925,7 +967,7 @@ export function ProviderWizardModal({
                                       {scopeInfo.label}
                                     </span>
                                     <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 shrink-0">
-                                      {f?.endpoint_type ?? "chat_completions"}
+                                      {f?.endpoint_type ?? PROVIDER_DEFAULT_ENDPOINTS[type] ?? "chat_completions"}
                                     </Badge>
                                   </div>
                                   <Button
@@ -954,10 +996,10 @@ export function ProviderWizardModal({
                                     </span>
                                   )}
                                   <span>
-                                    in: <strong className="text-zinc-700 dark:text-zinc-300">${f?.input_price ?? 0}/1M</strong>
+                                    in: <strong className="text-zinc-700 dark:text-zinc-300">{fmtPrice(f?.input_price)}/1M</strong>
                                   </span>
                                   <span>
-                                    out: <strong className="text-zinc-700 dark:text-zinc-300">${f?.output_price ?? 0}/1M</strong>
+                                    out: <strong className="text-zinc-700 dark:text-zinc-300">{fmtPrice(f?.output_price)}/1M</strong>
                                   </span>
                                 </div>
 

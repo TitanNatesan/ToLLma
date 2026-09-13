@@ -9,9 +9,11 @@ import {
   CardContent,
   GhostButton,
   SearchInput,
+  Select,
   StatusBadge,
   Switch,
 } from "@/components/ui";
+import { fmtPrice } from "@/lib/utils";
 import {
   useModelMutations,
   useModels,
@@ -55,9 +57,7 @@ function timeAgo(iso: string | null): string {
 }
 
 function fmtPriceShort(v: unknown): string {
-  const n = typeof v === "string" || typeof v === "number" ? parseFloat(String(v)) : NaN;
-  if (isNaN(n) || n === 0) return "$0";
-  return `$${String(v)}`;
+  return fmtPrice(v);
 }
 
 const MATCH_BADGE: Record<string, string> = {
@@ -128,7 +128,8 @@ export default function ProvidersPage() {
       return false;
     if (availableCap !== "ALL" && (m.suggested?.[availableCap] as unknown) !== true) return false;
     if (availableType !== "ALL" && m.endpoint_type !== availableType) return false;
-    if (availableCtx > 0 && !(m.context_window && m.context_window >= availableCtx)) return false;
+    const ctxVal = m.context_window ?? (m.suggested?.context_window ? Number(m.suggested.context_window) : null);
+    if (availableCtx > 0 && !(ctxVal && ctxVal >= availableCtx)) return false;
     return true;
   });
   const hiddenCount = available.length - filteredAvailable.length;
@@ -395,42 +396,48 @@ export default function ProvidersPage() {
                   data-testid="available-search"
                 />
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  <select
-                    value={availableCap}
-                    onChange={(e) => setAvailableCap(e.target.value)}
-                    className="h-7 rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-                    data-testid="available-cap"
-                    aria-label="Filter by capability"
-                  >
-                    <option value="ALL">All capabilities</option>
-                    {CAPS.map(([k, label]) => (
-                      <option key={k} value={k}>{label}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={availableType}
-                    onChange={(e) => setAvailableType(e.target.value)}
-                    className="h-7 rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-                    data-testid="available-type"
-                    aria-label="Filter by model type"
-                  >
-                    <option value="ALL">All types</option>
-                    <option value="responses">responses</option>
-                    <option value="chat_completions">chat_completions</option>
-                    <option value="messages">messages</option>
-                    <option value="converse">converse</option>
-                  </select>
-                  <select
-                    value={availableCtx}
-                    onChange={(e) => setAvailableCtx(Number(e.target.value))}
-                    className="h-7 rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-                    data-testid="available-ctx"
-                    aria-label="Filter by context window"
-                  >
-                    {CTX_OPTIONS.map((o) => (
-                      <option key={o.label} value={o.min}>{o.label}</option>
-                    ))}
-                  </select>
+                  <div className="w-36">
+                    <Select
+                      sizeVariant="sm"
+                      value={availableCap}
+                      onChange={(e) => setAvailableCap(e.target.value)}
+                      data-testid="available-cap"
+                      aria-label="Filter by capability"
+                    >
+                      <option value="ALL">All capabilities</option>
+                      {CAPS.map(([k, label]) => (
+                        <option key={k} value={k}>{label}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div className="w-32">
+                    <Select
+                      sizeVariant="sm"
+                      value={availableType}
+                      onChange={(e) => setAvailableType(e.target.value)}
+                      data-testid="available-type"
+                      aria-label="Filter by model type"
+                    >
+                      <option value="ALL">All types</option>
+                      <option value="responses">responses</option>
+                      <option value="chat_completions">chat_completions</option>
+                      <option value="messages">messages</option>
+                      <option value="converse">converse</option>
+                    </Select>
+                  </div>
+                  <div className="w-32">
+                    <Select
+                      sizeVariant="sm"
+                      value={availableCtx}
+                      onChange={(e) => setAvailableCtx(Number(e.target.value))}
+                      data-testid="available-ctx"
+                      aria-label="Filter by context window"
+                    >
+                      {CTX_OPTIONS.map((o) => (
+                        <option key={o.label} value={o.min}>{o.label}</option>
+                      ))}
+                    </Select>
+                  </div>
                 </div>
 
                 <div className="mt-3 grid gap-2">
@@ -459,7 +466,10 @@ export default function ProvidersPage() {
                         <p className="text-[11px] text-zinc-500">
                           {m.model_id} · in {fmtPriceShort(m.suggested?.input_price)}/1M · out{" "}
                           {fmtPriceShort(m.suggested?.output_price)}/1M
-                          {m.context_window ? ` · ctx ${(m.context_window / 1000).toFixed(0)}k` : ""}
+                          {(() => {
+                            const c = m.context_window ?? (m.suggested?.context_window ? Number(m.suggested.context_window) : null);
+                            return c ? ` · ctx ${(c / 1000).toFixed(0)}k` : "";
+                          })()}
                         </p>
                       </div>
                       <div className="flex gap-1.5">
@@ -585,7 +595,7 @@ export default function ProvidersPage() {
                         </div>
 
                         <p className="text-[11px] text-zinc-500">
-                          {m.model_id} · in ${m.input_price}/1M · out ${m.output_price}/1M
+                          {m.model_id} · in {fmtPrice(m.input_price)}/1M · out {fmtPrice(m.output_price)}/1M
                           {m.context_window ? ` · ctx ${(m.context_window / 1000).toFixed(0)}k` : ""}
                           {m.max_output_tokens ? ` · max ${(m.max_output_tokens / 1000).toFixed(0)}k` : ""}
                         </p>

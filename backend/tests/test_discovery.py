@@ -147,6 +147,42 @@ def test_validate_persists_but_discover_only_caches(db: Session, provider_factor
     assert len(list_models(db, provider_id=uuid.UUID(p["id"]))) == 1
 
 
+def test_bedrock_converse_discovery_sets_converse_endpoint(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tollms.api.providers.service import create_provider
+    from tollms.api.providers.schemas import ProviderCreate
+    from tollms.services.gateway.adapters.base import DiscoveredModel
+
+    p = create_provider(
+        db,
+        ProviderCreate(
+            name="BedrockTest",
+            provider_type=ProviderType.BEDROCK_CONVERSE,
+            credentials={"access_key": "ak", "secret_key": "sk", "region": "us-east-1"},
+        ),
+    )
+
+    async def _mock_discover(self):
+        return [
+            DiscoveredModel(
+                model_id="anthropic.claude-3-haiku-20240307-v1:0",
+                name="Claude 3 Haiku",
+                endpoint_type="converse",
+                context_window=200000,
+                max_output_tokens=4096,
+            )
+        ]
+
+    monkeypatch.setattr(BedrockAdapter, "discover_models", _mock_discover)
+
+    res = asyncio.run(discover_provider_models(db, p.id))
+    assert res.total == 1
+    info = res.discovered[0]
+    assert info.endpoint_type == "converse"
+    assert info.suggested["endpoint_type"] == "converse"
+    assert info.context_window == 200000
+    assert info.suggested["context_window"] == 200000
+
+
 async def _read_provider(db: Session, pid: str) -> dict:
     from tollms.api.providers.service import get_provider
 

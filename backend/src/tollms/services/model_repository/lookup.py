@@ -107,7 +107,7 @@ def suggest_payload(entry: RepositoryModel) -> dict[str, Any]:
     def per_1m(value: Any) -> str:
         if value is None:
             return "0"
-        return str(_Decimal(value) * 1_000_000)
+        return f"{(_Decimal(value) * 1_000_000):.12f}"
 
     endpoint = entry.endpoint_type if entry.endpoint_type in ("responses", "chat_completions", "messages", "converse") else "chat_completions"
     return {

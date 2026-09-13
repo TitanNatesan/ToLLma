@@ -189,9 +189,13 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           </Command.List>
 
           <div className="border-t border-zinc-200 px-3 py-2 dark:border-zinc-800 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
-              <Sparkles className="size-3 text-zinc-400" />
-              <span>ToLLma AI Workspace</span>
+            <div className="flex items-center gap-2 text-[10px] text-zinc-400">
+              <img
+                src="/tollma.png"
+                alt="ToLLma"
+                className="h-3.5 w-auto object-contain dark:drop-shadow-[0_1px_1px_rgba(255,255,255,0.3)]"
+              />
+              <span className="font-medium">AI Workspace</span>
             </div>
             <p className="text-[10px] text-zinc-400 font-mono">
               <kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">↑↓</kbd> navigate ·

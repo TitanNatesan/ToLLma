@@ -7,6 +7,7 @@ import * as SeparatorPrimitive from "@radix-ui/react-separator";
 import * as DialogPrimitives from "@radix-ui/react-dialog";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { Check, ChevronDown } from "lucide-react";
 import { Toaster as SonnerToaster } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -140,17 +141,102 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   );
 }
 
-export function Select({ className, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
+export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+  sizeVariant?: "default" | "sm";
+  wrapperClassName?: string;
+}
+
+export function Select({
+  className,
+  wrapperClassName,
+  sizeVariant = "default",
+  children,
+  disabled,
+  ...props
+}: SelectProps) {
   return (
-    <select
+    <div className={cn("relative inline-flex w-full items-center", disabled && "opacity-50", wrapperClassName)}>
+      <select
+        disabled={disabled}
+        className={cn(
+          "w-full appearance-none rounded-md border text-zinc-900 transition-colors cursor-pointer",
+          "border-zinc-300 bg-white hover:border-zinc-400 shadow-xs",
+          "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400/30 focus-visible:border-zinc-400 dark:focus-visible:ring-zinc-500/30",
+          "disabled:cursor-not-allowed",
+          sizeVariant === "sm" ? "h-7.5 pl-2.5 pr-7 text-xs" : "h-9 pl-3 pr-8 text-sm",
+          "[&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-900 dark:[&>option]:text-zinc-100",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </select>
+      <ChevronDown
+        className={cn(
+          "pointer-events-none absolute right-2 text-zinc-400 dark:text-zinc-500 shrink-0",
+          sizeVariant === "sm" ? "size-3.5" : "size-4",
+        )}
+      />
+    </div>
+  );
+}
+
+export interface CheckboxProps
+  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
+  label?: React.ReactNode;
+}
+
+export function Checkbox({
+  className,
+  label,
+  checked,
+  disabled,
+  id,
+  ...props
+}: CheckboxProps) {
+  return (
+    <label
+      htmlFor={id}
       className={cn(
-        "flex h-9 rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500",
-        "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900",
+        "group inline-flex items-center gap-2 text-xs select-none transition-colors",
+        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
         className,
       )}
-      {...props}
-    />
+    >
+      <div className="relative flex items-center justify-center">
+        <input
+          id={id}
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          className="peer sr-only"
+          {...props}
+        />
+        <div
+          className={cn(
+            "flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
+            "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900",
+            "group-hover:border-zinc-400 dark:group-hover:border-zinc-500",
+            "peer-focus-visible:ring-2 peer-focus-visible:ring-zinc-500/40 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
+            "peer-checked:border-zinc-900 peer-checked:bg-zinc-900 peer-checked:text-white",
+            "dark:peer-checked:border-zinc-100 dark:peer-checked:bg-zinc-100 dark:peer-checked:text-zinc-900",
+          )}
+        >
+          <Check
+            className={cn(
+              "size-3 stroke-[3] transition-transform duration-150",
+              checked ? "scale-100 opacity-100" : "scale-50 opacity-0",
+            )}
+          />
+        </div>
+      </div>
+      {label && (
+        <span className="text-zinc-700 group-hover:text-zinc-900 dark:text-zinc-300 dark:group-hover:text-zinc-100 font-medium">
+          {label}
+        </span>
+      )}
+    </label>
   );
 }
 

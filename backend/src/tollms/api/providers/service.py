@@ -153,13 +153,27 @@ async def discover_provider_models(
         # Provider identity wins; repository match supplies pricing/capabilities.
         suggested["model_id"] = d.model_id
         suggested["name"] = d.name or d.model_id
+        if d.endpoint_type:
+            suggested["endpoint_type"] = d.endpoint_type
+        ctx = d.context_window if d.context_window is not None else suggested.get("context_window")
+        max_out = d.max_output_tokens if d.max_output_tokens is not None else suggested.get("max_output_tokens")
+        for price_key in ("input_price", "output_price", "cache_read_price", "cache_write_price"):
+            val = suggested.get(price_key)
+            if val is not None:
+                s_val = str(val)
+                if "." in s_val:
+                    suggested[price_key] = s_val.rstrip("0").rstrip(".") or "0"
+        if ctx is not None:
+            suggested["context_window"] = ctx
+        if max_out is not None:
+            suggested["max_output_tokens"] = max_out
         infos.append(
             {
                 "model_id": d.model_id,
                 "name": d.name or d.model_id,
                 "endpoint_type": d.endpoint_type,
-                "context_window": d.context_window,
-                "max_output_tokens": d.max_output_tokens,
+                "context_window": ctx,
+                "max_output_tokens": max_out,
                 "repository_model_key": match.get("repository_model_key"),
                 "match_type": match.get("match_type", "fallback"),
                 "suggested": suggested,

@@ -138,7 +138,7 @@ export default function Home() {
         >
           {allMessages.length === 0 && !streaming && (
             <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
-              <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 shadow-inner">
+              <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
                 <Sparkles className="size-7" />
               </div>
               <h1 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200">
