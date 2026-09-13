@@ -631,3 +631,45 @@ Verification:
 - `npx tsc --noEmit`: 0 errors.
 - `npm test`: 17/17 passed.
 - `docker exec tollms-backend pytest`: 36/36 passed in 4.16s.
+
+---
+
+## 2026-09-13: Feature-Rich Markdown Renderer for Assistant Responses
+
+### Requirements Completed:
+1. **Scoped Response-Only Markdown Renderer**:
+   - Kept user request messages untouched (`isUser ? <MessageContent /> : <ResponseMarkdown />` in `MessageView.tsx`).
+   - Built a comprehensive, modular `ResponseMarkdown` component specifically for assistant response messages in `frontend/src/app/components/ResponseMarkdown.tsx`.
+2. **Feature-Rich Code Blocks**:
+   - Syntax highlighting with language label badges and line counts.
+   - Animated "Copy" button with checkmark feedback.
+   - "Download" button to save snippets directly to files with inferred extension (`.ts`, `.py`, `.sql`, etc.).
+   - "Wrap" lines toggle button (`WrapText`).
+   - Fixed text extraction so `rehype-highlight` span trees are copied and downloaded accurately.
+3. **GitHub-Style Markdown Alerts (Callouts)**:
+   - Intercepts blockquotes with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, and `[!CAUTION]`.
+   - Renders themed callout cards with matching colors, border accents, Lucide icons (`Info`, `Lightbulb`, `AlertCircle`, `AlertTriangle`, `ShieldAlert`), and clean title headers.
+4. **Rich Interactive Tables**:
+   - Styled table container with headers and horizontal overflow scroll.
+   - "Copy TSV" action button that copies tabular data directly formatted for Excel or Google Sheets.
+   - Alternating row styling and hover highlighting.
+5. **Task Lists / Checkboxes**:
+   - Custom styled checkboxes with emerald checkmarks for `- [x]` and `- [ ]` lists.
+6. **Thinking Process Accordion (`<think>...</think>`)**:
+   - DeepSeek R1 reasoning block with word count, thinking indicator, copy thought button, and smooth `framer-motion` collapsible animation.
+7. **Safe External Links & Refined Typography**:
+   - Opens links in new tab (`target="_blank" rel="noopener noreferrer"`) with `ExternalLink` icon.
+   - Enhanced typographic hierarchy for headings (`h1`-`h4`), blockquotes, horizontal rules, and inline code.
+
+### Files Created:
+- `frontend/src/app/components/ResponseMarkdown.tsx`
+- `frontend/src/app/components/__tests__/ResponseMarkdown.test.ts`
+
+### Files Modified:
+- `frontend/src/app/components/MessageView.tsx`
+- `frontend/src/app/globals.css`
+
+### Verification:
+- `npx tsc --noEmit`: 0 errors.
+- `npm test`: 19/19 passed across 5 test suites.
+- `docker exec tollms-backend pytest`: 36/36 passed in 3.86s.

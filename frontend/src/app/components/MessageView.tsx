@@ -17,6 +17,7 @@ import {
   User,
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
+import { ResponseMarkdown } from "./ResponseMarkdown";
 import type { ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
@@ -248,7 +249,11 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
               : "rounded-tl-sm border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900",
           )}
         >
-          <MessageContent content={message.content} isStreaming={isStreaming} />
+          {isUser ? (
+            <MessageContent content={message.content} isStreaming={isStreaming} />
+          ) : (
+            <ResponseMarkdown content={message.content} isStreaming={isStreaming} />
+          )}
         </div>
 
         {/* Action bar */}
