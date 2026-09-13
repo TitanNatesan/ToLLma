@@ -9,6 +9,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from tollms.core.exceptions import NotFoundError
+from tollms.services.cache import constants as cache_ttl
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.manager import cache_delete_sync, cache_get_sync, cache_set_sync
 from tollms.models.conversation import Conversation
 from tollms.models.message import Message, Role
 from tollms.api.conversations.schemas import (
@@ -89,6 +92,7 @@ def delete_conversation(db: Session, conversation_id: uuid.UUID) -> None:
     conv.is_deleted = True
     conv.deleted_at = datetime.now(timezone.utc)
     db.commit()
+    cache_delete_sync(cache_keys.usage_totals(conversation_id))
     logger.info("conversation soft-deleted: %s", conversation_id)
 
 
@@ -134,6 +138,7 @@ def add_message(
     db.add(msg)
     db.commit()
     db.refresh(msg)
+    cache_delete_sync(cache_keys.usage_totals(conversation_id))
     return msg
 
 
@@ -148,7 +153,32 @@ def list_messages(db: Session, conversation_id: uuid.UUID) -> list[Message]:
 
 
 def usage_totals(db: Session, conversation_id: uuid.UUID) -> UsageTotals:
-    get_conversation(db, conversation_id)
+    """Aggregate message usage + cost. Cached for cache_ttl.CONVERSATION;
+    invalidated by add_message/delete_conversation."""
+    get_conversation(db, conversation_id)  # 404 semantics preserved; cheap PK get
+    key = cache_keys.usage_totals(conversation_id)
+    hit = cache_get_sync(key)
+    if isinstance(hit, dict):
+        try:
+            return UsageTotals(**hit)
+        except Exception:
+            logger.warning("conversation %s usage: corrupt cache entry", conversation_id, exc_info=True)
+    result = _usage_totals_uncached(db, conversation_id)
+    cache_set_sync(key, _decimal_safe(result.model_dump()), ttl=cache_ttl.CONVERSATION)
+    return result
+
+
+def _decimal_safe(value):  # pydantic may emit Decimal; cache stores exact strings
+    if isinstance(value, dict):
+        return {k: _decimal_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_decimal_safe(v) for v in value]
+    if isinstance(value, Decimal):
+        return str(value)
+    return value
+
+
+def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTotals:
     scope = [Message.conversation_id == conversation_id, Message.is_deleted.is_(False)]
     row = db.execute(
         select(

@@ -6,6 +6,9 @@ import os
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from tollms.db.session import SessionLocal
+from tollms.services.cache import constants as cache_ttl
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.locks import locked_sync
 from tollms.services.model_repository.sync import run_sync
 
 logger = logging.getLogger(__name__)
@@ -14,14 +17,18 @@ _scheduler: BackgroundScheduler | None = None
 
 
 def _sync_job() -> None:
-    db = SessionLocal()
-    try:
-        run = run_sync(db)
-        logger.info("scheduled model repository sync finished: %s", run.status)
-    except Exception:
-        logger.exception("scheduled model repository sync crashed")
-    finally:
-        db.close()
+    with locked_sync(cache_keys.LOCK_SCHEDULER, cache_ttl.LOCK_SCHEDULER * 1000) as acquired:
+        if not acquired:
+            logger.warning("scheduled model repository sync skipped: previous run still holds the lock")
+            return
+        db = SessionLocal()
+        try:
+            run = run_sync(db)
+            logger.info("scheduled model repository sync finished: %s", run.status)
+        except Exception:
+            logger.exception("scheduled model repository sync crashed")
+        finally:
+            db.close()
 
 
 def start() -> None:

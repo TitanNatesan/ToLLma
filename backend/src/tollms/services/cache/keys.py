@@ -1,0 +1,91 @@
+"""Central key registry. No hardcoded cache keys anywhere else.
+
+Layout: ``tollma:<section>:<identifier>``. Sections double as
+invalidation scopes (``tollma:<section>:*``).
+"""
+
+import hashlib
+
+PREFIX = "tollma"
+
+
+def _key(section: str, identifier: str) -> str:
+    return f"{PREFIX}:{section}:{identifier}"
+
+
+def section_pattern(section: str) -> str:
+    return f"{PREFIX}:{section}:*"
+
+
+# --- providers -------------------------------------------------------------
+def provider(provider_id: object) -> str:
+    return _key("provider", str(provider_id))
+
+
+def provider_models(provider_id: object) -> str:
+    return _key("provider_models", str(provider_id))
+
+
+def provider_validation(provider_id: object) -> str:
+    return _key("provider_validation", str(provider_id))
+
+
+def provider_refresh_lock(provider_id: object) -> str:
+    return _key("lock", f"provider_refresh:{provider_id}")
+
+
+# --- registered models / gateway metadata ----------------------------------
+def model(model_id: object) -> str:
+    return _key("model", str(model_id))
+
+
+def repository_model(repo_key: str) -> str:
+    return _key("repository", f"model:{repo_key}")
+
+
+def repository_match(provider_type: str | None, model_id: str) -> str:
+    return _key("repository", f"match:{(provider_type or 'any').lower()}:{model_id}")
+
+
+def repository_search(query: str, provider_hint: str | None = None) -> str:
+    digest = hashlib.sha1(f"{(provider_hint or '').lower()}|{query.strip().lower()}".encode()).hexdigest()[:16]
+    return _key("repository", f"search:{digest}")
+
+
+# --- conversations ---------------------------------------------------------
+def conversation(conversation_id: object) -> str:
+    return _key("conversation", str(conversation_id))
+
+
+def conversation_messages(conversation_id: object) -> str:
+    return _key("conversation", f"messages:{conversation_id}")
+
+
+def usage_totals(conversation_id: object) -> str:
+    return _key("conversation", f"usage:{conversation_id}")
+
+
+# --- future SaaS surface (reserved; no writers yet) ------------------------
+def gateway_response(request_hash: str) -> str:
+    return _key("gateway", f"response:{request_hash}")
+
+
+def provider_usage(provider_id: object) -> str:
+    return _key("usage", str(provider_id))
+
+
+def budget(organization_id: object) -> str:
+    return _key("budget", str(organization_id))
+
+
+def virtual_key(key_id: object) -> str:
+    return _key("virtual_key", str(key_id))
+
+
+def organization_settings(organization_id: object) -> str:
+    return _key("org", f"settings:{organization_id}")
+
+
+# --- distributed locks -----------------------------------------------------
+LOCK_REPO_SYNC = _key("lock", "model_repo_sync")
+LOCK_SCHEDULER = _key("lock", "model_repo_scheduler")

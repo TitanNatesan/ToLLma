@@ -45,9 +45,11 @@ ONLY engine/infrastructure code consumable by multiple APIs:
 
 ```text
 services/
+├── cache/                client.py, manager.py, keys.py, constants.py,
+│                         decorators.py, locks.py, serializers.py, metrics.py
 ├── gateway/            adapters/, factory.py, costing.py
 └── model_repository/   sync.py, lookup.py, mapping.py, sources.py,
-                        canonical.py, scheduler.py
+                         canonical.py, scheduler.py
 ```
 
 Rules:
@@ -81,7 +83,7 @@ One module per table group: `conversation.py`, `message.py`, `provider.py`,
 ## Invariants (CI-verifiable)
 
 - No `tollms.modules` package and no `tollms.modules.*` imports anywhere.
-- `docker compose exec backend pytest -q` passes (currently 35 tests).
+- `docker compose exec backend pytest -q` passes (currently 51 tests).
 - `docker compose exec backend alembic check` reports no operations.
 - Every API module independently maintainable: no giant service files,
   no giant routers, no circular imports.

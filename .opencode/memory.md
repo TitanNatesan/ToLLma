@@ -449,6 +449,42 @@ Verification: pytest 35/35; Playwright 35 passed + 1 pre-existing skip; vitest 5
 tsc clean; next build success. Pre-existing lint errors (TopBar/ProviderWizardModal
 setState-in-effect, identical on stashed HEAD) left untouched.
 
+## 2026-09-13 - Production Valkey cache layer (core infrastructure)
+
+New services/cache engine (Valkey via redis.asyncio, PostgreSQL stays source of truth):
+constants.py (TTL registry: validation 300s, discovery 900s, conversation 300s,
+repo search 1h, repo intelligence 24h, locks), keys.py (tollma: registry + lock names,
+future SaaS keys reserved), serializers.py (pydantic/dataclass/datetime/Decimal/UUID),
+client.py (pooled connect, loop-affinity reconnect, separate bridge-loop client,
+tolerant ping/info), manager.py (get/set/delete/exists/mget/mset/ttl/expire/
+invalidate_pattern + sync bridge for sync service code + graceful bypass), decorators.py
+(@cached/@cache_invalidate/@cache_refresh), locks.py (SET NX PX + Lua release, async
+locked + sync locked_sync), metrics.py (hits/misses/writes/invalidations/errors,
+hit_rate, latency), __init__.py exports.
+Integrations: provider validate (cache-first 300s, test transports bypass) + discovery
+(cache-first 900s behind provider_refresh lock, live registration recompute) in
+api/providers/service.py with invalidation on update/delete (secrets never cached);
+find_for_model + lookup entry-ID caching in lookup engine (covers gateway metadata +
+repository lookups; sync invalidates repository:*); usage_totals cache (300s,
+invalidated by add_message/delete); run_sync wrapped by repo-sync lock (busy -> 422)
+in api/repository/service.py; scheduler _sync_job behind scheduler lock (skips when
+busy); GET /health/cache (healthy/degraded + hit_rate + keys + metrics + server info);
+lifespan connect/disconnect (loop-safe); compose valkey service pinned to
+valkey/valkey:8@sha256:3fbd... (AOF volume, healthcheck; old :latest RDB v80 volume
+wiped — cache data is rebuildable); VALKEY_*/CACHE_ENABLED in config + .env(.example);
+redis runtime dep + fakeredis dev dep, uv.lock regenerated.
+Bugs found by testing: sync-bridge threading.Lock self-deadlock (RLock fix);
+redis.asyncio loop affinity across asyncio.run/TestClient portals/bridge thread
+(reconnect-on-loop-change + dedicated bridge client + loop-safe disconnect);
+two test bugs (shared FakeRedis instance, messages route).
+Tests: tests/test_cache.py (15: manager, decorators, provider validation/discovery,
+update invalidation, repo match, sync invalidation, busy lock, contention, scope,
+usage, health, exports) + conftest autouse Valkey flush + metrics reset.
+Verification: pytest 51/51 in ~6s (per-test -v progress); alembic check clean;
+GET /health/cache healthy (valkey 8.1.10); perf find_for_model 12.63->2.58ms (5x),
+usage_totals 37.58->7.14ms (5x); e2e discovery/validation/providers 3/3 green;
+all compose services healthy.
+
 ## 2026-09-13 - Prevent Browser Password Autofill on Provider Credential Inputs
 
 Requirement: Disable browser password manager autofill / username suggestion dropdowns on all provider credentials fields (Step 2 and Edit mode in the Provider connection modal).

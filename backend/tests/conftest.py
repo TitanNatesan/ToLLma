@@ -61,6 +61,20 @@ def client(db: Session):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def _flush_cache():
+    """Keep cache-using tests hermetic: Valkey never leaks state between tests."""
+    yield
+    try:
+        from tollms.services.cache.manager import cache_invalidate_sync
+        from tollms.services.cache.metrics import metrics
+
+        cache_invalidate_sync("tollma:*")
+        metrics.reset()
+    except Exception:
+        pass
+
+
 @pytest.fixture()
 def provider_factory(client: TestClient):
     def _make(name: str = "P", ptype: str = "CUSTOM", creds: dict | None = None, **kw) -> dict:

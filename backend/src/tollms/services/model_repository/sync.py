@@ -12,6 +12,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from tollms.models.model_repository import RepositoryModel, RepositorySource, SyncRun
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.manager import cache_invalidate_sync
 from tollms.services.model_repository.canonical import canonicalize
 from tollms.services.model_repository.sources import (
     LITELLM_URL,
@@ -195,6 +197,8 @@ def run_sync(
     run.finished_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(run)
+    # Repository rows changed (or were re-seen): cached matches/searches rebuild lazily.
+    cache_invalidate_sync(cache_keys.section_pattern("repository"))
     logger.info(
         "model repository sync %s: +%s ~%s -%s errors=%s", run.id, created, updated, deactivated, len(errors)
     )

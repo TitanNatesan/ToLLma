@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     postgres_host: str
     postgres_port: int
 
+    # Valkey cache (optional: graceful bypass when unreachable/disabled)
+    valkey_host: str = "localhost"
+    valkey_port: int = 6379
+    valkey_password: str = ""
+    valkey_db: int = 0
+    cache_enabled: bool = True
+
     # Logging
     log_level: str = "INFO"
 

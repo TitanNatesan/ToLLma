@@ -17,14 +17,17 @@ from tollms.api.providers.router import router as providers_router
 from tollms.api.repository.router import router as repository_router
 from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
+from tollms.services import cache as cache_service
 from tollms.services.model_repository import scheduler as repository_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    await cache_service.connect()
     repository_scheduler.start()
     yield
     repository_scheduler.shutdown()
+    await cache_service.disconnect()
 
 
 def create_app() -> FastAPI:

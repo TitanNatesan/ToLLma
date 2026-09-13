@@ -24,10 +24,25 @@ services:
     ports: [ "${BACKEND_PORT}:8000" ]
     depends_on:
       postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
     volumes: [ "./backend:/app" ]
     healthcheck:
       test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)\"" ]
       interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
+
+  valkey:
+    image: valkey/valkey:8@sha256:3fbd2e3e4b6e85e046c1e7c215e8f79087bc0357789184305806664e320996f3
+    container_name: tollms-valkey
+    restart: unless-stopped
+    ports: [ "${VALKEY_PORT}:6379" ]
+    volumes: [ valkey_data:/data ]
+    command: [ valkey-server, --appendonly, "yes" ]
+    healthcheck:
+      test: [ "CMD", "valkey-cli", "ping" ]
+      interval: 5s
       timeout: 3s
       retries: 5
       start_period: 2s
@@ -50,5 +65,6 @@ services:
 
 volumes:
   postgres_data:
+  valkey_data:
   frontend_node_modules:
   frontend_next:

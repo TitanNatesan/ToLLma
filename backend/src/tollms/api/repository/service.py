@@ -8,8 +8,12 @@ from sqlalchemy.orm import Session
 
 from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.models.model_repository import RepositoryModel, SyncRun
+from tollms.services.cache import constants as cache_ttl
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.locks import locked_sync
 from tollms.services.model_repository.lookup import find_for_model, lookup, stats, suggest_payload
-from tollms.services.model_repository.sync import CAPABILITY_FIELDS, run_sync
+from tollms.services.model_repository.sync import CAPABILITY_FIELDS
+from tollms.services.model_repository.sync import run_sync as _engine_run_sync
 
 __all__ = [
     "find_for_model",
@@ -21,6 +25,14 @@ __all__ = [
     "list_entries",
     "sync_history",
 ]
+
+
+def run_sync(db: Session, **kwargs):
+    """Manual sync trigger behind the repo-sync lock (busy -> 422, never stacked)."""
+    with locked_sync(cache_keys.LOCK_REPO_SYNC, cache_ttl.LOCK_REPO_SYNC * 1000) as acquired:
+        if not acquired:
+            raise ValidationError("model repository sync already running")
+        return _engine_run_sync(db, **kwargs)
 
 
 def get_entry(db: Session, entry_id: object) -> RepositoryModel:

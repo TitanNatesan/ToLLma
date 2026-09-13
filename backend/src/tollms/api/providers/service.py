@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session
 
 from tollms.core.crypto import decrypt, encrypt, mask
 from tollms.core.exceptions import NotFoundError, ValidationError
+from tollms.services.cache import constants as cache_ttl
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.locks import locked
+from tollms.services.cache.manager import cache_invalidate_sync, get_manager
 from tollms.services.gateway.factory import build_adapter
 from tollms.models.registered_model import AIModel
 from tollms.models.provider import Provider, ProviderType
@@ -31,6 +35,15 @@ def masked_credentials(provider: Provider) -> dict[str, str]:
 
 def decrypted_credentials(provider: Provider) -> dict:
     return json.loads(decrypt(provider.credentials_encrypted))
+
+
+def _invalidate_provider_cache(provider_id: uuid.UUID) -> None:
+    """Drop cached validation/discovery/model state. Secrets are never cached."""
+    cache_invalidate_sync(
+        cache_keys.provider(provider_id),
+        cache_keys.provider_models(provider_id),
+        cache_keys.provider_validation(provider_id),
+    )
 
 
 def get_provider(db: Session, provider_id: uuid.UUID) -> Provider:
@@ -84,6 +97,7 @@ def update_provider(db: Session, provider_id: uuid.UUID, data: ProviderUpdate) -
         provider.is_active = data.is_active
     db.commit()
     db.refresh(provider)
+    _invalidate_provider_cache(provider.id)
     logger.info("provider updated: %s", provider.id)
     return provider
 
@@ -94,24 +108,43 @@ def delete_provider(db: Session, provider_id: uuid.UUID) -> None:
     provider.deleted_at = datetime.now(timezone.utc)
     provider.is_active = False
     db.commit()
+    _invalidate_provider_cache(provider.id)
     logger.info("provider soft-deleted: %s", provider.id)
 
 
 async def validate_provider(
     db: Session, provider_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None = None
 ) -> tuple[bool, str, float]:
-    """Validate via the adapter and persist the result on the provider."""
+    """Validate via the adapter and persist the result on the provider.
+
+    Fresh validations are cached for cache_ttl.VALIDATION seconds; cache
+    hits return the last result without re-probing or rewriting the DB.
+    Calls with an explicit transport (tests) always probe live.
+    """
     provider = get_provider(db, provider_id)
+    manager = get_manager()
+    if transport is None:
+        hit = await manager.get(cache_keys.provider_validation(provider.id))
+        if isinstance(hit, dict) and "valid" in hit:
+            logger.info("provider %s validation: cache hit", provider.id)
+            return bool(hit["valid"]), str(hit.get("message", "")), float(hit.get("latency_ms", 0))
     adapter = build_adapter(provider, None, decrypted_credentials(provider), transport)
     try:
         valid, message, latency = await adapter.validate_credentials()
     except Exception as e:
         logger.exception("provider %s validation crashed", provider.id)
         valid, message, latency = False, f"validation failed: {e}", 0
+    checked_at = datetime.now(timezone.utc)
     provider.validation_status = "valid" if valid else "invalid"
     provider.validation_message = message
-    provider.last_validated_at = datetime.now(timezone.utc)
+    provider.last_validated_at = checked_at
     db.commit()
+    if transport is None:
+        await manager.set(
+            cache_keys.provider_validation(provider.id),
+            {"valid": valid, "message": message, "latency_ms": latency, "checked_at": checked_at.isoformat()},
+            ttl=cache_ttl.VALIDATION,
+        )
     logger.info("provider %s validation: valid=%s (%s)", provider.id, valid, message)
     return valid, message, latency
 
@@ -124,19 +157,38 @@ async def discover_provider_models(
     Fetches the current model list from the provider, enriches each entry with
     repository intelligence (pricing/capabilities/match type), and stores the
     result on provider metadata for the Available/Registered panels.
+
+    Fresh results are cached for cache_ttl.DISCOVERY seconds behind a
+    provider_refresh lock; cache hits recompute registration live from the
+    DB. Calls with an explicit transport (tests) always fetch live.
     """
     from tollms.api.models.service import list_models as _list  # avoid import cycle at module load
     from tollms.services.model_repository.mapping import map_models as _map
 
     provider = get_provider(db, provider_id)
     registered = {m.model_id for m in _list(db, provider_id=provider.id)}
-    try:
-        creds = decrypted_credentials(provider)
-        adapter = build_adapter(provider, None, creds, transport)
-        discovered = await adapter.discover_models()
-    except Exception as e:
-        logger.exception("provider %s discovery crashed", provider.id)
-        return DiscoveryResult(provider_id=provider.id, message=f"discovery failed: {e}")
+    manager = get_manager()
+    cache_key = cache_keys.provider_models(provider.id)
+    if transport is None:
+        hit = await manager.get(cache_key)
+        if isinstance(hit, dict) and isinstance(hit.get("models"), list):
+            logger.info("provider %s discovery: cache hit (%s models)", provider.id, hit.get("total", 0))
+            return _discovery_from_cache(provider, hit, registered)
+    lock_key = cache_keys.provider_refresh_lock(provider.id)
+    async with locked(lock_key, cache_ttl.LOCK_PROVIDER_REFRESH * 1000) as acquired:
+        if not acquired:
+            # Another worker is refreshing; serve cache if it landed meanwhile.
+            hit = await manager.get(cache_key)
+            if isinstance(hit, dict) and isinstance(hit.get("models"), list):
+                return _discovery_from_cache(provider, hit, registered)
+            logger.warning("provider %s discovery: refresh busy, fetching live", provider.id)
+        try:
+            creds = decrypted_credentials(provider)
+            adapter = build_adapter(provider, None, creds, transport)
+            discovered = await adapter.discover_models()
+        except Exception as e:
+            logger.exception("provider %s discovery crashed", provider.id)
+            return DiscoveryResult(provider_id=provider.id, message=f"discovery failed: {e}")
     mapped = {
         m["model_id"]: m
         for m in _map(
@@ -186,6 +238,12 @@ async def discover_provider_models(
         "discovery": {"models": infos, "total": len(infos), "last_discovery_at": now.isoformat()},
     }
     db.commit()
+    if transport is None:
+        await manager.set(
+            cache_key,
+            {"models": infos, "total": len(infos), "last_discovery_at": now.isoformat()},
+            ttl=cache_ttl.DISCOVERY,
+        )
     new_count = sum(1 for i in infos if i["model_id"] not in registered)
     logger.info("provider %s discovery: %s found, %s new", provider.id, len(infos), new_count)
     return DiscoveryResult(
@@ -196,6 +254,30 @@ async def discover_provider_models(
         registered_count=len(registered),
         last_discovery_at=now,
         message=f"{len(infos)} found, {new_count} available",
+    )
+
+
+def _discovery_from_cache(provider: Provider, hit: dict, registered: set[str]) -> DiscoveryResult:
+    """Rebuild a DiscoveryResult from the Valkey payload with live registration."""
+    try:
+        discovered = [DiscoveredModelInfo(**i) for i in hit.get("models", [])]
+    except Exception:
+        logger.warning("provider %s discovery: corrupt cache entry", provider.id, exc_info=True)
+        return DiscoveryResult(provider_id=provider.id, message="discovery cache unreadable")
+    try:
+        last = datetime.fromisoformat(str(hit.get("last_discovery_at", "")))
+    except ValueError:
+        last = None
+    total = int(hit.get("total", len(discovered)))
+    new_count = sum(1 for d in discovered if d.model_id not in registered)
+    return DiscoveryResult(
+        provider_id=provider.id,
+        discovered=discovered,
+        total=total,
+        new_count=new_count,
+        registered_count=len(registered),
+        last_discovery_at=last,
+        message=f"{total} found, {new_count} available",
     )
 
 

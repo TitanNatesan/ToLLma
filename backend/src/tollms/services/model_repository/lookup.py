@@ -6,12 +6,16 @@ engine, and the repository API feature service. Never raises on lookup paths.
 """
 
 import logging
+import uuid
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tollms.models.model_repository import RepositoryModel, SyncRun
+from tollms.services.cache import constants as cache_ttl
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.manager import cache_delete_sync, cache_get_sync, cache_set_sync
 from tollms.services.model_repository.canonical import canonicalize
 
 logger = logging.getLogger(__name__)
@@ -27,7 +31,42 @@ PROVIDER_HINTS = {
 }
 
 
+def _cached_entry(db: Session, key: str) -> RepositoryModel | None | bool:
+    """Resolve an entry-ID cache slot. Returns None (cached miss), the entry
+    (cached hit), or False (no cache entry — query the database)."""
+    hit = cache_get_sync(key)
+    if not isinstance(hit, dict) or "id" not in hit:
+        return False
+    if hit["id"] is None:
+        return None
+    try:
+        entry = db.get(RepositoryModel, uuid.UUID(str(hit["id"])))
+    except (ValueError, AttributeError):
+        entry = None
+    if entry is None or entry.is_deleted:
+        cache_delete_sync(key)
+        return False
+    return entry
+
+
 def find_for_model(
+    db: Session, provider_type: str | None, model_id: str
+) -> RepositoryModel | None:
+    """Best-effort repository match for a provider model. Never raises.
+
+    Caches the matched entry id (or the miss) for cache_ttl.REPOSITORY_MODEL;
+    sync invalidates the whole repository section, so deactivations propagate.
+    """
+    key = cache_keys.repository_match(provider_type, model_id)
+    hit = _cached_entry(db, key)
+    if hit is not False:
+        return hit
+    match = _find_for_model_uncached(db, provider_type, model_id)
+    cache_set_sync(key, {"id": str(match.id) if match is not None else None}, ttl=cache_ttl.REPOSITORY_MODEL)
+    return match
+
+
+def _find_for_model_uncached(
     db: Session, provider_type: str | None, model_id: str
 ) -> RepositoryModel | None:
     """Best-effort repository match for a provider model. Never raises."""
@@ -59,6 +98,20 @@ def find_for_model(
 
 
 def lookup(db: Session, query: str, provider_hint: str | None = None) -> RepositoryModel | None:
+    """Best match for a user-typed model id (auto-populate). Prefers priced entries.
+
+    Caches the matched entry id (or the miss) for cache_ttl.REPOSITORY_SEARCH.
+    """
+    key = cache_keys.repository_search(query, provider_hint)
+    hit = _cached_entry(db, key)
+    if hit is not False:
+        return hit
+    match = _lookup_uncached(db, query, provider_hint)
+    cache_set_sync(key, {"id": str(match.id) if match is not None else None}, ttl=cache_ttl.REPOSITORY_SEARCH)
+    return match
+
+
+def _lookup_uncached(db: Session, query: str, provider_hint: str | None = None) -> RepositoryModel | None:
     """Best match for a user-typed model id (auto-populate). Prefers priced entries."""
     text = query.strip()
     if not text:
