@@ -161,7 +161,7 @@ export function LeftSidebar() {
           {/* Logo + nav */}
           <div className="border-b border-zinc-200 px-3 py-3 dark:border-zinc-800">
             <Link href="/" className="mb-3 block text-base font-bold tracking-tight" data-testid="app-logo">
-              ToLLms
+              ToLLma
             </Link>
             <nav className="flex flex-col gap-0.5" aria-label="Main">
               {NAV.map((n) => {

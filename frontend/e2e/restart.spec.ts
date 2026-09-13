@@ -1,5 +1,6 @@
 // Scenario 8: full stack restart preserves providers, models, conversations.
 import { execSync } from "node:child_process";
+import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { startMockLLM } from "./mock-server";
 import { API, apiCreateModel, apiCreateProvider } from "./helpers";
@@ -36,7 +37,7 @@ test("restart docker stack, providers + models + conversations persist", async (
   expect(chat.content).toContain("Hello");
 
   execSync("docker compose restart", {
-    cwd: "/home/ond/Projects/ToLLms",
+    cwd: path.resolve(__dirname, "../.."),
     timeout: 180000,
   });
   await waitFor("http://localhost:8000/health", 120000);

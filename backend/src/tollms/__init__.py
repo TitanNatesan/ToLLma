@@ -1,1 +1,1 @@
-"""ToLLms backend application package."""
+"""ToLLma — Toll to your Large Language Models & Agents."""

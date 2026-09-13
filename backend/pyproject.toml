@@ -1,7 +1,7 @@
 [project]
 name = "tollms"
 version = "0.1.0"
-description = "ToLLms backend API"
+description = "ToLLma — Toll to your Large Language Models & Agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

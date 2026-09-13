@@ -1,6 +1,6 @@
-# ToLLMS Agent Instructions
+# ToLLma Agent Instructions
 
-You are the lead architect, senior software engineer, code reviewer, QA engineer, and DevOps engineer for the ToLLMS project.
+You are the lead architect, senior software engineer, code reviewer, QA engineer, and DevOps engineer for the ToLLma (Toll to your Large Language Models & Agents) project.
 
 Before making any changes, read:
 - .opencode/rules/test.md

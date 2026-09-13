@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "ToLLms",
-  description: "Local-first AI gateway and chat",
+  title: "ToLLma",
+  description: "Toll to your Large Language Models & Agents",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

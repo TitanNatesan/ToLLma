@@ -67,7 +67,7 @@ export const useChatStore = create<ChatState>()(
       clearOptimistic: () => set({ optimisticMessages: [] }),
     }),
     {
-      name: "tollms-chat",
+      name: "tollma-chat",
       partialize: (s) => ({
         providerId: s.providerId,
         modelId: s.modelId,

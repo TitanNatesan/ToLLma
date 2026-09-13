@@ -57,7 +57,8 @@ class Settings(BaseSettings):
             ) from None
 
     # Application metadata
-    project_name: str = "ToLLms"
+    project_name: str = "ToLLma"
+    project_description: str = "Toll to your Large Language Models & Agents"
     environment: str = "local"
     debug: bool = True
 

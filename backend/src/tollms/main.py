@@ -24,8 +24,12 @@ def create_app() -> FastAPI:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         stream=sys.stdout,
     )
+    app = FastAPI(
+        title=settings.project_name,
+        description=settings.project_description,
+        debug=settings.debug,
+    )
     logger = logging.getLogger(__name__)
-    app = FastAPI(title=settings.project_name, debug=settings.debug)
     cors_origins = list(settings.cors_origins)
     if settings.environment == "local":
         for o in ("http://127.0.0.1:3000", "http://172.17.0.1:3000"):

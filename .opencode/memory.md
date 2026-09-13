@@ -190,3 +190,30 @@ Implemented:
    - Vitest unit tests: 5/5 passed.
    - Backend Pytest suite: 17/17 passed.
    - Playwright end-to-end test suite: 29/29 passed (including 20 chat-ux tests and 9 comprehensive e2e scenarios).
+
+## 2026-09-13 - Project Rebranding: ToLLms to ToLLma (Toll to your Large Language Models & Agents)
+
+Requirement: update the project name from `ToLLms` to `ToLLma`, reflecting the expanded scope from "Toll to your Large Language Models" to "Toll to your Large Language Models & Agents"; update project title and descriptions across the entire codebase.
+
+Implemented:
+1. Frontend Application Metadata & UI:
+   - `frontend/src/app/layout.tsx`: Updated `title: "ToLLma"` and `description: "Toll to your Large Language Models & Agents"`.
+   - `frontend/src/app/components/Sidebar.tsx`: Updated sidebar logo to `ToLLma` with title "ToLLma — Toll to your Large Language Models & Agents".
+   - `frontend/src/store/chat.ts`: Updated Zustand localStorage key to `tollma-chat`.
+2. Backend Application Metadata:
+   - `backend/src/tollms/core/config.py`: Updated `project_name = "ToLLma"` and added `project_description = "Toll to your Large Language Models & Agents"`.
+   - `backend/src/tollms/main.py`: Configured `FastAPI(title=settings.project_name, description=settings.project_description, debug=settings.debug)`.
+   - `backend/pyproject.toml`: Updated description to `"ToLLma — Toll to your Large Language Models & Agents"`.
+   - `backend/src/tollms/__init__.py`: Updated package docstring to `"""ToLLma — Toll to your Large Language Models & Agents."""`.
+3. Configuration & Documentation:
+   - `.env` & `.env.example`: Updated `PROJECT_NAME=ToLLma`, `PROJECT_DESCRIPTION="Toll to your Large Language Models & Agents"`, `NEXT_PUBLIC_APP_NAME=ToLLma`, and added `NEXT_PUBLIC_APP_DESCRIPTION="Toll to your Large Language Models & Agents"`.
+   - `AGENTS.md`: Updated header and instructions to reference ToLLma (Toll to your Large Language Models & Agents).
+   - `README.md`: Created project documentation with `# ToLLma` and `> **Toll to your Large Language Models & Agents**`.
+   - `frontend/e2e/restart.spec.ts`: Made project root directory resolution dynamic.
+4. Verification:
+   - Verified 0 instances of `ToLLms` or `ToLLMS` remain in the active codebase via ripgrep.
+   - TypeScript compilation (`npx tsc --noEmit`): 0 errors.
+   - ESLint (`npm run lint`): 0 errors, 0 warnings.
+   - Vitest unit tests: 5/5 passed.
+   - Backend Pytest suite: 17/17 passed.
+   - Playwright test suites (`tests/chat-ux.spec.ts`, `e2e/chat.spec.ts`, `e2e/manage.spec.ts`): All passed with 0 errors.
