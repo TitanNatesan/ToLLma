@@ -446,3 +446,23 @@ Verification:
 - Backend Pytest suite: 36/36 passed.
 - Playwright E2E suite (`npx playwright test`): 36 passed, 1 skipped, 0 failed.
 - Visual browser verification: Loaded `http://localhost:3000/providers`, triggered Add Provider wizard, advanced to Step 2 (Credentials for AWS Bedrock); verified that `Access Key` and `Secret Key` do not trigger password autofill dropdowns, secret masking functions cleanly, and eye toggle reveals and re-masks secrets seamlessly.
+
+## 2026-09-13 - Provider Wizard Header Step Badge Alignment & Clean Single Provider Platform Selection
+
+Requirements:
+1. Fix the "Step n of n" badge layout in the modal card header so text does not wrap awkwardly or squish vertically.
+2. Remove duplicate "Provider Type" select dropdown from Step 1 so the platform card grid is the single, clean provider type selector.
+
+Implemented Solution:
+1. `frontend/src/components/ui/primitives.tsx`:
+   - Updated `badgeVariants` base styles with `whitespace-nowrap shrink-0 px-2.5 py-0.5` to guarantee badges never break across multiple lines or compress vertically in flex containers.
+2. `frontend/src/app/providers/components/ProviderWizardModal.tsx`:
+   - Wizard Header: Refactored header layout to `flex items-center justify-between gap-4`. Assigned `min-w-0 flex-1` to the title block and `shrink-0 whitespace-nowrap px-2.5 py-1 text-xs font-mono` to the Step badge pill, ensuring crisp single-line alignment in both creation and edit modes.
+   - Step 1 Layout: Removed the redundant top-row `<Select>` dropdown for Provider Type. Expanded "Provider Name" to full width for a balanced layout. Maintained accessibility and test compatibility with a synced `sr-only` select element, while "Select Provider Platform" cards serve as the primary interactive selection. Added `data-testid={`provider-platform-${t}`}` to each platform card button.
+
+Verification:
+- TypeScript (`tsc --noEmit`): 0 errors.
+- Vitest unit tests: 5/5 passed.
+- Backend Pytest suite: 36/36 passed.
+- Playwright tests (`e2e/wizard.spec.ts` & `e2e/providers.spec.ts`): 3/3 passed.
+- Visual browser verification: Verified in browser that the Step badge is single-line and vertically centered, "Provider Name" is full-width, and the platform cards grid cleanly handles provider type selection without any duplicate dropdown.

@@ -423,18 +423,18 @@ export function ProviderWizardModal({
           data-form-type="other"
         >
           <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                   {isEditing ? "Edit Provider" : "Add Provider Connection"}
                 </h2>
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-zinc-500 mt-0.5">
                   {isEditing
                     ? "Update provider settings"
                     : "Provider is only registered after step 5 — nothing is saved before that"}
                 </p>
               </div>
-              <Badge variant="outline" className="text-xs font-mono">
+              <Badge variant="outline" className="text-xs font-mono shrink-0 whitespace-nowrap px-2.5 py-1">
                 Step {isEditing ? 1 : step} of 5
               </Badge>
             </div>
@@ -467,40 +467,37 @@ export function ProviderWizardModal({
               <>
                 {step === 1 && (
                   <div className="space-y-4" data-testid="wizard-step-1">
-                    <div className="flex items-center gap-2">
-                      <Field label="Provider Name">
-                        <Input
-                          value={name}
-                          placeholder={`e.g. Production ${type}`}
-                          onChange={(e) => setName(e.target.value)}
-                          data-testid="provider-name"
-                          autoFocus
-                          autoComplete="off"
-                          autoCorrect="off"
-                          autoCapitalize="none"
-                          spellCheck={false}
-                          data-1p-ignore="true"
-                          data-lpignore="true"
-                          data-bwignore="true"
-                          data-form-type="other"
-                        />
-                      </Field>
-                      <div className="w-1/2">
-                        <Field label="Provider Type">
-                          <Select
-                            value={type}
-                            onChange={(e) => setType(e.target.value as ProviderType)}
-                            data-testid="provider-type"
-                          >
-                            {PROVIDER_TYPES.map((t) => (
-                              <option key={t} value={t}>
-                                {PROVIDER_METAS[t]?.name ?? t}
-                              </option>
-                            ))}
-                          </Select>
-                        </Field>
-                      </div>
-                    </div>
+                    <Field label="Provider Name">
+                      <Input
+                        value={name}
+                        placeholder={`e.g. Production ${type}`}
+                        onChange={(e) => setName(e.target.value)}
+                        data-testid="provider-name"
+                        autoFocus
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        data-1p-ignore="true"
+                        data-lpignore="true"
+                        data-bwignore="true"
+                        data-form-type="other"
+                      />
+                    </Field>
+                    <select
+                      value={type}
+                      onChange={(e) => setType(e.target.value as ProviderType)}
+                      data-testid="provider-type"
+                      className="sr-only"
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    >
+                      {PROVIDER_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {PROVIDER_METAS[t]?.name ?? t}
+                        </option>
+                      ))}
+                    </select>
                     {nameTaken && name.trim() && (
                       <p className="text-xs text-red-500">A provider with this name already exists.</p>
                     )}
@@ -533,6 +530,7 @@ export function ProviderWizardModal({
                               key={t}
                               type="button"
                               onClick={() => setType(t)}
+                              data-testid={`provider-platform-${t}`}
                               className={cn(
                                 "flex flex-col items-start p-3 rounded-lg border text-left transition-all",
                                 isSelected

@@ -62,7 +62,7 @@ export function IconButton({ className, variant = "ghost", size = "icon", ...pro
 
 // --- shadcn/ui badge ---
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium transition-colors",
+  "inline-flex items-center whitespace-nowrap shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
   {
     variants: {
       variant: {
