@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatStore } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import {
@@ -10,8 +10,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { AIModel, Provider } from "@/types";
@@ -26,6 +24,7 @@ import {
   Eye,
   Image as ImageIcon,
   Mic,
+  Search,
   Square,
   Wrench,
   Zap,
@@ -47,60 +46,46 @@ const CAP_ICONS: Record<string, { icon: ComponentType<{ className?: string }>; l
   supports_image_generation: { icon: ImageIcon, label: "Image generation" },
 };
 
-function ProviderSelector({ providers }: { providers: Provider[] }) {
-  const { providerId, setProvider } = useChatStore();
-  const active = providers.find((p) => p.id === providerId);
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className={cn(
-            "flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors",
-            "border border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50",
-            "dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:bg-zinc-800",
-            !active && "text-zinc-400",
-          )}
-          data-testid="provider-selector"
-          aria-label="Select provider"
-        >
-          <Cpu className="size-3 text-zinc-500" />
-          <span className="max-w-24 truncate font-medium">
-            {active ? active.name : "Provider"}
-          </span>
-          <ChevronDown className="size-3 text-zinc-400" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        <DropdownMenuLabel>Provider</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {providers.filter((p) => p.is_active).map((p) => (
-          <DropdownMenuItem
-            key={p.id}
-            onClick={() => setProvider(p.id)}
-            data-testid={`provider-option-${p.id}`}
-            className={cn(providerId === p.id && "bg-zinc-100 dark:bg-zinc-800")}
-          >
-            <span className="flex-1 font-medium">{p.name}</span>
-            <Badge variant="outline" className="text-[10px]">{p.provider_type}</Badge>
-          </DropdownMenuItem>
-        ))}
-        {providers.filter((p) => p.is_active).length === 0 && (
-          <DropdownMenuItem disabled>No active providers</DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
+function UnifiedModelSelector({
+  providers,
+  models,
+}: {
+  providers: Provider[];
+  models: AIModel[];
+}) {
+  const { providerId, modelId, setProvider, setModel } = useChatStore();
+  const [search, setSearch] = useState("");
 
-function ModelSelector({ models }: { models: AIModel[] }) {
-  const { modelId, setModel } = useChatStore();
-  const active = models.find((m) => m.id === modelId);
-  const caps = active
+  const activeProvider = providers.find((p) => p.id === providerId);
+  const activeModel = models.find((m) => m.id === modelId);
+
+  const caps = activeModel
     ? Object.entries(CAP_ICONS)
-        .filter(([k]) => (active as unknown as Record<string, boolean>)[k])
+        .filter(([k]) => (activeModel as unknown as Record<string, boolean>)[k])
         .map(([, item]) => item)
     : [];
 
+  const q = search.trim().toLowerCase();
+
+  const activeProviders = providers.filter((p) => p.is_active);
+  const activeModels = models.filter((m) => m.is_active);
+
+  const groups = activeProviders
+    .map((p) => {
+      const pModels = activeModels.filter(
+        (m) =>
+          m.provider_id === p.id &&
+          (!q ||
+            m.name.toLowerCase().includes(q) ||
+            m.model_id.toLowerCase().includes(q) ||
+            p.name.toLowerCase().includes(q)),
+      );
+      return { provider: p, models: pModels };
+    })
+    .filter((g) => g.models.length > 0 || (q && g.provider.name.toLowerCase().includes(q)));
+
+  const totalMatchingModels = groups.reduce((acc, g) => acc + g.models.length, 0);
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -109,18 +94,22 @@ function ModelSelector({ models }: { models: AIModel[] }) {
             "flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors",
             "border border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50",
             "dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:bg-zinc-800",
-            !active && "text-zinc-400",
+            !activeModel && "text-zinc-400",
           )}
           data-testid="model-selector"
           aria-label="Select model"
-          disabled={!models.length}
         >
           <Bot className="size-3 text-zinc-500" />
-          <span className="max-w-36 truncate font-medium">
-            {active ? active.name : "Model"}
+          <span className="max-w-44 truncate font-medium">
+            {activeModel ? activeModel.name : "Select model"}
           </span>
+          {activeProvider && (
+            <span className="hidden sm:inline-flex rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.2 text-[9px] text-zinc-500 dark:text-zinc-400 font-normal">
+              {activeProvider.name}
+            </span>
+          )}
           {caps.length > 0 && (
-            <span className="hidden items-center gap-1 sm:flex">
+            <span className="hidden items-center gap-1 md:flex">
               {caps.slice(0, 3).map(({ icon: Icon, label }) => (
                 <Icon key={label} className="size-2.5 text-zinc-400" />
               ))}
@@ -129,38 +118,86 @@ function ModelSelector({ models }: { models: AIModel[] }) {
           <ChevronDown className="size-3 text-zinc-400" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-64">
-        <DropdownMenuLabel>Model</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {models.filter((m) => m.is_active).map((m) => {
-          const mCaps = Object.entries(CAP_ICONS)
-            .filter(([k]) => (m as unknown as Record<string, boolean>)[k])
-            .map(([, item]) => item);
-          return (
-            <DropdownMenuItem
-              key={m.id}
-              onClick={() => setModel(m.id)}
-              data-testid={`model-option-${m.id}`}
-              className={cn(modelId === m.id && "bg-zinc-100 dark:bg-zinc-800")}
-            >
-              <div className="flex flex-1 flex-col gap-0.5 overflow-hidden">
-                <span className="truncate font-medium">{m.name}</span>
-                <span className="text-[10px] text-zinc-400">
-                  {m.context_window ? `ctx ${m.context_window.toLocaleString()}` : ""}
-                  {m.input_price !== "0.000000" ? ` · $${m.input_price}/1M in` : ""}
-                </span>
+      <DropdownMenuContent align="start" className="w-80 p-0 overflow-hidden">
+        {/* Search input */}
+        <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
+          <div className="relative flex items-center">
+            <Search className="absolute left-2 size-3.5 text-zinc-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search models or providers…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-7 w-full rounded border border-zinc-200 bg-transparent pl-7 pr-2 text-xs outline-none focus:border-zinc-400 dark:border-zinc-700 dark:focus:border-zinc-500"
+              autoFocus
+            />
+          </div>
+        </div>
+
+        {/* Scrollable list with min-height and max-height */}
+        <div className="min-h-[220px] max-h-[380px] overflow-y-auto p-1.5">
+          {totalMatchingModels === 0 ? (
+            <div className="flex h-[200px] flex-col items-center justify-center gap-1 text-xs text-zinc-400">
+              <Bot className="size-5 opacity-40" />
+              <span>No models found</span>
+            </div>
+          ) : (
+            groups.map(({ provider, models: pModels }) => (
+              <div key={provider.id} className="mb-2 last:mb-0">
+                {/* Provider group header */}
+                <div className="sticky top-0 z-10 flex items-center justify-between rounded bg-zinc-100/95 px-2 py-1 text-[11px] font-semibold text-zinc-600 backdrop-blur-sm dark:bg-zinc-900/95 dark:text-zinc-400">
+                  <span className="flex items-center gap-1.5 truncate">
+                    <Cpu className="size-3 text-zinc-400" />
+                    <span className="truncate">{provider.name}</span>
+                  </span>
+                  <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 font-normal">
+                    {provider.provider_type}
+                  </Badge>
+                </div>
+
+                {/* Models in provider */}
+                <div className="mt-0.5 space-y-0.5">
+                  {pModels.map((m) => {
+                    const isSelected = modelId === m.id;
+                    const mCaps = Object.entries(CAP_ICONS)
+                      .filter(([k]) => (m as unknown as Record<string, boolean>)[k])
+                      .map(([, item]) => item);
+
+                    return (
+                      <DropdownMenuItem
+                        key={m.id}
+                        onClick={() => {
+                          setProvider(m.provider_id);
+                          setModel(m.id);
+                        }}
+                        data-testid={`model-option-${m.id}`}
+                        className={cn(
+                          "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-xs transition-colors",
+                          isSelected
+                            ? "bg-zinc-200 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                            : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+                        )}
+                      >
+                        <div className="flex flex-1 flex-col gap-0.5 overflow-hidden pr-2">
+                          <span className="truncate">{m.name}</span>
+                          <span className="text-[10px] text-zinc-400">
+                            {m.context_window ? `ctx ${m.context_window.toLocaleString()}` : ""}
+                            {m.input_price !== "0.000000" ? ` · $${m.input_price}/1M in` : ""}
+                          </span>
+                        </div>
+                        <span className="flex shrink-0 items-center gap-1">
+                          {mCaps.slice(0, 3).map(({ icon: Icon, label }) => (
+                            <Icon key={label} className="size-3 text-zinc-400" />
+                          ))}
+                        </span>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </div>
               </div>
-              <span className="flex shrink-0 items-center gap-1">
-                {mCaps.slice(0, 4).map(({ icon: Icon, label }) => (
-                  <Icon key={label} className="size-3 text-zinc-400" />
-                ))}
-              </span>
-            </DropdownMenuItem>
-          );
-        })}
-        {models.filter((m) => m.is_active).length === 0 && (
-          <DropdownMenuItem disabled>No models for this provider</DropdownMenuItem>
-        )}
+            ))
+          )}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -169,7 +206,7 @@ function ModelSelector({ models }: { models: AIModel[] }) {
 export function ChatComposer({ streaming, disabled = false, onSend, onStop }: ChatComposerProps) {
   const { providerId, modelId, draft, setDraft } = useChatStore();
   const { data: providers = [] } = useProviders();
-  const { data: models = [] } = useModels(providerId ?? undefined, undefined, { enabled: !!providerId });
+  const { data: models = [] } = useModels();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
 
@@ -221,13 +258,11 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
           }
         }}
         placeholder={
-          !providerId
-            ? "Select a provider first…"
-            : !modelId
-              ? "Select a model first…"
-              : streaming
-                ? "Generating response…"
-                : "Message… (Enter to send, Shift+Enter for newline)"
+          !modelId
+            ? "Select a model to start chatting…"
+            : streaming
+              ? "Generating response…"
+              : "Message… (Enter to send, Shift+Enter for newline)"
         }
         rows={1}
         disabled={disabled && !streaming}
@@ -244,37 +279,35 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
 
       {/* Toolbar */}
       <div className="mt-2 flex items-center gap-2">
-        {/* Selectors */}
-        <ProviderSelector providers={providers} />
-        <ModelSelector models={models} />
+        {/* Unified Model & Provider Selector */}
+        <UnifiedModelSelector providers={providers} models={models} />
 
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Send / Stop */}
-        {streaming ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onStop}
-            data-testid="stop-button"
-            className="gap-1.5"
-          >
-            <Square className="size-3 fill-current" />
-            Stop
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            onClick={handleSend}
-            disabled={!ready || !draft.trim()}
-            data-testid="send-button"
-            className="gap-1.5"
-          >
-            Send
-            <CornerDownLeft className="size-3 opacity-60" />
-          </Button>
-        )}
+        {/* Right side: Send / Stop button */}
+        <div className="ml-auto flex items-center gap-2">
+          {streaming ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onStop}
+              data-testid="stop-button"
+              className="gap-1.5 text-xs text-red-600 hover:text-red-700 border-red-200 dark:border-red-900"
+            >
+              <Square className="size-3 fill-current" />
+              Stop
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={handleSend}
+              disabled={!ready || !draft.trim()}
+              data-testid="send-button"
+              className="gap-1.5 text-xs"
+            >
+              <span>Send</span>
+              <CornerDownLeft className="size-3" />
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

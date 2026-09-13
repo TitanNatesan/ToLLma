@@ -31,5 +31,6 @@ export const CREDENTIAL_FIELDS: Record<ProviderType, Array<[string, { label: str
   CUSTOM: [
     ["base_url", { label: "Base URL" }],
     ["api_key", { label: "API Key", secret: true, optional: true }],
+    ["extra_headers", { label: "Extra headers (JSON)", multiline: true, optional: true }],
   ],
 };

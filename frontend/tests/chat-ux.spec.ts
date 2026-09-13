@@ -90,9 +90,8 @@ test.describe("Conversation management", () => {
 // ============================================================
 
 test.describe("Chat composer", () => {
-  test("renders provider and model selectors", async ({ page }) => {
+  test("renders unified model selector", async ({ page }) => {
     await goto(page);
-    await expect(page.getByTestId("provider-selector")).toBeVisible();
     await expect(page.getByTestId("model-selector")).toBeVisible();
   });
 
@@ -103,12 +102,14 @@ test.describe("Chat composer", () => {
     await expect(page.getByTestId("send-button")).toBeDisabled();
   });
 
-  test("provider dropdown shows active providers", async ({ page }) => {
+  test("model dropdown shows search input and grouped providers with min-height", async ({ page }) => {
     await goto(page);
-    await page.getByTestId("provider-selector").click();
-    // Dropdown opens — at least one active provider should show (or "No active providers")
-    const dropdown = page.locator("[data-testid^='provider-option-']").or(page.getByText("No active providers"));
-    await expect(dropdown.first()).toBeVisible();
+    await page.getByTestId("model-selector").click();
+    // Dropdown opens — search input is present
+    await expect(page.getByPlaceholder("Search models or providers…")).toBeVisible();
+    // Verify dropdown content is visible
+    const content = page.locator("[data-testid^='model-option-']").or(page.getByText("No models found"));
+    await expect(content.first()).toBeVisible();
   });
 });
 

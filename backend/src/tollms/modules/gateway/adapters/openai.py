@@ -150,9 +150,19 @@ class CustomAdapter(OpenAIChatAdapter):
     requires_key = False
 
     def _headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
         if self.credentials.get("api_key"):
-            return {"Authorization": f"Bearer {self.credentials['api_key']}"}
-        return {}
+            headers["Authorization"] = f"Bearer {self.credentials['api_key']}"
+        extra = self.credentials.get("extra_headers") or {}
+        if isinstance(extra, str):
+            try:
+                extra = json.loads(extra)
+            except json.JSONDecodeError:
+                logger.warning("custom provider: extra_headers is not valid JSON, ignoring")
+                extra = {}
+        if isinstance(extra, dict):
+            headers.update({str(k): str(v) for k, v in extra.items()})
+        return headers
 
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         self.base_url = self.credentials["base_url"].rstrip("/")

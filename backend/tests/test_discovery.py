@@ -73,6 +73,33 @@ def test_vertex_discover_with_mock_token(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_custom_requires_base_url_and_factory_covers_all_types(db: Session, provider_factory) -> None:
     assert asyncio.run(CustomAdapter(credentials={}, model_id="m").validate_credentials()) == (False, "base_url is required", 0)
     assert asyncio.run(CustomAdapter(credentials={}, model_id="m").discover_models()) == []
+
+    # Extra headers (dict or JSON string) are merged into every custom request.
+    seen: dict = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        seen.update(request.headers)
+        return httpx.Response(200, json={"data": []})
+
+    t = httpx.MockTransport(capture)
+    asyncio.run(
+        CustomAdapter(
+            credentials={"base_url": "http://x", "extra_headers": {"x-opencode-session": "s1"}},
+            model_id="m",
+            transport=t,
+        ).validate_credentials()
+    )
+    assert seen["x-opencode-session"] == "s1"
+    assert "authorization" not in seen
+    asyncio.run(
+        CustomAdapter(
+            credentials={"base_url": "http://x", "api_key": "k", "extra_headers": '{"x-a": "b"}'},
+            model_id="m",
+            transport=t,
+        ).validate_credentials()
+    )
+    assert seen["authorization"] == "Bearer k"
+    assert seen["x-a"] == "b"
     assert asyncio.run(BedrockAdapter(credentials={}, model_id="m").validate_credentials())[0] is False
 
     for ptype in ProviderType:

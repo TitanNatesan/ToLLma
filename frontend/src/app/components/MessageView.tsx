@@ -16,6 +16,7 @@ import {
   Trash2,
   User,
 } from "lucide-react";
+import { MermaidBlock } from "./MermaidBlock";
 import type { ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,17 @@ import "highlight.js/styles/github-dark.css";
 
 // Allow rendering both persisted ChatMessage and in-flight OptimisticMessage
 type MessageLike = ChatMessage | (OptimisticMessage & { role: string });
+
+function extractText(node: React.ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (!node) return "";
+  if (Array.isArray(node)) return node.map(extractText).join("");
+  if (typeof node === "object" && "props" in node && (node as { props?: { children?: React.ReactNode } }).props?.children) {
+    return extractText((node as { props: { children: React.ReactNode } }).props.children);
+  }
+  return "";
+}
 
 function copyText(text: string) {
   void navigator.clipboard.writeText(text).then(() => toast.success("Copied!")).catch(() => {});
@@ -105,6 +117,15 @@ function MessageContent({ content, isStreaming }: { content: string; isStreaming
             components={{
               pre: ({ children }) => <>{children}</>,
               code: ({ className, children, ...props }) => {
+                const codeStr = extractText(children);
+                const isMermaid =
+                  className === "language-mermaid" ||
+                  className?.includes("mermaid") ||
+                  (className?.startsWith("language-") &&
+                    /^\s*(graph\s+(TD|TB|BT|RL|LR)|flowchart\s+(TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap)\b/m.test(codeStr));
+                if (isMermaid) {
+                  return <MermaidBlock chart={codeStr} />;
+                }
                 const isBlock = className?.startsWith("language-");
                 return isBlock ? (
                   <CodeBlock className={className}>{children}</CodeBlock>

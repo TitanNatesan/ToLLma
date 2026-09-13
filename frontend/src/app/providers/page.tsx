@@ -277,7 +277,7 @@ export default function ProvidersPage() {
 
   return (
     <main className="flex min-h-0 flex-1 gap-4 p-4">
-      <section className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto" aria-label="Provider list">
+      <section className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto min-h-[300px]" aria-label="Provider list">
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold">Providers</h1>
           <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate} data-testid="add-provider">
@@ -365,7 +365,7 @@ export default function ProvidersPage() {
         })}
       </section>
 
-      <section className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto" aria-label="Provider details">
+      <section className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto min-h-[300px]" aria-label="Provider details">
         {!selected ? (
           <Card className="m-auto max-w-md text-center" data-testid="no-provider-selected">
             <CardContent>

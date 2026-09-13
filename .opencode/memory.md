@@ -103,6 +103,19 @@ Playwright rewritten to 8 scenarios, 9/9 serial on Desktop (mock /models returns
 Fixes: stale Desktop node_modules volume; UI refresh race already covered; spec scoping to details section.
 Verification: pytest 16/16, vitest 5/5, Playwright 9/9, tsc+eslint clean, next build success (routes: /, /providers, /health).
 
+## 2026-09-13 - Custom provider extra headers (opencode zen gateway)
+
+Symptom: CUSTOM provider "OpenCode Go" (https://opencode.ai/zen/go/v1) returned upstream 500 for
+muse-spark-1.3-contributor. Root cause (probed from backend container with stored creds, key never printed):
+zen routes through "Console Go" and requires an x-opencode-session header; without it models 400
+(MissingSessionID) or 500. Header value is not validated — any stable id works.
+Fix: CustomAdapter._headers() merges optional credentials.extra_headers (dict or JSON string) into chat,
+validate, and discover requests; Custom credential form gained "Extra headers (JSON)" field; seeded
+x-opencode-session on the OpenCode Go provider server-side. Verified end-to-end via POST /gateway/chat with
+mimo-v2.5: real streamed reply, real usage tokens (252/32). Test: header-merge cases in test_discovery.py.
+Note: muse-spark-1.3-contributor still 500s upstream even with the header — broken on their side, not ours.
+pytest 17/17.
+
 ## 2026-09-13 - Frontend request flood & CORS optimization fix
 
 Requirement: professional and stable fix for excessive HTTP request loops and CORS preflight storms hitting the backend on page load/refresh.
@@ -217,3 +230,37 @@ Implemented:
    - Vitest unit tests: 5/5 passed.
    - Backend Pytest suite: 17/17 passed.
    - Playwright test suites (`tests/chat-ux.spec.ts`, `e2e/chat.spec.ts`, `e2e/manage.spec.ts`): All passed with 0 errors.
+
+## 2026-09-13 - Unified Model/Provider Selector & Client-Side Mermaid Rendering
+
+Requirement: add minimum height to the model and provider scrolls; remove the separate provider selection button from the chat UI; list providers and their respective models grouped together inside the model dropdown itself with search filtering; render interactive Mermaid diagrams in the UI with diagram/code toggling.
+
+Implemented:
+1. Unified Model & Provider Selector:
+   - Removed standalone `ProviderSelector` from `ChatInput.tsx`.
+   - Created `UnifiedModelSelector`:
+     * Displays current model name and provider badge (`Bot` icon + model name + provider tag + chevron).
+     * Search input at the top filtering across model names, model IDs, and provider names.
+     * Scroll container with `min-h-[220px]` and `max-h-[380px] overflow-y-auto` preventing dropdown viewport explosion.
+     * Sticky provider section headers with provider type badges.
+     * Selecting an option sets both `providerId` and `modelId` in `useChatStore`.
+2. Scroll Container Bounds on Providers Page:
+   - Added `min-h-[300px]` to Provider List and Provider Details sections in `frontend/src/app/providers/page.tsx`.
+3. Client-Side Mermaid Diagram Rendering:
+   - Installed `mermaid` dependency in frontend.
+   - Implemented `frontend/src/app/components/MermaidBlock.tsx`:
+     * Custom dark theme tailored to ToLLma aesthetics.
+     * SVG rendering with unique ID generation.
+     * Interactive toolbar with "Diagram" and "Code" toggle tabs.
+     * Copy Mermaid source code button with toast notification.
+     * Error handling: graceful fallback to code view on incomplete streaming or syntax errors.
+   - Updated `MessageView.tsx` to detect `language-mermaid` or flowchart/graph syntax and route to `MermaidBlock`.
+4. Test Updates & Verification:
+   - Updated `frontend/e2e/helpers.ts` `selectProviderModel` for unified selector.
+   - Updated `frontend/tests/chat-ux.spec.ts` for unified model selector and search bounds.
+   - TypeScript compilation (`npx tsc --noEmit`): 0 errors.
+   - ESLint (`npm run lint`): 0 errors, 0 warnings.
+   - Vitest unit tests: 5/5 passed.
+   - Backend Pytest suite: 17/17 passed.
+   - Playwright end-to-end suite: 29/29 passed in 2.2m.
+   - Visual verification: Captured screenshots of rendered LiteLLM Mermaid architecture diagram, Diagram/Code tabs, and opened unified model dropdown with grouped providers.

@@ -36,12 +36,8 @@ export async function apiCreateModel(providerId: string, name: string, inputPric
  * The new UI has testids: provider-selector (button) → provider-option-{id}
  * and model-selector (button) → model-option-{id}
  */
-export async function selectProviderModel(page: Page, providerId: string, modelId: string): Promise<void> {
-  // Click provider dropdown trigger
-  await page.getByTestId("provider-selector").click();
-  // Wait for option and click it
-  await page.getByTestId(`provider-option-${providerId}`).click();
-  // Click model dropdown trigger when enabled
+export async function selectProviderModel(page: Page, _providerId: string, modelId: string): Promise<void> {
+  // Click unified model dropdown trigger
   await expect(page.getByTestId("model-selector")).toBeEnabled();
   await page.getByTestId("model-selector").click();
   await page.getByTestId(`model-option-${modelId}`).click();
