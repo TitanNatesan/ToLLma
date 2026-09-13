@@ -264,3 +264,30 @@ Implemented:
    - Backend Pytest suite: 17/17 passed.
    - Playwright end-to-end suite: 29/29 passed in 2.2m.
    - Visual verification: Captured screenshots of rendered LiteLLM Mermaid architecture diagram, Diagram/Code tabs, and opened unified model dropdown with grouped providers.
+
+## 2026-09-13 - Model Intelligence Repository (source of truth)
+
+Requirement: global model repository fed by LiteLLM + OpenRouter (discovery pipeline -> normalization ->
+repository -> registry -> selection UI -> cost/capability engines), with canonical-key dedupe, 24h sync,
+history tracking, search/filter/stats APIs, and raw payload preservation for schema evolution.
+Implemented (backend, new self-contained module modules/model_repository/):
+- models.py: model_repository (model_key unique, identity/capability/limit/pricing columns, metadata_ +
+  raw_source_payload JSONB per the recommended addition, soft-delete mixin) and model_repository_sync_runs
+  tables; pricing stored source-native per-token at Numeric(20,12) (gateway prices per-1M — convert on use).
+- sources.py: LiteLLMSourceAdapter + OpenRouterSourceAdapter (sync httpx fetch, defensive per-record
+  normalize, never crash on bad entries); canonical key {provider}/{model} lowercase; openrouter/ routing
+  prefixes recurse (openrouter/anthropic/x -> anthropic/x), raising cross-source merges 87 -> 283.
+- service.py: run_sync (payloads injectable for offline tests; per-record try/except with error_details cap
+  20; create/update/deactivate+reactivate; never raises), list/search/filter/pagination, stats, history.
+- scheduler.py: APScheduler BackgroundScheduler every 24h with own SessionLocal; skipped under pytest via
+  PYTEST_CURRENT_TEST; lifespan start/shutdown in main.py.
+- router.py: GET stats, GET models (search/provider/capability/active_only/page/page_size), GET models/{id},
+  POST /sync, GET /sync-history. Manual _read mapper (same metadata_ alias collision as models module).
+- Migration 9a31c4e7b2d5 (single head, applied); dependency apscheduler>=3.10 (pyproject + uv.lock + container).
+Tests: backend/tests/test_model_repository.py (6: create/dedupe, update/deactivate, failure-never-raises,
+API search/filter/pagination/stats/history, scheduler-off guard, prefix recursion); frontend/e2e/repository.spec.ts
+(3 read-only API specs, no POST sync — slow + rewrites dev data).
+Verification: pytest 23/23; live POST /sync -> done, 4276 created, 0 errors (~60s); re-sync idempotent
+(+0 ~4023 -0 err=0, 4023 active / 177 providers); Playwright repo spec 3/3; tsc + eslint clean.
+Deviations: POST /sync returns 200 not 202 (blocks ~60s; honest status); no new frontend page and no
+provider-discovery enrichment yet — repository stands alone behind APIs (see next steps).

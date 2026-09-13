@@ -4,17 +4,27 @@ import logging
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
 from tollms.api.health import router as health_router
 from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
 from tollms.modules.conversations.router import router as conversations_router
 from tollms.modules.gateway.router import router as gateway_router
+from tollms.modules.model_repository import scheduler as repository_scheduler
+from tollms.modules.model_repository.router import router as repository_router
 from tollms.modules.models.router import router as models_router
 from tollms.modules.providers.router import router as providers_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    repository_scheduler.start()
+    yield
+    repository_scheduler.shutdown()
 
 
 def create_app() -> FastAPI:
@@ -28,6 +38,7 @@ def create_app() -> FastAPI:
         title=settings.project_name,
         description=settings.project_description,
         debug=settings.debug,
+        lifespan=lifespan,
     )
     logger = logging.getLogger(__name__)
     cors_origins = list(settings.cors_origins)
@@ -65,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(providers_router)
     app.include_router(models_router)
+    app.include_router(repository_router)
     app.include_router(conversations_router)
     app.include_router(gateway_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
