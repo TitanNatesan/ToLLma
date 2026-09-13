@@ -8,14 +8,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tollms.modules.conversations.service import list_messages, usage_totals
-from tollms.modules.gateway.costing import PriceSet, UsageTokens, calculate, prices_for_model
-from tollms.modules.gateway.schemas import ChatRequest
-from tollms.modules.gateway.service import run_chat
-from tollms.modules.model_repository.canonical import canonicalize
-from tollms.modules.model_repository.models import RepositorySource
-from tollms.modules.model_repository.service import list_entries, lookup, run_sync
-from tollms.modules.models.service import get_model
+from tollms.api.conversations.service import list_messages, usage_totals
+from tollms.services.gateway.costing import PriceSet, UsageTokens, calculate, prices_for_model
+from tollms.api.gateway.schemas import ChatRequest
+from tollms.api.gateway.service import run_chat
+from tollms.services.model_repository.canonical import canonicalize
+from tollms.models.model_repository import RepositorySource
+from tollms.api.repository.service import list_entries, run_sync
+from tollms.services.model_repository.lookup import lookup
+from tollms.api.models.service import get_model
 import uuid
 
 
@@ -171,7 +172,7 @@ def test_model_create_snapshots_repository(client: TestClient, db: Session, prov
 def test_prices_for_model_falls_back_without_repo(provider_factory, model_factory, db: Session) -> None:
     p = provider_factory("Fallback")
     m = model_factory(p["id"])
-    from tollms.modules.models.service import get_model as _get
+    from tollms.api.models.service import get_model as _get
 
     prices = prices_for_model(_get(db, uuid.UUID(m["id"])), None)
     assert prices.input == Decimal("2.5") and prices.output == Decimal("10")

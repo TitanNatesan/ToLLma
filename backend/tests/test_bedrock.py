@@ -1,6 +1,6 @@
 """Tests for Bedrock adapter model resolution and profile routing."""
 
-from tollms.modules.gateway.adapters.bedrock import resolve_bedrock_model_id
+from tollms.services.gateway.adapters.bedrock import resolve_bedrock_model_id
 
 
 def test_resolve_bedrock_model_id():

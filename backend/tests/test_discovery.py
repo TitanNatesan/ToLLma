@@ -7,14 +7,14 @@ import httpx
 import pytest
 from sqlalchemy.orm import Session
 
-from tollms.modules.gateway.adapters.anthropic import AnthropicAdapter
-from tollms.modules.gateway.adapters.bedrock import BedrockAdapter
-from tollms.modules.gateway.adapters.gemini import GeminiAdapter, VertexAdapter
-from tollms.modules.gateway.adapters.openai import CustomAdapter, OpenAIChatAdapter, OpenAIResponsesAdapter
-from tollms.modules.gateway.factory import build_adapter
-from tollms.modules.models.service import list_models
-from tollms.modules.providers.models import Provider, ProviderType
-from tollms.modules.providers.service import discover_provider_models, validate_provider
+from tollms.services.gateway.adapters.anthropic import AnthropicAdapter
+from tollms.services.gateway.adapters.bedrock import BedrockAdapter
+from tollms.services.gateway.adapters.gemini import GeminiAdapter, VertexAdapter
+from tollms.services.gateway.adapters.openai import CustomAdapter, OpenAIChatAdapter, OpenAIResponsesAdapter
+from tollms.services.gateway.factory import build_adapter
+from tollms.api.models.service import list_models
+from tollms.models.provider import Provider, ProviderType
+from tollms.api.providers.service import discover_provider_models, validate_provider
 
 
 def _mock(routes: dict[str, tuple[int, dict]]) -> httpx.MockTransport:
@@ -128,7 +128,7 @@ def test_validate_and_discover_persist(db: Session, provider_factory, model_fact
 
 
 async def _read_provider(db: Session, pid: str) -> dict:
-    from tollms.modules.providers.service import get_provider
+    from tollms.api.providers.service import get_provider
 
     p = get_provider(db, uuid.UUID(pid))
     return {"validation_status": p.validation_status, "last_validated_at": p.last_validated_at}

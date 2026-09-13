@@ -9,15 +9,15 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from tollms.api.health import router as health_router
+from tollms.api.conversations.router import router as conversations_router
+from tollms.api.gateway.router import router as gateway_router
+from tollms.api.health.router import router as health_router
+from tollms.api.models.router import router as models_router
+from tollms.api.providers.router import router as providers_router
+from tollms.api.repository.router import router as repository_router
 from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
-from tollms.modules.conversations.router import router as conversations_router
-from tollms.modules.gateway.router import router as gateway_router
-from tollms.modules.model_repository import scheduler as repository_scheduler
-from tollms.modules.model_repository.router import router as repository_router
-from tollms.modules.models.router import router as models_router
-from tollms.modules.providers.router import router as providers_router
+from tollms.services.model_repository import scheduler as repository_scheduler
 
 
 @asynccontextmanager

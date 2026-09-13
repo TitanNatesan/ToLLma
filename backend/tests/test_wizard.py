@@ -7,11 +7,11 @@ import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tollms.modules.model_repository.mapping import detect_providers_from_url, map_one
-from tollms.modules.model_repository.service import run_sync
-from tollms.modules.models.service import get_model
-from tollms.modules.providers.models import ProviderType
-from tollms.modules.providers.service import draft_validate
+from tollms.services.model_repository.mapping import detect_providers_from_url, map_one
+from tollms.services.model_repository.sync import run_sync
+from tollms.api.models.service import get_model
+from tollms.models.provider import ProviderType
+from tollms.api.providers.service import draft_validate
 
 
 def _models_transport(models: list[dict]) -> httpx.MockTransport:

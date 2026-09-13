@@ -389,5 +389,31 @@ Implemented:
    - ESLint validation (`docker compose exec frontend npm run lint`): 0 errors, 0 warnings.
    - Frontend Vitest unit tests: 5/5 passed.
    - Backend Pytest suite: 31/31 passed.
-   - Playwright end-to-end suite (`npx playwright test`): 33 passed, 2 skipped (empty conversations), 0 failed across all 35 tests.
-   - Visual inspection: Verified pixel-perfect, cohesive UI layout across both Chat and Providers workspaces.
+    - Playwright end-to-end suite (`npx playwright test`): 33 passed, 2 skipped (empty conversations), 0 failed across all 35 tests.
+    - Visual inspection: Verified pixel-perfect, cohesive UI layout across both Chat and Providers workspaces.
+
+## 2026-09-13 - Backend refactor: modules/ -> api/ + services/ + models/ (no behavior change)
+
+Drove `backend/src/tollms/modules/{conversations,providers,models,model_repository,gateway}`
+into layered arch via git mv (history kept): feature code -> `api/{conversations,providers,
+models,repository,gateway,health/}` (router+schemas+service each; health router-only);
+reusable engines -> `services/gateway/{adapters,factory,costing}` +
+`services/model_repository/{canonical,mapping,sources,scheduler,sync,lookup}`;
+ORM -> `models/{conversation,message,provider,registered_model,model_repository}` with
+aggregate `models/__init__.py`. modules/ deleted.
+Split: old model_repository/service.py divided three ways — sync engine (run_sync/merge,
+services/.../sync.py), match engine (PROVIDER_HINTS/find_for_model/lookup/suggest_payload/
+stats, services/.../lookup.py — mapping.py imports from here so services never depend on api),
+feature service (get_entry/list_entries/sync_history + re-exports, api/repository/service.py).
+conversations/models.py split Role+Message -> message.py, Conversation -> conversation.py.
+Rewrote ~30 files' imports by script (tollms.modules.* -> tollms.{api,services,models}.*),
+updated alembic/env.py to single `import tollms.models`, declared migration-only partial index
+uq_providers_name_live in Provider metadata (alembic check was red before AND after until this;
+now green — lesson encoded in backend.md). Kept package name `tollms` (prompt said `tollma`;
+rename has no benefit, touches packaging/docker). Skipped registry.py/encryption/storage/
+workers/shared scaffolding — no code needs them yet.
+Verification: pytest 36/36; alembic upgrade heads + check clean; cold restart healthy,
+APScheduler 24h job starts, /health + /health/ready ok; all 27 routes in OpenAPI;
+live repo stats (4029 models) + lookup ok; Playwright 37/37; vitest 5/5; tsc clean.
+Also rewrote .opencode/rules/backend.md to the layered rules (flow router->api service->
+services->models; engine-keyed services; models aggregate import; check-green invariant).

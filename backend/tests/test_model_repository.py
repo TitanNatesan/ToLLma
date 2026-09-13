@@ -6,8 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from tollms.modules.model_repository import scheduler, service
-from tollms.modules.model_repository.sources import LiteLLMSourceAdapter
+from tollms.api.repository import service
+from tollms.services.model_repository import scheduler
+from tollms.services.model_repository.sources import LiteLLMSourceAdapter
 
 
 LITELLM_SAMPLE = {
@@ -104,7 +105,7 @@ def test_sync_updates_and_deactivates(db: Session) -> None:
 
 def test_source_failure_never_raises(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "tollms.modules.model_repository.service.LiteLLMSourceAdapter.fetch",
+        "tollms.services.model_repository.sync.LiteLLMSourceAdapter.fetch",
         lambda self: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     run = service.run_sync(db, openrouter_data={"data": []})

@@ -7,9 +7,9 @@ import uuid
 import httpx
 from sqlalchemy.orm import Session
 
-from tollms.modules.conversations.service import list_messages, usage_totals
-from tollms.modules.gateway.schemas import ChatRequest
-from tollms.modules.gateway.service import run_chat, run_stream
+from tollms.api.conversations.service import list_messages, usage_totals
+from tollms.api.gateway.schemas import ChatRequest
+from tollms.api.gateway.service import run_chat, run_stream
 
 SSE_BODY = (
     'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n'
