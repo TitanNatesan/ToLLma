@@ -49,6 +49,12 @@ body {
   margin-left: 1px;
 }
 
+/* Secure credential masking without triggering browser login autofill */
+.credential-masked {
+  -webkit-text-security: disc !important;
+  text-security: disc !important;
+}
+
 /* Custom slim scrollbar */
 ::-webkit-scrollbar {
   width: 4px;

@@ -36,6 +36,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
+  Eye,
+  EyeOff,
   KeyRound,
   Layers,
   Loader2,
@@ -132,6 +134,98 @@ function loadDraft(): Draft | null {
   }
 }
 
+interface CredentialFieldProps {
+  fieldKey: string;
+  spec: { label: string; secret?: boolean; multiline?: boolean; optional?: boolean };
+  value: string;
+  onChange: (v: string) => void;
+  showSecret?: boolean;
+  onToggleSecret?: () => void;
+}
+
+function CredentialField({
+  fieldKey,
+  spec,
+  value,
+  onChange,
+  showSecret,
+  onToggleSecret,
+}: CredentialFieldProps) {
+  const [supportsTextSecurity, setSupportsTextSecurity] = useState(true);
+
+  useEffect(() => {
+    if (typeof CSS !== "undefined" && typeof CSS.supports === "function") {
+      setSupportsTextSecurity(CSS.supports("-webkit-text-security", "disc"));
+    }
+  }, []);
+
+  const inputType = spec.secret && !showSecret
+    ? (supportsTextSecurity ? "text" : "password")
+    : "text";
+
+  return (
+    <Field label={spec.label + (spec.optional ? " (optional)" : "")}>
+      {spec.multiline ? (
+        <Textarea
+          rows={3}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          data-testid={`cred-${fieldKey}`}
+          placeholder={spec.secret ? "••••••••••••••••" : ""}
+          name={`tollma_provider_param_${fieldKey}`}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-bwignore="true"
+          data-form-type="other"
+        />
+      ) : (
+        <div className="relative">
+          <Input
+            type={inputType}
+            style={{
+              WebkitTextSecurity: spec.secret && !showSecret ? "disc" : "none",
+            } as React.CSSProperties}
+            className={cn(
+              "font-mono text-xs",
+              spec.secret && !showSecret && "credential-masked",
+              spec.secret && "pr-9",
+            )}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            data-testid={`cred-${fieldKey}`}
+            placeholder={spec.secret ? "••••••••••••••••" : ""}
+            name={`tollma_provider_param_${fieldKey}`}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-bwignore="true"
+            data-form-type="other"
+          />
+          {spec.secret && (
+            <button
+              type="button"
+              onClick={onToggleSecret}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors p-0.5 rounded focus:outline-none"
+              tabIndex={-1}
+              aria-label={showSecret ? "Hide secret" : "Show secret"}
+              title={showSecret ? "Hide secret" : "Show secret"}
+            >
+              {showSecret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+          )}
+        </div>
+      )}
+    </Field>
+  );
+}
+
 export function ProviderWizardModal({
   open,
   onClose,
@@ -156,6 +250,7 @@ export function ProviderWizardModal({
   );
   const [description, setDescription] = useState(() => (isEditing ? "" : (loadDraft()?.description ?? "")));
   const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing ? {} : (loadDraft()?.creds ?? {})));
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState<DraftValidation | null>(null);
   const [mapped, setMapped] = useState<MappedModel[] | null>(null);
@@ -307,6 +402,7 @@ export function ProviderWizardModal({
   }
 
   function close() {
+    setShowSecrets({});
     onClose();
   }
 
@@ -316,7 +412,16 @@ export function ProviderWizardModal({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
       <DialogContent className="max-w-3xl p-0 overflow-hidden shadow-2xl">
-        <div data-testid="provider-form" className="flex flex-col">
+        <form
+          data-testid="provider-form"
+          className="flex flex-col"
+          autoComplete="off"
+          onSubmit={(e) => e.preventDefault()}
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-bwignore="true"
+          data-form-type="other"
+        >
           <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60">
             <div className="flex items-center justify-between">
               <div>
@@ -370,6 +475,14 @@ export function ProviderWizardModal({
                           onChange={(e) => setName(e.target.value)}
                           data-testid="provider-name"
                           autoFocus
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          data-1p-ignore="true"
+                          data-lpignore="true"
+                          data-bwignore="true"
+                          data-form-type="other"
                         />
                       </Field>
                       <div className="w-1/2">
@@ -397,6 +510,14 @@ export function ProviderWizardModal({
                         placeholder="e.g. Team production key"
                         onChange={(e) => setDescription(e.target.value)}
                         data-testid="provider-description"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        data-1p-ignore="true"
+                        data-lpignore="true"
+                        data-bwignore="true"
+                        data-form-type="other"
                       />
                     </Field>
                     <div className="space-y-2">
@@ -443,25 +564,20 @@ export function ProviderWizardModal({
                       <span className="text-[11px] text-zinc-400">Keys are stored encrypted on your server</span>
                     </div>
                     {CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
-                      <Field key={fieldKey} label={spec.label + (spec.optional ? " (optional)" : "")}>
-                        {spec.multiline ? (
-                          <Textarea
-                            rows={3}
-                            value={creds[fieldKey] ?? ""}
-                            onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
-                            data-testid={`cred-${fieldKey}`}
-                            placeholder={spec.secret ? "••••••••••••••••" : ""}
-                          />
-                        ) : (
-                          <Input
-                            type={spec.secret ? "password" : "text"}
-                            value={creds[fieldKey] ?? ""}
-                            onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
-                            data-testid={`cred-${fieldKey}`}
-                            placeholder={spec.secret ? "••••••••••••••••" : ""}
-                          />
-                        )}
-                      </Field>
+                      <CredentialField
+                        key={fieldKey}
+                        fieldKey={fieldKey}
+                        spec={spec}
+                        value={creds[fieldKey] ?? ""}
+                        onChange={(v) => setCreds((prev) => ({ ...prev, [fieldKey]: v }))}
+                        showSecret={showSecrets[fieldKey]}
+                        onToggleSecret={() =>
+                          setShowSecrets((prev) => ({
+                            ...prev,
+                            [fieldKey]: !prev[fieldKey],
+                          }))
+                        }
+                      />
                     ))}
                   </div>
                 )}
@@ -663,7 +779,7 @@ export function ProviderWizardModal({
               )}
             </div>
           </div>
-        </div>
+        </form>
       </DialogContent>
 
       {editingModelId && (
@@ -722,29 +838,40 @@ function EditBody({
   busy: boolean;
   onSave: () => void;
 }) {
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+
   return (
     <div className="space-y-3" data-testid="wizard-edit-body">
       <Field label="Provider Name">
-        <Input value={name} onChange={(e) => setName(e.target.value)} data-testid="provider-name" />
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          data-testid="provider-name"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-bwignore="true"
+          data-form-type="other"
+        />
       </Field>
       {CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
-        <Field key={fieldKey} label={spec.label + (spec.optional ? " (optional)" : "")}>
-          {spec.multiline ? (
-            <Textarea
-              rows={3}
-              value={creds[fieldKey] ?? ""}
-              onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
-              data-testid={`cred-${fieldKey}`}
-            />
-          ) : (
-            <Input
-              type={spec.secret ? "password" : "text"}
-              value={creds[fieldKey] ?? ""}
-              onChange={(e) => setCreds({ ...creds, [fieldKey]: e.target.value })}
-              data-testid={`cred-${fieldKey}`}
-            />
-          )}
-        </Field>
+        <CredentialField
+          key={fieldKey}
+          fieldKey={fieldKey}
+          spec={spec}
+          value={creds[fieldKey] ?? ""}
+          onChange={(v) => setCreds({ ...creds, [fieldKey]: v })}
+          showSecret={showSecrets[fieldKey]}
+          onToggleSecret={() =>
+            setShowSecrets((prev) => ({
+              ...prev,
+              [fieldKey]: !prev[fieldKey],
+            }))
+          }
+        />
       ))}
       <Button onClick={onSave} disabled={!name.trim() || busy} data-testid="save-provider">
         Save Provider

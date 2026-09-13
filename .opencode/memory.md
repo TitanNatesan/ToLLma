@@ -417,3 +417,32 @@ APScheduler 24h job starts, /health + /health/ready ok; all 27 routes in OpenAPI
 live repo stats (4029 models) + lookup ok; Playwright 37/37; vitest 5/5; tsc clean.
 Also rewrote .opencode/rules/backend.md to the layered rules (flow router->api service->
 services->models; engine-keyed services; models aggregate import; check-green invariant).
+
+## 2026-09-13 - Prevent Browser Password Autofill on Provider Credential Inputs
+
+Requirement: Disable browser password manager autofill / username suggestion dropdowns on all provider credentials fields (Step 2 and Edit mode in the Provider connection modal).
+
+Root Cause:
+- Chromium treats forms containing `<input type="password">` as login forms.
+- Chromium's password heuristics engine identifies preceding text fields (e.g. `Access Key`, `API Key`) as `USERNAME` fields and attaches saved-account dropdowns, auto-populating email addresses and passwords.
+- Standard `autocomplete="off"` is ignored by Chromium when a password input is present in the form.
+
+Implemented Solution:
+1. `frontend/src/app/providers/components/ProviderWizardModal.tsx`:
+   - Created reusable `CredentialField` component.
+   - For secret inputs, uses `type="text"` combined with native CSS `-webkit-text-security: disc` and `.credential-masked` styling when masked. Because no `type="password"` input exists in the DOM, Chromium and browser password managers do not classify the form as a login form and never attach username autofill heuristics or saved password dropdowns.
+   - Added interactive show/hide secret toggle with `Eye` and `EyeOff` icons (`lucide-react`).
+   - Hardened all credential and provider inputs with anti-autofill attributes: `autoComplete="off"`, `autoCorrect="off"`, `autoCapitalize="none"`, `spellCheck={false}`, `data-1p-ignore="true"` (1Password), `data-lpignore="true"` (LastPass), `data-bwignore="true"` (Bitwarden), and `data-form-type="other"` (Dashlane).
+   - Applied `<CredentialField>` across both Step 2 of the wizard and `EditBody`.
+   - Updated modal container to an explicit `<form>` with `autoComplete="off"` and `onSubmit={(e) => e.preventDefault()}`.
+2. `frontend/src/app/globals.css`:
+   - Added `.credential-masked` utility class with `-webkit-text-security: disc !important` and `text-security: disc !important`.
+3. `frontend/src/components/ui/TopBar.tsx`:
+   - Resolved client theme hydration mismatch on theme toggle button.
+
+Verification:
+- TypeScript (`tsc --noEmit`): 0 errors.
+- Vitest unit tests: 5/5 passed.
+- Backend Pytest suite: 36/36 passed.
+- Playwright E2E suite (`npx playwright test`): 36 passed, 1 skipped, 0 failed.
+- Visual browser verification: Loaded `http://localhost:3000/providers`, triggered Add Provider wizard, advanced to Step 2 (Credentials for AWS Bedrock); verified that `Access Key` and `Secret Key` do not trigger password autofill dropdowns, secret masking functions cleanly, and eye toggle reveals and re-masks secrets seamlessly.

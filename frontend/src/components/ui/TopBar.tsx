@@ -26,14 +26,17 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const { setRepoSearchOpen } = useChatStore();
-  const [isDark, setIsDark] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return (
+  const [mounted, setMounted] = useState(false);
+  const [isDark, setIsDark] = useState(true);
+
+  useEffect(() => {
+    setMounted(true);
+    const isDarkTheme =
       document.documentElement.classList.contains("dark") ||
       (!("theme" in localStorage) && window.matchMedia("(prefers-color-scheme: dark)").matches) ||
-      localStorage.getItem("theme") === "dark"
-    );
-  });
+      localStorage.getItem("theme") === "dark";
+    setIsDark(isDarkTheme);
+  }, []);
 
   const toggleTheme = () => {
     setIsDark((prev) => {
@@ -202,7 +205,7 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
           data-testid="theme-toggle-btn"
           aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
         >
-          {isDark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+          {mounted ? (isDark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />) : <span className="size-3.5" />}
         </button>
       </div>
     </header>
