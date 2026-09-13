@@ -20,15 +20,16 @@ test("chat flow streams, tracks usage, survives reload", async ({ page, request 
   const assistant = page.getByTestId("message-assistant").last();
   await expect(assistant).toContainText("Hello from mock", { timeout: 20000 });
 
-  // Settings panel shows live conversation usage (mock reports 8 in / 6 out).
-  const panel = page.getByTestId("chat-settings");
+  // Intelligence panel shows live conversation usage (mock reports 8 in / 6 out).
+  const panel = page.getByTestId("right-sidebar");
   await expect(panel.getByTestId("usage-total")).toContainText("14 tok", { timeout: 10000 });
   await expect(panel.getByTestId("usage-prompt")).toContainText("8");
   await expect(panel.getByTestId("usage-completion")).toContainText("6");
 
   // Sidebar picked up the new conversation.
-  const sidebar = page.getByRole("complementary");
+  const sidebar = page.getByTestId("left-sidebar");
   await expect(sidebar.getByText(text.slice(0, 20)).first()).toBeVisible();
+
 
   // Reload -> conversation + both messages persist.
   await page.reload();

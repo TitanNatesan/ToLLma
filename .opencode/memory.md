@@ -153,3 +153,40 @@ Verification:
 - End-to-end browser verification via browser subagent: loaded UI, selected `dedede (BEDROCK_CONVERSE)` and `Claude Haiku 4.5`, typed message and verified streamed assistant response and usage calculation in UI.
 - Pytest suite: 17/17 tests passing.
 - Frontend linting & typechecking: 0 errors.
+
+## 2026-09-13 - ToLLms V1 Chat Experience & UX Enhancement + Lucide Icon Migration
+
+Requirement: transform ToLLms into a modern, production-grade, three-panel AI chat application (ChatGPT/Claude/Perplexity style) while preserving provider and model management capabilities; replace all emojis and unicode glyphs across the entire user interface with cohesive Lucide icons (`lucide-react`).
+
+Implemented:
+1. Three-Panel Layout Architecture:
+   - Left Sidebar: collapsible conversation drawer with category groupings (Pinned, Recent), search filter, new chat trigger, inline renaming, pinning, and deletion.
+   - Center Chat Panel: clean conversation stream, interactive welcome state, floating bottom composer with integrated provider/model selectors, stop generation and regenerate controls, Markdown rendering with syntax highlighting, and collapsible `<think>` reasoning blocks.
+   - Right Intelligence Panel: collapsible drawer displaying real-time model telemetry, context limits, capabilities badges, pricing information, and live token usage with estimated session cost.
+2. Conversation Pinning & Database Migration:
+   - Added `is_pinned` boolean column with index to `conversations` table.
+   - Generated and applied Alembic migration `7187f733ecbe_add_conversation_is_pinned.py`.
+   - Updated backend schemas, service functions, and exposed `PATCH /api/v1/conversations/{id}/pin`.
+3. Command Palette (Ctrl+K / Cmd+K):
+   - Keyboard accessible modal for quick navigation, starting new chats, jumping to providers, and searching conversation history.
+4. Comprehensive Lucide Icon Migration (`lucide-react`):
+   - Replaced all emojis and unicode characters across the entire frontend with typed, responsive Lucide SVG components.
+   - `ChatInput.tsx`: `Eye`, `Brain`, `Wrench`, `Zap`, `Mic`, `ImageIcon`, `Cpu`, `Bot`, `ChevronDown`, `CornerDownLeft`, `Square`.
+   - `ChatSettingsPanel.tsx`: `FileText`, `Eye`, `Mic`, `Volume2`, `ImageIcon`, `Wrench`, `Brain`, `Zap`, `ChevronRight`, `ChevronLeft`.
+   - `MessageView.tsx`: `Brain`, `ChevronUp`, `ChevronDown`, `User`, `Sparkles`, `Copy`, `RotateCcw`, `Trash2`.
+   - `Sidebar.tsx`: `MessageSquare`, `Cpu`, `ChevronLeft`, `ChevronRight`, `Plus`, `Pin`, `Pencil`, `Trash2`.
+   - `CommandPalette.tsx`: `CommandIcon`, `Plus`, `Search`, `Cpu`, `MessageSquare`, `Pin`.
+   - `page.tsx`: Modern `Sparkles` icon card for welcome state, `RotateCcw` for regeneration.
+   - `providers/page.tsx`: `Plus` for Add Provider/Model, `CheckCircle2` for Validate, `RefreshCw` with spin animation for Refresh Models, `Pencil` for Edit, `Trash2` for Delete.
+5. Provider Management Enhancements:
+   - Filter chips for all provider types (OPENAI_RESPONSES, OPENAI_CHAT, ANTHROPIC_MESSAGES, GEMINI, VERTEX_AI, BEDROCK_CONVERSE, CUSTOM).
+   - Real-time provider search and model filtering.
+6. Verification & Stability Fixes:
+   - Bound mock LLM server in `frontend/e2e/mock-server.ts` to `0.0.0.0` for reliable Docker host gateway connectivity.
+   - Configured `workers: 1` in `playwright.config.ts` for clean test isolation with host mock server.
+   - Added `expect` import in `frontend/e2e/helpers.ts`.
+   - TypeScript compilation (`npx tsc --noEmit`): 0 errors.
+   - ESLint (`npm run lint`): 0 warnings, 0 errors.
+   - Vitest unit tests: 5/5 passed.
+   - Backend Pytest suite: 17/17 passed.
+   - Playwright end-to-end test suite: 29/29 passed (including 20 chat-ux tests and 9 comprehensive e2e scenarios).

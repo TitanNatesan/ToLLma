@@ -7,6 +7,7 @@ import {
   getConversation,
   getUsage,
   listConversations,
+  pinConversation,
   renameConversation,
 } from "@/services/api";
 import { useChatStore } from "@/store/chat";
@@ -42,6 +43,13 @@ export function useConversationMutations() {
     create: useMutation({ mutationFn: createConversation, onSuccess: invalidateLists }),
     rename: useMutation({
       mutationFn: ({ id, title }: { id: string; title: string }) => renameConversation(id, title),
+      onSuccess: (_d, v) => {
+        invalidateLists();
+        void qc.invalidateQueries({ queryKey: ["conversation", v.id] });
+      },
+    }),
+    pin: useMutation({
+      mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) => pinConversation(id, pinned),
       onSuccess: (_d, v) => {
         invalidateLists();
         void qc.invalidateQueries({ queryKey: ["conversation", v.id] });

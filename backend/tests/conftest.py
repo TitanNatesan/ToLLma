@@ -26,9 +26,8 @@ def _admin_url() -> str:
 def _database() -> str:
     admin = create_engine(_admin_url(), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
-        exists = conn.execute(text("SELECT 1 FROM pg_database WHERE datname='tollms_test'")).first()
-        if not exists:
-            conn.execute(text("CREATE DATABASE tollms_test"))
+        conn.execute(text("DROP DATABASE IF EXISTS tollms_test WITH (FORCE)"))
+        conn.execute(text("CREATE DATABASE tollms_test"))
     admin.dispose()
     url = _test_url()
     engine = create_engine(url)

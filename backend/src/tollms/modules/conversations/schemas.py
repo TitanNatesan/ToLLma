@@ -19,6 +19,10 @@ class ConversationRename(BaseModel):
     title: str = Field(min_length=1, max_length=255)
 
 
+class ConversationPin(BaseModel):
+    pinned: bool
+
+
 class MessageRead(BaseModel):
     id: uuid.UUID
     role: Role
@@ -31,6 +35,7 @@ class MessageRead(BaseModel):
     input_cost: Decimal | None
     output_cost: Decimal | None
     total_cost: Decimal | None
+    latency_ms: float | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -39,6 +44,7 @@ class MessageRead(BaseModel):
 class ConversationRead(BaseModel):
     id: uuid.UUID
     title: str
+    is_pinned: bool = False
     provider_id: uuid.UUID | None
     model_id: uuid.UUID | None
     created_at: datetime

@@ -31,9 +31,19 @@ def get_conversation(db: Session, conversation_id: uuid.UUID) -> Conversation:
 
 
 def list_conversations(db: Session, *, search: str | None = None) -> list[Conversation]:
-    stmt = select(Conversation).where(Conversation.is_deleted.is_(False)).order_by(Conversation.updated_at.desc())
+    stmt = (
+        select(Conversation)
+        .where(Conversation.is_deleted.is_(False))
+        .order_by(Conversation.is_pinned.desc(), Conversation.updated_at.desc())
+    )
     if search:
-        stmt = stmt.where(Conversation.title.ilike(f"%{search}%"))
+        # Search title OR message content via EXISTS subquery
+        content_match = select(Message.id).where(
+            Message.conversation_id == Conversation.id,
+            Message.is_deleted.is_(False),
+            Message.content.ilike(f"%{search}%"),
+        ).exists()
+        stmt = stmt.where(or_(Conversation.title.ilike(f"%{search}%"), content_match))
     return list(db.scalars(stmt))
 
 
@@ -73,6 +83,15 @@ def delete_conversation(db: Session, conversation_id: uuid.UUID) -> None:
     conv.deleted_at = datetime.now(timezone.utc)
     db.commit()
     logger.info("conversation soft-deleted: %s", conversation_id)
+
+
+def pin_conversation(db: Session, conversation_id: uuid.UUID, *, pinned: bool) -> Conversation:
+    conv = get_conversation(db, conversation_id)
+    conv.is_pinned = pinned
+    db.commit()
+    db.refresh(conv)
+    logger.info("conversation %s pinned=%s", conversation_id, pinned)
+    return conv
 
 
 def add_message(

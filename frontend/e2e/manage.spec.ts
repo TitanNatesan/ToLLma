@@ -21,28 +21,32 @@ test("rename persists across reload", async ({ page }) => {
   await createChat(page, stamp);
   const renamed = `renamed ${stamp}`;
 
-  const row = page.getByRole("complementary").locator("li", { hasText: `rename me ${stamp}` });
+  const sidebar = page.getByTestId("left-sidebar");
+  const item = sidebar.locator("[data-testid^='conversation-item-']", { hasText: `rename me ${stamp}` });
+  const row = item.locator("..");
   await row.hover();
   await row.getByTitle("Rename", { exact: true }).click();
   await page.getByLabel("Conversation title").fill(renamed);
   await page.getByLabel("Conversation title").press("Enter");
-  await expect(page.getByRole("complementary").getByText(renamed)).toBeVisible();
+  await expect(sidebar.getByText(renamed)).toBeVisible();
 
   await page.reload();
-  await expect(page.getByRole("complementary").getByText(renamed)).toBeVisible();
+  await expect(sidebar.getByText(renamed)).toBeVisible();
 });
 
 test("delete removes conversation and database row", async ({ page, request }) => {
   const stamp = Date.now() + 1;
   await createChat(page, stamp);
 
-  const row = page.getByRole("complementary").locator("li", { hasText: `rename me ${stamp}` });
+  const sidebar = page.getByTestId("left-sidebar");
+  const item = sidebar.locator("[data-testid^='conversation-item-']", { hasText: `rename me ${stamp}` });
+  const row = item.locator("..");
   await row.hover();
   await row.getByTitle("Delete", { exact: true }).click();
-  await expect(row).toHaveCount(0);
+  await expect(item).toHaveCount(0);
 
   await page.reload();
-  await expect(page.getByRole("complementary").getByText(`rename me ${stamp}`)).toHaveCount(0);
+  await expect(sidebar.getByText(`rename me ${stamp}`)).toHaveCount(0);
 
   // Database state: conversation is gone from the API.
   const list = await (await request.get(`${API}/api/v1/conversations?search=rename%20me%20${stamp}`)).json();

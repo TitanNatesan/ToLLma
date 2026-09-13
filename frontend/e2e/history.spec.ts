@@ -24,13 +24,13 @@ test("multiple conversations order by recency and reload", async ({ page }) => {
   await expect(page.getByTestId("message-assistant").last()).toContainText("Hello from mock", { timeout: 20000 });
 
   // Most recent conversation sorts first in the sidebar.
-  const sidebar = page.getByRole("complementary");
-  const items = sidebar.locator("li");
+  const sidebar = page.getByTestId("left-sidebar");
+  const items = sidebar.locator("[data-testid^='conversation-item-']");
   await expect(items.first()).toContainText(second.slice(0, 20));
 
   // Reload -> history intact, newest still first, and it loads on click.
   await page.reload();
-  await expect(page.getByRole("complementary").locator("li").first()).toContainText(second.slice(0, 20));
-  await page.getByRole("complementary").locator("li").first().getByRole("button").first().click();
+  await expect(sidebar.locator("[data-testid^='conversation-item-']").first()).toContainText(second.slice(0, 20));
+  await sidebar.locator("[data-testid^='conversation-item-']").first().click();
   await expect(page.getByTestId("message-user").last()).toContainText(second);
 });

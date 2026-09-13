@@ -1,15 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { listProviders, streamChat } from "@/services/api";
 
+const originalBackendUrl = process.env.BACKEND_URL;
+const originalApiUrl = process.env.NEXT_PUBLIC_API_URL;
+
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.NEXT_PUBLIC_API_URL;
+  if (originalBackendUrl !== undefined) {
+    process.env.BACKEND_URL = originalBackendUrl;
+  } else {
+    delete process.env.BACKEND_URL;
+  }
+  if (originalApiUrl !== undefined) {
+    process.env.NEXT_PUBLIC_API_URL = originalApiUrl;
+  } else {
+    delete process.env.NEXT_PUBLIC_API_URL;
+  }
 });
 
 describe("api client", () => {
   it("builds provider list URL and parses JSON", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([{ id: "1" }])));
     vi.stubGlobal("fetch", fetchMock);
+    delete process.env.BACKEND_URL;
     process.env.NEXT_PUBLIC_API_URL = "http://api:8000";
     const providers = await listProviders();
     expect(fetchMock).toHaveBeenCalledWith("http://api:8000/api/v1/providers", expect.anything());

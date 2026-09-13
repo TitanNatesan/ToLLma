@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { CREDENTIAL_FIELDS, PROVIDER_TYPES } from "@/app/providers/fields";
+import { CheckCircle2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Field, GhostButton, Input, Select, Switch, Textarea } from "@/components/ui";
 import { useModelMutations, useModels, useProviderMutations, useProviders } from "@/hooks/useRegistry";
 import type { AIModel, EndpointType, Provider, ProviderType } from "@/types";
@@ -190,6 +191,14 @@ export default function ProvidersPage() {
   const [discoverMsg, setDiscoverMsg] = useState<Record<string, string>>({});
   const [showModelForm, setShowModelForm] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
+  const [providerSearch, setProviderSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<ProviderType | "ALL">("ALL");
+
+  const filteredProviders = (providers ?? []).filter((p) => {
+    const matchSearch = !providerSearch || p.name.toLowerCase().includes(providerSearch.toLowerCase());
+    const matchType = typeFilter === "ALL" || p.provider_type === typeFilter;
+    return matchSearch && matchType;
+  });
 
   const selected = (providers ?? []).find((p) => p.id === selectedId) ?? null;
   const selectedModels = (allModels ?? []).filter((m) => m.provider_id === selectedId);
@@ -271,9 +280,38 @@ export default function ProvidersPage() {
       <section className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto" aria-label="Provider list">
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold">Providers</h1>
-          <Button size="sm" className="ml-auto" onClick={openCreate} data-testid="add-provider">
+          <Button size="sm" className="ml-auto gap-1.5" onClick={openCreate} data-testid="add-provider">
+            <Plus className="size-3.5" />
             Add
           </Button>
+        </div>
+        {/* Search + filter */}
+        <div className="flex flex-col gap-1.5">
+          <Input
+            placeholder="Search providers…"
+            value={providerSearch}
+            onChange={(e) => setProviderSearch(e.target.value)}
+            aria-label="Search providers"
+            data-testid="provider-search"
+            className="h-7 text-xs"
+          />
+          <div className="flex flex-wrap gap-1">
+            {(["ALL", ...PROVIDER_TYPES] as Array<ProviderType | "ALL">).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                data-testid={`type-filter-${t}`}
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                  typeFilter === t
+                    ? "border-zinc-700 bg-zinc-700 text-white dark:border-zinc-300 dark:bg-zinc-300 dark:text-zinc-900"
+                    : "border-zinc-200 text-zinc-500 hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500",
+                )}
+              >
+                {t === "ALL" ? "All" : t}
+              </button>
+            ))}
+          </div>
         </div>
         {showForm && (
           <Card data-testid="provider-form">
@@ -302,7 +340,7 @@ export default function ProvidersPage() {
           </Card>
         )}
         {isLoading && <p className="text-sm text-zinc-500">Loading…</p>}
-        {(providers ?? []).map((p) => {
+        {filteredProviders.map((p) => {
           const count = (allModels ?? []).filter((m) => m.provider_id === p.id).length;
           return (
             <Card
@@ -360,14 +398,22 @@ export default function ProvidersPage() {
                   ))}
                 </dl>
                 <div className="flex flex-wrap gap-2">
-                  <GhostButton size="sm" onClick={() => runValidate(selected.id)} disabled={busy !== null} data-testid={`validate-${selected.id}`}>
+                  <GhostButton size="sm" className="gap-1.5" onClick={() => runValidate(selected.id)} disabled={busy !== null} data-testid={`validate-${selected.id}`}>
+                    <CheckCircle2 className="size-3.5" />
                     {busy === `validate:${selected.id}` ? "Checking…" : "Validate"}
                   </GhostButton>
-                  <GhostButton size="sm" onClick={() => runDiscover(selected.id)} disabled={busy !== null} data-testid={`discover-${selected.id}`}>
+                  <GhostButton size="sm" className="gap-1.5" onClick={() => runDiscover(selected.id)} disabled={busy !== null} data-testid={`discover-${selected.id}`}>
+                    <RefreshCw className={cn("size-3.5", busy === `discover:${selected.id}` && "animate-spin")} />
                     {busy === `discover:${selected.id}` ? "Discovering…" : "Refresh models"}
                   </GhostButton>
-                  <GhostButton size="sm" onClick={() => openEdit(selected)}>Edit</GhostButton>
-                  <GhostButton size="sm" onClick={() => { pm.remove.mutate(selected.id); setSelectedId(null); toast.success("Provider deleted"); }}>Delete</GhostButton>
+                  <GhostButton size="sm" className="gap-1.5" onClick={() => openEdit(selected)}>
+                    <Pencil className="size-3.5" />
+                    Edit
+                  </GhostButton>
+                  <GhostButton size="sm" className="gap-1.5 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20" onClick={() => { pm.remove.mutate(selected.id); setSelectedId(null); toast.success("Provider deleted"); }}>
+                    <Trash2 className="size-3.5" />
+                    Delete
+                  </GhostButton>
                 </div>
                 {discoverMsg[selected.id] && (
                   <p className="text-xs text-zinc-500" data-testid={`discover-result-${selected.id}`}>{discoverMsg[selected.id]}</p>
@@ -377,7 +423,8 @@ export default function ProvidersPage() {
 
             <div className="flex items-center gap-2">
               <h2 className="font-semibold">Models</h2>
-              <Button size="sm" className="ml-auto" onClick={() => { setEditingModel(null); setShowModelForm(true); }} data-testid="add-model">
+              <Button size="sm" className="ml-auto gap-1.5" onClick={() => { setEditingModel(null); setShowModelForm(true); }} data-testid="add-model">
+                <Plus className="size-3.5" />
                 Add model
               </Button>
             </div>
@@ -432,8 +479,14 @@ export default function ProvidersPage() {
                       ))}
                     </div>
                     <div className="flex gap-2">
-                      <GhostButton size="sm" onClick={() => { setEditingModel(m); setShowModelForm(true); }} data-testid={`model-edit-${m.id}`}>Edit</GhostButton>
-                      <GhostButton size="sm" onClick={() => mm.remove.mutate(m.id)} data-testid={`model-delete-${m.id}`}>Delete</GhostButton>
+                      <GhostButton size="sm" className="gap-1.5" onClick={() => { setEditingModel(m); setShowModelForm(true); }} data-testid={`model-edit-${m.id}`}>
+                        <Pencil className="size-3.5" />
+                        Edit
+                      </GhostButton>
+                      <GhostButton size="sm" className="gap-1.5 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20" onClick={() => mm.remove.mutate(m.id)} data-testid={`model-delete-${m.id}`}>
+                        <Trash2 className="size-3.5" />
+                        Delete
+                      </GhostButton>
                     </div>
                   </CardContent>
                 </Card>

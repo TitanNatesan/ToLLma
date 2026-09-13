@@ -1,5 +1,10 @@
 import { Slot } from "@radix-ui/react-slot";
 import * as SwitchPrimitives from "@radix-ui/react-switch";
+import * as TooltipPrimitives from "@radix-ui/react-tooltip";
+import * as DropdownMenuPrimitives from "@radix-ui/react-dropdown-menu";
+import * as ScrollAreaPrimitives from "@radix-ui/react-scroll-area";
+import * as SeparatorPrimitive from "@radix-ui/react-separator";
+import * as DialogPrimitives from "@radix-ui/react-dialog";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { Toaster as SonnerToaster } from "sonner";
@@ -27,7 +32,8 @@ const buttonVariants = cva(
         default: "h-9 px-4 py-2",
         sm: "h-8 rounded-md px-3 text-xs",
         lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
+        icon: "h-8 w-8",
+        xs: "h-6 w-6 rounded",
       },
     },
     defaultVariants: { variant: "default", size: "default" },
@@ -50,6 +56,10 @@ export function GhostButton({ className, variant = "outline", ...props }: Button
   return <Button variant={variant} className={className} {...props} />;
 }
 
+export function IconButton({ className, variant = "ghost", size = "icon", ...props }: ButtonProps) {
+  return <Button variant={variant} size={size} className={cn("shrink-0", className)} {...props} />;
+}
+
 // --- shadcn/ui badge ---
 const badgeVariants = cva(
   "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium transition-colors",
@@ -61,6 +71,7 @@ const badgeVariants = cva(
         success: "border-transparent bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
         destructive: "border-transparent bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
         outline: "text-zinc-700 dark:text-zinc-300",
+        warning: "border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
       },
     },
     defaultVariants: { variant: "secondary" },
@@ -171,5 +182,139 @@ export function Field({ label, children }: { label: string; children: React.Reac
       <span className="font-medium">{label}</span>
       {children}
     </label>
+  );
+}
+
+// --- Separator ---
+export function Separator({ className, orientation = "horizontal", ...props }: React.ComponentPropsWithoutRef<typeof SeparatorPrimitive.Root>) {
+  return (
+    <SeparatorPrimitive.Root
+      orientation={orientation}
+      className={cn(
+        "shrink-0 bg-zinc-200 dark:bg-zinc-800",
+        orientation === "horizontal" ? "h-px w-full" : "h-full w-px",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+// --- Tooltip ---
+export const TooltipProvider = TooltipPrimitives.Provider;
+
+export function Tooltip({ children, content, side = "top" }: { children: React.ReactNode; content: React.ReactNode; side?: "top" | "bottom" | "left" | "right" }) {
+  return (
+    <TooltipPrimitives.Root delayDuration={400}>
+      <TooltipPrimitives.Trigger asChild>{children}</TooltipPrimitives.Trigger>
+      <TooltipPrimitives.Portal>
+        <TooltipPrimitives.Content
+          side={side}
+          className="z-50 rounded-md bg-zinc-900 px-2 py-1 text-xs text-white shadow-md dark:bg-zinc-100 dark:text-zinc-900"
+          sideOffset={4}
+        >
+          {content}
+          <TooltipPrimitives.Arrow className="fill-zinc-900 dark:fill-zinc-100" />
+        </TooltipPrimitives.Content>
+      </TooltipPrimitives.Portal>
+    </TooltipPrimitives.Root>
+  );
+}
+
+// --- Dropdown Menu ---
+export const DropdownMenu = DropdownMenuPrimitives.Root;
+export const DropdownMenuTrigger = DropdownMenuPrimitives.Trigger;
+
+export function DropdownMenuContent({ className, sideOffset = 4, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Content>) {
+  return (
+    <DropdownMenuPrimitives.Portal>
+      <DropdownMenuPrimitives.Content
+        sideOffset={sideOffset}
+        className={cn(
+          "z-50 min-w-48 overflow-hidden rounded-md border border-zinc-200 bg-white p-1 shadow-md dark:border-zinc-800 dark:bg-zinc-900",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+          className,
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitives.Portal>
+  );
+}
+
+export function DropdownMenuItem({ className, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Item>) {
+  return (
+    <DropdownMenuPrimitives.Item
+      className={cn(
+        "relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none",
+        "focus:bg-zinc-100 dark:focus:bg-zinc-800",
+        "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function DropdownMenuLabel({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("px-2 py-1.5 text-xs font-semibold text-zinc-500", className)} {...props} />;
+}
+
+export function DropdownMenuSeparator({ className, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Separator>) {
+  return <DropdownMenuPrimitives.Separator className={cn("my-1 h-px bg-zinc-200 dark:bg-zinc-800", className)} {...props} />;
+}
+
+// --- Scroll Area ---
+export function ScrollArea({ className, children, ...props }: React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitives.Root>) {
+  return (
+    <ScrollAreaPrimitives.Root className={cn("relative overflow-hidden", className)} {...props}>
+      <ScrollAreaPrimitives.Viewport className="h-full w-full rounded-[inherit]">
+        {children}
+      </ScrollAreaPrimitives.Viewport>
+      <ScrollAreaPrimitives.Scrollbar
+        orientation="vertical"
+        className="flex touch-none select-none transition-colors w-2 p-0.5"
+      >
+        <ScrollAreaPrimitives.Thumb className="relative flex-1 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+      </ScrollAreaPrimitives.Scrollbar>
+    </ScrollAreaPrimitives.Root>
+  );
+}
+
+// --- Dialog (for command palette modal) ---
+export const Dialog = DialogPrimitives.Root;
+export const DialogTrigger = DialogPrimitives.Trigger;
+export const DialogPortal = DialogPrimitives.Portal;
+
+export function DialogOverlay({ className, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitives.Overlay>) {
+  return (
+    <DialogPrimitives.Overlay
+      className={cn(
+        "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out",
+        "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function DialogContent({ className, children, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitives.Content>) {
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitives.Content
+        className={cn(
+          "fixed left-1/2 top-[20%] z-50 w-full max-w-lg -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out",
+          "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+          "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </DialogPrimitives.Content>
+    </DialogPortal>
   );
 }

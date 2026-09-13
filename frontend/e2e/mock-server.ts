@@ -46,7 +46,7 @@ export async function startMockLLM(port = 4899): Promise<string> {
       if (err.code === "EADDRINUSE") resolve(); // already running (shared worker)
       else reject(e);
     });
-    server!.listen(port, resolve);
+    server!.listen(port, "0.0.0.0", resolve);
   });
   return `http://localhost:${port}`;
 }

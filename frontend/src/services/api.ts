@@ -107,6 +107,8 @@ export const createConversation = (body: { title?: string; provider_id?: string 
   post<Conversation>("/api/v1/conversations", body);
 export const renameConversation = (id: string, title: string) =>
   patch<Conversation>(`/api/v1/conversations/${id}`, { title });
+export const pinConversation = (id: string, pinned: boolean) =>
+  patch<Conversation>(`/api/v1/conversations/${id}/pin`, { pinned });
 export const deleteConversation = (id: string) => del<void>(`/api/v1/conversations/${id}`);
 export const getUsage = (id: string) => get<UsageTotals>(`/api/v1/conversations/${id}/usage`);
 

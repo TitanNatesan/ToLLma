@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 export const API = "http://localhost:8000";
 // Backend runs in a container; the mock LLM runs on the host.
@@ -31,12 +31,24 @@ export async function apiCreateModel(providerId: string, name: string, inputPric
   return res.json();
 }
 
+/**
+ * Selects provider then model using the new dropdown-based chat composer.
+ * The new UI has testids: provider-selector (button) → provider-option-{id}
+ * and model-selector (button) → model-option-{id}
+ */
 export async function selectProviderModel(page: Page, providerId: string, modelId: string): Promise<void> {
-  await page.getByTestId("provider-select").selectOption(providerId);
-  await page.getByTestId("model-select").selectOption(modelId);
+  // Click provider dropdown trigger
+  await page.getByTestId("provider-selector").click();
+  // Wait for option and click it
+  await page.getByTestId(`provider-option-${providerId}`).click();
+  // Click model dropdown trigger when enabled
+  await expect(page.getByTestId("model-selector")).toBeEnabled();
+  await page.getByTestId("model-selector").click();
+  await page.getByTestId(`model-option-${modelId}`).click();
 }
 
 export async function sendMessage(page: Page, text: string): Promise<void> {
   await page.getByTestId("chat-input").fill(text);
+  await expect(page.getByTestId("send-button")).toBeEnabled();
   await page.getByTestId("send-button").click();
 }

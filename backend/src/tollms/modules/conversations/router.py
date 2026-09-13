@@ -9,6 +9,7 @@ from tollms.core.deps import get_db
 from tollms.modules.conversations import service
 from tollms.modules.conversations.schemas import (
     ConversationCreate,
+    ConversationPin,
     ConversationRead,
     ConversationRename,
     MessageRead,
@@ -49,6 +50,12 @@ def rename(conversation_id: uuid.UUID, data: ConversationRename, db: Session = D
 @router.delete("/{conversation_id}", status_code=204)
 def delete(conversation_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
     service.delete_conversation(db, conversation_id)
+
+
+@router.patch("/{conversation_id}/pin", response_model=ConversationRead)
+def pin(conversation_id: uuid.UUID, data: ConversationPin, db: Session = Depends(get_db)) -> ConversationRead:
+    conv = service.pin_conversation(db, conversation_id, pinned=data.pinned)
+    return ConversationRead.model_validate(service.get_conversation_with_messages(db, conv.id))
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageRead])

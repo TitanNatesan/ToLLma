@@ -89,12 +89,14 @@ export interface ChatMessage {
   input_cost: string | null;
   output_cost: string | null;
   total_cost: string | null;
+  latency_ms: number | null;
   created_at: string;
 }
 
 export interface Conversation {
   id: string;
   title: string;
+  is_pinned: boolean;
   provider_id: string | null;
   model_id: string | null;
   created_at: string;
