@@ -162,3 +162,87 @@ export interface StreamDone {
   latency_ms?: number;
   empty?: boolean;
 }
+
+export interface RepositoryModelItem {
+  id: string;
+  model_key: string;
+  canonical_name: string;
+  display_name: string | null;
+  family: string | null;
+  provider: string;
+  provider_model_id: string;
+  vendor: string | null;
+  endpoint_type: string;
+  description: string | null;
+  documentation_url: string | null;
+  release_date: string | null;
+  is_active: boolean;
+  is_deprecated: boolean;
+  last_seen_at: string | null;
+  sources: string[];
+  supports_text_input: boolean;
+  supports_text_output: boolean;
+  supports_vision_input: boolean;
+  supports_image_output: boolean;
+  supports_audio_input: boolean;
+  supports_audio_output: boolean;
+  supports_video_input: boolean;
+  supports_video_output: boolean;
+  supports_reasoning: boolean;
+  supports_tool_calling: boolean;
+  supports_structured_output: boolean;
+  supports_streaming: boolean;
+  supports_embeddings: boolean;
+  supports_prompt_caching: boolean;
+  context_window: number | null;
+  max_input_tokens: number | null;
+  max_output_tokens: number | null;
+  input_cost: string | null;
+  output_cost: string | null;
+  cache_read_cost: string | null;
+  cache_write_cost: string | null;
+  reasoning_cost: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RepositoryModelPage {
+  items: RepositoryModelItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface LastSyncInfo {
+  id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  models_created: number;
+  models_updated: number;
+  models_deactivated: number;
+  errors_count: number;
+}
+
+export interface RepositoryStats {
+  total_models: number;
+  active_models: number;
+  deprecated_models: number;
+  providers_count: number;
+  by_provider: Record<string, number>;
+  last_sync: LastSyncInfo | null;
+}
+
+export interface SyncRun {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  models_created: number;
+  models_updated: number;
+  models_deactivated: number;
+  errors_count: number;
+  error_details: string[];
+}
+

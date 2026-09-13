@@ -280,7 +280,7 @@ export function ScrollArea({ className, children, ...props }: React.ComponentPro
   );
 }
 
-// --- Dialog (for command palette modal) ---
+// --- Dialog (for modal dialogs) ---
 export const Dialog = DialogPrimitives.Root;
 export const DialogTrigger = DialogPrimitives.Trigger;
 export const DialogPortal = DialogPrimitives.Portal;
@@ -289,7 +289,7 @@ export function DialogOverlay({ className, ...props }: React.ComponentPropsWitho
   return (
     <DialogPrimitives.Overlay
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm",
+        "fixed inset-0 z-50 bg-black/60 backdrop-blur-sm",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         className,
@@ -305,7 +305,7 @@ export function DialogContent({ className, children, ...props }: React.Component
       <DialogOverlay />
       <DialogPrimitives.Content
         className={cn(
-          "fixed left-1/2 top-[20%] z-50 w-full max-w-lg -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
+          "fixed left-1/2 top-[15%] z-50 w-full max-w-lg -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",

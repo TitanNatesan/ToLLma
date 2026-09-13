@@ -325,3 +325,34 @@ Verification: pytest 31/31; live sync done twice (4276 created, then idempotent 
 34 passed + 1 pre-existing skip; vitest 5/5; tsc + eslint clean; next build success.
 Not done (out of scope / next): extra free sources (HF/Ollama listings — no stable key-less JSON found);
 fuzzy version-date key matching; discovery-time auto-enrichment of provider models.
+
+## 2026-09-13 - ToLLma V1 Complete Product UX & UI Redesign (Unified AI Workspace)
+
+Requirement: redesign ToLLma from a collection of disconnected CRUD screens into a cohesive, high-density AI workspace comparable to ChatGPT, Claude, Cursor, and Linear; preserve ToLLma's provider-centric architecture while unifying navigation, layout system, component architecture, state management, and design system.
+
+Implemented:
+1. Design System Architecture (`frontend/src/components/ui/`):
+   - Created centralized, shared primitives: `AppShell`, `Sidebar`, `TopBar`, `SearchInput`, `ModelSelector`, `ProviderSelector`, `UsageCard`, `CostCard`, `CapabilityBadge`, `StatusBadge`, `EmptyState`, `LoadingState`, `ErrorState`, `SectionHeader`, `PageHeader`, `DetailPanel`, `SettingsPanel`, `CommandPalette`, and base primitives (`Badge`, `Button`, `GhostButton`, `Card`, `Dialog`, `Input`, `Select`, `Textarea`, `Switch`, `Field`).
+   - Clean barrel export in `frontend/src/components/ui/index.ts` replacing legacy monolithic `ui.tsx`.
+2. Unified Application Layout & Global Navigation:
+   - Created persistent global `TopBar` across all routes (`/` and `/providers`) featuring ToLLma branding, direct Chat/Providers route switcher, upcoming Analytics/Settings badges, Model Catalog search button, Command Palette launcher (`Ctrl+K`), live repository Sync status trigger, and theme toggle.
+   - Built context-aware, collapsible, resizable `Sidebar` with persisted width (`sidebarWidth` in Zustand `tollma-chat` store) switching seamlessly between Conversation list (Chat page) and Provider filter/list (Providers page).
+3. Chat Experience Redesign (`/`):
+   - Header with active conversation title, provider/model indicator, token telemetry, export options (Markdown / JSON), and clear actions.
+   - Centered message composer with unified selector grouping providers and models with sticky headers and search.
+   - Upgraded right-side Model Intelligence drawer with capabilities badges, pricing per 1M tokens, reasoning/tooling readiness flags, and live conversation token and cost analytics.
+4. Providers Workspace Redesign (`/providers`):
+   - 3-Panel workspace layout: Left Sidebar (provider search, type filter pills, provider cards with status and model counts) -> Center Panel (provider details, validation status, masked credentials, operational toolbar) -> Right Panel (models table, search filter, capabilities tags, endpoint badges, active toggles, and add model action).
+   - 5-Step `ProviderWizardModal`: Provider type selection, credentials inputs, auto-validation, auto-discovery, and completion with smooth dialog handling.
+   - Model Detail Drawer (`ModelDetailDrawer.tsx`): Slide-over drawer revealing model pricing, token context limits, capabilities, and repository provenance.
+   - Model Intelligence Repository Catalog Modal (`RepositoryCatalogModal.tsx`): Search over 4,000+ normalized upstream models with one-click import into active provider.
+5. Backend & Contract Compatibility Refinements:
+   - APScheduler: Configured immediate startup sync conditional on empty database (`count == 0`), ensuring repository models are available upon container start/restart without duplicate execution contention.
+   - Optimistic React Query cache updates on provider create, update, remove, and validate mutations for instant UI reactivity.
+6. Comprehensive Verification:
+   - TypeScript compilation (`docker compose exec frontend npx tsc --noEmit`): 0 errors.
+   - ESLint validation (`docker compose exec frontend npm run lint`): 0 errors, 0 warnings.
+   - Frontend Vitest unit tests: 5/5 passed.
+   - Backend Pytest suite: 31/31 passed.
+   - Playwright end-to-end suite (`npx playwright test`): 33 passed, 2 skipped (empty conversations), 0 failed across all 35 tests.
+   - Visual inspection: Verified pixel-perfect, cohesive UI layout across both Chat and Providers workspaces.

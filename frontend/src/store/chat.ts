@@ -19,8 +19,14 @@ interface ChatState {
   streaming: boolean;
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
+  sidebarWidth: number;
   draft: string;
   optimisticMessages: OptimisticMessage[];
+  repoSearchOpen: boolean;
+  addProviderOpen: boolean;
+  providerSearch: string;
+  providerTypeFilter: string;
+  selectedProviderId: string | null;
 
   setProvider: (id: string | null) => void;
   setModel: (id: string | null) => void;
@@ -29,10 +35,16 @@ interface ChatState {
   setStreaming: (b: boolean) => void;
   setLeftSidebar: (open: boolean) => void;
   setRightSidebar: (open: boolean) => void;
+  setSidebarWidth: (w: number) => void;
   setDraft: (text: string) => void;
   addOptimistic: (msg: OptimisticMessage) => void;
   updateOptimisticStreaming: (id: string, delta: string) => void;
   clearOptimistic: () => void;
+  setRepoSearchOpen: (open: boolean) => void;
+  setAddProviderOpen: (open: boolean) => void;
+  setProviderSearch: (s: string) => void;
+  setProviderTypeFilter: (t: string) => void;
+  setSelectedProviderId: (id: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -45,8 +57,14 @@ export const useChatStore = create<ChatState>()(
       streaming: false,
       leftSidebarOpen: true,
       rightSidebarOpen: true,
+      sidebarWidth: 260,
       draft: "",
       optimisticMessages: [],
+      repoSearchOpen: false,
+      addProviderOpen: false,
+      providerSearch: "",
+      providerTypeFilter: "ALL",
+      selectedProviderId: null,
 
       setProvider: (providerId) => set({ providerId, modelId: null }),
       setModel: (modelId) => set({ modelId }),
@@ -55,6 +73,7 @@ export const useChatStore = create<ChatState>()(
       setStreaming: (streaming) => set({ streaming }),
       setLeftSidebar: (leftSidebarOpen) => set({ leftSidebarOpen }),
       setRightSidebar: (rightSidebarOpen) => set({ rightSidebarOpen }),
+      setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
       setDraft: (draft) => set({ draft }),
       addOptimistic: (msg) =>
         set((s) => ({ optimisticMessages: [...s.optimisticMessages, msg] })),
@@ -65,6 +84,11 @@ export const useChatStore = create<ChatState>()(
           ),
         })),
       clearOptimistic: () => set({ optimisticMessages: [] }),
+      setRepoSearchOpen: (repoSearchOpen) => set({ repoSearchOpen }),
+      setAddProviderOpen: (addProviderOpen) => set({ addProviderOpen }),
+      setProviderSearch: (providerSearch) => set({ providerSearch }),
+      setProviderTypeFilter: (providerTypeFilter) => set({ providerTypeFilter }),
+      setSelectedProviderId: (selectedProviderId) => set({ selectedProviderId }),
     }),
     {
       name: "tollma-chat",
@@ -74,7 +98,9 @@ export const useChatStore = create<ChatState>()(
         activeConversationId: s.activeConversationId,
         leftSidebarOpen: s.leftSidebarOpen,
         rightSidebarOpen: s.rightSidebarOpen,
+        sidebarWidth: s.sidebarWidth,
         draft: s.draft,
+        selectedProviderId: s.selectedProviderId,
       }),
     },
   ),

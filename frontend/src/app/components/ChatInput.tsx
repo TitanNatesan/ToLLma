@@ -207,6 +207,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
   const { providerId, modelId, draft, setDraft } = useChatStore();
   const { data: providers = [] } = useProviders();
   const { data: models = [] } = useModels();
+  const activeModel = models.find((m) => m.id === modelId);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
 
@@ -281,6 +282,18 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
       <div className="mt-2 flex items-center gap-2">
         {/* Unified Model & Provider Selector */}
         <UnifiedModelSelector providers={providers} models={models} />
+
+        {/* Context and Pricing Info */}
+        {activeModel && (
+          <div className="hidden sm:flex items-center gap-2 text-[10px] text-zinc-400 font-mono">
+            {activeModel.context_window && (
+              <span>ctx {(activeModel.context_window / 1000).toFixed(0)}k</span>
+            )}
+            {activeModel.input_price !== "0.000000" && (
+              <span>· ${activeModel.input_price}/1M</span>
+            )}
+          </div>
+        )}
 
         {/* Right side: Send / Stop button */}
         <div className="ml-auto flex items-center gap-2">

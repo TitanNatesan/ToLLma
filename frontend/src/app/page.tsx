@@ -7,8 +7,7 @@ import { toast } from "sonner";
 import { ChatComposer } from "@/app/components/ChatInput";
 import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";
 import { MessageView } from "@/app/components/MessageView";
-import { LeftSidebar } from "@/app/components/Sidebar";
-import { CommandPalette, useCommandPalette } from "@/app/components/CommandPalette";
+import { ChatHeader } from "@/app/components/ChatHeader";
 import { Button } from "@/components/ui";
 import { useConversation, useConversationMutations } from "@/hooks/useChat";
 import { streamChat } from "@/services/api";
@@ -32,7 +31,6 @@ export default function Home() {
 
   const { data: conversation, error: convError } = useConversation(activeConversationId);
   const mutations = useConversationMutations();
-  const { open: cmdOpen, setOpen: setCmdOpen } = useCommandPalette();
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -48,7 +46,7 @@ export default function Home() {
   const persistedMessages: ChatMessage[] = conversation?.messages ?? [];
   const allMessages = [...persistedMessages, ...optimisticMessages] as ChatMessage[];
 
-  // Auto-scroll
+  // Auto-scroll to bottom on message updates
   useEffect(() => {
     if (stickRef.current) {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -99,7 +97,6 @@ export default function Home() {
           clearOptimistic();
           mutations.refresh(convId);
         },
-
         onError: (m) => {
           setStreaming(false);
           clearOptimistic();
@@ -123,12 +120,12 @@ export default function Home() {
   const ready = !!providerId && !!modelId;
 
   return (
-    <div className="flex flex-1 overflow-hidden" style={{ height: "100dvh" }}>
-      {/* Left Sidebar */}
-      <LeftSidebar />
-
+    <div className="flex h-full flex-1 overflow-hidden">
       {/* Center Chat Panel */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950">
+        {/* Chat Header */}
+        <ChatHeader />
+
         {/* Messages area */}
         <div
           ref={scrollRef}
@@ -141,7 +138,7 @@ export default function Home() {
         >
           {allMessages.length === 0 && !streaming && (
             <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
-              <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 shadow-inner">
                 <Sparkles className="size-7" />
               </div>
               <h1 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200">
@@ -194,7 +191,7 @@ export default function Home() {
               data-testid="regenerate-button"
               onClick={() => send(lastUser.content, activeConversationId)}
               disabled={!ready}
-              className="gap-1.5 text-xs"
+              className="gap-1.5 text-xs text-zinc-600 dark:text-zinc-400"
             >
               <RotateCcw className="size-3.5" />
               Regenerate
@@ -212,9 +209,6 @@ export default function Home() {
 
       {/* Right Intelligence Panel */}
       <IntelligencePanel />
-
-      {/* Command Palette */}
-      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
     </div>
   );
 }

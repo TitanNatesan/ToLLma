@@ -13,6 +13,7 @@ import {
   updateProvider,
   validateProvider,
 } from "@/services/api";
+import type { Provider } from "@/types";
 
 export function useProviders() {
   return useQuery({ queryKey: ["providers"], queryFn: listProviders });
@@ -25,13 +26,49 @@ export function useProviderMutations() {
     void qc.invalidateQueries({ queryKey: ["models"] });
   };
   return {
-    create: useMutation({ mutationFn: createProvider, onSuccess: invalidate }),
+    create: useMutation({
+      mutationFn: createProvider,
+      onSuccess: (newProvider) => {
+        qc.setQueryData<Provider[]>(["providers"], (old = []) => [...old, newProvider]);
+        invalidate();
+      },
+    }),
     update: useMutation({
       mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => updateProvider(id, body),
-      onSuccess: invalidate,
+      onSuccess: (updated) => {
+        qc.setQueryData<Provider[]>(["providers"], (old = []) =>
+          old.map((p) => (p.id === updated.id ? updated : p)),
+        );
+        invalidate();
+      },
     }),
-    remove: useMutation({ mutationFn: deleteProvider, onSuccess: invalidate }),
-    validate: useMutation({ mutationFn: validateProvider, onSuccess: invalidate }),
+    remove: useMutation({
+      mutationFn: deleteProvider,
+      onSuccess: (_, removedId) => {
+        qc.setQueryData<Provider[]>(["providers"], (old = []) =>
+          old.filter((p) => p.id !== removedId),
+        );
+        invalidate();
+      },
+    }),
+    validate: useMutation({
+      mutationFn: validateProvider,
+      onSuccess: (valRes, id) => {
+        qc.setQueryData<Provider[]>(["providers"], (old = []) =>
+          old.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  validation_status: valRes.valid ? "valid" : "invalid",
+                  validation_message: valRes.message,
+                  last_validated_at: new Date().toISOString(),
+                }
+              : p,
+          ),
+        );
+        invalidate();
+      },
+    }),
     discover: useMutation({ mutationFn: discoverProviderModels, onSuccess: invalidate }),
   };
 }
