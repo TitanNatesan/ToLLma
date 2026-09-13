@@ -135,6 +135,7 @@ class BedrockAdapter(BaseProviderAdapter):
         try:
             stream = await asyncio.to_thread(self._stream_events, payload)
             in_reasoning = False
+            has_text = False
             for event in stream:
                 if "contentBlockDelta" in event:
                     delta_obj = event["contentBlockDelta"].get("delta") or {}
@@ -149,11 +150,28 @@ class BedrockAdapter(BaseProviderAdapter):
                         if in_reasoning:
                             yield StreamChunk(delta="\n</think>\n\n")
                             in_reasoning = False
+                        has_text = True
                         yield StreamChunk(delta=text)
                 elif "contentBlockStop" in event:
                     if in_reasoning:
                         yield StreamChunk(delta="\n</think>\n\n")
                         in_reasoning = False
+                elif "modelStreamErrorException" in event:
+                    # Bedrock delivers model output errors as stream events
+                    err_detail = event["modelStreamErrorException"].get("message", "")
+                    logger.warning("bedrock modelStreamErrorException for %s: %s", resolved_model_id, err_detail)
+                    if "model output must contain either output text or tool calls" in err_detail:
+                        if not has_text:
+                            yield StreamChunk(
+                                delta="*(The model completed its reasoning phase but produced no final answer text. "
+                                      "This can happen with extended thinking models. Please try regenerating your message.)*"
+                            )
+                        return
+                    raise RuntimeError(f"stream error from Bedrock: {err_detail}")
+                elif "internalServerException" in event:
+                    err_detail = event["internalServerException"].get("message", "")
+                    logger.error("bedrock internalServerException for %s: %s", resolved_model_id, err_detail)
+                    raise RuntimeError(f"Bedrock internal error: {err_detail}")
                 elif "metadata" in event:
                     usage = event["metadata"].get("usage") or {}
                     if usage.get("totalTokens"):
@@ -164,6 +182,24 @@ class BedrockAdapter(BaseProviderAdapter):
                         )
             if in_reasoning:
                 yield StreamChunk(delta="\n</think>\n\n")
+            # If only reasoning was produced with no answer text, emit a notice so the
+            # conversation record is non-empty and the user gets meaningful feedback.
+            if not has_text:
+                logger.warning("bedrock model %s produced only reasoning content with no answer text", resolved_model_id)
+                yield StreamChunk(delta="\n\n*(The model completed its reasoning but did not produce a final answer. Try regenerating or simplify your request.)*")
         except Exception as e:
+            err_msg = str(e)
+            # Bedrock ValidationException: model produced empty output (reasoning-only response)
+            if "model output must contain either output text or tool calls" in err_msg:
+                logger.warning(
+                    "bedrock model %s returned empty output (reasoning-only): %s",
+                    resolved_model_id,
+                    err_msg,
+                )
+                yield StreamChunk(
+                    delta="*(The model completed its reasoning phase but produced no final answer text. "
+                          "This can happen with extended thinking models. Please try regenerating your message.)*"
+                )
+                return
             logger.exception("bedrock stream failed")
             raise RuntimeError(f"streaming failed: {e}") from e
