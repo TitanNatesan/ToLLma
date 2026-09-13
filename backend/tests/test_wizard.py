@@ -1,4 +1,4 @@
-"""Provider registration wizard: draft-validate, mapping, register, resync, bulk."""
+"""Provider registration wizard: draft-validate, mapping, register, bulk."""
 
 import asyncio
 import uuid
@@ -112,42 +112,6 @@ def test_register_is_atomic_with_match_stats(client: TestClient, db: Session) ->
     r = client.post("/api/v1/providers/register", json={**payload, "models": []})
     assert r.status_code == 422
     assert len(client.get("/api/v1/providers").json()) == 1
-
-
-def test_resync_never_silently_overwrites_pricing(client: TestClient, db: Session) -> None:
-    run_sync(
-        db,
-        litellm_data={
-            "openai/gpt-4o": {
-                "input_cost_per_token": 2.5e-06, "output_cost_per_token": 1e-05,
-                "max_input_tokens": 128000, "litellm_provider": "openai", "mode": "chat",
-            }
-        },
-        openrouter_data={"data": []},
-    )
-    prov = client.post(
-        "/api/v1/providers/register",
-        json={
-            "name": "SyncProv", "provider_type": "CUSTOM", "credentials": {"base_url": "http://x"},
-            "models": [{
-                "model_id": "gpt-4o", "name": "Old name", "endpoint_type": "chat_completions",
-                "repository_model_key": "openai/gpt-4o", "input_price": "999",
-            }],
-        },
-    ).json()
-    mid = client.get("/api/v1/models", params={"provider_id": prov["provider"]["id"]}).json()[0]["id"]
-
-    r = client.post(f"/api/v1/models/{mid}/resync")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["pricing_applied"] is False
-    assert get_model(db, uuid.UUID(mid)).input_price == 999  # override preserved
-
-    r = client.post(f"/api/v1/models/{mid}/resync", params={"include_pricing": True})
-    assert r.json()["pricing_applied"] is True
-    assert float(get_model(db, uuid.UUID(mid)).input_price) == 2.5
-
-    assert client.post(f"/api/v1/models/{uuid.uuid4()}/resync").status_code == 404
 
 
 def test_bulk_update(client: TestClient, provider_factory, model_factory) -> None:

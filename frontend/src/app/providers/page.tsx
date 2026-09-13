@@ -7,11 +7,8 @@ import {
   Button,
   Card,
   CardContent,
-  Field,
   GhostButton,
-  Input,
   SearchInput,
-  Select,
   StatusBadge,
   Switch,
 } from "@/components/ui";
@@ -21,17 +18,15 @@ import {
   useProviderMutations,
   useProviders,
 } from "@/hooks/useRegistry";
-import { lookupRepositoryModel, resyncModel } from "@/services/api";
 import { useChatStore } from "@/store/chat";
 import { ProviderWizardModal } from "./components/ProviderWizardModal";
 import { ModelDetailDrawer } from "./components/ModelDetailDrawer";
-import { RepositoryCatalogModal } from "./components/RepositoryCatalogModal";
-import { CAPS, EMPTY_MODEL_FORM, ModelForm, fromModel, toPayload } from "./components/ModelForm";
-import type { AIModel, EndpointType, Provider } from "@/types";
+import { RegisterModelDrawer } from "./components/RegisterModelDrawer";
+import { CAPS, ModelForm, fromModel, toPayload } from "./components/ModelForm";
+import type { AIModel, DiscoveredModelInfo, Provider } from "@/types";
 import {
   CheckCircle2,
   Cpu,
-  Database,
   KeyRound,
   Pencil,
   Plus,
@@ -40,6 +35,36 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const CTX_OPTIONS = [
+  { label: "Any context", min: 0 },
+  { label: "≥ 32k", min: 32000 },
+  { label: "≥ 128k", min: 128000 },
+  { label: "≥ 1M", min: 1000000 },
+];
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "Never";
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"} ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+function fmtPriceShort(v: unknown): string {
+  const n = typeof v === "string" || typeof v === "number" ? parseFloat(String(v)) : NaN;
+  if (isNaN(n) || n === 0) return "$0";
+  return `$${String(v)}`;
+}
+
+const MATCH_BADGE: Record<string, string> = {
+  provider_specific: "Exact match",
+  global: "Repository",
+  fallback: "Unmatched",
+};
 
 export default function ProvidersPage() {
   const { data: providers = [] } = useProviders();
@@ -57,11 +82,17 @@ export default function ProvidersPage() {
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [discoverMsg, setDiscoverMsg] = useState<Record<string, string>>({});
-  const [showModelForm, setShowModelForm] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
+  const [showEditForm, setShowEditForm] = useState(false);
   const [drawerModel, setDrawerModel] = useState<AIModel | null>(null);
-  const [modelSearch, setModelSearch] = useState("");
-  const [catalogModalOpen, setCatalogModalOpen] = useState(false);
+  const [registeredSearch, setRegisteredSearch] = useState("");
+  const [availableSearch, setAvailableSearch] = useState("");
+  const [availableCap, setAvailableCap] = useState("ALL");
+  const [availableType, setAvailableType] = useState("ALL");
+  const [availableCtx, setAvailableCtx] = useState(0);
+  const [registerInfo, setRegisterInfo] = useState<DiscoveredModelInfo | null>(null);
+  const [registerStep, setRegisterStep] = useState(0);
+  const [lastRegisteredId, setLastRegisteredId] = useState<string | null>(null);
 
   // Determine active provider: either from store or first available provider
   const activeId =
@@ -72,11 +103,41 @@ export default function ProvidersPage() {
   const selected = providers.find((p) => p.id === activeId) ?? null;
   const selectedModels = allModels.filter((m) => m.provider_id === activeId);
 
-  const filteredModels = selectedModels.filter(
+  // Discovery cache (written by Refresh; never registers anything by itself).
+  const discovery = (() => {
+    const d = selected?.metadata?.discovery as
+      | { models?: unknown; last_discovery_at?: unknown }
+      | undefined;
+    if (!d || !Array.isArray(d.models)) return null;
+    return {
+      models: d.models as DiscoveredModelInfo[],
+      last_discovery_at:
+        typeof d.last_discovery_at === "string" ? d.last_discovery_at : null,
+    };
+  })();
+  const registeredIds = new Set(selectedModels.map((m) => m.model_id));
+  const available = (discovery?.models ?? []).filter((m) => !registeredIds.has(m.model_id));
+  const filteredAvailable = available.filter((m) => {
+    const q = availableSearch.trim().toLowerCase();
+    if (
+      q &&
+      !m.name.toLowerCase().includes(q) &&
+      !m.model_id.toLowerCase().includes(q) &&
+      !(m.repository_model_key ?? "").toLowerCase().includes(q)
+    )
+      return false;
+    if (availableCap !== "ALL" && (m.suggested?.[availableCap] as unknown) !== true) return false;
+    if (availableType !== "ALL" && m.endpoint_type !== availableType) return false;
+    if (availableCtx > 0 && !(m.context_window && m.context_window >= availableCtx)) return false;
+    return true;
+  });
+  const hiddenCount = available.length - filteredAvailable.length;
+
+  const filteredRegistered = selectedModels.filter(
     (m) =>
-      !modelSearch ||
-      m.name.toLowerCase().includes(modelSearch.toLowerCase()) ||
-      m.model_id.toLowerCase().includes(modelSearch.toLowerCase()),
+      !registeredSearch ||
+      m.name.toLowerCase().includes(registeredSearch.toLowerCase()) ||
+      m.model_id.toLowerCase().includes(registeredSearch.toLowerCase()),
   );
 
   async function runValidate(id: string) {
@@ -97,25 +158,8 @@ export default function ProvidersPage() {
       const d = await pm.discover.mutateAsync(id);
       setDiscoverMsg((s) => ({ ...s, [id]: d.message }));
       toast.success("Model discovery finished", { description: d.message });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function runSyncModels(id: string) {
-    setBusy(`sync:${id}`);
-    try {
-      const linked = (allModels ?? []).filter((m) => m.provider_id === id && m.repository_model_key);
-      let updated = 0;
-      for (const m of linked) {
-        const res = await resyncModel(m.id, false);
-        updated += Object.keys(res.applied).length;
-      }
-      toast.success(
-        linked.length === 0 ? "No repository-linked models to sync" : `Synced ${linked.length} models (${updated} fields updated)`,
-      );
     } catch (e) {
-      toast.error("Sync failed", { description: e instanceof Error ? e.message : "Error" });
+      toast.error("Discovery failed", { description: e instanceof Error ? e.message : "Error" });
     } finally {
       setBusy(null);
     }
@@ -142,7 +186,7 @@ export default function ProvidersPage() {
                   Select a provider
                 </h2>
                 <p className="text-xs text-zinc-500">
-                  Choose a provider from the sidebar to manage credentials, test validation, and register models.
+                  Choose a provider from the sidebar to validate credentials, discover models, and register models.
                 </p>
                 <Button
                   size="sm"
@@ -212,6 +256,9 @@ export default function ProvidersPage() {
                           : "Unvalidated"
                     }
                   />
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedModels.length} models
+                  </Badge>
                   {selected.last_validated_at && (
                     <span
                       className="text-xs text-zinc-500"
@@ -256,7 +303,7 @@ export default function ProvidersPage() {
                   </dl>
                 </div>
 
-                {/* Operations Toolbar */}
+                {/* Operations Toolbar: only Validate + Refresh models */}
                 <div className="flex flex-wrap gap-2">
                   <GhostButton
                     size="sm"
@@ -284,31 +331,6 @@ export default function ProvidersPage() {
                     />
                     {busy === `discover:${selected.id}` ? "Discovering…" : "Refresh models"}
                   </GhostButton>
-
-                  <GhostButton
-                    size="sm"
-                    className="gap-1.5 text-xs"
-                    onClick={() => setCatalogModalOpen(true)}
-                  >
-                    <Database className="size-3.5 text-purple-500" />
-                    <span>Catalog Import</span>
-                  </GhostButton>
-
-                  <GhostButton
-                    size="sm"
-                    className="gap-1.5 text-xs"
-                    onClick={() => void runSyncModels(selected.id)}
-                    disabled={busy !== null}
-                    data-testid={`sync-models-${selected.id}`}
-                  >
-                    <RefreshCw
-                      className={cn(
-                        "size-3.5 text-amber-500",
-                        busy === `sync:${selected.id}` && "animate-spin",
-                      )}
-                    />
-                    {busy === `sync:${selected.id}` ? "Syncing…" : "Sync models"}
-                  </GhostButton>
                 </div>
 
                 {discoverMsg[selected.id] && (
@@ -319,180 +341,319 @@ export default function ProvidersPage() {
                     {discoverMsg[selected.id]}
                   </div>
                 )}
+
+                {/* Discovery statistics */}
+                <div
+                  className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-3.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-400"
+                  data-testid="discovery-stats"
+                >
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Discovery
+                  </div>
+                  <dl className="grid grid-cols-2 gap-2">
+                    <div className="flex justify-between gap-2">
+                      <dt>Available Models:</dt>
+                      <dd className="font-semibold text-zinc-900 dark:text-zinc-100">{available.length}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt>Registered Models:</dt>
+                      <dd className="font-semibold text-zinc-900 dark:text-zinc-100">{selectedModels.length}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt>Hidden Models:</dt>
+                      <dd className="font-semibold text-zinc-900 dark:text-zinc-100">{hiddenCount}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt>Last Discovery:</dt>
+                      <dd className="font-semibold text-zinc-900 dark:text-zinc-100">
+                        {timeAgo(discovery?.last_discovery_at ?? null)}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
               </div>
             </div>
 
-            {/* Right Panel: Models Management & Table */}
-            <div className="flex flex-1 flex-col overflow-y-auto bg-zinc-50/30 p-4 dark:bg-zinc-950/30 min-h-[300px]">
-              {/* Models Header & Action Toolbar */}
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2">
+            {/* Right side: Available (unregistered) + Registered panels */}
+            <div className="flex flex-1 flex-col overflow-y-auto bg-zinc-50/30 dark:bg-zinc-950/30 min-h-[300px] xl:flex-row xl:overflow-hidden">
+              {/* LEFT: Available Models */}
+              <div className="flex flex-1 flex-col border-b border-zinc-200 p-4 dark:border-zinc-800 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r">
+                <div className="mb-2 flex items-center gap-2">
                   <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Models
+                    Available Models
+                  </h2>
+                  <Badge variant="secondary" className="text-xs">
+                    {available.length}
+                  </Badge>
+                </div>
+                <SearchInput
+                  placeholder="Search name, ID, repository…"
+                  value={availableSearch}
+                  onChange={(e) => setAvailableSearch(e.target.value)}
+                  onClear={() => setAvailableSearch("")}
+                  className="h-8"
+                  data-testid="available-search"
+                />
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <select
+                    value={availableCap}
+                    onChange={(e) => setAvailableCap(e.target.value)}
+                    className="h-7 rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+                    data-testid="available-cap"
+                    aria-label="Filter by capability"
+                  >
+                    <option value="ALL">All capabilities</option>
+                    {CAPS.map(([k, label]) => (
+                      <option key={k} value={k}>{label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={availableType}
+                    onChange={(e) => setAvailableType(e.target.value)}
+                    className="h-7 rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+                    data-testid="available-type"
+                    aria-label="Filter by model type"
+                  >
+                    <option value="ALL">All types</option>
+                    <option value="responses">responses</option>
+                    <option value="chat_completions">chat_completions</option>
+                    <option value="messages">messages</option>
+                    <option value="converse">converse</option>
+                  </select>
+                  <select
+                    value={availableCtx}
+                    onChange={(e) => setAvailableCtx(Number(e.target.value))}
+                    className="h-7 rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
+                    data-testid="available-ctx"
+                    aria-label="Filter by context window"
+                  >
+                    {CTX_OPTIONS.map((o) => (
+                      <option key={o.label} value={o.min}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mt-3 grid gap-2">
+                  {filteredAvailable.map((m) => (
+                    <div
+                      key={m.model_id}
+                      data-testid={`available-row-${m.model_id}`}
+                      className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60"
+                    >
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100">
+                            {m.name}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 font-mono">
+                            {m.endpoint_type}
+                          </Badge>
+                          <Badge
+                            variant="secondary"
+                            className="text-[9px] px-1.5 py-0"
+                            data-testid={`avail-match-${m.model_id}`}
+                          >
+                            {MATCH_BADGE[m.match_type] ?? m.match_type}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-zinc-500">
+                          {m.model_id} · in {fmtPriceShort(m.suggested?.input_price)}/1M · out{" "}
+                          {fmtPriceShort(m.suggested?.output_price)}/1M
+                          {m.context_window ? ` · ctx ${(m.context_window / 1000).toFixed(0)}k` : ""}
+                        </p>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button
+                          size="sm"
+                          className="h-7 text-[11px]"
+                          onClick={() => {
+                            setRegisterInfo(m);
+                            setRegisterStep(2);
+                          }}
+                          data-testid={`register-${m.model_id}`}
+                        >
+                          Register
+                        </Button>
+                        <GhostButton
+                          size="sm"
+                          className="h-7 text-[11px]"
+                          onClick={() => {
+                            setRegisterInfo(m);
+                            setRegisterStep(0);
+                          }}
+                          data-testid={`available-details-${m.model_id}`}
+                        >
+                          View Details
+                        </GhostButton>
+                      </div>
+                    </div>
+                  ))}
+                  {available.length === 0 && (
+                    <p className="py-8 text-center text-xs text-zinc-400" data-testid="no-available-models">
+                      {discovery
+                        ? "All discovered models are registered."
+                        : "No discovered models yet — click Refresh models to discover."}
+                    </p>
+                  )}
+                  {available.length > 0 && filteredAvailable.length === 0 && (
+                    <p className="py-8 text-center text-xs text-zinc-400" data-testid="no-available-match">
+                      No available models match the current filters.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* RIGHT: Registered Models */}
+              <div className="flex flex-1 flex-col p-4 xl:min-h-0 xl:overflow-y-auto">
+                <div className="mb-2 flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    Registered Models
                   </h2>
                   <Badge variant="secondary" className="text-xs">
                     {selectedModels.length}
                   </Badge>
                 </div>
+                <SearchInput
+                  placeholder="Search registered…"
+                  value={registeredSearch}
+                  onChange={(e) => setRegisteredSearch(e.target.value)}
+                  onClear={() => setRegisteredSearch("")}
+                  className="h-8"
+                  data-testid="registered-search"
+                />
 
-                <div className="flex items-center gap-2">
-                  <SearchInput
-                    placeholder="Filter models…"
-                    value={modelSearch}
-                    onChange={(e) => setModelSearch(e.target.value)}
-                    onClear={() => setModelSearch("")}
-                    className="w-48 h-8"
-                  />
-                  <Button
-                    size="sm"
-                    className="gap-1.5 text-xs h-8"
-                    onClick={() => {
-                      setEditingModel(null);
-                      setShowModelForm(true);
-                    }}
-                    data-testid="add-model"
-                  >
-                    <Plus className="size-3.5" />
-                    <span>Add model</span>
-                  </Button>
-                </div>
-              </div>
-
-              {/* Inline Model Create/Edit Form */}
-              {showModelForm && (
-                <div className="mb-4">
-                  <ModelForm
-                    initial={editingModel ? fromModel(editingModel) : EMPTY_MODEL_FORM}
-                    onCancel={() => {
-                      setShowModelForm(false);
-                      setEditingModel(null);
-                    }}
-                    onSubmit={async (f) => {
-                      try {
-                        if (editingModel) {
+                {/* Inline edit form (registered models only) */}
+                {showEditForm && editingModel && (
+                  <div className="mt-3">
+                    <ModelForm
+                      initial={fromModel(editingModel)}
+                      onCancel={() => {
+                        setShowEditForm(false);
+                        setEditingModel(null);
+                      }}
+                      onSubmit={async (f) => {
+                        try {
                           const { model_id: _omit, provider_id: _omit2, ...rest } = toPayload(
                             selected.id,
                             f,
                           );
                           await mm.update.mutateAsync({ id: editingModel.id, body: rest });
                           toast.success("Model updated");
-                        } else {
-                          await mm.create.mutateAsync(toPayload(selected.id, f));
-                          toast.success("Model created");
+                          setShowEditForm(false);
+                          setEditingModel(null);
+                        } catch (e) {
+                          toast.error("Save failed", {
+                            description: e instanceof Error ? e.message : "unknown error",
+                          });
                         }
-                        setShowModelForm(false);
-                        setEditingModel(null);
-                      } catch (e) {
-                        toast.error("Save failed", {
-                          description: e instanceof Error ? e.message : "unknown error",
-                        });
-                      }
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Models Table / Cards */}
-              <div className="grid gap-2.5">
-                {filteredModels.map((m) => (
-                  <div
-                    key={m.id}
-                    data-testid={`model-row-${m.id}`}
-                    onClick={() => setDrawerModel(m)}
-                    className={cn(
-                      "group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition-all hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700 cursor-pointer",
-                      !m.is_active && "opacity-60",
-                    )}
-                  >
-                    <div className="flex flex-col gap-1 min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100">
-                          {m.name}
-                        </span>
-                        <Badge variant="outline" className="text-[10px] px-1 py-0 font-mono">
-                          {m.endpoint_type}
-                        </Badge>
-                        {!m.is_active && (
-                          <Badge variant="destructive" className="text-[9px] px-1 py-0">
-                            Disabled
-                          </Badge>
-                        )}
-                        {m.repository_model_key && (
-                          <span className="text-[10px] text-zinc-400 font-mono hidden md:inline">
-                            repo: {m.repository_model_key}
-                          </span>
-                        )}
-                      </div>
-
-                      <p className="text-[11px] text-zinc-500">
-                        {m.model_id} · in ${m.input_price}/1M · out ${m.output_price}/1M
-                        {m.context_window ? ` · ctx ${(m.context_window / 1000).toFixed(0)}k` : ""}
-                        {m.max_output_tokens ? ` · max ${(m.max_output_tokens / 1000).toFixed(0)}k` : ""}
-                      </p>
-
-                      <div className="flex flex-wrap gap-1">
-                        {CAPS.filter(([k]) => (m as unknown as Record<string, boolean>)[k]).map(
-                          ([, label]) => (
-                            <Badge key={label} variant="secondary" className="text-[9px] px-1.5 py-0">
-                              {label}
-                            </Badge>
-                          ),
-                        )}
-                      </div>
-                    </div>
-
-                    <div
-                      className="flex items-center gap-2 shrink-0 self-end sm:self-center"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <label className="flex items-center gap-1.5 text-xs text-zinc-500">
-                        <Switch
-                          checked={m.is_active}
-                          onCheckedChange={(v) => mm.update.mutate({ id: m.id, body: { is_active: v } })}
-                          aria-label={`Enable ${m.name}`}
-                          data-testid={`model-toggle-${m.id}`}
-                        />
-                        <span className="text-[10px]">{m.is_active ? "On" : "Off"}</span>
-                      </label>
-
-                      <GhostButton
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        onClick={() => {
-                          setEditingModel(m);
-                          setShowModelForm(true);
-                        }}
-                        data-testid={`model-edit-${m.id}`}
-                        title="Edit Model"
-                      >
-                        <Pencil className="size-3" />
-                      </GhostButton>
-
-                      <GhostButton
-                        size="sm"
-                        className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                        onClick={() => mm.remove.mutate(m.id)}
-                        data-testid={`model-delete-${m.id}`}
-                        title="Delete Model"
-                      >
-                        <Trash2 className="size-3" />
-                      </GhostButton>
-                    </div>
+                      }}
+                    />
                   </div>
-                ))}
-
-                {selectedModels.length === 0 && !showModelForm && (
-                  <p className="text-xs text-zinc-400 py-8 text-center" data-testid="no-models">
-                    No models yet — refresh to discover, or add one manually.
-                  </p>
                 )}
+
+                <div className="mt-3 grid gap-2.5">
+                  {filteredRegistered.map((m) => (
+                    <div
+                      key={m.id}
+                      data-testid={`model-row-${m.id}`}
+                      onClick={() => setDrawerModel(m)}
+                      className={cn(
+                        "group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition-all hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700 cursor-pointer",
+                        !m.is_active && "opacity-60",
+                        lastRegisteredId === m.id &&
+                          "border-emerald-400 bg-emerald-50/60 dark:border-emerald-700 dark:bg-emerald-950/20",
+                      )}
+                    >
+                      <div className="flex flex-col gap-1 min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100">
+                            {m.name}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 font-mono">
+                            {m.endpoint_type}
+                          </Badge>
+                          {!m.is_active && (
+                            <Badge variant="destructive" className="text-[9px] px-1 py-0">
+                              Disabled
+                            </Badge>
+                          )}
+                          {lastRegisteredId === m.id && (
+                            <Badge className="bg-emerald-500 text-[9px] px-1.5 py-0 text-white">
+                              Just registered
+                            </Badge>
+                          )}
+                        </div>
+
+                        <p className="text-[11px] text-zinc-500">
+                          {m.model_id} · in ${m.input_price}/1M · out ${m.output_price}/1M
+                          {m.context_window ? ` · ctx ${(m.context_window / 1000).toFixed(0)}k` : ""}
+                          {m.max_output_tokens ? ` · max ${(m.max_output_tokens / 1000).toFixed(0)}k` : ""}
+                        </p>
+
+                        <div className="flex flex-wrap gap-1">
+                          {CAPS.filter(([k]) => (m as unknown as Record<string, boolean>)[k]).map(
+                            ([, label]) => (
+                              <Badge key={label} variant="secondary" className="text-[9px] px-1.5 py-0">
+                                {label}
+                              </Badge>
+                            ),
+                          )}
+                        </div>
+                      </div>
+
+                      <div
+                        className="flex items-center gap-2 shrink-0 self-end sm:self-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+                          <Switch
+                            checked={m.is_active}
+                            onCheckedChange={(v) => mm.update.mutate({ id: m.id, body: { is_active: v } })}
+                            aria-label={`Enable ${m.name}`}
+                            data-testid={`model-toggle-${m.id}`}
+                          />
+                          <span className="text-[10px]">{m.is_active ? "On" : "Off"}</span>
+                        </label>
+
+                        <GhostButton
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={() => {
+                            setEditingModel(m);
+                            setShowEditForm(true);
+                          }}
+                          data-testid={`model-edit-${m.id}`}
+                          title="Edit Model"
+                        >
+                          <Pencil className="size-3" />
+                        </GhostButton>
+
+                        <GhostButton
+                          size="sm"
+                          className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
+                          onClick={() => mm.remove.mutate(m.id)}
+                          data-testid={`model-delete-${m.id}`}
+                          title="Delete Model"
+                        >
+                          <Trash2 className="size-3" />
+                        </GhostButton>
+                      </div>
+                    </div>
+                  ))}
+
+                  {selectedModels.length === 0 && !showEditForm && (
+                    <p className="text-xs text-zinc-400 py-8 text-center" data-testid="no-registered-models">
+                      No registered models — discover above, then Register from Available Models.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </>
         )}
       </section>
 
-      {/* Model Detail Drawer */}
+      {/* Model Detail Drawer (registered models) */}
       <ModelDetailDrawer
         model={drawerModel}
         provider={selected}
@@ -501,9 +662,27 @@ export default function ProvidersPage() {
         onEdit={(m) => {
           setDrawerModel(null);
           setEditingModel(m);
-          setShowModelForm(true);
+          setShowEditForm(true);
         }}
       />
+
+      {/* Register Model Drawer (available -> registered) */}
+      {registerInfo && (
+        <RegisterModelDrawer
+          key={`${selected?.id}:${registerInfo.model_id}:${registerStep}`}
+          info={registerInfo}
+          providerId={selected?.id ?? ""}
+          open={!!registerInfo}
+          initialStep={registerStep}
+          onClose={() => setRegisterInfo(null)}
+          onRegistered={(m) => {
+            setLastRegisteredId(m.id);
+            window.setTimeout(() => {
+              setLastRegisteredId((cur) => (cur === m.id ? null : cur));
+            }, 4000);
+          }}
+        />
+      )}
 
       {/* Provider Wizard Modal (Add / Edit) */}
       {addProviderOpen && (
@@ -523,13 +702,6 @@ export default function ProvidersPage() {
         }}
         />
       )}
-
-      {/* Repository Catalog Modal */}
-      <RepositoryCatalogModal
-        open={catalogModalOpen}
-        onClose={() => setCatalogModalOpen(false)}
-        targetProviderId={selected?.id}
-      />
     </div>
   );
 }

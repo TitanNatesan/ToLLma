@@ -101,11 +101,113 @@ const PROVIDER_METAS: Record<
 };
 
 const STEP_LABELS = ["1. Provider Type", "2. Credentials", "3. Validation", "4. Models", "5. Finish"];
-const DRAFT_KEY = "tollma-wizard-draft";const MATCH_BADGE: Record<MatchType, string> = {
-  provider_specific: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-  global: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
-  fallback: "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-};
+const DRAFT_KEY = "tollma-wizard-draft";
+
+export type ModelScope = "US" | "EU" | "APAC" | "global" | "provider" | "fallback";
+
+export interface ModelScopeInfo {
+  scope: ModelScope;
+  label: string;
+  badgeClass: string;
+}
+
+export function getModelScope(
+  modelId: string,
+  matchType: MatchType,
+  displayName?: string,
+): ModelScopeInfo {
+  if (matchType === "fallback") {
+    return {
+      scope: "fallback",
+      label: "fallback",
+      badgeClass:
+        "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700",
+    };
+  }
+
+  const lowerId = modelId.toLowerCase();
+  const lowerName = (displayName ?? "").toLowerCase();
+
+  const isExplicitGlobal = lowerId.startsWith("global.") || lowerId.startsWith("global-");
+
+  if (!isExplicitGlobal) {
+    const isUs =
+      lowerId.startsWith("us.") ||
+      lowerId.startsWith("us-") ||
+      lowerId.startsWith("us_") ||
+      lowerId.includes(".us.") ||
+      lowerId.includes("/us/") ||
+      lowerName.startsWith("us.") ||
+      lowerName.startsWith("us-") ||
+      /\b(us|usa)\b/i.test(displayName ?? "");
+
+    if (isUs) {
+      return {
+        scope: "US",
+        label: "US",
+        badgeClass:
+          "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-semibold",
+      };
+    }
+
+    const isEu =
+      lowerId.startsWith("eu.") ||
+      lowerId.startsWith("eu-") ||
+      lowerId.startsWith("eu_") ||
+      lowerId.includes(".eu.") ||
+      lowerId.includes("/eu/") ||
+      lowerName.startsWith("eu.") ||
+      lowerName.startsWith("eu-") ||
+      /\b(eu|europe)\b/i.test(displayName ?? "");
+
+    if (isEu) {
+      return {
+        scope: "EU",
+        label: "EU",
+        badgeClass:
+          "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-semibold",
+      };
+    }
+
+    const isApac =
+      lowerId.startsWith("apac.") ||
+      lowerId.startsWith("apac-") ||
+      lowerId.startsWith("apac_") ||
+      lowerId.startsWith("ap.") ||
+      lowerId.startsWith("ap-") ||
+      lowerId.includes(".apac.") ||
+      lowerId.includes("/apac/") ||
+      lowerName.startsWith("apac.") ||
+      lowerName.startsWith("apac-") ||
+      /\b(apac|asia)\b/i.test(displayName ?? "");
+
+    if (isApac) {
+      return {
+        scope: "APAC",
+        label: "APAC",
+        badgeClass:
+          "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-200 dark:border-teal-800 font-semibold",
+      };
+    }
+  }
+
+  if (matchType === "provider_specific") {
+    return {
+      scope: "provider",
+      label: "provider",
+      badgeClass:
+        "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800",
+    };
+  }
+
+  return {
+    scope: "global",
+    label: "global",
+    badgeClass:
+      "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-800",
+  };
+}
+
 const CAP_FILTERS: Array<[string, string]> = [
   ["supports_text", "text"],
   ["supports_vision", "vision"],
@@ -258,7 +360,7 @@ export function ProviderWizardModal({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [forms, setForms] = useState<Record<string, ModelFormState>>({});
   const [search, setSearch] = useState("");
-  const [matchFilter, setMatchFilter] = useState<"ALL" | MatchType>("ALL");
+  const [matchFilter, setMatchFilter] = useState<"ALL" | MatchType | "US" | "EU" | "APAC">("ALL");
   const [capFilter, setCapFilter] = useState("ALL");
   const [priceFilter, setPriceFilter] = useState<"ALL" | "PRICED" | "FREE">("ALL");
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
@@ -303,21 +405,51 @@ export function ProviderWizardModal({
     if (!mapped) return [];
     const q = search.trim().toLowerCase();
     return mapped.filter((m) => {
-      if (matchFilter !== "ALL" && m.match_type !== matchFilter) return false;
+      const scopeInfo = getModelScope(m.model_id, m.match_type, String(m.suggested?.name ?? ""));
+      if (matchFilter !== "ALL") {
+        if (matchFilter === "US" && scopeInfo.scope !== "US") return false;
+        if (matchFilter === "EU" && scopeInfo.scope !== "EU") return false;
+        if (matchFilter === "APAC" && scopeInfo.scope !== "APAC") return false;
+        if (matchFilter === "global" && scopeInfo.scope !== "global") return false;
+        if (matchFilter === "provider_specific" && m.match_type !== "provider_specific") return false;
+        if (matchFilter === "fallback" && m.match_type !== "fallback") return false;
+      }
       if (capFilter !== "ALL" && !(m.suggested[capFilter] as boolean)) return false;
       if (priceFilter !== "ALL") {
-        const priced = parseFloat(String(m.suggested.input_price ?? "0")) > 0 || parseFloat(String(m.suggested.output_price ?? "0")) > 0;
+        const priced =
+          parseFloat(String(m.suggested.input_price ?? "0")) > 0 ||
+          parseFloat(String(m.suggested.output_price ?? "0")) > 0;
         if (priceFilter === "PRICED" && !priced) return false;
         if (priceFilter === "FREE" && priced) return false;
       }
-      if (q && !(m.model_id.toLowerCase().includes(q) || String(m.suggested.name ?? "").toLowerCase().includes(q))) return false;
+      if (
+        q &&
+        !(
+          m.model_id.toLowerCase().includes(q) ||
+          String(m.suggested.name ?? "").toLowerCase().includes(q) ||
+          scopeInfo.label.toLowerCase().includes(q)
+        )
+      )
+        return false;
       return true;
     });
   }, [mapped, search, matchFilter, capFilter, priceFilter]);
 
   const matchStats = useMemo(() => {
-    const stats: Record<MatchType, number> = { provider_specific: 0, global: 0, fallback: 0 };
-    for (const m of mapped ?? []) if (selected.has(m.model_id)) stats[m.match_type] += 1;
+    const stats: Record<MatchType, number> & { us: number } = {
+      provider_specific: 0,
+      global: 0,
+      fallback: 0,
+      us: 0,
+    };
+    for (const m of mapped ?? []) {
+      if (selected.has(m.model_id)) {
+        stats[m.match_type] += 1;
+        if (getModelScope(m.model_id, m.match_type, String(m.suggested?.name ?? "")).scope === "US") {
+          stats.us += 1;
+        }
+      }
+    }
     return stats;
   }, [mapped, selected]);
 
@@ -636,8 +768,11 @@ export function ProviderWizardModal({
                           />
                           <Select value={matchFilter} onChange={(e) => setMatchFilter(e.target.value as typeof matchFilter)} data-testid="wiz-match-filter" className="max-w-40 text-xs">
                             <option value="ALL">All matches</option>
-                            <option value="provider_specific">Provider-specific</option>
+                            <option value="US">US specific</option>
                             <option value="global">Global</option>
+                            <option value="EU">EU specific</option>
+                            <option value="APAC">APAC specific</option>
+                            <option value="provider_specific">Provider-specific</option>
                             <option value="fallback">Unknown</option>
                           </Select>
                           <Select value={capFilter} onChange={(e) => setCapFilter(e.target.value)} data-testid="wiz-cap-filter" className="max-w-36 text-xs">
@@ -682,6 +817,8 @@ export function ProviderWizardModal({
                           {filtered.map((m) => {
                             const f = forms[m.model_id];
                             const checked = selected.has(m.model_id);
+                            const displayName = String(f?.name || m.suggested.name || m.model_id);
+                            const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
                             return (
                               <div
                                 key={m.model_id}
@@ -699,9 +836,13 @@ export function ProviderWizardModal({
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5">
                                     <Cpu className="size-3.5 shrink-0 text-zinc-400" />
-                                    <span className="truncate font-medium">{String(f?.name || m.suggested.name || m.model_id)}</span>
-                                    <span className={cn("rounded px-1 py-0.5 text-[10px] font-medium", MATCH_BADGE[m.match_type])} data-testid={`wiz-match-${m.model_id}`}>
-                                      {m.match_type === "provider_specific" ? "provider" : m.match_type}
+                                    <span className="truncate font-medium">{displayName}</span>
+                                    <span
+                                      className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
+                                      data-testid={`wiz-match-${m.model_id}`}
+                                      title={`${scopeInfo.label} scope (${m.match_type === "fallback" ? "unmatched" : "catalog match"})`}
+                                    >
+                                      {scopeInfo.label}
                                     </span>
                                   </div>
                                   <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
@@ -735,7 +876,7 @@ export function ProviderWizardModal({
                     <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800" data-testid="wiz-summary-models">
                       <p className="font-semibold">{selected.size} models selected</p>
                       <p className="mt-1 text-zinc-500" data-testid="wiz-summary-matches">
-                        Matched provider models: {matchStats.provider_specific} · Matched global models: {matchStats.global} · Unknown models: {matchStats.fallback}
+                        Matched provider models: {matchStats.provider_specific} · Matched global models: {matchStats.global}{matchStats.us > 0 ? ` (${matchStats.us} US)` : ""} · Unknown models: {matchStats.fallback}
                       </p>
                     </div>
 
@@ -756,6 +897,7 @@ export function ProviderWizardModal({
                           selectedModels.map((m) => {
                             const f = forms[m.model_id];
                             const displayName = String(f?.name || m.suggested.name || m.model_id);
+                            const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
                             const activeCaps = f?.caps
                               ? Object.entries(f.caps)
                                   .filter(([, v]) => v)
@@ -776,10 +918,11 @@ export function ProviderWizardModal({
                                     <span
                                       className={cn(
                                         "rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-                                        MATCH_BADGE[m.match_type],
+                                        scopeInfo.badgeClass,
                                       )}
+                                      title={`${scopeInfo.label} scope (${m.match_type === "fallback" ? "unmatched" : "catalog match"})`}
                                     >
-                                      {m.match_type === "provider_specific" ? "provider" : m.match_type}
+                                      {scopeInfo.label}
                                     </span>
                                     <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 shrink-0">
                                       {f?.endpoint_type ?? "chat_completions"}

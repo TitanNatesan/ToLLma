@@ -8,15 +8,12 @@ import { Dialog, DialogContent } from "./primitives";
 import { useChatStore } from "@/store/chat";
 import { useConversations } from "@/hooks/useChat";
 import { useProviders } from "@/hooks/useRegistry";
-import { syncRepository } from "@/services/api";
 import {
   Command as CommandIcon,
   Cpu,
-  Database,
   MessageSquare,
   Pin,
   Plus,
-  RefreshCw,
   Search,
   Sparkles,
 } from "lucide-react";
@@ -32,7 +29,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     setConversation,
     setSearch,
     setLeftSidebar,
-    setRepoSearchOpen,
     setAddProviderOpen,
   } = useChatStore();
   const { data: convs = [] } = useConversations("");
@@ -117,20 +113,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
               </Command.Item>
 
               <Command.Item
-                value="search models repository catalog"
-                onSelect={() =>
-                  run(() => {
-                    setRepoSearchOpen(true);
-                  })
-                }
-                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
-                data-testid="cmd-search-models"
-              >
-                <Database className="size-4 text-zinc-500" />
-                <span>Search Model Catalog</span>
-              </Command.Item>
-
-              <Command.Item
                 value="go to providers manage"
                 onSelect={() => run(() => router.push("/providers"))}
                 className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
@@ -155,31 +137,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 <span>Add Provider</span>
               </Command.Item>
 
-              <Command.Item
-                value="sync repository model intelligence fetch models"
-                onSelect={() =>
-                  run(async () => {
-                    try {
-                      toast.loading("Syncing model repository…", { id: "sync-repo" });
-                      const res = await syncRepository();
-                      toast.success("Repository synced successfully", {
-                        id: "sync-repo",
-                        description: `${res.models_created} added, ${res.models_updated} updated`,
-                      });
-                    } catch (e) {
-                      toast.error("Sync failed", {
-                        id: "sync-repo",
-                        description: e instanceof Error ? e.message : "Error",
-                      });
-                    }
-                  })
-                }
-                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
-                data-testid="cmd-sync-repository"
-              >
-                <RefreshCw className="size-4 text-blue-500" />
-                <span>Sync Model Repository</span>
-              </Command.Item>
             </Command.Group>
 
             {/* Provider Shortcuts */}

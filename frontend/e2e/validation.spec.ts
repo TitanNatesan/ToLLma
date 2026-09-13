@@ -1,20 +1,27 @@
-// Scenario 2: wizard validation is stored and displayed.
+// Validate checks credentials only: no discovery, no registration.
 import { expect, test } from "@playwright/test";
-import { MOCK_URL, wizardRegister } from "./helpers";
+import { apiCreateProvider } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
   await startMockLLM();
 });
 
-test("wizard validation persists across reload", async ({ page }) => {
+test("validate stores status and registers nothing", async ({ page }) => {
   const name = `pw-val-${Date.now()}`;
-  await wizardRegister(page, { name, type: "CUSTOM", baseUrl: MOCK_URL });
+  const { id: providerId } = await apiCreateProvider(name);
 
-  // Status is stored server-side, not just client state.
+  await page.goto("/providers");
+  await page.locator("section[aria-label='Provider list']").getByText(name).click();
   const detail = page.getByTestId("provider-detail");
+
+  await detail.getByTestId(`validate-${providerId}`).click();
   await expect(detail.getByText("Valid").first()).toBeVisible({ timeout: 20000 });
   await expect(detail.getByText(/checked /)).toBeVisible();
+
+  // Validation alone discovers/registers nothing.
+  await expect(detail.getByTestId("discovery-stats")).toContainText(/Available Models:\s*0/);
+  await expect(detail.getByTestId("discovery-stats")).toContainText(/Registered Models:\s*0/);
 
   await page.reload();
   await page.locator("section[aria-label='Provider list']").getByText(name).click();

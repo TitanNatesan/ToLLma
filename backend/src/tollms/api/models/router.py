@@ -78,18 +78,6 @@ def update(model_id: uuid.UUID, data: ModelUpdate, db: Session = Depends(get_db)
     return _read(service.update_model(db, model_id, data))
 
 
-@router.post("/{model_id}/resync", response_model=dict)
-def resync(model_id: uuid.UUID, include_pricing: bool = False, db: Session = Depends(get_db)) -> dict:
-    """Refresh a linked model from its repository entry.
-
-    Pricing is only applied with include_pricing=true — user overrides are never
-    silently overwritten.
-    """
-    result = service.resync_model(db, model_id, include_pricing=include_pricing)
-    result["applied"] = {k: str(v) for k, v in result["applied"].items()}
-    return result
-
-
 @router.delete("/{model_id}", status_code=204)
 def delete(model_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
     service.delete_model(db, model_id)

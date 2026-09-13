@@ -108,7 +108,7 @@ def test_custom_requires_base_url_and_factory_covers_all_types(db: Session, prov
         assert adapter is not None
 
 
-def test_validate_and_discover_persist(db: Session, provider_factory, model_factory) -> None:
+def test_validate_persists_but_discover_only_caches(db: Session, provider_factory, model_factory) -> None:
     p = provider_factory("D", creds={"base_url": "http://mock"})
     t = _mock({"/models": (200, {"data": [{"id": "disc-a"}, {"id": "disc-b"}]})})
 
@@ -118,17 +118,37 @@ def test_validate_and_discover_persist(db: Session, provider_factory, model_fact
     assert stored["validation_status"] == "valid"
     assert stored["last_validated_at"] is not None
 
+    # Refresh discovers and caches — it registers nothing.
     first = asyncio.run(discover_provider_models(db, uuid.UUID(p["id"]), t))
-    assert first.created == 2
-    assert sorted(first.discovered) == ["disc-a", "disc-b"]
-    assert len(list_models(db, provider_id=uuid.UUID(p["id"]))) == 2
+    assert first.total == 2
+    assert first.new_count == 2
+    assert sorted(i.model_id for i in first.discovered) == ["disc-a", "disc-b"]
+    assert len(list_models(db, provider_id=uuid.UUID(p["id"]))) == 0
 
+    # Cache persisted on provider metadata for the Available/Registered panels.
+    cached = asyncio.run(_read_provider(db, p["id"]))["metadata"]["discovery"]
+    assert cached["total"] == 2
+    assert cached["last_discovery_at"] is not None
+    assert {m["model_id"] for m in cached["models"]} == {"disc-a", "disc-b"}
+    assert all("suggested" in m and "match_type" in m for m in cached["models"])
+
+    # Registering one model flips it from available to registered on re-refresh.
+    from tollms.api.models.schemas import ModelCreate
+    from tollms.models.registered_model import EndpointType
+
+    from tollms.api.models.service import create_model as _create
+
+    _create(db, ModelCreate(provider_id=uuid.UUID(p["id"]), model_id="disc-a", name="A",
+                            endpoint_type=EndpointType.CHAT_COMPLETIONS))
     second = asyncio.run(discover_provider_models(db, uuid.UUID(p["id"]), t))
-    assert second.created == 0  # idempotent
+    assert second.total == 2
+    assert second.new_count == 1  # idempotent w.r.t. registration
+    assert second.registered_count == 1
+    assert len(list_models(db, provider_id=uuid.UUID(p["id"]))) == 1
 
 
 async def _read_provider(db: Session, pid: str) -> dict:
     from tollms.api.providers.service import get_provider
 
     p = get_provider(db, uuid.UUID(pid))
-    return {"validation_status": p.validation_status, "last_validated_at": p.last_validated_at}
+    return {"validation_status": p.validation_status, "last_validated_at": p.last_validated_at, "metadata": p.metadata_}

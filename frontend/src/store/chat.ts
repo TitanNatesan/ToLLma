@@ -22,7 +22,6 @@ interface ChatState {
   sidebarWidth: number;
   draft: string;
   optimisticMessages: OptimisticMessage[];
-  repoSearchOpen: boolean;
   addProviderOpen: boolean;
   providerSearch: string;
   providerTypeFilter: string;
@@ -40,7 +39,6 @@ interface ChatState {
   addOptimistic: (msg: OptimisticMessage) => void;
   updateOptimisticStreaming: (id: string, delta: string) => void;
   clearOptimistic: () => void;
-  setRepoSearchOpen: (open: boolean) => void;
   setAddProviderOpen: (open: boolean) => void;
   setProviderSearch: (s: string) => void;
   setProviderTypeFilter: (t: string) => void;
@@ -60,7 +58,6 @@ export const useChatStore = create<ChatState>()(
       sidebarWidth: 260,
       draft: "",
       optimisticMessages: [],
-      repoSearchOpen: false,
       addProviderOpen: false,
       providerSearch: "",
       providerTypeFilter: "ALL",
@@ -84,7 +81,6 @@ export const useChatStore = create<ChatState>()(
           ),
         })),
       clearOptimistic: () => set({ optimisticMessages: [] }),
-      setRepoSearchOpen: (repoSearchOpen) => set({ repoSearchOpen }),
       setAddProviderOpen: (addProviderOpen) => set({ addProviderOpen }),
       setProviderSearch: (providerSearch) => set({ providerSearch }),
       setProviderTypeFilter: (providerTypeFilter) => set({ providerTypeFilter }),

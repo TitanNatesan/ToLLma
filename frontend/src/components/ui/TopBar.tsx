@@ -3,29 +3,20 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import {
   BarChart3,
   Command as CmdIcon,
   Cpu,
-  Database,
   MessageSquare,
   Moon,
-  RefreshCw,
   Search,
   Settings,
   Sun,
 } from "lucide-react";
-import { Badge, Button, Tooltip } from "./primitives";
-import { getRepositoryStats, syncRepository } from "@/services/api";
-import { useChatStore } from "@/store/chat";
 import { cn } from "@/lib/utils";
 
 export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => void }) {
   const pathname = usePathname();
-  const queryClient = useQueryClient();
-  const { setRepoSearchOpen } = useChatStore();
   const [mounted, setMounted] = useState(false);
   const [isDark, setIsDark] = useState(true);
 
@@ -52,28 +43,7 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
     });
   };
 
-  // Model repository sync query and mutation
-  const { data: repoStats } = useQuery({
-    queryKey: ["model-repository", "stats"],
-    queryFn: getRepositoryStats,
-    refetchInterval: 60000,
-  });
-
-  const syncMutation = useMutation({
-    mutationFn: syncRepository,
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["model-repository"] });
-      queryClient.invalidateQueries({ queryKey: ["models"] });
-      toast.success("Repository sync completed", {
-        description: `${result.models_created} added, ${result.models_updated} updated`,
-      });
-    },
-    onError: (err) => {
-      toast.error("Repository sync failed", {
-        description: err instanceof Error ? err.message : "Unknown error",
-      });
-    },
-  });
+  // (Repository sync runs on the server scheduler; no manual trigger in the UI.)
 
   const navItems = [
     { href: "/", label: "Chat", icon: MessageSquare },
@@ -147,19 +117,8 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
         </nav>
       </div>
 
-      {/* Right section: Search, Command Palette, Sync status, Theme */}
+      {/* Right section: Command Palette, Theme */}
       <div className="flex items-center gap-1.5 sm:gap-2">
-        {/* Global Model Repository Search button */}
-        <button
-          onClick={() => setRepoSearchOpen(true)}
-          className="hidden sm:flex items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50/50 px-2 py-1 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800"
-          title="Search Model Catalog"
-          data-testid="global-model-search-btn"
-        >
-          <Database className="size-3.5 text-zinc-400" />
-          <span className="text-[11px]">Model Catalog</span>
-        </button>
-
         {/* Command Palette button */}
         <button
           onClick={onOpenCommandPalette}
@@ -173,30 +132,6 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
             <CmdIcon className="size-2.5" /> K
           </kbd>
         </button>
-
-        {/* Repository Sync indicator & button */}
-        <Tooltip
-          content={
-            repoStats?.last_sync?.started_at
-              ? `Last synced ${new Date(repoStats.last_sync.started_at).toLocaleTimeString()} (${repoStats.total_models} models)`
-              : "Sync Model Intelligence Repository"
-          }
-        >
-          <button
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 disabled:opacity-50"
-            data-testid="sync-status-btn"
-            aria-label="Sync Model Repository"
-          >
-            <RefreshCw
-              className={cn("size-3.5", syncMutation.isPending && "animate-spin text-blue-500")}
-            />
-            <span className="hidden lg:inline text-[11px]">
-              {syncMutation.isPending ? "Syncing…" : "Sync"}
-            </span>
-          </button>
-        </Tooltip>
 
         {/* Theme toggle */}
         <button

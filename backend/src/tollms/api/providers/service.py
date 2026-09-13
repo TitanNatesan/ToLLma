@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 from sqlalchemy import select
@@ -12,9 +13,9 @@ from sqlalchemy.orm import Session
 from tollms.core.crypto import decrypt, encrypt, mask
 from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.services.gateway.factory import build_adapter
-from tollms.models.registered_model import AIModel, EndpointType
+from tollms.models.registered_model import AIModel
 from tollms.models.provider import Provider, ProviderType
-from tollms.api.providers.schemas import DiscoveryResult, ProviderCreate, ProviderUpdate
+from tollms.api.providers.schemas import DiscoveredModelInfo, DiscoveryResult, ProviderCreate, ProviderUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -118,45 +119,81 @@ async def validate_provider(
 async def discover_provider_models(
     db: Session, provider_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None = None
 ) -> DiscoveryResult:
-    """Fetch models from the provider and store the ones we don't have yet."""
+    """Refresh the provider's discovery cache. Never registers or modifies models.
+
+    Fetches the current model list from the provider, enriches each entry with
+    repository intelligence (pricing/capabilities/match type), and stores the
+    result on provider metadata for the Available/Registered panels.
+    """
     from tollms.api.models.service import list_models as _list  # avoid import cycle at module load
+    from tollms.services.model_repository.mapping import map_models as _map
 
     provider = get_provider(db, provider_id)
-    adapter = build_adapter(provider, None, decrypted_credentials(provider), transport)
+    registered = {m.model_id for m in _list(db, provider_id=provider.id)}
     try:
+        creds = decrypted_credentials(provider)
+        adapter = build_adapter(provider, None, creds, transport)
         discovered = await adapter.discover_models()
     except Exception as e:
         logger.exception("provider %s discovery crashed", provider.id)
-        return DiscoveryResult(provider_id=provider.id, discovered=[], created=0, message=f"discovery failed: {e}")
-    existing = {m.model_id for m in _list(db, provider_id=provider.id)}
-    created = 0
-    for d in discovered:
-        if d.model_id in existing:
-            continue
-        try:
-            endpoint = EndpointType(d.endpoint_type)
-        except ValueError:
-            endpoint = EndpointType.CHAT_COMPLETIONS
-        db.add(
-            AIModel(
-                provider_id=provider.id,
-                model_id=d.model_id,
-                name=d.name,
-                endpoint_type=endpoint,
-                context_window=d.context_window,
-                max_output_tokens=d.max_output_tokens,
-                metadata_={"discovered": True},
-            )
+        return DiscoveryResult(provider_id=provider.id, message=f"discovery failed: {e}")
+    mapped = {
+        m["model_id"]: m
+        for m in _map(
+            db,
+            [d.model_id for d in discovered],
+            provider_type=provider.provider_type.value,
+            base_url=(creds.get("base_url") if isinstance(creds, dict) else None),
         )
-        created += 1
+    }
+    infos = []
+    for d in discovered:
+        match = mapped.get(d.model_id, {})
+        suggested = _json_safe(match.get("suggested") or {})
+        # Provider identity wins; repository match supplies pricing/capabilities.
+        suggested["model_id"] = d.model_id
+        suggested["name"] = d.name or d.model_id
+        infos.append(
+            {
+                "model_id": d.model_id,
+                "name": d.name or d.model_id,
+                "endpoint_type": d.endpoint_type,
+                "context_window": d.context_window,
+                "max_output_tokens": d.max_output_tokens,
+                "repository_model_key": match.get("repository_model_key"),
+                "match_type": match.get("match_type", "fallback"),
+                "suggested": suggested,
+                "repository_match": _json_safe(match.get("repository_match") or {}),
+            }
+        )
+    now = datetime.now(timezone.utc)
+    provider.metadata_ = {
+        **(provider.metadata_ or {}),
+        "discovery": {"models": infos, "total": len(infos), "last_discovery_at": now.isoformat()},
+    }
     db.commit()
-    logger.info("provider %s discovery: %s found, %s created", provider.id, len(discovered), created)
+    new_count = sum(1 for i in infos if i["model_id"] not in registered)
+    logger.info("provider %s discovery: %s found, %s new", provider.id, len(infos), new_count)
     return DiscoveryResult(
         provider_id=provider.id,
-        discovered=[d.model_id for d in discovered],
-        created=created,
-        message=f"{len(discovered)} found, {created} added",
+        discovered=[DiscoveredModelInfo(**i) for i in infos],
+        total=len(infos),
+        new_count=new_count,
+        registered_count=len(registered),
+        last_discovery_at=now,
+        message=f"{len(infos)} found, {new_count} available",
     )
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively convert dates/decimals to JSON-safe scalars for metadata storage."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
 
 
 async def draft_validate(

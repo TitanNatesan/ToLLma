@@ -48,11 +48,32 @@ class ValidationResult(BaseModel):
     latency_ms: float
 
 
+class DiscoveredModelInfo(BaseModel):
+    """One provider-discovered model enriched with repository intelligence.
+
+    Identity fields come from the provider; pricing/capabilities in
+    `suggested` come from the repository match (or zeroed defaults).
+    """
+
+    model_id: str
+    name: str
+    endpoint_type: str
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    repository_model_key: str | None = None
+    match_type: str = "fallback"
+    suggested: dict[str, Any] = Field(default_factory=dict)
+    repository_match: dict[str, Any] = Field(default_factory=dict)
+
+
 class DiscoveryResult(BaseModel):
     provider_id: uuid.UUID
-    discovered: list[str]
-    created: int
-    message: str
+    discovered: list[DiscoveredModelInfo] = Field(default_factory=list)
+    total: int = 0
+    new_count: int = 0
+    registered_count: int = 0
+    last_discovery_at: datetime | None = None
+    message: str = ""
 
 
 class DraftValidate(BaseModel):

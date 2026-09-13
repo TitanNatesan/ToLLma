@@ -21,7 +21,14 @@ test("wizard registers only on finish, then persists", async ({ page, request })
   await wizardRegister(page, { name, type: "CUSTOM", baseUrl: MOCK_URL });
 
   // Detail view opens for the new provider (registration auto-selects it).
-  await expect(page.getByTestId("provider-detail")).toContainText(name);
+  const detail = page.getByTestId("provider-detail");
+  await expect(detail).toContainText(name);
+
+  // Only two provider actions exist: Validate + Refresh models.
+  await expect(detail.getByRole("button", { name: "Validate" })).toBeVisible();
+  await expect(detail.getByRole("button", { name: "Refresh models" })).toBeVisible();
+  await expect(detail.getByRole("button", { name: "Catalog Import" })).toHaveCount(0);
+  await expect(detail.getByRole("button", { name: "Sync models" })).toHaveCount(0);
 
   // Reload -> persists (database, not just client state).
   await page.reload();

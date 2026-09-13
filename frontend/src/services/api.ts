@@ -9,11 +9,7 @@ import type {
   Provider,
   RegisterResult,
   RepositoryLookup,
-  RepositoryModelPage,
-  RepositoryStats,
-  ResyncResult,
   StreamDone,
-  SyncRun,
   UsageTotals,
   ValidationResult,
 } from "@/types";
@@ -111,35 +107,11 @@ export const updateModel = (id: string, body: Record<string, unknown>) => patch<
 export const deleteModel = (id: string) => del<void>(`/api/v1/models/${id}`);
 export const bulkUpdateModels = (ids: string[], changes: Record<string, unknown>) =>
   patch<{ updated: number }>("/api/v1/models/bulk", { ids, patch: changes });
-export const resyncModel = (id: string, includePricing = false) =>
-  post<ResyncResult>(`/api/v1/models/${id}/resync${includePricing ? "?include_pricing=true" : ""}`, {});
 export const lookupRepositoryModel = (query: string, providerHint?: string) => {
   const q = new URLSearchParams({ query });
   if (providerHint) q.set("provider_hint", providerHint);
   return get<RepositoryLookup>(`/api/v1/model-repository/lookup?${q.toString()}`);
 };
-export const listRepositoryModels = (params?: {
-  search?: string;
-  provider?: string;
-  capability?: string;
-  active_only?: boolean;
-  page?: number;
-  page_size?: number;
-}) => {
-  const q = new URLSearchParams();
-  if (params?.search) q.set("search", params.search);
-  if (params?.provider) q.set("provider", params.provider);
-  if (params?.capability) q.set("capability", params.capability);
-  if (params?.active_only !== undefined) q.set("active_only", String(params.active_only));
-  if (params?.page) q.set("page", String(params.page));
-  if (params?.page_size) q.set("page_size", String(params.page_size));
-  const s = q.toString();
-  return get<RepositoryModelPage>(`/api/v1/model-repository/models${s ? `?${s}` : ""}`);
-};
-export const getRepositoryStats = () => get<RepositoryStats>("/api/v1/model-repository/stats");
-export const syncRepository = () => post<SyncRun>("/api/v1/model-repository/sync", {});
-export const getRepositorySyncHistory = (limit = 20) =>
-  get<SyncRun[]>(`/api/v1/model-repository/sync-history?limit=${limit}`);
 export const mapDiscoveredModels = (body: { provider_type?: string; base_url?: string; model_ids: string[] }) =>
   post<{ mapped: MappedModel[] }>("/api/v1/model-repository/map", body);
 

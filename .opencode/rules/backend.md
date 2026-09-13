@@ -81,7 +81,7 @@ One module per table group: `conversation.py`, `message.py`, `provider.py`,
 ## Invariants (CI-verifiable)
 
 - No `tollms.modules` package and no `tollms.modules.*` imports anywhere.
-- `docker compose exec backend pytest -q` passes (currently 36 tests).
+- `docker compose exec backend pytest -q` passes (currently 35 tests).
 - `docker compose exec backend alembic check` reports no operations.
 - Every API module independently maintainable: no giant service files,
   no giant routers, no circular imports.

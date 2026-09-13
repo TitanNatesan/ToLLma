@@ -1,4 +1,4 @@
-// Model Intelligence end-to-end: repository import, chat usage/cost, analytics, sync.
+// Model Intelligence end-to-end: register-drawer repository assist, chat usage/cost, analytics, sync.
 import { expect, test } from "@playwright/test";
 import { API, apiCreateModel, apiCreateProvider, selectProviderModel, sendMessage } from "./helpers";
 import { startMockLLM } from "./mock-server";
@@ -7,13 +7,21 @@ test.beforeAll(async () => {
   await startMockLLM();
 });
 
-test("repository import auto-populates the model form", async ({ page, request }) => {
+test("register drawer auto-populates from the repository", async ({ page, request }) => {
   const stamp = Date.now();
   const { id: providerId } = await apiCreateProvider(`pw-intel-prov-${stamp}`);
 
   await page.goto("/providers");
   await page.locator("section[aria-label='Provider list']").getByText(`pw-intel-prov-${stamp}`).click();
-  await page.getByTestId("add-model").click();
+  const section = page.locator("section[aria-label='Provider details']");
+  const detail = section.getByTestId("provider-detail");
+  await detail.getByTestId(`discover-${providerId}`).click();
+  await expect(section.getByTestId("available-row-mock-disc-a")).toBeVisible({ timeout: 20000 });
+
+  // Register drawer is prefilled from the discovery cache; repository search
+  // swaps in canonical pricing/limits for a different model id.
+  await section.getByTestId("register-mock-disc-a").click();
+  await expect(page.getByTestId("register-drawer")).toBeVisible();
   await page.getByTestId("madd-repo-search").fill("gpt-4o");
   await page.getByTestId("madd-repo-import").click();
   // Auto-populated from the repository (prices converted to per-1M, limits filled).

@@ -418,6 +418,37 @@ live repo stats (4029 models) + lookup ok; Playwright 37/37; vitest 5/5; tsc cle
 Also rewrote .opencode/rules/backend.md to the layered rules (flow router->api service->
 services->models; engine-keyed services; models aggregate import; check-green invariant).
 
+## 2026-09-13 - Provider page UX simplification (Validate -> Discover -> Select -> Use)
+
+Removed Catalog Import and Sync Models from the entire product: deleted
+RepositoryCatalogModal.tsx + its AppShell global mount, TopBar Model Catalog button and
+repository Sync button/stats query, CommandPalette catalog/sync actions, provider-page
+Sync models button, ModelDetailDrawer sync-metadata/pricing section, backend
+POST /models/{id}/resync + resync_model (+ helpers), frontend resyncModel/syncRepository/
+listRepositoryModels/getRepositoryStats/getRepositorySyncHistory fns and ResyncResult/
+SyncRun/RepositoryStats/RepositoryModelPage/RepositoryModelItem types, store repoSearchOpen.
+POST /model-repository/sync stays (scheduler/ops trigger, no UI references it).
+Reworked POST /providers/{id}/discover into cache-only Refresh: fetches provider models,
+enriches each via the mapping engine (provider_specific/global/fallback + suggested
+pricing/caps, JSON-sanitized), stores {models,total,last_discovery_at} on
+provider.metadata.discovery; registers nothing (new DiscoveryResult shape).
+Provider page now: header (name/type/status/model count/last checked), Validate + Refresh
+actions only, Discovery stats bar (Available/Registered/Hidden/filtered-out/Last Discovery
+relative time), Available panel (search + capability/type/context filters, match badges,
+Register + View Details per row) and Registered panel (search, edit/disable/delete;
+manual Add removed). New RegisterModelDrawer: step 1 provider info (read-only), step 2
+repository match (badge + key or zeroed defaults), step 3 ModelForm prefilled via
+fromSuggested (editable, repo search kept as invisible assist); save POSTs /models and the
+row moves panels with a "Just registered" highlight, no refresh. Validate stays
+credentials-only (e2e asserts zero models after validate).
+Tests: rewrote test_discovery persist test (cache written, 0 created, re-refresh flips
+new_count); deleted wizard resync test; rewrote e2e discovery/validation (new flow),
+providers (asserts only 2 actions), wizard (dropped sync test), intelligence (repo
+auto-populate via register drawer).
+Verification: pytest 35/35; Playwright 35 passed + 1 pre-existing skip; vitest 5/5;
+tsc clean; next build success. Pre-existing lint errors (TopBar/ProviderWizardModal
+setState-in-effect, identical on stashed HEAD) left untouched.
+
 ## 2026-09-13 - Prevent Browser Password Autofill on Provider Credential Inputs
 
 Requirement: Disable browser password manager autofill / username suggestion dropdowns on all provider credentials fields (Step 2 and Edit mode in the Provider connection modal).
