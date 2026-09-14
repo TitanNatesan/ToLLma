@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Paperclip,
   RotateCcw,
   Sparkles,
   Trash2,
@@ -18,7 +19,8 @@ import {
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
 import { ResponseMarkdown } from "./ResponseMarkdown";
-import type { ChatMessage } from "@/types";
+import { attachmentContentUrl } from "@/services/api";
+import type { ChatAttachment, ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { cn } from "@/lib/utils";
@@ -102,6 +104,49 @@ function renderContent(content: string) {
   }
   if (last < content.length) parts.push({ type: "text", content: content.slice(last) });
   return parts;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Persisted attachment cards: images render inline, everything else links
+ * to the owned download endpoint (session cookie authenticates). */
+function MessageAttachments({ attachments }: { attachments?: ChatAttachment[] }) {
+  if (!attachments || attachments.length === 0) return null;
+  return (
+    <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="message-attachments">
+      {attachments.map((a) => {
+        const url = attachmentContentUrl(a.id);
+        return a.kind === "image" ? (
+          <a key={a.id} href={url} target="_blank" rel="noreferrer" title={a.filename}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={url}
+              alt={a.filename}
+              crossOrigin="use-credentials"
+              loading="lazy"
+              className="max-h-40 rounded-lg border border-zinc-200 object-cover dark:border-zinc-700"
+            />
+          </a>
+        ) : (
+          <a
+            key={a.id}
+            href={url}
+            download={a.filename}
+            title={`${a.filename} (${a.kind})`}
+            className="inline-flex max-w-48 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+          >
+            <Paperclip className="size-3 shrink-0 text-zinc-400" />
+            <span className="truncate">{a.filename}</span>
+            <span className="shrink-0 text-[10px] text-zinc-400">{formatBytes(a.file_size)}</span>
+          </a>
+        );
+      })}
+    </div>
+  );
 }
 
 function MessageContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
@@ -249,6 +294,7 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
               : "rounded-tl-sm border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900",
           )}
         >
+          <MessageAttachments attachments={msg.attachments} />
           {isUser ? (
             <MessageContent content={message.content} isStreaming={isStreaming} />
           ) : (

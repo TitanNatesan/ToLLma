@@ -1005,3 +1005,30 @@ Chat composer now renders upload controls, reasoning selector, and capability ba
 - `tsc --noEmit` clean; `vitest` 34/34; `next build` clean
 - `pytest` 62/62 (61 + 1 new); `alembic check` clean
 - e2e: chat/manage/providers/wizard specs pass except pre-existing failures (chat-ux 23/43 sidebar testids, wizard:10 `add-provider` — both reproduce on pristine tree via stash)
+
+## 2026-09-14 — True Attachment Handling End-to-End (multimodal gateway)
+
+### Requirement Completed
+Attachments are first-class entities: upload stores bytes + DB row, gateway forwards real content to providers (native image/audio/video parts per adapter; document text extracted at upload and injected as context; audio transcribed via the provider's own OpenAI-compatible endpoint when native audio is unavailable; video frame+transcript fallback behind runtime ffmpeg detection). History re-injects derived text always and media best-effort. Message reads expose attachments; UI unchanged except upload-then-send wiring + history preview cards.
+
+### Files Created
+- `backend/src/tollms/models/attachment.py` + `backend/alembic/versions/e8a4c1d2f7b9_attachments.py`
+- `backend/src/tollms/services/gateway/attachments.py` (validate/store/extract/transcribe/ffmpeg engine)
+- `backend/src/tollms/api/attachments/{__init__,router,service,schemas}.py` (`POST/GET/GET-content/DELETE /api/v1/chat/attachments`)
+- `backend/tests/test_attachments.py` (18 tests)
+
+### Files Modified
+- Adapters (`base/openai/anthropic/gemini/bedrock`): `MediaPart`, `supports_*` flags, native parts (image_url/input_image/Anthropic blocks/inline_data/converse blocks)
+- `api/gateway/{schemas,service}.py` (`attachment_ids`, ownership-gated assembly, linking, history re-injection)
+- `api/conversations/{schemas,service,router}.py` (`MessageRead.attachments`, `conversation_read`/`message_reads`)
+- `core/config.py` (`storage_dir`, `max_upload_mb`); `main.py` (router); `pyproject.toml`+`uv.lock` (`pypdf`, `python-multipart`)
+- Frontend: `services/api.ts` (upload helper, `attachment_ids`), `AttachmentPicker` (upload-then-add), `MessageView` (preview cards), `types`, `capabilities.ts`, `page.tsx`
+
+### Decisions
+- Immutable storage paths (`user_id/<conv|unassigned>/<uuid>_<safe>`), no move-on-link; paths never serialized.
+- No new STT infra: transcription reuses provider's own `/audio/transcriptions` (OpenAI-family only); otherwise clear 422.
+- No ffmpeg install: frame/audio fallback degrades gracefully; clear 422 when nothing applies. No silent drops anywhere.
+- Blank message allowed iff `attachment_ids` present; sent attachments undeletable (history); cross-owner -> 404.
+
+### Verification
+- `pytest` 80/80 (62 + 18 new); `alembic check` clean; `tsc` clean; `vitest` 34/34; `next build` clean; e2e chat+history 3/3.

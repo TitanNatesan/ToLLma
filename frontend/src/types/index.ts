@@ -110,10 +110,22 @@ export interface AIModel {
 
 export type Role = "system" | "user" | "assistant";
 
+export interface ChatAttachment {
+  id: string;
+  filename: string;
+  mime_type: string;
+  kind: string;
+  file_size: number;
+  conversation_id: string | null;
+  message_id: string | null;
+  created_at: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  attachments?: ChatAttachment[];
   provider_id: string | null;
   model_id: string | null;
   prompt_tokens: number | null;

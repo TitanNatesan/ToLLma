@@ -218,7 +218,7 @@ function UnifiedModelSelector({
 }
 
 export function ChatComposer({ streaming, disabled = false, onSend, onStop }: ChatComposerProps) {
-  const { providerId, modelId, draft, setDraft } = useChatStore();
+  const { providerId, modelId, draft, setDraft, activeConversationId } = useChatStore();
   const { data: providers = [] } = useProviders();
   const { data: models = [] } = useModels();
   const { model: activeModel, caps } = useModelCapabilities(models, modelId);
@@ -354,6 +354,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
           kinds={kinds}
           currentCount={attachments.length}
           disabled={!ready || streaming}
+          conversationId={activeConversationId}
           onAdd={(picked) => setAttachments((prev) => [...prev, ...picked])}
         />
 

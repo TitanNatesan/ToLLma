@@ -163,6 +163,39 @@ export interface StreamCallbacks {
   onError: (message: string) => void;
 }
 
+export interface UploadedAttachment {
+  attachment_id: string;
+  filename: string;
+  mime_type: string;
+  kind: string;
+  size: number;
+}
+
+export async function uploadChatAttachment(file: File, conversationId?: string | null): Promise<UploadedAttachment> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  if (conversationId) form.append("conversation_id", conversationId);
+  const token = getAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  // No JSON Content-Type: the browser sets multipart boundaries. Cookies ride along.
+  const res = await fetch(`${apiBase()}/api/v1/chat/attachments`, {
+    method: "POST",
+    headers,
+    body: form,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ApiError(res.status, res.statusText, detail, `upload ${file.name} -> ${res.status} ${detail.slice(0, 200)}`);
+  }
+  return res.json() as Promise<UploadedAttachment>;
+}
+
+export function attachmentContentUrl(attachmentId: string): string {
+  return `${apiBase()}/api/v1/chat/attachments/${attachmentId}/content`;
+}
+
 export async function streamChat(
   body: {
     provider_id: string;
@@ -170,7 +203,7 @@ export async function streamChat(
     conversation_id?: string | null;
     message: string;
     reasoning_level?: string | null;
-    attachments?: { name: string; size: number; mime: string; kind: string }[];
+    attachment_ids?: string[];
   },
   cb: StreamCallbacks,
 ): Promise<void> {

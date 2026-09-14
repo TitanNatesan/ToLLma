@@ -89,7 +89,9 @@ export default function Home() {
         conversation_id: conversationId,
         message: text,
         reasoning_level: payload.reasoningLevel,
-        attachments: payload.attachments,
+        attachment_ids: payload.attachments
+          .map((a) => a.attachmentId)
+          .filter((id): id is string => !!id),
       },
       {
         signal: ctrl.signal,

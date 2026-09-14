@@ -24,6 +24,8 @@ export interface ComposerAttachment {
   size: number;
   mime: string;
   kind: AttachmentKind;
+  /** Server id from POST /api/v1/chat/attachments. Set once upload succeeds. */
+  attachmentId: string | null;
   /** Object URL for image thumbnails; undefined otherwise. */
   previewUrl?: string;
 }
@@ -33,6 +35,7 @@ export interface AttachmentDescriptor {
   size: number;
   mime: string;
   kind: AttachmentKind;
+  attachmentId: string | null;
 }
 
 export interface ChatSendPayload {
@@ -137,5 +140,5 @@ export function kindForFile(file: File): AttachmentKind | null {
 }
 
 export function describeAttachment(a: ComposerAttachment): AttachmentDescriptor {
-  return { name: a.name, size: a.size, mime: a.mime, kind: a.kind };
+  return { name: a.name, size: a.size, mime: a.mime, kind: a.kind, attachmentId: a.attachmentId };
 }

@@ -4,6 +4,7 @@ import { useRef } from "react";
 import { toast } from "sonner";
 import { Image as ImageIcon, Mic, Paperclip, Video } from "lucide-react";
 import type { ComponentType } from "react";
+import { uploadChatAttachment } from "@/services/api";
 import {
   ACCEPT_BY_KIND,
   MAX_ATTACHMENTS,
@@ -20,23 +21,27 @@ const KIND_BUTTON: Record<AttachmentKind, { icon: ComponentType<{ className?: st
   video: { icon: Video, label: "Upload video", testid: "attach-video" },
 };
 
-/** One upload button per supported kind. Unsupported kinds render nothing. */
+/** One upload button per supported kind. Unsupported kinds render nothing.
+ * Files upload immediately (POST /api/v1/chat/attachments); chips appear
+ * only after the server accepts them, so staged items always have an id. */
 export function AttachmentPicker({
   kinds,
   currentCount,
   disabled,
+  conversationId,
   onAdd,
 }: {
   kinds: AttachmentKind[];
   currentCount: number;
   disabled?: boolean;
+  conversationId?: string | null;
   onAdd: (attachments: ComposerAttachment[]) => void;
 }) {
   const inputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   if (kinds.length === 0) return null;
 
-  function handleFiles(kind: AttachmentKind, files: FileList | null) {
+  async function handleFiles(kind: AttachmentKind, files: FileList | null) {
     if (!files || files.length === 0) return;
     const picked: ComposerAttachment[] = [];
     for (const file of Array.from(files)) {
@@ -53,14 +58,22 @@ export function AttachmentPicker({
         toast.error(`${file.name} is not a supported ${kind} file`);
         continue;
       }
-      picked.push({
-        id: crypto.randomUUID(),
-        name: file.name,
-        size: file.size,
-        mime: file.type,
-        kind,
-        previewUrl: kind === "image" ? URL.createObjectURL(file) : undefined,
-      });
+      try {
+        const up = await uploadChatAttachment(file, conversationId);
+        picked.push({
+          id: crypto.randomUUID(),
+          name: up.filename,
+          size: up.size,
+          mime: up.mime_type,
+          kind,
+          attachmentId: up.attachment_id,
+          previewUrl: kind === "image" ? URL.createObjectURL(file) : undefined,
+        });
+      } catch (e) {
+        toast.error(`Upload failed: ${file.name}`, {
+          description: e instanceof Error ? e.message : "unknown error",
+        });
+      }
     }
     if (picked.length > 0) onAdd(picked);
   }
