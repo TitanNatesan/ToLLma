@@ -149,7 +149,7 @@ export default function Home() {
                 {!ready && (
                   <span>
                     {" "}
-                    <Link href="/providers" className="text-blue-500 underline">
+                    <Link href="/providers" className="text-tollma-600 underline hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300">
                       Set up a provider
                     </Link>{" "}
                     to get started.

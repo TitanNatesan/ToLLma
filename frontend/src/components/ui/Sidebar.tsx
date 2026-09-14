@@ -84,7 +84,7 @@ function ConvItem({
       transition={{ duration: 0.15 }}
       className={cn(
         "group flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800",
-        active && "bg-zinc-100 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100",
+        active && "bg-tollma-50 font-medium text-tollma-800 dark:bg-tollma-950 dark:text-tollma-200",
       )}
     >
       {conv.is_pinned && (
@@ -307,7 +307,7 @@ export function Sidebar() {
                       className={cn(
                         "group cursor-pointer rounded-lg border p-2.5 transition-all text-xs",
                         isSelected
-                          ? "border-zinc-500 bg-white shadow-sm ring-1 ring-zinc-500 dark:border-zinc-600 dark:bg-zinc-900"
+                          ? "border-tollma-500 bg-tollma-50/50 shadow-sm ring-1 ring-tollma-500 dark:border-tollma-600 dark:bg-tollma-950/40"
                           : "border-zinc-200 bg-white/70 hover:border-zinc-300 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-zinc-700 dark:hover:bg-zinc-900",
                       )}
                     >

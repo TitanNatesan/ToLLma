@@ -22,7 +22,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
           onChange={onChange}
           className={cn(
             "h-8 w-full rounded-md border border-zinc-200 bg-zinc-50/50 pl-8 pr-7 text-xs transition-colors",
-            "placeholder:text-zinc-400 focus:border-zinc-400 focus:bg-white focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/60 dark:focus:border-zinc-700 dark:focus:bg-zinc-950",
+            "placeholder:text-zinc-400 focus:border-tollma-500 focus:bg-white focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/60 dark:focus:border-tollma-500 dark:focus:bg-zinc-950",
           )}
           {...props}
         />

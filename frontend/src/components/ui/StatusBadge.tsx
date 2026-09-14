@@ -22,7 +22,7 @@ interface StatusConfig {
 const CONFIGS: Record<StatusType, StatusConfig> = {
   valid: {
     label: "Valid",
-    dotColor: "bg-emerald-500",
+    dotColor: "bg-tollma-500",
     variant: "success",
   },
   invalid: {
@@ -37,7 +37,7 @@ const CONFIGS: Record<StatusType, StatusConfig> = {
   },
   active: {
     label: "Active",
-    dotColor: "bg-emerald-500",
+    dotColor: "bg-tollma-500",
     variant: "success",
   },
   inactive: {
@@ -47,12 +47,12 @@ const CONFIGS: Record<StatusType, StatusConfig> = {
   },
   syncing: {
     label: "Syncing",
-    dotColor: "bg-blue-500 animate-pulse",
+    dotColor: "bg-tollma-500 animate-pulse",
     variant: "secondary",
   },
   done: {
     label: "Synced",
-    dotColor: "bg-emerald-500",
+    dotColor: "bg-tollma-500",
     variant: "success",
   },
   error: {

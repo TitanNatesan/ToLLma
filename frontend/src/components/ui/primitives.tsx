@@ -21,7 +21,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300",
+        default: "bg-tollma-600 text-white hover:bg-tollma-700 dark:bg-tollma-600 dark:text-white dark:hover:bg-tollma-500",
         secondary: "bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700",
         outline:
           "border border-zinc-300 bg-transparent hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800",
@@ -67,9 +67,9 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900",
+        default: "border-transparent bg-tollma-600 text-white dark:bg-tollma-600 dark:text-white",
         secondary: "border-transparent bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-        success: "border-transparent bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+        success: "border-transparent bg-tollma-100 text-tollma-800 dark:bg-tollma-900 dark:text-tollma-200",
         destructive: "border-transparent bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
         outline: "text-zinc-700 dark:text-zinc-300",
         warning: "border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
@@ -96,7 +96,7 @@ export function Switch({
     <SwitchPrimitives.Root
       className={cn(
         "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-zinc-200 transition-colors",
-        "data-[state=checked]:bg-zinc-900 dark:data-[state=checked]:bg-zinc-100",
+        "data-[state=checked]:bg-tollma-600 dark:data-[state=checked]:bg-tollma-500",
         "focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-700",
         className,
       )}
@@ -118,7 +118,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
     <input
       className={cn(
         "flex h-9 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500",
+        "focus-visible:outline-none focus-visible:border-tollma-500 focus-visible:ring-2 focus-visible:ring-tollma-500/40",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -132,7 +132,7 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
     <textarea
       className={cn(
         "flex min-h-16 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500",
+        "focus-visible:outline-none focus-visible:border-tollma-500 focus-visible:ring-2 focus-visible:ring-tollma-500/40",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -174,7 +174,7 @@ export function Select({
           "w-full appearance-none rounded-md border text-zinc-900 transition-colors cursor-pointer",
           "border-zinc-300 bg-white hover:border-zinc-400 shadow-xs",
           "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400/30 focus-visible:border-zinc-400 dark:focus-visible:ring-zinc-500/30",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/40 focus-visible:border-tollma-500 dark:focus-visible:ring-tollma-500/40",
           "disabled:cursor-not-allowed",
           sizeVariant === "sm" ? "h-8 pl-2.5 pr-7 text-xs" : "h-9 pl-3 pr-8 text-sm",
           "[&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-900 dark:[&>option]:text-zinc-100",
@@ -230,9 +230,9 @@ export function Checkbox({
             "flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
             "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900",
             "group-hover:border-zinc-400 dark:group-hover:border-zinc-500",
-            "peer-focus-visible:ring-2 peer-focus-visible:ring-zinc-500/40 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
-            "peer-checked:border-zinc-900 peer-checked:bg-zinc-900 peer-checked:text-white",
-            "dark:peer-checked:border-zinc-100 dark:peer-checked:bg-zinc-100 dark:peer-checked:text-zinc-900",
+            "peer-focus-visible:ring-2 peer-focus-visible:ring-tollma-500/40 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
+            "peer-checked:border-tollma-600 peer-checked:bg-tollma-600 peer-checked:text-white",
+            "dark:peer-checked:border-tollma-500 dark:peer-checked:bg-tollma-500 dark:peer-checked:text-white",
           )}
         >
           <Check

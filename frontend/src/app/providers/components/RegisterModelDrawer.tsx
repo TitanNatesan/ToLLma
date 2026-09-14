@@ -105,9 +105,9 @@ export function RegisterModelDrawer({
                 className={cn(
                   "flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
                   i < step
-                    ? "bg-emerald-500 text-white"
+                    ? "bg-tollma-600 text-white"
                     : i === step
-                      ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                      ? "bg-tollma-600 text-white dark:bg-tollma-500 dark:text-white"
                       : "bg-zinc-200 text-zinc-500 dark:bg-zinc-800",
                 )}
               >

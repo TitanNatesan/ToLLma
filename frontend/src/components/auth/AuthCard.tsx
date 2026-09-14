@@ -198,7 +198,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <Button
                 type="submit"
                 disabled={loginBusy}
-                className="h-10 w-full rounded-lg bg-white text-xs font-semibold text-zinc-950 transition-all hover:bg-zinc-200 disabled:opacity-50"
+                className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
                 data-testid="login-submit"
               >
                 {loginBusy ? (
@@ -254,7 +254,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <button
                 type="button"
                 onClick={switchToSignup}
-                className="font-medium text-white underline underline-offset-4 hover:text-zinc-200 transition-colors cursor-pointer"
+                className="font-medium text-white underline underline-offset-4 hover:text-tollma-300 transition-colors cursor-pointer"
               >
                 Sign up
               </button>
@@ -356,7 +356,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <Button
                 type="submit"
                 disabled={signupBusy}
-                className="h-10 w-full rounded-lg bg-white text-xs font-semibold text-zinc-950 transition-all hover:bg-zinc-200 disabled:opacity-50"
+                className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
                 data-testid="signup-submit"
               >
                 {signupBusy ? (
@@ -412,7 +412,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <button
                 type="button"
                 onClick={switchToLogin}
-                className="font-medium text-white underline underline-offset-4 hover:text-zinc-200 transition-colors cursor-pointer"
+                className="font-medium text-white underline underline-offset-4 hover:text-tollma-300 transition-colors cursor-pointer"
               >
                 Log in
               </button>

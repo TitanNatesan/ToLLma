@@ -133,7 +133,7 @@ export function ModelSelector({
                         className={cn(
                           "flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors",
                           isSelected
-                            ? "bg-zinc-200 font-semibold text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                            ? "bg-tollma-100 font-semibold text-tollma-900 dark:bg-tollma-900 dark:text-tollma-100"
                             : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                         )}
                       >

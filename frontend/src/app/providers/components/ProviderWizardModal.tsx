@@ -685,7 +685,7 @@ export function ProviderWizardModal({
                               className={cn(
                                 "flex flex-col items-start p-3 rounded-lg border text-left transition-all",
                                 isSelected
-                                  ? "border-zinc-800 bg-zinc-900 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900 shadow-sm"
+                                  ? "border-tollma-600 bg-tollma-600 text-white dark:border-tollma-500 dark:bg-tollma-600 dark:text-white shadow-sm"
                                   : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700",
                               )}
                             >
@@ -745,12 +745,12 @@ export function ProviderWizardModal({
                         className={cn(
                           "p-3 rounded-lg border text-xs flex items-start gap-2.5",
                           validation.valid
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200"
+                            ? "border-tollma-200 bg-tollma-50 text-tollma-900 dark:border-tollma-900/50 dark:bg-tollma-950/20 dark:text-tollma-200"
                             : "border-red-200 bg-red-50 text-red-900 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200",
                         )}
                         data-testid="wiz-validation-result"
                       >
-                        {validation.valid ? <CheckCircle2 className="size-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="size-4 text-red-600 shrink-0 mt-0.5" />}
+                        {validation.valid ? <CheckCircle2 className="size-4 text-tollma-600 shrink-0 mt-0.5" /> : <XCircle className="size-4 text-red-600 shrink-0 mt-0.5" />}
                         <div>
                           <div className="font-semibold">
                             {validation.valid

@@ -348,7 +348,7 @@ export default function ProvidersPage() {
                     disabled={busy !== null}
                     data-testid={`validate-${selected.id}`}
                   >
-                    <CheckCircle2 className="size-3.5 text-emerald-500" />
+                    <CheckCircle2 className="size-3.5 text-tollma-500" />
                     {busy === `validate:${selected.id}` ? "Checking…" : "Validate"}
                   </GhostButton>
 
@@ -361,7 +361,7 @@ export default function ProvidersPage() {
                   >
                     <RefreshCw
                       className={cn(
-                        "size-3.5 text-blue-500",
+                        "size-3.5 text-tollma-500",
                         busy === `discover:${selected.id}` && "animate-spin",
                       )}
                     />
@@ -371,7 +371,7 @@ export default function ProvidersPage() {
 
                 {discoverMsg[selected.id] && (
                   <div
-                    className="p-2.5 rounded-lg border border-blue-200 bg-blue-50 text-xs text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300"
+                    className="p-2.5 rounded-lg border border-tollma-200 bg-tollma-50 text-xs text-tollma-800 dark:border-tollma-900/40 dark:bg-tollma-950/20 dark:text-tollma-300"
                     data-testid={`discover-result-${selected.id}`}
                   >
                     {discoverMsg[selected.id]}
@@ -606,7 +606,7 @@ export default function ProvidersPage() {
                         "group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition-all hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700 cursor-pointer",
                         !m.is_active && "opacity-60",
                         lastRegisteredId === m.id &&
-                          "border-emerald-400 bg-emerald-50/60 dark:border-emerald-700 dark:bg-emerald-950/20",
+                          "border-tollma-400 bg-tollma-50/60 dark:border-tollma-700 dark:bg-tollma-950/20",
                       )}
                     >
                       <div className="flex flex-col gap-1 min-w-0 flex-1">
@@ -623,7 +623,7 @@ export default function ProvidersPage() {
                             </Badge>
                           )}
                           {lastRegisteredId === m.id && (
-                            <Badge className="bg-emerald-500 text-[9px] px-1.5 py-0 text-white">
+                            <Badge className="bg-tollma-600 text-[9px] px-1.5 py-0 text-white">
                               Just registered
                             </Badge>
                           )}

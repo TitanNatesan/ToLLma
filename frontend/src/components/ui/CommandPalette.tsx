@@ -90,7 +90,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     router.push("/");
                   })
                 }
-                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
+                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-tollma-50 dark:data-[selected=true]:bg-tollma-950"
                 data-testid="cmd-new-chat"
               >
                 <Plus className="size-4 text-zinc-500" />
@@ -105,7 +105,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     setSearch("");
                   })
                 }
-                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
+                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-tollma-50 dark:data-[selected=true]:bg-tollma-950"
                 data-testid="cmd-search-conversations"
               >
                 <Search className="size-4 text-zinc-500" />
@@ -115,7 +115,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
               <Command.Item
                 value="go to providers manage"
                 onSelect={() => run(() => router.push("/providers"))}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
+                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-tollma-50 dark:data-[selected=true]:bg-tollma-950"
                 data-testid="cmd-providers"
               >
                 <Cpu className="size-4 text-zinc-500" />
@@ -130,10 +130,10 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     setAddProviderOpen(true);
                   })
                 }
-                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
+                className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-tollma-50 dark:data-[selected=true]:bg-tollma-950"
                 data-testid="cmd-add-provider"
               >
-                <Plus className="size-4 text-emerald-500" />
+                <Plus className="size-4 text-tollma-500" />
                 <span>Add Provider</span>
               </Command.Item>
 
@@ -151,7 +151,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                         router.push("/providers");
                       })
                     }
-                    className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-tollma-50 dark:data-[selected=true]:bg-tollma-950"
                   >
                     <Cpu className="size-4 text-zinc-500" />
                     <span className="font-medium">{p.name}</span>
@@ -176,7 +176,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                         router.push("/");
                       })
                     }
-                    className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-zinc-100 dark:data-[selected=true]:bg-zinc-800"
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-tollma-50 dark:data-[selected=true]:bg-tollma-950"
                     data-testid={`cmd-conv-${c.id}`}
                   >
                     <MessageSquare className="size-4 text-zinc-500" />

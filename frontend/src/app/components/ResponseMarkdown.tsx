@@ -193,13 +193,13 @@ function RichCodeBlock({
             className={cn(
               "flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors",
               copied
-                ? "bg-emerald-500/20 text-emerald-400"
+                ? "bg-tollma-500/20 text-tollma-400"
                 : "bg-zinc-800 text-zinc-200 hover:bg-zinc-700 hover:text-white",
             )}
             title="Copy code"
           >
             {copied ? (
-              <Check className="size-3 text-emerald-400" />
+              <Check className="size-3 text-tollma-400" />
             ) : (
               <Copy className="size-3" />
             )}
@@ -224,18 +224,18 @@ const ALERT_CONFIGS = {
   note: {
     label: "Note",
     icon: Info,
-    border: "border-blue-500",
-    bg: "bg-blue-50/70 dark:bg-blue-950/30",
-    titleColor: "text-blue-700 dark:text-blue-300",
-    iconColor: "text-blue-600 dark:text-blue-400",
+    border: "border-tollma-500",
+    bg: "bg-tollma-50/70 dark:bg-tollma-950/30",
+    titleColor: "text-tollma-700 dark:text-tollma-300",
+    iconColor: "text-tollma-600 dark:text-tollma-400",
   },
   tip: {
     label: "Tip",
     icon: Lightbulb,
-    border: "border-emerald-500",
-    bg: "bg-emerald-50/70 dark:bg-emerald-950/30",
-    titleColor: "text-emerald-700 dark:text-emerald-300",
-    iconColor: "text-emerald-600 dark:text-emerald-400",
+    border: "border-tollma-500",
+    bg: "bg-tollma-50/70 dark:bg-tollma-950/30",
+    titleColor: "text-tollma-700 dark:text-tollma-300",
+    iconColor: "text-tollma-600 dark:text-tollma-400",
   },
   important: {
     label: "Important",
@@ -369,7 +369,7 @@ function RichTable({ children }: { children: React.ReactNode }) {
           title="Copy table contents"
         >
           {copied ? (
-            <Check className="size-3 text-emerald-500" />
+            <Check className="size-3 text-tollma-500" />
           ) : (
             <Copy className="size-3" />
           )}
@@ -434,7 +434,7 @@ function EnhancedThinkBlock({
             title="Copy thought process"
           >
             {copied ? (
-              <Check className="size-3 text-emerald-600 dark:text-emerald-400" />
+              <Check className="size-3 text-tollma-600 dark:text-tollma-400" />
             ) : (
               <Copy className="size-3" />
             )}
@@ -559,7 +559,7 @@ export function ResponseMarkdown({
                         className={cn(
                           "flex size-3.5 items-center justify-center rounded border transition-colors",
                           checked
-                            ? "border-emerald-500 bg-emerald-500 text-white"
+                            ? "border-tollma-500 bg-tollma-500 text-white"
                             : "border-zinc-400 bg-transparent dark:border-zinc-600",
                         )}
                       >
@@ -578,7 +578,7 @@ export function ResponseMarkdown({
                     href={href}
                     target={isExternal ? "_blank" : undefined}
                     rel={isExternal ? "noopener noreferrer" : undefined}
-                    className="inline-flex items-center gap-0.5 font-medium text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 underline underline-offset-2 transition-colors"
+                    className="inline-flex items-center gap-0.5 font-medium text-tollma-500 hover:text-tollma-600 dark:text-tollma-400 dark:hover:text-tollma-300 underline underline-offset-2 transition-colors"
                     {...props}
                   >
                     <span>{children}</span>

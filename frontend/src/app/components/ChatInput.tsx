@@ -174,7 +174,7 @@ function UnifiedModelSelector({
                         className={cn(
                           "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-xs transition-colors",
                           isSelected
-                            ? "bg-zinc-200 font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                            ? "bg-tollma-100 font-medium text-tollma-900 dark:bg-tollma-900 dark:text-tollma-100"
                             : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                         )}
                       >
@@ -271,7 +271,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         data-testid="chat-input"
         className={cn(
           "w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm leading-relaxed",
-          "focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-900",
+          "focus:outline-none focus:ring-2 focus:ring-tollma-500/50 focus:border-tollma-500 dark:border-zinc-700 dark:bg-zinc-900",
           "placeholder:text-zinc-400 disabled:opacity-50",
           "transition-all duration-150",
         )}

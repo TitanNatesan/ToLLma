@@ -84,7 +84,7 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
                 className={cn(
                   "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
                   isActive
-                    ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 font-semibold"
+                    ? "bg-tollma-50 text-tollma-800 dark:bg-tollma-950 dark:text-tollma-200 font-semibold"
                     : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
                 )}
                 data-testid={`nav-item-${item.label.toLowerCase()}`}

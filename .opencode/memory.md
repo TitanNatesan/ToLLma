@@ -523,6 +523,38 @@ untouched; compose all healthy. Flakes killed along the way: RLock bridge deadlo
 (earlier), verify double-fire (StrictMode + single-use token), save/GET race in
 intel:10 (drawer-close gate), orphan sync rows + stale locks from --reload kills.
 
+## 2026-09-14 - ToLLma green accent theme (frontend only, #066E09)
+
+Tokens: tollma 50-950 scale in globals.css @theme (500=#066E09 brand; muted,
+non-neon; white-on-500+ passes AA). All components consume tollma-* utilities;
+zero hardcoded greens. Primitives: Button default + Badge default -> tollma-600,
+Badge success -> tollma tints, Switch/Checkbox checked -> tollma-600/500, Input/
+Textarea/Select/SearchInput/ChatInput focus -> tollma-500 border + 40-50% ring
+glow. Nav: TopBar active tab + Sidebar active conversation -> tollma-50/950 tints;
+selected provider card -> tollma border+ring+tint; selected model rows ->
+tollma-100/900. Status: StatusBadge valid/active/done/syncing dots ->
+tollma-500 (red/amber untouched), StatusCard border, cost figures tollma-600/400.
+Chat: link + Mermaid + Send (via Button) green; bubbles untouched. Providers page:
+validate/discover icons, discover-result info box (blue->tollma tints),
+just-registered card + badge. Wizard: validation box + platform-select +
+step circles green. Markdown callouts: emerald/blue variants -> tollma 1:1
+(info is now muted green-gray). CommandPalette selected rows tinted + add icon
+green. AuthCard submits -> tollma-500, toggles hover tollma-300. Product fix
+included: shared DialogContent had no max-height (Save unreachable on 720p) ->
+max-h-80vh scroll. Deliberately UNCHANGED: region badges (US sky/EU purple/APAC
+teal/global are semantic coding), logo tiles (monochrome brand mark), red/amber
+status, disabled states (grayscale), all layouts/sizes/animations.
+Verification: tsc clean; lint 3 pre-existing setState-in-effect errors untouched;
+build success; vitest 19/19; contrast 13/13 pairs AA (lowest 5.93:1); before/after
+screenshots providers/chat/login identical except accents; e2e 36/39. The 3
+failures are pre-existing HEAD (89595a4) issues proven on pristine tree via
+stash: wizard.spec expects mapping text in wiz-match-* (repurposed to region
+badges by regional-scope feature), 2 collapse tests hit duplicate toggle testids
+from panel-toggle refinements. Left untouched per frontend-only scope (no
+unrelated test edits). Anomaly noted: dev model_repository tables found empty
+mid-session (no DELETE path exists in code; volumes intact); repopulated via
+manual sync (4029 rows, 0 errors).
+
 ## 2026-09-13 - Prevent Browser Password Autofill on Provider Credential Inputs
 
 Requirement: Disable browser password manager autofill / username suggestion dropdowns on all provider credentials fields (Step 2 and Edit mode in the Provider connection modal).

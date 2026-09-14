@@ -256,7 +256,7 @@ export function IntelligencePanel() {
                   />
                   <StatRow
                     label="Total Cost"
-                    value={<span data-testid="usage-cost" className="text-emerald-600 dark:text-emerald-400 font-bold">{formatCost(usage.total_cost)}</span>}
+                    value={<span data-testid="usage-cost" className="text-tollma-600 dark:text-tollma-400 font-bold">{formatCost(usage.total_cost)}</span>}
                     mono
                   />
                   <StatRow label="Messages" value={messageCount} mono />
@@ -315,7 +315,7 @@ export function IntelligencePanel() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Diagrams:</span>
-                  <span className="text-emerald-500 font-medium">Mermaid SVG</span>
+                  <span className="text-tollma-500 font-medium">Mermaid SVG</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Tool Calls &amp; Citations:</span>

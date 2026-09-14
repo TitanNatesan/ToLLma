@@ -37,8 +37,8 @@ export function CostCard({
   if (compact) {
     return (
       <div className={cn("flex items-center gap-1.5 text-xs text-zinc-500", className)}>
-        <DollarSign className="size-3 text-emerald-500" />
-        <span className="font-semibold text-emerald-600 dark:text-emerald-400">{tot}</span>
+        <DollarSign className="size-3 text-tollma-500" />
+        <span className="font-semibold text-tollma-600 dark:text-tollma-400">{tot}</span>
       </div>
     );
   }
@@ -48,10 +48,10 @@ export function CostCard({
       <CardContent className="p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-            <TrendingUp className="size-3 text-emerald-500" />
+            <TrendingUp className="size-3 text-tollma-500" />
             Cost Analysis
           </span>
-          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+          <span className="text-xs font-bold text-tollma-600 dark:text-tollma-400 font-mono">
             {tot}
           </span>
         </div>

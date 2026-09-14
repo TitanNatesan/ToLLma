@@ -39,14 +39,14 @@ function VerifyBody() {
           <>
             <h1 className="text-lg font-semibold" data-testid="verify-ok">Email verified</h1>
             <p className="text-sm text-zinc-500">Your account is active.</p>
-            <Link href="/" className="inline-block underline">Go to ToLLma</Link>
+            <Link href="/" className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Go to ToLLma</Link>
           </>
         )}
         {status === "bad" && (
           <>
             <h1 className="text-lg font-semibold" data-testid="verify-bad">Link invalid or expired</h1>
             <p className="text-sm text-zinc-500">Verification links are single-use and expire after 24 hours.</p>
-            <Link href="/login" className="inline-block underline">Back to login</Link>
+            <Link href="/login" className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Back to login</Link>
           </>
         )}
       </div>

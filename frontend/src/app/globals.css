@@ -23,6 +23,22 @@
   --font-mono: var(--font-mono);
 }
 
+/* ToLLma brand green scale (500 = #066E09). Muted professional shades —
+   no neon. White text on 500+ passes WCAG AA (6.5:1 and up). */
+@theme {
+  --color-tollma-50: #edf5ee;
+  --color-tollma-100: #d9e9db;
+  --color-tollma-200: #b3d4b7;
+  --color-tollma-300: #84b78b;
+  --color-tollma-400: #519c5b;
+  --color-tollma-500: #066e09;
+  --color-tollma-600: #055b08;
+  --color-tollma-700: #044a06;
+  --color-tollma-800: #033805;
+  --color-tollma-900: #022a04;
+  --color-tollma-950: #021e03;
+}
+
 html,
 body {
   height: 100%;

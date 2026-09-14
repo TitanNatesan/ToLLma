@@ -192,7 +192,7 @@ export function ChatHeader() {
             <span title="Total tokens used in this conversation">
               {usage.total_tokens.toLocaleString()} tok
             </span>
-            <span title="Total estimated cost" className="text-emerald-600 dark:text-emerald-400 font-semibold">
+            <span title="Total estimated cost" className="text-tollma-600 dark:text-tollma-400 font-semibold">
               {costFormatted}
             </span>
           </div>
