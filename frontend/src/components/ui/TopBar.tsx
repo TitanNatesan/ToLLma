@@ -23,25 +23,21 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
 
   useEffect(() => {
     setMounted(true);
-    const isDarkTheme =
-      document.documentElement.classList.contains("dark") ||
-      (!("theme" in localStorage) && window.matchMedia("(prefers-color-scheme: dark)").matches) ||
-      localStorage.getItem("theme") === "dark";
-    setIsDark(isDarkTheme);
+    const hasDark = document.documentElement.classList.contains("dark");
+    setIsDark(hasDark);
   }, []);
 
   const toggleTheme = () => {
-    setIsDark((prev) => {
-      const next = !prev;
-      if (next) {
-        document.documentElement.classList.add("dark");
-        localStorage.setItem("theme", "dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-        localStorage.setItem("theme", "light");
-      }
-      return next;
-    });
+    const isCurrentlyDark = document.documentElement.classList.contains("dark");
+    const nextIsDark = !isCurrentlyDark;
+    if (nextIsDark) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
+    }
+    setIsDark(nextIsDark);
   };
 
   // (Repository sync runs on the server scheduler; no manual trigger in the UI.)

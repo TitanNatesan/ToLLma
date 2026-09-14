@@ -6,6 +6,7 @@ import { useConversation, useUsage } from "@/hooks/useChat";
 import { useChatStore } from "@/store/chat";
 import {
   Badge,
+  Button,
   CapabilityBadge,
   CostCard,
   Tooltip,
@@ -14,13 +15,12 @@ import {
 import {
   Bot,
   Brain,
-  ChevronLeft,
-  ChevronRight,
   Cpu,
   Database,
   FileCode2,
   HelpCircle,
   Layers,
+  PanelRightClose,
   Sparkles,
   Workflow,
   Zap,
@@ -115,24 +115,6 @@ export function IntelligencePanel() {
 
   return (
     <>
-      {/* Collapse toggle */}
-      <button
-        className={cn(
-          "fixed right-0 top-1/2 z-20 -translate-y-1/2 rounded-l-md border border-r-0 border-zinc-200 bg-white px-1 py-3 text-xs text-zinc-400 shadow-sm transition-all hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
-          rightSidebarOpen ? "-translate-x-64" : "translate-x-0",
-        )}
-        onClick={() => setRightSidebar(!rightSidebarOpen)}
-        aria-label={rightSidebarOpen ? "Collapse intelligence panel" : "Expand intelligence panel"}
-        data-testid="right-sidebar-toggle"
-        style={{ transition: "transform 0.25s ease-in-out" }}
-      >
-        {rightSidebarOpen ? (
-          <ChevronRight className="size-3 text-zinc-400" />
-        ) : (
-          <ChevronLeft className="size-3 text-zinc-400" />
-        )}
-      </button>
-
       <motion.aside
         animate={{ width: rightSidebarOpen ? 256 : 0 }}
         transition={{ duration: 0.25, ease: "easeInOut" }}
@@ -150,11 +132,25 @@ export function IntelligencePanel() {
                 Model Intelligence
               </h2>
             </div>
-            {model && (
-              <Badge variant="outline" className="text-[9px] font-mono px-1 py-0">
-                {model.endpoint_type}
-              </Badge>
-            )}
+            <div className="flex items-center gap-1.5">
+              {model && (
+                <Badge variant="outline" className="text-[9px] font-mono px-1 py-0">
+                  {model.endpoint_type}
+                </Badge>
+              )}
+              <Tooltip content="Hide Intelligence">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-7 p-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                  onClick={() => setRightSidebar(false)}
+                  aria-label="Close intelligence panel"
+                  data-testid="right-sidebar-toggle"
+                >
+                  <PanelRightClose className="size-3.5" />
+                </Button>
+              </Tooltip>
+            </div>
           </div>
 
           {/* Scrollable Content */}

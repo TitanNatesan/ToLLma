@@ -5,16 +5,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft,
-  ChevronRight,
   Cpu,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Pin,
   Plus,
   Trash2,
 } from "lucide-react";
-import { Badge, Button } from "./primitives";
+import { Badge, Button, Select, Tooltip } from "./primitives";
 import { SearchInput } from "./SearchInput";
 import { StatusBadge } from "./StatusBadge";
 import { useConversationMutations, useConversations } from "@/hooks/useChat";
@@ -23,6 +23,16 @@ import { useChatStore } from "@/store/chat";
 import { PROVIDER_TYPES } from "@/app/providers/fields";
 import type { Conversation, Provider, ProviderType } from "@/types";
 import { cn } from "@/lib/utils";
+
+const PROVIDER_TYPE_NAMES: Record<ProviderType, string> = {
+  OPENAI_RESPONSES: "OpenAI Responses",
+  OPENAI_CHAT: "OpenAI Chat",
+  ANTHROPIC_MESSAGES: "Anthropic Messages",
+  GEMINI: "Google Gemini",
+  VERTEX_AI: "Google Vertex AI",
+  BEDROCK_CONVERSE: "AWS Bedrock",
+  CUSTOM: "Custom Gateway",
+};
 
 function ConvItem({
   conv,
@@ -195,26 +205,6 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Collapse Toggle Button */}
-      <button
-        className={cn(
-          "fixed left-0 top-1/2 z-20 -translate-y-1/2 rounded-r-md border border-l-0 border-zinc-200 bg-white px-1 py-3 text-xs text-zinc-400 shadow-sm transition-all hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900",
-        )}
-        style={{
-          transform: `translate(${leftSidebarOpen ? `${sidebarWidth}px` : "0px"}, -50%)`,
-          transition: isResizing ? "none" : "transform 0.25s ease-in-out",
-        }}
-        onClick={() => setLeftSidebar(!leftSidebarOpen)}
-        aria-label={leftSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-        data-testid="left-sidebar-toggle"
-      >
-        {leftSidebarOpen ? (
-          <ChevronLeft className="size-3 text-zinc-400" />
-        ) : (
-          <ChevronRight className="size-3 text-zinc-400" />
-        )}
-      </button>
-
       <motion.aside
         animate={{ width: currentWidth }}
         transition={{
@@ -241,6 +231,17 @@ export function Sidebar() {
               {/* Header & Add Provider Action */}
               <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
                 <div className="flex items-center gap-1.5">
+                  <Tooltip content="Hide sidebar">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 -ml-1"
+                      onClick={() => setLeftSidebar(false)}
+                      aria-label="Collapse sidebar"
+                    >
+                      <PanelLeftClose className="size-3.5" />
+                    </Button>
+                  </Tooltip>
                   <Cpu className="size-3.5 text-zinc-500" />
                   <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
                     Providers
@@ -260,7 +261,7 @@ export function Sidebar() {
                 </Button>
               </div>
 
-              {/* Search & Filter Chips */}
+              {/* Search & Provider Type Dropdown */}
               <div className="flex flex-col gap-2 border-b border-zinc-200 p-2.5 dark:border-zinc-800">
                 <SearchInput
                   placeholder="Search providers…"
@@ -271,27 +272,21 @@ export function Sidebar() {
                   data-testid="provider-search"
                 />
 
-                {/* Filter chips */}
-                <div className="flex flex-wrap gap-1">
-                  {(["ALL", ...PROVIDER_TYPES] as Array<ProviderType | "ALL">).map((t) => {
-                    const isSelected = providerTypeFilter === t;
-                    return (
-                      <button
-                        key={t}
-                        onClick={() => setProviderTypeFilter(t)}
-                        data-testid={`type-filter-${t}`}
-                        className={cn(
-                          "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
-                          isSelected
-                            ? "border-zinc-700 bg-zinc-700 text-white dark:border-zinc-300 dark:bg-zinc-300 dark:text-zinc-900"
-                            : "border-zinc-200 text-zinc-500 hover:border-zinc-400 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-600",
-                        )}
-                      >
-                        {t === "ALL" ? "All" : t}
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* Provider Type Dropdown */}
+                <Select
+                  value={providerTypeFilter}
+                  onChange={(e) => setProviderTypeFilter(e.target.value as ProviderType | "ALL")}
+                  data-testid="provider-type-filter"
+                  sizeVariant="sm"
+                  className="w-full text-xs"
+                >
+                  <option value="ALL" data-testid="type-filter-ALL">All provider types</option>
+                  {PROVIDER_TYPES.map((t) => (
+                    <option key={t} value={t} data-testid={`type-filter-${t}`}>
+                      {PROVIDER_TYPE_NAMES[t] ?? t}
+                    </option>
+                  ))}
+                </Select>
               </div>
 
               {/* Providers list */}
@@ -359,12 +354,24 @@ export function Sidebar() {
               className="flex h-full flex-1 flex-col overflow-hidden"
               aria-label="Conversations"
             >
-              {/* New Chat Button */}
-              <div className="p-2.5 border-b border-zinc-200 dark:border-zinc-800">
+              {/* Collapse Sidebar Button & New Chat Button */}
+              <div className="flex items-center gap-1.5 p-2.5 border-b border-zinc-200 dark:border-zinc-800">
+                <Tooltip content="Hide sidebar">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0 text-zinc-500 shrink-0 hover:text-zinc-700 dark:hover:text-zinc-300"
+                    onClick={() => setLeftSidebar(false)}
+                    aria-label="Collapse sidebar"
+                    data-testid="left-sidebar-toggle"
+                  >
+                    <PanelLeftClose className="size-4" />
+                  </Button>
+                </Tooltip>
                 <button
                   onClick={() => setConversation(null)}
                   data-testid="new-chat"
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm transition-all hover:bg-zinc-50 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm transition-all hover:bg-zinc-50 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
                 >
                   <Plus className="size-3.5" />
                   <span>New chat</span>

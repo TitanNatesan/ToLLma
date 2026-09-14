@@ -8,6 +8,8 @@ import {
   FileText,
   Layers,
   MoreVertical,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Pencil,
@@ -34,8 +36,10 @@ export function ChatHeader() {
     activeConversationId,
     providerId,
     modelId,
+    leftSidebarOpen,
     rightSidebarOpen,
     setConversation,
+    setLeftSidebar,
     setRightSidebar,
   } = useChatStore();
 
@@ -121,6 +125,20 @@ export function ChatHeader() {
     <header className="flex h-12 w-full shrink-0 items-center justify-between border-b border-zinc-200 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/80">
       {/* Left: Title & Inline Rename */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
+        {!leftSidebarOpen && (
+          <Tooltip content="Show sidebar">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 w-8 p-0 -ml-1 text-zinc-500 shrink-0"
+              onClick={() => setLeftSidebar(true)}
+              aria-label="Open sidebar"
+              data-testid="left-sidebar-toggle"
+            >
+              <PanelLeftOpen className="size-4" />
+            </Button>
+          </Tooltip>
+        )}
         {renaming ? (
           <form
             onSubmit={(e) => {
@@ -226,22 +244,21 @@ export function ChatHeader() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Toggle Intelligence Panel */}
-          <Tooltip content={rightSidebarOpen ? "Hide Intelligence" : "Show Intelligence"}>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-8 w-8 p-0 ml-0.5 text-zinc-500"
-              onClick={() => setRightSidebar(!rightSidebarOpen)}
-              aria-label="Toggle intelligence panel"
-            >
-              {rightSidebarOpen ? (
-                <PanelRightClose className="size-4" />
-              ) : (
+          {/* Open Intelligence Panel (only shown when panel is closed) */}
+          {!rightSidebarOpen && (
+            <Tooltip content="Show Intelligence">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 w-8 p-0 ml-0.5 text-zinc-500"
+                onClick={() => setRightSidebar(true)}
+                aria-label="Show intelligence panel"
+                data-testid="right-sidebar-toggle"
+              >
                 <PanelRightOpen className="size-4" />
-              )}
-            </Button>
-          </Tooltip>
+              </Button>
+            </Tooltip>
+          )}
         </div>
       </div>
     </header>

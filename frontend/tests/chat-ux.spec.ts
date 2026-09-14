@@ -163,7 +163,7 @@ test.describe("Provider page enhancements", () => {
   test("renders search and type filters", async ({ page }) => {
     await goto(page, "/providers");
     await expect(page.getByTestId("provider-search")).toBeVisible();
-    await expect(page.getByTestId("type-filter-ALL")).toBeVisible();
+    await expect(page.getByTestId("provider-type-filter")).toBeVisible();
   });
 
   test("provider search filters list", async ({ page }) => {
@@ -175,15 +175,15 @@ test.describe("Provider page enhancements", () => {
     expect(count).toBe(0);
   });
 
-  test("type filter chips are interactive", async ({ page }) => {
+  test("type filter dropdown is interactive", async ({ page }) => {
     await goto(page, "/providers");
-    // BEDROCK_CONVERSE filter
-    const bedrockBtn = page.getByTestId("type-filter-BEDROCK_CONVERSE");
-    await bedrockBtn.click();
-    // Should be highlighted (selected state class)
-    await expect(bedrockBtn).toHaveClass(/bg-zinc-700|bg-zinc-300/);
+    // Select BEDROCK_CONVERSE filter
+    const select = page.getByTestId("provider-type-filter");
+    await select.selectOption("BEDROCK_CONVERSE");
+    expect(await select.inputValue()).toBe("BEDROCK_CONVERSE");
     // Reset
-    await page.getByTestId("type-filter-ALL").click();
+    await select.selectOption("ALL");
+    expect(await select.inputValue()).toBe("ALL");
   });
 
   test("add provider button is visible", async ({ page }) => {

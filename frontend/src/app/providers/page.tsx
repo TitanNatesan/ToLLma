@@ -12,6 +12,7 @@ import {
   Select,
   StatusBadge,
   Switch,
+  Tooltip,
 } from "@/components/ui";
 import { fmtPrice } from "@/lib/utils";
 import {
@@ -30,6 +31,7 @@ import {
   CheckCircle2,
   Cpu,
   KeyRound,
+  PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -77,6 +79,8 @@ export default function ProvidersPage() {
     setSelectedProviderId,
     addProviderOpen,
     setAddProviderOpen,
+    leftSidebarOpen,
+    setLeftSidebar,
   } = useChatStore();
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
@@ -174,7 +178,24 @@ export default function ProvidersPage() {
         aria-label="Provider details"
       >
         {!selected ? (
-          <div className="flex flex-1 items-center justify-center p-8">
+          <div className="relative flex flex-1 items-center justify-center p-8">
+            {!leftSidebarOpen && (
+              <div className="absolute top-4 left-4">
+                <Tooltip content="Show sidebar">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 gap-1.5 text-xs text-zinc-600 dark:text-zinc-400"
+                    onClick={() => setLeftSidebar(true)}
+                    aria-label="Open sidebar"
+                    data-testid="left-sidebar-toggle"
+                  >
+                    <PanelLeftOpen className="size-4" />
+                    <span>Show Providers</span>
+                  </Button>
+                </Tooltip>
+              </div>
+            )}
             <Card
               className="max-w-md text-center p-6 border-zinc-200 dark:border-zinc-800 shadow-sm"
               data-testid="no-provider-selected"
@@ -211,6 +232,20 @@ export default function ProvidersPage() {
               <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
+                    {!leftSidebarOpen && (
+                      <Tooltip content="Show sidebar">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 p-0 text-zinc-500 -ml-1 mr-1"
+                          onClick={() => setLeftSidebar(true)}
+                          aria-label="Open sidebar"
+                          data-testid="left-sidebar-toggle"
+                        >
+                          <PanelLeftOpen className="size-4" />
+                        </Button>
+                      </Tooltip>
+                    )}
                     <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
                       {selected.name}
                     </h1>

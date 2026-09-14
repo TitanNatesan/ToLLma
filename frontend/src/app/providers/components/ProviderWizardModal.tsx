@@ -107,7 +107,7 @@ const PROVIDER_METAS: Record<
 const STEP_LABELS = ["1. Provider Type", "2. Credentials", "3. Validation", "4. Models", "5. Finish"];
 const DRAFT_KEY = "tollma-wizard-draft";
 
-export type ModelScope = "US" | "EU" | "APAC" | "global" | "provider" | "fallback";
+export type ModelScope = "US" | "EU" | "APAC" | "global";
 
 export interface ModelScopeInfo {
   scope: ModelScope;
@@ -117,99 +117,109 @@ export interface ModelScopeInfo {
 
 export function getModelScope(
   modelId: string,
-  matchType: MatchType,
+  _matchType?: MatchType,
   displayName?: string,
-): ModelScopeInfo {
-  if (matchType === "fallback") {
-    return {
-      scope: "fallback",
-      label: "fallback",
-      badgeClass:
-        "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700",
-    };
-  }
-
+): ModelScopeInfo | null {
   const lowerId = modelId.toLowerCase();
   const lowerName = (displayName ?? "").toLowerCase();
 
-  const isExplicitGlobal = lowerId.startsWith("global.") || lowerId.startsWith("global-");
-
-  if (!isExplicitGlobal) {
-    const isUs =
-      lowerId.startsWith("us.") ||
-      lowerId.startsWith("us-") ||
-      lowerId.startsWith("us_") ||
-      lowerId.includes(".us.") ||
-      lowerId.includes("/us/") ||
-      lowerName.startsWith("us.") ||
-      lowerName.startsWith("us-") ||
-      /\b(us|usa)\b/i.test(displayName ?? "");
-
-    if (isUs) {
-      return {
-        scope: "US",
-        label: "US",
-        badgeClass:
-          "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-semibold",
-      };
-    }
-
-    const isEu =
-      lowerId.startsWith("eu.") ||
-      lowerId.startsWith("eu-") ||
-      lowerId.startsWith("eu_") ||
-      lowerId.includes(".eu.") ||
-      lowerId.includes("/eu/") ||
-      lowerName.startsWith("eu.") ||
-      lowerName.startsWith("eu-") ||
-      /\b(eu|europe)\b/i.test(displayName ?? "");
-
-    if (isEu) {
-      return {
-        scope: "EU",
-        label: "EU",
-        badgeClass:
-          "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-semibold",
-      };
-    }
-
-    const isApac =
-      lowerId.startsWith("apac.") ||
-      lowerId.startsWith("apac-") ||
-      lowerId.startsWith("apac_") ||
-      lowerId.startsWith("ap.") ||
-      lowerId.startsWith("ap-") ||
-      lowerId.includes(".apac.") ||
-      lowerId.includes("/apac/") ||
-      lowerName.startsWith("apac.") ||
-      lowerName.startsWith("apac-") ||
-      /\b(apac|asia)\b/i.test(displayName ?? "");
-
-    if (isApac) {
-      return {
-        scope: "APAC",
-        label: "APAC",
-        badgeClass:
-          "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-200 dark:border-teal-800 font-semibold",
-      };
-    }
-  }
-
-  if (matchType === "provider_specific") {
+  // 1. Explicit global prefix / profile
+  if (
+    lowerId.startsWith("global.") ||
+    lowerId.startsWith("global-") ||
+    lowerId.startsWith("global/") ||
+    lowerName.startsWith("global.") ||
+    lowerName.startsWith("global-") ||
+    /\bglobal\b/i.test(displayName ?? "")
+  ) {
     return {
-      scope: "provider",
-      label: "provider",
+      scope: "global",
+      label: "global",
       badgeClass:
-        "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800",
+        "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-800",
     };
   }
 
-  return {
-    scope: "global",
-    label: "global",
-    badgeClass:
-      "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-800",
-  };
+  // 2. US region check (inference profile prefixes us.*, regional IDs like us-east-1, etc.)
+  const isUs =
+    lowerId.startsWith("us.") ||
+    lowerId.startsWith("us-") ||
+    lowerId.startsWith("us_") ||
+    lowerId.startsWith("us/") ||
+    lowerId.includes(".us.") ||
+    lowerId.includes("/us/") ||
+    lowerId.includes("us-east-") ||
+    lowerId.includes("us-west-") ||
+    lowerId.includes("us-central") ||
+    lowerName.startsWith("us.") ||
+    lowerName.startsWith("us-") ||
+    /\b(us|usa)\b/i.test(displayName ?? "");
+
+  if (isUs) {
+    return {
+      scope: "US",
+      label: "US",
+      badgeClass:
+        "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-semibold",
+    };
+  }
+
+  // 3. EU region check (eu.*, crce.*, regional IDs like eu-west-1, etc.)
+  const isEu =
+    lowerId.startsWith("eu.") ||
+    lowerId.startsWith("eu-") ||
+    lowerId.startsWith("eu_") ||
+    lowerId.startsWith("eu/") ||
+    lowerId.startsWith("crce.") ||
+    lowerId.includes(".eu.") ||
+    lowerId.includes("/eu/") ||
+    lowerId.includes("eu-west-") ||
+    lowerId.includes("eu-central-") ||
+    lowerId.includes("eu-north-") ||
+    lowerId.includes("eu-south-") ||
+    lowerId.includes("europe-") ||
+    lowerName.startsWith("eu.") ||
+    lowerName.startsWith("eu-") ||
+    /\b(eu|europe)\b/i.test(displayName ?? "");
+
+  if (isEu) {
+    return {
+      scope: "EU",
+      label: "EU",
+      badgeClass:
+        "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-semibold",
+    };
+  }
+
+  // 4. APAC region check (apac.*, ap.*, regional IDs like ap-southeast-1, etc.)
+  const isApac =
+    lowerId.startsWith("apac.") ||
+    lowerId.startsWith("apac-") ||
+    lowerId.startsWith("apac_") ||
+    lowerId.startsWith("apac/") ||
+    lowerId.startsWith("ap.") ||
+    lowerId.startsWith("ap-") ||
+    lowerId.includes(".apac.") ||
+    lowerId.includes("/apac/") ||
+    lowerId.includes("ap-southeast-") ||
+    lowerId.includes("ap-northeast-") ||
+    lowerId.includes("ap-south-") ||
+    lowerId.includes("asia-") ||
+    lowerName.startsWith("apac.") ||
+    lowerName.startsWith("apac-") ||
+    /\b(apac|asia)\b/i.test(displayName ?? "");
+
+  if (isApac) {
+    return {
+      scope: "APAC",
+      label: "APAC",
+      badgeClass:
+        "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-200 dark:border-teal-800 font-semibold",
+    };
+  }
+
+  // 5. No region found -> return null (don't show any region badge)
+  return null;
 }
 
 const CAP_FILTERS: Array<[string, string]> = [
@@ -430,10 +440,10 @@ export function ProviderWizardModal({
     return mapped.filter((m) => {
       const scopeInfo = getModelScope(m.model_id, m.match_type, String(m.suggested?.name ?? ""));
       if (matchFilter !== "ALL") {
-        if (matchFilter === "US" && scopeInfo.scope !== "US") return false;
-        if (matchFilter === "EU" && scopeInfo.scope !== "EU") return false;
-        if (matchFilter === "APAC" && scopeInfo.scope !== "APAC") return false;
-        if (matchFilter === "global" && scopeInfo.scope !== "global") return false;
+        if (matchFilter === "US" && scopeInfo?.scope !== "US") return false;
+        if (matchFilter === "EU" && scopeInfo?.scope !== "EU") return false;
+        if (matchFilter === "APAC" && scopeInfo?.scope !== "APAC") return false;
+        if (matchFilter === "global" && scopeInfo?.scope !== "global") return false;
         if (matchFilter === "provider_specific" && m.match_type !== "provider_specific") return false;
         if (matchFilter === "fallback" && m.match_type !== "fallback") return false;
       }
@@ -450,7 +460,7 @@ export function ProviderWizardModal({
         !(
           m.model_id.toLowerCase().includes(q) ||
           String(m.suggested.name ?? "").toLowerCase().includes(q) ||
-          scopeInfo.label.toLowerCase().includes(q)
+          (scopeInfo ? scopeInfo.label.toLowerCase().includes(q) : false)
         )
       )
         return false;
@@ -870,13 +880,15 @@ export function ProviderWizardModal({
                                   <div className="flex items-center gap-1.5">
                                     <Cpu className="size-3.5 shrink-0 text-zinc-400" />
                                     <span className="truncate font-medium">{displayName}</span>
-                                    <span
-                                      className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
-                                      data-testid={`wiz-match-${m.model_id}`}
-                                      title={`${scopeInfo.label} scope (${m.match_type === "fallback" ? "unmatched" : "catalog match"})`}
-                                    >
-                                      {scopeInfo.label}
-                                    </span>
+                                    {scopeInfo && (
+                                      <span
+                                        className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
+                                        data-testid={`wiz-match-${m.model_id}`}
+                                        title={`${scopeInfo.label} region`}
+                                      >
+                                        {scopeInfo.label}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
                                     {m.model_id}
@@ -942,15 +954,17 @@ export function ProviderWizardModal({
                                     <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100 truncate">
                                       {displayName}
                                     </span>
-                                    <span
-                                      className={cn(
-                                        "rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-                                        scopeInfo.badgeClass,
-                                      )}
-                                      title={`${scopeInfo.label} scope (${m.match_type === "fallback" ? "unmatched" : "catalog match"})`}
-                                    >
-                                      {scopeInfo.label}
-                                    </span>
+                                    {scopeInfo && (
+                                      <span
+                                        className={cn(
+                                          "rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+                                          scopeInfo.badgeClass,
+                                        )}
+                                        title={`${scopeInfo.label} region`}
+                                      >
+                                        {scopeInfo.label}
+                                      </span>
+                                    )}
                                     <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 shrink-0">
                                       {f?.endpoint_type ?? PROVIDER_DEFAULT_ENDPOINTS[type] ?? "chat_completions"}
                                     </Badge>

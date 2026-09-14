@@ -808,3 +808,92 @@ Verification:
 - `docker exec tollms-backend pytest tests/test_auth.py`: 11/11 passed.
 - `docker exec tollms-backend pytest tests/test_wizard.py`: 3/3 passed.
 - `docker exec tollms-backend pytest`: 61/61 passed in 373s.
+
+---
+
+## 2026-09-14: Theme Switching Fix & Regional Scope Resolution ("Show Region Only if Found")
+
+### Requirements Completed:
+1. **Tailwind v4 Theme Switching**:
+   - Resolved theme toggle inactivity where toggling `.dark` class on `<html>` had no effect due to Tailwind CSS v4 defaulting to media-query based dark mode.
+   - Added `@custom-variant dark (&:where(.dark, .dark *));` to `frontend/src/app/globals.css` alongside `.dark` CSS variable overrides and scrollbar styling.
+   - In `frontend/src/app/layout.tsx`, added `suppressHydrationWarning` on `<html>` and an anti-flash inline script in `<head>` that instantly initializes the `.dark` class from `localStorage.getItem("theme")` or `window.matchMedia("(prefers-color-scheme: dark)")`.
+   - Updated `frontend/src/components/ui/TopBar.tsx` so the theme toggle reads `document.documentElement.classList.contains("dark")`, updates the DOM class, and writes `"dark"` / `"light"` to `localStorage`.
+2. **Proper Region Detection ("Show Region Only if Found, Else Don't Show Region")**:
+   - Fixed issue where AWS Bedrock discovered models (e.g. `us.anthropic.claude-3-sonnet-20240229-v1:0`, `us.meta.llama3-2-11b-instruct-v1:0`) displayed a grey `fallback` badge with tooltip `fallback scope (unmatched)` in Step 4 and Step 5 of the provider wizard.
+   - Root Cause: `match_type` in the backend represents repository catalog matching (`provider_specific`, `global`, `fallback`). `getModelScope` had previously checked `if (matchType === "fallback") return fallback` and `if (matchType === "global") return global`, confusing repository catalog match status with geographic regions.
+   - Solution: Decoupled region identification from `match_type`. `getModelScope` now inspects model identifiers and names for geographic inference profile prefixes and regional identifiers:
+     * `US`: `us.`, `us-`, `us_`, `us/`, `us-east-`, `us-west-`, `us-central`, `US`, `USA`.
+     * `EU`: `eu.`, `eu-`, `eu_`, `eu/`, `crce.`, `eu-west-`, `eu-central-`, `europe-`, `EU`, `Europe`.
+     * `APAC`: `apac.`, `apac-`, `ap.`, `ap-`, `ap-southeast-`, `ap-northeast-`, `asia-`, `APAC`, `Asia`.
+     * `global`: Explicit `global.`, `global-`, `global/`, or `global` inference profile naming.
+   - When no region is found (e.g. standard models without regional prefixes like `mock-disc-a`, `gpt-4o`), `getModelScope` returns `null`.
+   - Step 4 and Step 5 conditionally render `{scopeInfo && (<span ...>{scopeInfo.label}</span>)}`, ensuring no badge or placeholder is rendered when no region is detected.
+   - Updated filter select and search in Step 4 to safely handle nullable `scopeInfo`.
+
+### Files Modified:
+- `frontend/src/app/globals.css`
+- `frontend/src/app/layout.tsx`
+- `frontend/src/components/ui/TopBar.tsx`
+- `frontend/src/app/providers/components/ProviderWizardModal.tsx`
+- `frontend/src/app/providers/components/__tests__/scope.test.ts`
+- `.opencode/memory.md`
+
+### Verification:
+- `npm test`: 19/19 passed across 5 test suites (`scope.test.ts`, `endpoint.test.ts`, `ResponseMarkdown.test.ts`, `utils.test.ts`, `api.test.ts`).
+- `npm run build`: Next.js 16.3.5 production build compiled 10/10 static routes with 0 TypeScript errors.
+
+---
+
+## 2026-09-14: Left Sidebar Provider Type Dropdown & Header Panel Collapse Buttons
+
+### Requirements Completed:
+1. **Dropdown for Left Side Provider Search**:
+   - In `frontend/src/components/ui/Sidebar.tsx`, replaced cluttered multi-line wrapped filter chips (`[ALL] [OPENAI_RESPONSES]...`) with a clean `<Select>` dropdown (`providerTypeFilter`).
+   - Mapped all provider types to readable names ("OpenAI Responses", "OpenAI Chat", "Anthropic Messages", "Google Gemini", "Google Vertex AI", "AWS Bedrock", "Custom Gateway").
+   - Preserved `data-testid="type-filter-${t}"` on option elements and updated Playwright UX test suite in `tests/chat-ux.spec.ts` to test `selectOption`.
+2. **Remove Center Floating Collapse Buttons on Both Sides**:
+   - Left side: Removed fixed floating center toggle button (`fixed left-0 top-1/2 z-20`) from `frontend/src/components/ui/Sidebar.tsx`.
+   - Right side: Removed fixed floating center toggle button (`fixed right-0 top-1/2 z-20`) from `frontend/src/app/components/ChatSettingsPanel.tsx`.
+3. **Left Side Collapse Button Near New Chat**:
+   - In `frontend/src/components/ui/Sidebar.tsx` (Chat view), placed a ghost collapse button with `PanelLeftClose` icon wrapped in a Tooltip ("Hide sidebar") right next to the "+ New chat" button.
+   - In `frontend/src/components/ui/Sidebar.tsx` (Providers view), added matching `PanelLeftClose` ghost button next to "+ Add" provider button in the header.
+   - In `frontend/src/app/components/ChatHeader.tsx`, added `PanelLeftOpen` button on the left when the sidebar is collapsed (`!leftSidebarOpen`), enabling single-click re-opening.
+   - In `frontend/src/app/providers/page.tsx`, added `PanelLeftOpen` button to both the Provider Details header and the empty state when the sidebar is collapsed.
+   - In `frontend/src/app/components/ChatSettingsPanel.tsx`, added a `PanelRightClose` button in the Model Intelligence header matching `ChatHeader.tsx`.
+
+### Files Modified:
+- `frontend/src/components/ui/Sidebar.tsx`
+- `frontend/src/app/components/ChatSettingsPanel.tsx`
+- `frontend/src/app/components/ChatHeader.tsx`
+- `frontend/src/app/providers/page.tsx`
+- `frontend/tests/chat-ux.spec.ts`
+- `.opencode/memory.md`
+
+### Verification:
+- `npm test`: 19/19 passed across 5 test suites (`scope.test.ts`, `endpoint.test.ts`, `ResponseMarkdown.test.ts`, `utils.test.ts`, `api.test.ts`).
+- `npm run build`: Next.js production build succeeded (10/10 static pages generated, 0 TypeScript errors).
+
+---
+
+## 2026-09-14: Left-Most Collapse Button & Intelligence Panel Toggle Refinements
+
+### Requirements Completed:
+1. **Dropdown for Left Side Provider Search Retained**:
+   - Maintained clean `<Select>` dropdown (`providerTypeFilter`) in `frontend/src/components/ui/Sidebar.tsx` with user-friendly provider names ("OpenAI Responses", "OpenAI Chat", "Google Gemini", etc.) and comprehensive filter support.
+2. **Hide "Hide Intelligence" Button from Header When Panel Is Open**:
+   - In `frontend/src/app/components/ChatHeader.tsx`, only render the intelligence panel toggle button when `!rightSidebarOpen` (with tooltip "Show Intelligence").
+   - When the panel is open (`rightSidebarOpen`), the header button is hidden; the collapse button is exclusively displayed in the `Model Intelligence` panel header (`ChatSettingsPanel.tsx`) with tooltip "Hide Intelligence" and `data-testid="right-sidebar-toggle"`.
+3. **Left Sidebar Collapse Button Placed Left-Most**:
+   - In `frontend/src/components/ui/Sidebar.tsx` (Chat view), re-ordered the header row items so the `PanelLeftClose` collapse button (`data-testid="left-sidebar-toggle"`) is the left-most element, followed by the "+ New chat" button.
+   - In `frontend/src/components/ui/Sidebar.tsx` (Providers view), ensured `PanelLeftClose` is the left-most element preceding the "Providers" badge and "+ Add" button.
+
+### Files Modified:
+- `frontend/src/components/ui/Sidebar.tsx`
+- `frontend/src/app/components/ChatSettingsPanel.tsx`
+- `frontend/src/app/components/ChatHeader.tsx`
+- `.opencode/memory.md`
+
+### Verification:
+- `npm test`: 19/19 passed across 5 test suites (`scope.test.ts`, `endpoint.test.ts`, `ResponseMarkdown.test.ts`, `utils.test.ts`, `api.test.ts`).
+- `npm run build`: Next.js 16.3.5 production build completed cleanly with 0 TypeScript errors.
