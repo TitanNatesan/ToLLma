@@ -929,3 +929,52 @@ Verification:
 ### Verification:
 - `npm test`: 19/19 passed across 5 test suites (`scope.test.ts`, `endpoint.test.ts`, `ResponseMarkdown.test.ts`, `utils.test.ts`, `api.test.ts`).
 - `npm run build`: Next.js 16.3.5 production build completed cleanly with 0 TypeScript errors.
+
+---
+
+## 2026-09-14: Unauthenticated User Login Gate
+
+### Requirements Completed:
+1. **Show Login Page Only When Unauthenticated**:
+   - In `frontend/src/components/Shell.tsx`, gated `<AppShell>` rendering so protected views (`ChatView`, `ProvidersPage`) and their child hooks never mount when a user is unauthenticated.
+   - If session bootstrap is loading (`!checked`), displays a clean minimalist loading spinner to avoid premature protected UI flashes or query dispatch.
+   - If unauthenticated (`!user` on protected routes), directly renders `<AuthCard initialMode="login" />` and synchronizes browser navigation to `/login`.
+2. **Clean Session Teardown & 401 Handling**:
+   - In `frontend/src/store/auth.ts`, updated `reset()` to clear `tollma_session` cookie (`max-age=0`) along with stored access tokens, preventing stale presence cookies from bypassing server proxies.
+   - In `frontend/src/services/api.ts`, triggered `useAuthStore.getState().reset()` when session refresh fails on 401.
+   - In `frontend/src/components/Shell.tsx`, called `reset()` when `getCurrentUser()` returns 401, immediately purging stale tokens and presenting the login interface.
+
+### Files Modified:
+- `frontend/src/components/Shell.tsx`
+- `frontend/src/store/auth.ts`
+- `frontend/src/services/api.ts`
+- `.opencode/memory.md`
+
+### Verification:
+- `npm test`: 19/19 vitest tests passed.
+- `npm run build`: Next.js 16.3.5 production build compiled all routes cleanly with 0 TypeScript errors.
+
+---
+
+## 2026-09-14: Purge LocalStorage Credentials & Tokens on Auth Failure
+
+### Requirements Completed:
+1. **Purge LocalStorage Cache & Credentials on Auth Failure**:
+   - In `frontend/src/store/auth.ts`, added `clearAuthAndCredentialCache()` which explicitly removes `tollma_access_token`, `tollma-wizard-draft` (containing provider credentials), and any other provider or token cache keys from `localStorage`, while preserving user preferences like `theme`.
+   - Connected `clearAuthAndCredentialCache()` directly into `reset()`.
+2. **Immediate Cleanup on 401 and Unauthenticated States**:
+   - In `frontend/src/services/api.ts`, whenever any endpoint encounters a `401 Unauthorized` status (and refresh fails or on non-login requests), `useAuthStore.getState().reset()` runs, wiping cached credentials and tokens.
+   - In `frontend/src/components/Shell.tsx`, invoked `clearAuthAndCredentialCache()` whenever the presence cookie is absent or when session resolution confirms `!user`.
+3. **Unit Tests Added**:
+   - Created `frontend/src/store/auth.test.ts` verifying that `clearAuthAndCredentialCache()` and `reset()` thoroughly delete credentials and access tokens while keeping the `theme` key intact.
+
+### Files Modified:
+- `frontend/src/store/auth.ts`
+- `frontend/src/services/api.ts`
+- `frontend/src/components/Shell.tsx`
+- `frontend/src/store/auth.test.ts`
+- `.opencode/memory.md`
+
+### Verification:
+- `npm test`: 21/21 vitest tests passed across 6 test suites.
+- `npm run build`: Next.js 16.3.5 production build compiled all 10 routes cleanly with 0 TypeScript errors.

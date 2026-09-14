@@ -73,8 +73,12 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
       }
       return req<T>(path, init, false);
     }
+    useAuthStore.getState().reset();
   }
   if (!res.ok) {
+    if (res.status === 401 && path !== "/auth/login") {
+      useAuthStore.getState().reset();
+    }
     const body = await res.text().catch(() => "");
     let data: unknown = body;
     try {
