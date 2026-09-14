@@ -87,13 +87,32 @@ def test_chat_request_accepts_composer_fields(db: Session, provider_factory, mod
         model_id=uuid.UUID(m["id"]),
         message="hi",
         reasoning_level="high",
-        attachments=[{"name": "a.png", "size": 12, "mime": "image/png", "kind": "image"}],
+        attachment_ids=[uuid.uuid4()],
     )
     assert req.reasoning_level == "high"
-    assert req.attachments[0]["kind"] == "image"
+    assert len(req.attachment_ids) == 1
 
-    result = asyncio.run(run_chat(db, req, _transport()))
-    assert result.content == "Hello world"
+    # Unknown attachment ids 404 (ownership/existence gate).
+    try:
+        asyncio.run(run_chat(db, req, _transport()))
+        raise AssertionError("expected NotFoundError")
+    except Exception as e:
+        from tollms.core.exceptions import NotFoundError
+
+        assert isinstance(e, NotFoundError)
 
     # Old clients sending neither field still validate (backward compatible).
-    assert _request(p["id"], m["id"]).attachments == []
+    assert _request(p["id"], m["id"]).attachment_ids == []
+
+    # Blank message is allowed with attachments, rejected without.
+    assert ChatRequest(
+        provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
+        message="  ", attachment_ids=[uuid.uuid4()],
+    ).attachment_ids
+    try:
+        ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]), message="  ")
+        raise AssertionError("expected ValidationError")
+    except Exception as e:
+        from pydantic import ValidationError as PydanticValidationError
+
+        assert isinstance(e, PydanticValidationError)

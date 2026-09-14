@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import httpx
 
@@ -10,9 +11,20 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class MediaPart:
+    """One non-text attachment payload. Gate on the adapter's supports_* flags."""
+
+    kind: str  # "image" | "audio" | "video"
+    mime_type: str
+    data_b64: str
+    filename: str = ""
+
+
+@dataclass
 class ChatMessage:
     role: str
     content: str
+    media: list[MediaPart] = field(default_factory=list)
 
 
 @dataclass
@@ -54,6 +66,13 @@ class BaseProviderAdapter:
     model_id: str
     transport: httpx.AsyncBaseTransport | None = None
     timeout: float = 120.0
+
+    # Native wire support per media kind. Document text needs no wire support:
+    # the gateway injects extracted text as plain content (supports_files=True).
+    supports_vision: ClassVar[bool] = False
+    supports_audio: ClassVar[bool] = False
+    supports_video: ClassVar[bool] = False
+    supports_files: ClassVar[bool] = True
 
     def _client(self, **kwargs) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self.transport, timeout=self.timeout, **kwargs)

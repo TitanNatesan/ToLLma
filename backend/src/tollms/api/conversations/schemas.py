@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from tollms.api.attachments.schemas import AttachmentRead
 from tollms.models.message import Role
 
 
@@ -43,6 +44,7 @@ class MessageRead(BaseModel):
     reasoning_cost: Decimal | None = None
     latency_ms: float | None = None
     created_at: datetime
+    attachments: list[AttachmentRead] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

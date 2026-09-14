@@ -8,6 +8,8 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from tollms.api.attachments import service as attachment_service
+from tollms.api.attachments.schemas import AttachmentRead
 from tollms.core.exceptions import NotFoundError
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
@@ -16,6 +18,8 @@ from tollms.models.conversation import Conversation
 from tollms.models.message import Message, Role
 from tollms.api.conversations.schemas import (
     ConversationCreate,
+    ConversationRead,
+    MessageRead,
     ModelUsageBreakdown,
     ProviderUsageBreakdown,
     UsageTotals,
@@ -179,6 +183,29 @@ def list_messages(
         .order_by(Message.created_at)
     )
     return list(db.scalars(stmt))
+
+
+def conversation_read(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> ConversationRead:
+    """Conversation + messages with attachments, ownership-checked."""
+    conv = get_conversation_with_messages(db, conversation_id, user_id)
+    read = ConversationRead.model_validate(conv)
+    read.messages = message_reads(db, conv.messages, user_id)
+    return read
+
+
+def message_reads(
+    db: Session, messages: list[Message], user_id: uuid.UUID | None = None
+) -> list[MessageRead]:
+    """Message rows -> read models with their attachments. One extra query."""
+    grouped = attachment_service.attachments_for_messages(db, [m.id for m in messages], user_id)
+    out = []
+    for m in messages:
+        read = MessageRead.model_validate(m)
+        read.attachments = [AttachmentRead.model_validate(a) for a in grouped.get(m.id, [])]
+        out.append(read)
+    return out
 
 
 def usage_totals(

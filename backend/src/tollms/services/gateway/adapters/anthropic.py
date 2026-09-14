@@ -12,6 +12,21 @@ logger = logging.getLogger(__name__)
 
 class AnthropicAdapter(BaseProviderAdapter):
     endpoint_type = "messages"
+    supports_vision = True
+
+    def _content(self, m: ChatMessage):
+        if not m.media:
+            return m.content
+        blocks: list[dict] = []
+        if m.content:
+            blocks.append({"type": "text", "text": m.content})
+        for part in m.media:
+            if part.kind == "image":
+                blocks.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": part.mime_type, "data": part.data_b64},
+                })
+        return blocks or m.content
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -52,7 +67,7 @@ class AnthropicAdapter(BaseProviderAdapter):
 
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         system = "\n".join(m.content for m in messages if m.role == "system")
-        rest = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
+        rest = [{"role": m.role, "content": self._content(m)} for m in messages if m.role != "system"]
         body: dict = {"model": self.model_id, "messages": rest, "stream": True, "max_tokens": 4096}
         if system:
             body["system"] = system

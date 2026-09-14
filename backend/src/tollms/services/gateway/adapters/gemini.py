@@ -11,11 +11,21 @@ from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessa
 logger = logging.getLogger(__name__)
 
 
+def _gemini_parts(m: ChatMessage) -> list[dict]:
+    parts: list[dict] = []
+    if m.content:
+        parts.append({"text": m.content})
+    for part in m.media:
+        if part.kind in ("image", "audio", "video"):
+            parts.append({"inline_data": {"mime_type": part.mime_type, "data": part.data_b64}})
+    return parts or [{"text": ""}]
+
+
 def _gemini_body(messages: list[ChatMessage]) -> dict:
     contents = []
     for m in messages:
         role = "user" if m.role in ("user", "system") else "model"
-        contents.append({"role": role, "parts": [{"text": m.content}]})
+        contents.append({"role": role, "parts": _gemini_parts(m)})
     return {"contents": contents}
 
 
@@ -28,6 +38,9 @@ def _gemini_text(item: dict) -> str:
 
 class GeminiAdapter(BaseProviderAdapter):
     endpoint_type = "chat_completions"
+    supports_vision = True
+    supports_audio = True
+    supports_video = True
 
     async def validate_credentials(self) -> tuple[bool, str, float]:
         if not self.credentials.get("api_key"):
@@ -110,6 +123,9 @@ class GeminiAdapter(BaseProviderAdapter):
 
 class VertexAdapter(BaseProviderAdapter):
     endpoint_type = "chat_completions"
+    supports_vision = True
+    supports_audio = True
+    supports_video = True
 
     def _check_config(self) -> str | None:
         missing = [k for k in ("project_id", "location", "credentials_json") if not self.credentials.get(k)]

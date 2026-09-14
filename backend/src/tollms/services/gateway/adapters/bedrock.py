@@ -32,6 +32,33 @@ def resolve_bedrock_model_id(model_id: str, region: str) -> str:
 
 class BedrockAdapter(BaseProviderAdapter):
     endpoint_type = "converse"
+    supports_vision = True
+    supports_video = True
+
+    IMAGE_FORMATS = {"png": "png", "jpg": "jpeg", "jpeg": "jpeg", "gif": "gif", "webp": "webp"}
+    VIDEO_FORMATS = {"mp4": "mp4", "mov": "mov", "webm": "webm", "mkv": "mkv"}
+
+    def _blocks(self, m: ChatMessage) -> list[dict]:
+        import base64
+
+        blocks: list[dict] = []
+        if m.content:
+            blocks.append({"text": m.content})
+        for part in m.media:
+            raw = base64.b64decode(part.data_b64)
+            if part.kind == "image":
+                ext = (part.filename.rsplit(".", 1)[-1] if "." in part.filename else "").lower()
+                fmt = self.IMAGE_FORMATS.get(ext)
+                if fmt is None:
+                    raise ValueError(f"bedrock converse does not accept .{ext or '?'} images")
+                blocks.append({"image": {"format": fmt, "source": {"bytes": raw}}})
+            elif part.kind == "video":
+                ext = (part.filename.rsplit(".", 1)[-1] if "." in part.filename else "").lower()
+                fmt = self.VIDEO_FORMATS.get(ext)
+                if fmt is None:
+                    raise ValueError(f"bedrock converse does not accept .{ext or '?'} video")
+                blocks.append({"video": {"format": fmt, "source": {"bytes": raw}}})
+        return blocks or [{"text": ""}]
 
     def _check_config(self) -> str | None:
         missing = [k for k in ("access_key", "secret_key", "region") if not self.credentials.get(k)]
@@ -124,7 +151,7 @@ class BedrockAdapter(BaseProviderAdapter):
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         system = [{"text": m.content} for m in messages if m.role == "system"]
         rest = [
-            {"role": "user" if m.role == "user" else "assistant", "content": [{"text": m.content}]}
+            {"role": "user" if m.role == "user" else "assistant", "content": self._blocks(m)}
             for m in messages
             if m.role != "system"
         ]

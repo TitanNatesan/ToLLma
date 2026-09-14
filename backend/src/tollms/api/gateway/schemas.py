@@ -2,21 +2,26 @@
 
 import uuid
 from decimal import Decimal
-from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChatRequest(BaseModel):
     provider_id: uuid.UUID
     model_id: uuid.UUID
     conversation_id: uuid.UUID | None = None
-    message: str = Field(min_length=1)
+    message: str = ""
     system: str | None = None
-    # Capability-aware composer fields. Adapters are text-only today, so the
-    # service accepts, validates, and logs these without forwarding content.
     reasoning_level: str | None = Field(default=None, max_length=32)
-    attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=10)
+    # Uploaded attachments (POST /api/v1/chat/attachments first). Content is
+    # resolved, ownership-checked, and forwarded by the gateway.
+    attachment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def _message_or_attachments(self) -> "ChatRequest":
+        if not self.message.strip() and not self.attachment_ids:
+            raise ValueError("message must not be blank")
+        return self
 
 
 class ChatResponse(BaseModel):

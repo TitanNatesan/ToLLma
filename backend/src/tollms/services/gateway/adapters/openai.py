@@ -31,6 +31,26 @@ class OpenAIChatAdapter(BaseProviderAdapter):
     base_url = "https://api.openai.com/v1"
     endpoint_type = "chat_completions"
     requires_key = True
+    supports_vision = True
+    supports_audio = True
+
+    def _content(self, m: ChatMessage):
+        """Text stays a string; media becomes OpenAI content parts."""
+        if not m.media:
+            return m.content
+        parts: list[dict] = []
+        if m.content:
+            parts.append({"type": "text", "text": m.content})
+        for part in m.media:
+            if part.kind == "image":
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{part.mime_type};base64,{part.data_b64}"},
+                })
+            elif part.kind == "audio":
+                fmt = "wav" if "wav" in part.mime_type else "mp3"
+                parts.append({"type": "input_audio", "input_audio": {"data": part.data_b64, "format": fmt}})
+        return parts or m.content
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.credentials['api_key']}"}
@@ -68,7 +88,7 @@ class OpenAIChatAdapter(BaseProviderAdapter):
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         body = {
             "model": self.model_id,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [{"role": m.role, "content": self._content(m)} for m in messages],
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -106,11 +126,26 @@ class OpenAIChatAdapter(BaseProviderAdapter):
 
 class OpenAIResponsesAdapter(OpenAIChatAdapter):
     endpoint_type = "responses"
+    supports_audio = False  # audio reaches responses models as transcripts
+
+    def _content(self, m: ChatMessage):
+        if not m.media:
+            return m.content
+        parts: list[dict] = []
+        if m.content:
+            parts.append({"type": "input_text", "text": m.content})
+        for part in m.media:
+            if part.kind == "image":
+                parts.append({
+                    "type": "input_image",
+                    "image_url": f"data:{part.mime_type};base64,{part.data_b64}",
+                })
+        return parts or m.content
 
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         body = {
             "model": self.model_id,
-            "input": [{"role": m.role, "content": m.content} for m in messages],
+            "input": [{"role": m.role, "content": self._content(m)} for m in messages],
             "stream": True,
         }
         headers = {"Authorization": f"Bearer {self.credentials['api_key']}"}

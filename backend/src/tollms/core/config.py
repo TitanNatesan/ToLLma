@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     valkey_db: int = 0
     cache_enabled: bool = True
 
+    # Attachment storage (local filesystem; served only through owned endpoints)
+    storage_dir: str = "storage/uploads"
+    max_upload_mb: int = 25
+
     # Logging
     log_level: str = "INFO"
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
+    from tollms.models.attachment import Attachment
     from tollms.models.user import User
 
 
@@ -34,3 +35,6 @@ class Conversation(SoftDeleteMixin, TimestampedModel):
         back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
     )
     owner: Mapped["User | None"] = relationship(back_populates="conversations")
+    attachments: Mapped[list["Attachment"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan", order_by="Attachment.created_at"
+    )

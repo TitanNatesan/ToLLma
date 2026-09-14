@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from tollms.api.attachments.router import router as attachments_router
 from tollms.api.auth.router import router as auth_router
 from tollms.api.conversations.router import router as conversations_router
 from tollms.api.gateway.router import router as gateway_router
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(models_router)
     app.include_router(repository_router)
     app.include_router(conversations_router)
+    app.include_router(attachments_router)
     app.include_router(gateway_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app

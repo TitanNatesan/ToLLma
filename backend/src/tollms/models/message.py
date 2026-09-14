@@ -3,12 +3,16 @@
 import enum
 import uuid
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Enum, Float, ForeignKey, Index, Numeric, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
+
+if TYPE_CHECKING:
+    from tollms.models.attachment import Attachment
 
 
 class Role(str, enum.Enum):
@@ -52,3 +56,6 @@ class Message(SoftDeleteMixin, TimestampedModel):
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    attachments: Mapped[list["Attachment"]] = relationship(
+        back_populates="message", cascade="all, delete-orphan", order_by="Attachment.created_at"
+    )
