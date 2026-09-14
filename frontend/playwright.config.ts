@@ -11,5 +11,12 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "setup", testMatch: ["tests/auth.setup.ts"] },
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"], storageState: "tests/.auth/state.json" },
+      dependencies: ["setup"],
+    },
+  ],
 });

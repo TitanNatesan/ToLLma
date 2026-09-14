@@ -1,16 +1,17 @@
 // Scenario 5: streamed chat flow + usage/cost display + persistence.
 import { expect, test } from "@playwright/test";
 import { startMockLLM } from "./mock-server";
-import { API, apiCreateModel, apiCreateProvider, selectProviderModel, sendMessage } from "./helpers";
+import { API, apiCreateModel, apiCreateProvider, selectProviderModel, sendMessage, apiLoginAs } from "./helpers";
 
 test.beforeAll(async () => {
   await startMockLLM();
 });
 
 test("chat flow streams, tracks usage, survives reload", async ({ page, request }) => {
+  await apiLoginAs(page, "chat");
   const stamp = Date.now();
-  const { id: providerId } = await apiCreateProvider(`pw-cprov-${stamp}`);
-  const { id: modelId } = await apiCreateModel(providerId, `pw-cmodel-${stamp}`, "2", "8");
+  const { id: providerId } = await apiCreateProvider(page.request, `pw-cprov-${stamp}`);
+  const { id: modelId } = await apiCreateModel(page.request, providerId, `pw-cmodel-${stamp}`, "2", "8");
   const text = `hello chat ${stamp}`;
 
   await page.goto("/");
@@ -38,8 +39,8 @@ test("chat flow streams, tracks usage, survives reload", async ({ page, request 
   await expect(page.getByTestId("message-assistant").last()).toContainText("Hello from mock", { timeout: 20000 });
 
   // API totals match: cost = 8*2/1e6 + 6*8/1e6 = 0.000064.
-  const list = await (await request.get(`${API}/api/v1/conversations?search=${encodeURIComponent(text)}`)).json();
-  const usage = await (await request.get(`${API}/api/v1/conversations/${list[0].id}/usage`)).json();
+  const list = await (await page.request.get(`${API}/api/v1/conversations?search=${encodeURIComponent(text)}`)).json();
+  const usage = await (await page.request.get(`${API}/api/v1/conversations/${list[0].id}/usage`)).json();
   expect(usage.total_tokens).toBe(14);
   expect(Math.abs(parseFloat(usage.total_cost) - 0.000064)).toBeLessThan(1e-9);
 });

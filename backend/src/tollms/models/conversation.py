@@ -1,12 +1,16 @@
 """Conversation table. Message table lives in message.py."""
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
+
+if TYPE_CHECKING:
+    from tollms.models.user import User
 
 
 class Conversation(SoftDeleteMixin, TimestampedModel):
@@ -15,8 +19,12 @@ class Conversation(SoftDeleteMixin, TimestampedModel):
         Index("ix_conversations_updated", "updated_at"),
         Index("ix_conversations_created", "created_at"),
         Index("ix_conversations_pinned", "is_pinned"),
+        Index("ix_conversations_user", "user_id"),
     )
 
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(255), default="New conversation", nullable=False)
     is_pinned: Mapped[bool] = mapped_column(default=False, nullable=False, server_default="false")
     provider_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("providers.id"), nullable=True)
@@ -25,3 +33,4 @@ class Conversation(SoftDeleteMixin, TimestampedModel):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
     )
+    owner: Mapped["User | None"] = relationship(back_populates="conversations")

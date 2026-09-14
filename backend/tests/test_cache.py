@@ -260,15 +260,16 @@ def test_usage_totals_cached_and_invalidated(client: TestClient, db: Session, pr
     m = model_factory(p["id"])
     cid = client.post("/api/v1/conversations",
                       json={"title": "T", "provider_id": p["id"], "model_id": m["id"]}).json()["id"]
+    uid = client.get("/auth/me").json()["id"]
     first = client.get(f"/api/v1/conversations/{cid}/usage")
     assert first.status_code == 200
-    assert _run(get_manager().exists(cache_keys.usage_totals(cid))) is True
+    assert _run(get_manager().exists(cache_keys.usage_totals(cid, uid))) is True
     second = client.get(f"/api/v1/conversations/{cid}/usage")
     assert second.json() == first.json()
     assert metrics.snapshot()["hits"] >= 1
     # New message invalidates; totals still correct afterwards.
-    add_message(db, uuid.UUID(cid), Role.USER, "hi")
-    assert _run(get_manager().exists(cache_keys.usage_totals(cid))) is False
+    add_message(db, uuid.UUID(cid), Role.USER, "hi", user_id=uuid.UUID(uid))
+    assert _run(get_manager().exists(cache_keys.usage_totals(cid, uid))) is False
     assert client.get(f"/api/v1/conversations/{cid}/usage").json()["prompt_tokens"] >= 0
 
 

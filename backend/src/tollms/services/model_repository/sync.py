@@ -129,7 +129,13 @@ def run_sync(
 
     When a payload is None the corresponding source is fetched live.
     Never raises: fetch/normalize failures are recorded on the SyncRun.
+    Rows orphaned in 'running' by a crash/restart are marked 'interrupted'
+    first, so last_sync never reports a zombie run.
     """
+    db.query(SyncRun).filter(SyncRun.status == "running").update(
+        {"status": "interrupted", "finished_at": datetime.now(timezone.utc)},
+        synchronize_session=False,
+    )
     run = SyncRun(status="running")
     db.add(run)
     db.commit()

@@ -1,6 +1,6 @@
 // Scenario 1: wizard registration + persistence (nothing saved before step 5).
 import { expect, test } from "@playwright/test";
-import { API, MOCK_URL, wizardRegister } from "./helpers";
+import { API, MOCK_URL, wizardRegister, apiLoginAs } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
@@ -8,6 +8,7 @@ test.beforeAll(async () => {
 });
 
 test("wizard registers only on finish, then persists", async ({ page, request }) => {
+  await apiLoginAs(page, "prov");
   const name = `pw-prov-${Date.now()}`;
   await page.goto("/providers");
   await page.getByTestId("add-provider").click();
@@ -15,7 +16,7 @@ test("wizard registers only on finish, then persists", async ({ page, request })
   await page.getByTestId("provider-type").selectOption("CUSTOM");
   // Abandon at step 1: nothing may be persisted.
   await page.keyboard.press("Escape");
-  const list = await (await request.get(`${API}/api/v1/providers`)).json();
+  const list = await (await page.request.get(`${API}/api/v1/providers`)).json();
   expect(list.some((p: { name: string }) => p.name === name)).toBe(false);
 
   await wizardRegister(page, { name, type: "CUSTOM", baseUrl: MOCK_URL });

@@ -19,7 +19,7 @@ models/* + db/*           (ORM entities, session, Base)
 ## `api/` — feature packages
 
 One package per API feature: `conversations/`, `providers/`, `models/`,
-`repository/`, `gateway/`, `health/`.
+`repository/`, `gateway/`, `health/`, `auth/`.
 
 Each feature package holds `router.py`, `schemas.py`, `service.py`
 (`health` is router-only). A `service.py` inside `api/` is a
@@ -47,10 +47,23 @@ ONLY engine/infrastructure code consumable by multiple APIs:
 services/
 ├── cache/                client.py, manager.py, keys.py, constants.py,
 │                         decorators.py, locks.py, serializers.py, metrics.py
+├── email/                service.py, templates/ (verification today; resets/invites later)
 ├── gateway/            adapters/, factory.py, costing.py
 └── model_repository/   sync.py, lookup.py, mapping.py, sources.py,
                          canonical.py, scheduler.py
 ```
+
+## Auth / ownership
+
+- `core/security.py` owns passwords (argon2), JWTs (HS256 access 15m /
+  refresh 30d, both carrying `sid`), Valkey sessions (`session:{sid}`),
+  and `get_current_user` (Bearer or httpOnly cookie + live session check).
+- Every router except `health` and `auth` requires `get_current_user`.
+- User-owned tables (`providers`, `conversations`, `messages`) carry
+  nullable `user_id`; every service function takes `user_id` and filters
+  by it (None = unscoped, tests/service use only). Cross-owner access
+  returns 404, never 403 (no existence oracle).
+- Provider names are unique per `(user_id, name)` among live rows.
 
 Rules:
 
@@ -83,7 +96,7 @@ One module per table group: `conversation.py`, `message.py`, `provider.py`,
 ## Invariants (CI-verifiable)
 
 - No `tollms.modules` package and no `tollms.modules.*` imports anywhere.
-- `docker compose exec backend pytest -q` passes (currently 51 tests).
+- `docker compose exec backend pytest -q` passes (currently 62 tests).
 - `docker compose exec backend alembic check` reports no operations.
 - Every API module independently maintainable: no giant service files,
   no giant routers, no circular imports.

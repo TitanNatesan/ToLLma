@@ -1,6 +1,6 @@
 // Refresh discovers into Available (registers nothing); Register moves Available -> Registered.
 import { expect, test } from "@playwright/test";
-import { API, MOCK_URL, apiCreateProvider } from "./helpers";
+import { API, MOCK_URL, apiCreateProvider, apiLoginAs } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
@@ -8,8 +8,9 @@ test.beforeAll(async () => {
 });
 
 test("refresh discovers, register moves model to registered", async ({ page, request }) => {
+  await apiLoginAs(page, "disc");
   const name = `pw-disc-${Date.now()}`;
-  const { id: providerId } = await apiCreateProvider(name);
+  const { id: providerId } = await apiCreateProvider(page.request, name);
 
   await page.goto("/providers");
   await page.locator("section[aria-label='Provider list']").getByText(name).click();
@@ -29,7 +30,7 @@ test("refresh discovers, register moves model to registered", async ({ page, req
   await expect(section.getByTestId("avail-match-mock-disc-a")).toContainText("Unmatched");
   await expect(detail.getByTestId("discovery-stats")).toContainText(/Available Models:\s*2/);
   await expect(detail.getByTestId("discovery-stats")).toContainText(/Registered Models:\s*0/);
-  let models = await (await request.get(`${API}/api/v1/models`, { params: { provider_id: providerId } })).json();
+  let models = await (await page.request.get(`${API}/api/v1/models`, { params: { provider_id: providerId } })).json();
   expect(models).toHaveLength(0);
 
   // Available search narrows the list (hidden count grows).
@@ -55,7 +56,7 @@ test("refresh discovers, register moves model to registered", async ({ page, req
   await expect(row).toContainText("Just registered");
   await expect(detail.getByTestId("discovery-stats")).toContainText(/Available Models:\s*1/);
   await expect(detail.getByTestId("discovery-stats")).toContainText(/Registered Models:\s*1/);
-  models = await (await request.get(`${API}/api/v1/models`, { params: { provider_id: providerId } })).json();
+  models = await (await page.request.get(`${API}/api/v1/models`, { params: { provider_id: providerId } })).json();
   expect(models).toHaveLength(1);
 
   // Reload -> panels persist (server-side cache + registry).

@@ -16,3 +16,6 @@ storage/*
 !storage/.gitkeep
 
 .opencode/node_modules/
+
+# Playwright UI-suite session state
+frontend/tests/.auth/

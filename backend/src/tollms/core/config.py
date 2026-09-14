@@ -70,6 +70,31 @@ class Settings(BaseSettings):
     # Security (Required: must be provided via environment or .env)
     secret_key: str
 
+    # JWT authentication
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    access_token_minutes: int = 15
+    refresh_token_days: int = 30
+    verification_token_hours: int = 24
+
+    @property
+    def jwt_signing_key(self) -> str:
+        return self.jwt_secret or self.secret_key
+
+    # Google OAuth (optional: /auth/google/* returns 503 when unset)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+    frontend_url: str = "http://localhost:3000"
+
+    # Email (optional: verification links are logged when SMTP is unset)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "ToLLma <no-reply@tollma.ai>"
+    smtp_use_tls: bool = True
+
     # CORS
     backend_cors_origins: str = "http://localhost:3000"
 

@@ -1,6 +1,6 @@
 // Provider registration wizard: mapping, edit drawer, bulk edit, summary.
 import { expect, test } from "@playwright/test";
-import { API, MOCK_URL } from "./helpers";
+import { API, MOCK_URL, apiLoginAs } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
@@ -8,6 +8,7 @@ test.beforeAll(async () => {
 });
 
 test("wizard maps, edits, bulk-updates and registers with match stats", async ({ page, request }) => {
+  await apiLoginAs(page, "wizard");
   const name = `pw-wiz-${Date.now()}`;
   await page.goto("/providers");
   await page.evaluate(() => localStorage.clear());
@@ -52,9 +53,9 @@ test("wizard maps, edits, bulk-updates and registers with match stats", async ({
   await page.getByTestId("wiz-register").click();
   await expect(page.getByTestId("provider-detail")).toContainText(name, { timeout: 15000 });
 
-  const providers = await (await request.get(`${API}/api/v1/providers`)).json();
+  const providers = await (await page.request.get(`${API}/api/v1/providers`)).json();
   const provider = providers.find((p: { name: string }) => p.name === name);
-  const models = await (await request.get(`${API}/api/v1/models`, { params: { provider_id: provider.id } })).json();
+  const models = await (await page.request.get(`${API}/api/v1/models`, { params: { provider_id: provider.id } })).json();
   expect(models).toHaveLength(2);
   const renamed = models.find((m: { model_id: string }) => m.model_id === "mock-disc-a");
   expect(renamed.name).toBe("Disc A Renamed");

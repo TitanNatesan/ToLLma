@@ -61,8 +61,22 @@ def conversation_messages(conversation_id: object) -> str:
     return _key("conversation", f"messages:{conversation_id}")
 
 
-def usage_totals(conversation_id: object) -> str:
-    return _key("conversation", f"usage:{conversation_id}")
+def usage_totals(conversation_id: object, user_id: object | None = None) -> str:
+    scope = str(user_id) if user_id is not None else "legacy"
+    return _key("conversation", f"usage:{scope}:{conversation_id}")
+
+
+# --- auth sessions -------------------------------------------------------
+def session(session_id: str) -> str:
+    return _key("session", session_id)
+
+
+def verify_email(token_hash: str) -> str:
+    return _key("verify_email", token_hash)
+
+
+def oauth_state(state: str) -> str:
+    return _key("oauth_state", state)
 
 
 # --- future SaaS surface (reserved; no writers yet) ------------------------

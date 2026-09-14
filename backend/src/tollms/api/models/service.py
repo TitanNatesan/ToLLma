@@ -9,16 +9,27 @@ from sqlalchemy.orm import Session
 
 from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.models.registered_model import AIModel
+from tollms.models.provider import Provider
 from tollms.api.models.schemas import CAPABILITY_FIELDS, ModelCreate, ModelUpdate
 from tollms.api.providers.service import get_provider
 
 logger = logging.getLogger(__name__)
 
 
-def get_model(db: Session, model_id: uuid.UUID) -> AIModel:
+def _owned_provider_ids(db: Session, user_id: uuid.UUID | None) -> set[uuid.UUID] | None:
+    if user_id is None:
+        return None
+    return set(db.scalars(select(Provider.id).where(Provider.user_id == user_id)))
+
+
+def get_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = None) -> AIModel:
     model = db.get(AIModel, model_id)
     if model is None or model.is_deleted:
         raise NotFoundError(f"model {model_id} not found")
+    if user_id is not None:
+        owner = db.scalar(select(Provider.user_id).where(Provider.id == model.provider_id))
+        if owner != user_id:
+            raise NotFoundError(f"model {model_id} not found")
     return model
 
 
@@ -29,8 +40,13 @@ def list_models(
     search: str | None = None,
     capability: str | None = None,
     active_only: bool = False,
+    user_id: uuid.UUID | None = None,
 ) -> list[AIModel]:
     stmt = select(AIModel).where(AIModel.is_deleted.is_(False))
+    if user_id is not None:
+        stmt = stmt.where(
+            AIModel.provider_id.in_(select(Provider.id).where(Provider.user_id == user_id))
+        )
     if provider_id is not None:
         stmt = stmt.where(AIModel.provider_id == provider_id)
     if search:
@@ -51,8 +67,9 @@ def create_model(
     *,
     repository_match: dict | None = None,
     commit: bool = True,
+    user_id: uuid.UUID | None = None,
 ) -> AIModel:
-    get_provider(db, data.provider_id)  # validates provider exists
+    get_provider(db, data.provider_id, user_id)  # validates provider exists and is owned
     payload = data.model_dump()
     metadata = payload.pop("metadata")
     if data.repository_model_key:
@@ -84,8 +101,10 @@ def create_model(
     return model
 
 
-def update_model(db: Session, model_id: uuid.UUID, data: ModelUpdate) -> AIModel:
-    model = get_model(db, model_id)
+def update_model(
+    db: Session, model_id: uuid.UUID, data: ModelUpdate, user_id: uuid.UUID | None = None
+) -> AIModel:
+    model = get_model(db, model_id, user_id)
     for field, value in data.model_dump(exclude_unset=True).items():
         if field == "metadata":
             model.metadata_ = value
@@ -97,8 +116,8 @@ def update_model(db: Session, model_id: uuid.UUID, data: ModelUpdate) -> AIModel
     return model
 
 
-def delete_model(db: Session, model_id: uuid.UUID) -> None:
-    model = get_model(db, model_id)
+def delete_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = None) -> None:
+    model = get_model(db, model_id, user_id)
     model.is_deleted = True
     model.deleted_at = datetime.now(timezone.utc)
     model.is_active = False
@@ -106,15 +125,20 @@ def delete_model(db: Session, model_id: uuid.UUID) -> None:
     logger.info("model soft-deleted: %s", model.id)
 
 
-def bulk_update_models(db: Session, ids: list[uuid.UUID], data: ModelUpdate) -> int:
-    """Apply one patch to many models. Skips missing/deleted rows. Returns updated count."""
+def bulk_update_models(
+    db: Session, ids: list[uuid.UUID], data: ModelUpdate, user_id: uuid.UUID | None = None
+) -> int:
+    """Apply one patch to many models. Skips missing/deleted/unowned rows. Returns updated count."""
     patch = {k: v for k, v in data.model_dump(exclude_unset=True).items() if k != "metadata"}
     if "metadata" in data.model_dump(exclude_unset=True):
         patch["metadata_"] = data.metadata
+    owned = _owned_provider_ids(db, user_id)
     updated = 0
     for model_id in ids:
         model = db.get(AIModel, model_id)
         if model is None or model.is_deleted:
+            continue
+        if owned is not None and model.provider_id not in owned:
             continue
         for field, value in patch.items():
             if value is not None or field in ("description", "context_window", "max_output_tokens", "release_date"):

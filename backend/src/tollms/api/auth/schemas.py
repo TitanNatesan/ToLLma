@@ -1,0 +1,49 @@
+"""Auth request/response models. Tokens travel via httpOnly cookies in
+browsers; the same endpoints accept/return Bearer tokens for API clients."""
+
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field
+
+from tollms.models.user import AuthProvider
+
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = Field(default=None, max_length=255)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str | None = None  # falls back to the refresh_token cookie
+
+
+class UserRead(BaseModel):
+    id: uuid.UUID
+    email: str
+    full_name: str | None
+    email_verified: bool
+    auth_provider: AuthProvider
+    avatar_url: str | None
+    created_at: datetime
+
+
+class AuthResponse(BaseModel):
+    user: UserRead
+    # Non-prod only: lets e2e/dev complete verification without an inbox.
+    debug_verification_token: str | None = None
+
+
+class VerifyResponse(BaseModel):
+    user: UserRead
+    message: str = "email verified"
+
+
+class RefreshResponse(BaseModel):
+    user: UserRead

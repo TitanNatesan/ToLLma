@@ -1,5 +1,6 @@
 import type {
   AIModel,
+  AuthResponse,
   ChatMessage,
   Conversation,
   DiscoveryResult,
@@ -11,6 +12,7 @@ import type {
   RepositoryLookup,
   StreamDone,
   UsageTotals,
+  User,
   ValidationResult,
 } from "@/types";
 
@@ -37,7 +39,7 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -45,10 +47,19 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
   const res = await fetch(`${apiBase()}${path}`, {
     cache: "no-store",
+    credentials: "include", // httpOnly session cookies
     ...init,
     headers,
   });
   if (res.status === 204) return undefined as T;
+  if (res.status === 401 && retry && !path.startsWith("/auth/")) {
+    // Access token may have expired mid-session: one silent refresh, then retry.
+    const refreshed = await fetch(`${apiBase()}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => null);
+    if (refreshed?.ok) return req<T>(path, init, false);
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     let data: unknown = body;
@@ -76,7 +87,6 @@ const del = <T,>(path: string) => req<T>(path, { method: "DELETE" });
 export function getLiveness(): Promise<HealthResponse> {
   return get<HealthResponse>("/health");
 }
-
 export function getReadiness(): Promise<HealthResponse> {
   return get<HealthResponse>("/health/ready");
 }
@@ -148,6 +158,7 @@ export async function streamChat(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: cb.signal,
+      credentials: "include",
     });
   } catch (e) {
     if ((e as Error).name === "AbortError") return;
@@ -191,3 +202,32 @@ export async function streamChat(
 }
 
 export type { ChatMessage };
+
+// --- auth (httpOnly cookies; never touch tokens in JS) ---
+
+export function signup(email: string, password: string, fullName?: string): Promise<AuthResponse> {
+  return post<AuthResponse>("/auth/signup", { email, password, full_name: fullName || null });
+}
+
+export function login(email: string, password: string): Promise<AuthResponse> {
+  return post<AuthResponse>("/auth/login", { email, password });
+}
+
+export function logout(): Promise<{ status: string }> {
+  return post<{ status: string }>("/auth/logout", {});
+}
+
+export function getCurrentUser(): Promise<User> {
+  return get<User>("/auth/me");
+}
+
+export function verifyEmail(token: string, signal?: AbortSignal): Promise<{ user: User; message: string }> {
+  return req<{ user: User; message: string }>(
+    `/auth/verify?token=${encodeURIComponent(token)}`,
+    signal ? { signal } : undefined,
+  );
+}
+
+export function googleLoginUrl(): string {
+  return `${apiBase()}/auth/google/login`;
+}

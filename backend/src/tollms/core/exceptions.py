@@ -12,6 +12,10 @@ class NotFoundError(Exception):
     pass
 
 
+class AuthenticationError(Exception):
+    pass
+
+
 class ValidationError(Exception):
     pass
 
@@ -25,6 +29,10 @@ def register_handlers(app: FastAPI) -> None:
     async def _not_found(_: Request, e: NotFoundError) -> JSONResponse:
         logger.warning("not found: %s", e)
         return JSONResponse(status_code=404, content={"detail": str(e)})
+
+    @app.exception_handler(AuthenticationError)
+    async def _unauthorized(_: Request, e: AuthenticationError) -> JSONResponse:
+        return JSONResponse(status_code=401, content={"detail": str(e)})
 
     @app.exception_handler(ValidationError)
     async def _bad_request(_: Request, e: ValidationError) -> JSONResponse:

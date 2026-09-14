@@ -1,16 +1,17 @@
 // Scenario 5: history ordering + loading across reloads.
 import { expect, test } from "@playwright/test";
 import { startMockLLM } from "./mock-server";
-import { apiCreateModel, apiCreateProvider, selectProviderModel, sendMessage } from "./helpers";
+import { apiCreateModel, apiCreateProvider, selectProviderModel, sendMessage, apiLoginAs } from "./helpers";
 
 test.beforeAll(async () => {
   await startMockLLM();
 });
 
 test("multiple conversations order by recency and reload", async ({ page }) => {
+  await apiLoginAs(page, "hist");
   const stamp = Date.now();
-  const { id: providerId } = await apiCreateProvider(`pw-hprov-${stamp}`);
-  const { id: modelId } = await apiCreateModel(providerId, `pw-hmodel-${stamp}`);
+  const { id: providerId } = await apiCreateProvider(page.request, `pw-hprov-${stamp}`);
+  const { id: modelId } = await apiCreateModel(page.request, providerId, `pw-hmodel-${stamp}`);
   const first = `first conv ${stamp}`;
   const second = `second conv ${stamp}`;
 

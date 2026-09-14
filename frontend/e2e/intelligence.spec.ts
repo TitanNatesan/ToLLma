@@ -1,6 +1,6 @@
 // Model Intelligence end-to-end: register-drawer repository assist, chat usage/cost, analytics, sync.
 import { expect, test } from "@playwright/test";
-import { API, apiCreateModel, apiCreateProvider, selectProviderModel, sendMessage } from "./helpers";
+import { API, apiCreateModel, apiCreateProvider, selectProviderModel, sendMessage, apiLoginAs, apiSignupRequest } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
@@ -8,8 +8,9 @@ test.beforeAll(async () => {
 });
 
 test("register drawer auto-populates from the repository", async ({ page, request }) => {
+  await apiLoginAs(page, "intel");
   const stamp = Date.now();
-  const { id: providerId } = await apiCreateProvider(`pw-intel-prov-${stamp}`);
+  const { id: providerId } = await apiCreateProvider(page.request, `pw-intel-prov-${stamp}`);
 
   await page.goto("/providers");
   await page.locator("section[aria-label='Provider list']").getByText(`pw-intel-prov-${stamp}`).click();
@@ -31,9 +32,11 @@ test("register drawer auto-populates from the repository", async ({ page, reques
   const context = await page.getByTestId("madd-context").inputValue();
   expect(parseInt(context, 10)).toBeGreaterThan(0);
   await page.getByTestId("madd-save").click();
+  // Drawer closes only after the POST resolves: persistence is guaranteed past this line.
+  await expect(page.getByTestId("register-drawer")).not.toBeVisible({ timeout: 15000 });
 
   // Data persistence: stored with repository link + snapshot of original values.
-  const models = await (await request.get(`${API}/api/v1/models`, { params: { provider_id: providerId } })).json();
+  const models = await (await page.request.get(`${API}/api/v1/models`, { params: { provider_id: providerId } })).json();
   const created = models.find((m: { model_id: string }) => m.model_id === "gpt-4o");
   expect(created).toBeDefined();
   expect(created.repository_model_key).toBe("openai/gpt-4o");
@@ -41,9 +44,10 @@ test("register drawer auto-populates from the repository", async ({ page, reques
 });
 
 test("chat shows per-message usage/cost and conversation analytics", async ({ page }) => {
+  await apiLoginAs(page, "intelchat");
   const stamp = Date.now();
-  const { id: providerId } = await apiCreateProvider(`pw-chat-prov-${stamp}`);
-  const { id: modelId } = await apiCreateModel(providerId, `pw-chat-model-${stamp}`, "2", "8");
+  const { id: providerId } = await apiCreateProvider(page.request, `pw-chat-prov-${stamp}`);
+  const { id: modelId } = await apiCreateModel(page.request, providerId, `pw-chat-model-${stamp}`, "2", "8");
 
   await page.goto("/");
   await selectProviderModel(page, providerId, modelId);
@@ -62,6 +66,8 @@ test("chat shows per-message usage/cost and conversation analytics", async ({ pa
 });
 
 test("repository search, filters, and manual sync", async ({ request }) => {
+  test.setTimeout(240_000); // live source fetch + 4k-row merge takes minutes
+  await apiSignupRequest(request, "intelrepo");
   const search = await (await request.get(`${API}/api/v1/model-repository/models`, { params: { search: "gpt-4o", page_size: 3 } })).json();
   expect(search.total).toBeGreaterThan(0);
 

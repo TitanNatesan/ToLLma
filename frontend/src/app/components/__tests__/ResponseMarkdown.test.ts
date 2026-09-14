@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ReactNode } from "react";
 import { extractText } from "../ResponseMarkdown";
 
 describe("ResponseMarkdown utilities", () => {
@@ -11,7 +12,7 @@ describe("ResponseMarkdown utilities", () => {
         props: {
           children: ["deep", " ", "text"],
         },
-      }),
+      } as unknown as ReactNode),
     ).toBe("deep text");
   });
 

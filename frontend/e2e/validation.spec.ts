@@ -1,6 +1,6 @@
 // Validate checks credentials only: no discovery, no registration.
 import { expect, test } from "@playwright/test";
-import { apiCreateProvider } from "./helpers";
+import { apiCreateProvider, apiLoginAs } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
@@ -8,8 +8,9 @@ test.beforeAll(async () => {
 });
 
 test("validate stores status and registers nothing", async ({ page }) => {
+  await apiLoginAs(page, "validation");
   const name = `pw-val-${Date.now()}`;
-  const { id: providerId } = await apiCreateProvider(name);
+  const { id: providerId } = await apiCreateProvider(page.request, name);
 
   await page.goto("/providers");
   await page.locator("section[aria-label='Provider list']").getByText(name).click();

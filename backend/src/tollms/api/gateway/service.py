@@ -35,11 +35,11 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _resolve(db: Session, provider_id: uuid.UUID, model_id: uuid.UUID):
-    provider = get_provider(db, provider_id)
+def _resolve(db: Session, provider_id: uuid.UUID, model_id: uuid.UUID, user_id: uuid.UUID | None = None):
+    provider = get_provider(db, provider_id, user_id)
     if not provider.is_active:
         raise ValidationError(f"provider {provider_id} is not active")
-    model = get_model(db, model_id)
+    model = get_model(db, model_id, user_id)
     if not model.is_active:
         raise ValidationError(f"model {model_id} is not active")
     if model.provider_id != provider.id:
@@ -47,12 +47,14 @@ def _resolve(db: Session, provider_id: uuid.UUID, model_id: uuid.UUID):
     return provider, model
 
 
-def _history(db: Session, conv_id: uuid.UUID | None, system: str | None) -> tuple[list[ChatMessage], uuid.UUID | None]:
+def _history(
+    db: Session, conv_id: uuid.UUID | None, system: str | None, user_id: uuid.UUID | None = None
+) -> tuple[list[ChatMessage], uuid.UUID | None]:
     messages: list[ChatMessage] = []
     if system:
         messages.append(ChatMessage(role="system", content=system))
     if conv_id is not None:
-        for m in list_messages(db, conv_id):
+        for m in list_messages(db, conv_id, user_id):
             messages.append(ChatMessage(role=m.role.value, content=m.content))
     return messages, conv_id
 
@@ -87,9 +89,10 @@ async def run_chat(
     db: Session,
     data: ChatRequest,
     transport: httpx.AsyncBaseTransport | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> ChatResponse:
     """Non-streaming chat. Persists user + assistant messages, usage, cost."""
-    provider, model = _resolve(db, data.provider_id, data.model_id)
+    provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
     start = time.monotonic()
     try:
         if data.conversation_id is None:
@@ -98,12 +101,13 @@ async def run_chat(
                 ConversationCreate(
                     title=data.message[:60], provider_id=provider.id, model_id=model.id
                 ),
+                user_id,
             )
             conv_id = conv.id
         else:
-            conv = get_conversation(db, data.conversation_id)
+            conv = get_conversation(db, data.conversation_id, user_id)
             conv_id = conv.id
-        history, _ = _history(db, conv_id, data.system)
+        history, _ = _history(db, conv_id, data.system, user_id)
         history.append(ChatMessage(role="user", content=data.message))
         adapter = build_adapter(provider, model, decrypted_credentials(provider), transport)
         logger.info("gateway chat: provider=%s model=%s conv=%s", provider.provider_type, model.model_id, conv_id)
@@ -116,11 +120,13 @@ async def run_chat(
         cost = breakdown.legacy_triplet()
         extra_usage = (tokens.cache_read, tokens.cache_write, tokens.reasoning)
         extra_cost = (breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost)
-        add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id)
+        add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id,
+                    user_id=user_id)
         assistant = add_message(
             db, conv_id, Role.ASSISTANT, result.text,
             provider_id=provider.id, model_id=model.id, usage=usage, cost=cost,
             extra_usage=extra_usage, extra_cost=extra_cost, latency_ms=latency_ms,
+            user_id=user_id,
         )
         touch(db, conv)
         logger.info(
@@ -145,20 +151,24 @@ async def run_chat(
 
 
 async def run_stream(
-    db: Session, data: ChatRequest, transport: httpx.AsyncBaseTransport | None = None
+    db: Session,
+    data: ChatRequest,
+    transport: httpx.AsyncBaseTransport | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> AsyncIterator[str]:
     """SSE stream. Persists messages once the stream completes (or partial text on error)."""
-    provider, model = _resolve(db, data.provider_id, data.model_id)
+    provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
     start = time.monotonic()
     if data.conversation_id is None:
         conv = create_conversation(
-            db, ConversationCreate(title=data.message[:60], provider_id=provider.id, model_id=model.id)
+            db, ConversationCreate(title=data.message[:60], provider_id=provider.id, model_id=model.id),
+            user_id,
         )
         conv_id = conv.id
     else:
-        conv = get_conversation(db, data.conversation_id)
+        conv = get_conversation(db, data.conversation_id, user_id)
         conv_id = conv.id
-    history, _ = _history(db, conv_id, data.system)
+    history, _ = _history(db, conv_id, data.system, user_id)
     history.append(ChatMessage(role="user", content=data.message))
     yield f"data: {json.dumps({'conversation_id': str(conv_id)})}\n\n"
     adapter = build_adapter(provider, model, decrypted_credentials(provider), transport)
@@ -193,13 +203,15 @@ async def run_stream(
         )
         usage = (tokens.prompt, tokens.completion, total)
         cost = breakdown.legacy_triplet()
-        add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id)
+        add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id,
+                    user_id=user_id)
         assistant = add_message(
             db, conv_id, Role.ASSISTANT, result.text,
             provider_id=provider.id, model_id=model.id, usage=usage, cost=cost,
             extra_usage=(tokens.cache_read, tokens.cache_write, tokens.reasoning),
             extra_cost=(breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost),
             latency_ms=latency_ms,
+            user_id=user_id,
         )
         touch(db, conv)
         logger.info("gateway stream done: conv=%s tokens=%s/%s cost=%s", conv_id, usage[0], usage[1], cost[2])

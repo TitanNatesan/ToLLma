@@ -23,8 +23,12 @@ class Message(SoftDeleteMixin, TimestampedModel):
         Index("ix_messages_conversation", "conversation_id"),
         Index("ix_messages_created", "created_at"),
         Index("ix_messages_role", "role"),
+        Index("ix_messages_user", "user_id"),
     )
 
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )

@@ -76,8 +76,26 @@ def _flush_cache():
 
 
 @pytest.fixture()
-def provider_factory(client: TestClient):
+def user_factory(client: TestClient):
+    def _make(email: str = "u@tollma.ai", password: str = "password123", **kw) -> dict:
+        r = client.post("/auth/signup", json={"email": email, "password": password, **kw})
+        assert r.status_code == 200, r.text
+        client._authed = True  # type: ignore[attr-defined]
+        return r.json()["user"]
+
+    return _make
+
+
+def _ensure_authed(client: TestClient, user_factory) -> None:
+    if not getattr(client, "_authed", False):
+        user_factory()
+        client._authed = True  # type: ignore[attr-defined]
+
+
+@pytest.fixture()
+def provider_factory(client: TestClient, user_factory):
     def _make(name: str = "P", ptype: str = "CUSTOM", creds: dict | None = None, **kw) -> dict:
+        _ensure_authed(client, user_factory)
         r = client.post(
             "/api/v1/providers",
             json={"name": name, "provider_type": ptype, "credentials": creds or {"base_url": "http://mock"}, **kw},
@@ -89,8 +107,9 @@ def provider_factory(client: TestClient):
 
 
 @pytest.fixture()
-def model_factory(client: TestClient):
+def model_factory(client: TestClient, user_factory):
     def _make(provider_id: str, **kw) -> dict:
+        _ensure_authed(client, user_factory)
         payload = {
             "provider_id": provider_id,
             "model_id": "mock-model",

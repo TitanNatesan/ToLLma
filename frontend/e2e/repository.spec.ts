@@ -1,8 +1,9 @@
 // Model Intelligence Repository: read APIs are wired and shaped correctly.
 import { expect, test } from "@playwright/test";
-import { API } from "./helpers";
+import { API, apiSignupRequest } from "./helpers";
 
 test("repository stats shape", async ({ request }) => {
+  await apiSignupRequest(request, "repo1");
   const stats = await (await request.get(`${API}/api/v1/model-repository/stats`)).json();
   expect(stats.total_models).toBeGreaterThan(0);
   expect(stats.active_models).toBeGreaterThan(0);
@@ -11,6 +12,7 @@ test("repository stats shape", async ({ request }) => {
 });
 
 test("repository search, filter, pagination", async ({ request }) => {
+  await apiSignupRequest(request, "repo2");
   const search = await (
     await request.get(`${API}/api/v1/model-repository/models`, { params: { search: "claude", page_size: 5 } })
   ).json();
@@ -32,6 +34,7 @@ test("repository search, filter, pagination", async ({ request }) => {
 });
 
 test("repository sync history shape", async ({ request }) => {
+  await apiSignupRequest(request, "repo3");
   const history = await (await request.get(`${API}/api/v1/model-repository/sync-history`)).json();
   expect(history.length).toBeGreaterThan(0);
   // Latest run may be an idempotent re-sync (0 created); assert it ran clean.

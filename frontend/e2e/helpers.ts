@@ -1,33 +1,57 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
 export const API = "http://localhost:8000";
 // Backend runs in a container; the mock LLM runs on the host.
 export const MOCK_URL = "http://host.docker.internal:4899";
 
-export async function apiCreateProvider(name: string, baseUrl: string = MOCK_URL): Promise<{ id: string }> {
-  const res = await fetch(`${API}/api/v1/providers`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, provider_type: "CUSTOM", credentials: { base_url: baseUrl } }),
+/** Sign up + verify a fresh user in the page's context (cookies persist for UI + page.request). */
+export async function apiLoginAs(page: Page, tag: string): Promise<{ email: string }> {
+  const email = `pw-${tag}-${Date.now()}@tollma.ai`;
+  const signup = await page.request.post(`${API}/auth/signup`, { data: { email, password: "password123" } });
+  if (!signup.ok()) throw new Error(`e2e signup failed: ${await signup.text()}`);
+  const token = (await signup.json()).debug_verification_token as string | null;
+  if (token) await page.request.get(`${API}/auth/verify`, { params: { token } });
+  return { email };
+}
+
+/** Sign up in a bare request context (for API-only specs). Cookies persist in the fixture. */
+export async function apiSignupRequest(request: APIRequestContext, tag: string): Promise<{ email: string }> {
+  const email = `pw-${tag}-${Date.now()}@tollma.ai`;
+  const signup = await request.post(`${API}/auth/signup`, { data: { email, password: "password123" } });
+  if (!signup.ok()) throw new Error(`e2e signup failed: ${await signup.text()}`);
+  return { email };
+}
+
+export async function apiCreateProvider(
+  request: APIRequestContext,
+  name: string,
+  baseUrl: string = MOCK_URL,
+): Promise<{ id: string }> {
+  const res = await request.post(`${API}/api/v1/providers`, {
+    data: { name, provider_type: "CUSTOM", credentials: { base_url: baseUrl } },
   });
-  if (!res.ok) throw new Error(`create provider failed: ${await res.text()}`);
+  if (!res.ok()) throw new Error(`create provider failed: ${await res.text()}`);
   return res.json();
 }
 
-export async function apiCreateModel(providerId: string, name: string, inputPrice = "2", outputPrice = "8"): Promise<{ id: string }> {
-  const res = await fetch(`${API}/api/v1/models`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+export async function apiCreateModel(
+  request: APIRequestContext,
+  providerId: string,
+  name: string,
+  inputPrice = "2",
+  outputPrice = "8",
+): Promise<{ id: string }> {
+  const res = await request.post(`${API}/api/v1/models`, {
+    data: {
       provider_id: providerId,
       model_id: `mock-${name}`,
       name,
       endpoint_type: "chat_completions",
       input_price: inputPrice,
       output_price: outputPrice,
-    }),
+    },
   });
-  if (!res.ok) throw new Error(`create model failed: ${await res.text()}`);
+  if (!res.ok()) throw new Error(`create model failed: ${await res.text()}`);
   return res.json();
 }
 

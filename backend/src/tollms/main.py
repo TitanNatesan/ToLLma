@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from tollms.api.auth.router import router as auth_router
 from tollms.api.conversations.router import router as conversations_router
 from tollms.api.gateway.router import router as gateway_router
 from tollms.api.health.router import router as health_router
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
             raise
 
     app.include_router(health_router)
+    app.include_router(auth_router)
     app.include_router(providers_router)
     app.include_router(models_router)
     app.include_router(repository_router)

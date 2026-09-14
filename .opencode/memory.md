@@ -485,6 +485,44 @@ GET /health/cache healthy (valkey 8.1.10); perf find_for_model 12.63->2.58ms (5x
 usage_totals 37.58->7.14ms (5x); e2e discovery/validation/providers 3/3 green;
 all compose services healthy.
 
+## 2026-09-13 - Authentication & user isolation (email + Google OAuth + JWT + sessions)
+
+Backend: models/user.py (User + AuthProvider EMAIL/GOOGLE, live-unique email partial
+index, unique google_id) + migration d5f1a2b3c4d6 (users table; user_id nullable
+UUID+FK+index on providers/conversations/messages; provider names global-unique ->
+per-(user_id,name) partial unique). core/security.py (argon2, HS256 access 15m /
+refresh 30d / verify 24h, sid-bound Valkey sessions session:{sid} 30d TTL,
+get_current_user via Bearer-or-cookie + live session + active PG user;
+AuthenticationError 401). services/email/ (SMTP or log+outbox, verify.html template).
+api/auth/ (signup[UNVERIFIED + session + debug token non-prod]/verify[idempotent
+replay for verified addresses]/login/google login+callback[find-or-create, link on
+verified Google email]/refresh/logout/me; httpOnly access+refresh + tollma_session
+presence cookies, Secure in prod). Cache keys session/verify_email/oauth_state added.
+Ownership: user_id threaded through providers/models/conversations/gateway services
+(404 across owners, per-user name uniqueness, AIModel scoping via provider join,
+gateway chat/streams stamp owner, usage cache key user-scoped). Repository stays
+global (auth-required, unowned). run_sync marks crash-orphaned 'running' rows
+'interrupted'; LOCK_REPO_SYNC 3600->600s after reload-killed syncs held the lock.
+Frontend: api credentials:include + silent refresh-and-retry on 401; User type +
+store/auth + Shell session bootstrap (bare chrome on auth pages); login/signup/
+verify(Suspense)/auth/callback pages; src/proxy.ts (Next 16 convention) gating via
+presence cookie; UserMenu + logout in TopBar; shared DialogContent max-h-80vh scroll
+(save buttons were unreachable on 720p screens). E2E: auth.spec (gate/signup/verify/
+logout/isolation), per-test apiLoginAs/apiSignupRequest, setup-project storageState
+for the UI suite, intel manual-sync test.setTimeout(240s).
+Tests: tests/test_auth.py (11: signup/verify incl. expiry/idempotent replay/login/
+JWT-anon-reject/isolation A-B providers+models+conversations+messages/refresh/logout/
+Google callback incl. unconfigured/linked) + conftest user_factory with jar auth;
+existing suites updated for auth (factories auto-signup). Deps: pyjwt, argon2-cffi,
+email-validator (+lock); env AUTH block (JWT_SECRET fallback SECRET_KEY, GOOGLE_*,
+FRONTEND_URL, SMTP_*).
+Verification: pytest 62/62; alembic check clean; Playwright 39/39 (incl. 4 auth);
+vitest 19/19; tsc clean (1 pre-existing ResponseMarkdown test error fixed by cast —
+was failing builds); build success; lint 3 pre-existing setState-in-effect errors
+untouched; compose all healthy. Flakes killed along the way: RLock bridge deadlock
+(earlier), verify double-fire (StrictMode + single-use token), save/GET race in
+intel:10 (drawer-close gate), orphan sync rows + stale locks from --reload kills.
+
 ## 2026-09-13 - Prevent Browser Password Autofill on Provider Credential Inputs
 
 Requirement: Disable browser password manager autofill / username suggestion dropdowns on all provider credentials fields (Step 2 and Edit mode in the Provider connection modal).

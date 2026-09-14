@@ -3,6 +3,21 @@ export interface HealthResponse {
   database?: string;
 }
 
+export interface User {
+  id: string;
+  email: string;
+  full_name: string | null;
+  email_verified: boolean;
+  auth_provider: "EMAIL" | "GOOGLE";
+  avatar_url: string | null;
+  created_at: string;
+}
+
+export interface AuthResponse {
+  user: User;
+  debug_verification_token?: string | null;
+}
+
 export interface ApiState<T> {
   data: T | null;
   error: string | null;

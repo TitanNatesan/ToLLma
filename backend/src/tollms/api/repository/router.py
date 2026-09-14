@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
+from tollms.core.security import get_current_user
+from tollms.models.user import User
 from tollms.core.exceptions import NotFoundError
 from tollms.api.repository import service
 from tollms.api.repository.schemas import (
@@ -27,7 +29,7 @@ def _read(m) -> RepositoryModelRead:
 
 
 @router.get("/stats", response_model=RepositoryStatsRead)
-def get_stats(db: Session = Depends(get_db)) -> RepositoryStatsRead:
+def get_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> RepositoryStatsRead:
     return RepositoryStatsRead(**service.stats(db))
 
 
@@ -40,6 +42,7 @@ def list_models(
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> RepositoryModelPage:
     rows, total = service.list_entries(
         db, search=search, provider=provider, capability=capability,
@@ -53,7 +56,7 @@ def list_models(
 
 
 @router.get("/models/{entry_id}", response_model=RepositoryModelRead)
-def get_model(entry_id: uuid.UUID, db: Session = Depends(get_db)) -> RepositoryModelRead:
+def get_model(entry_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> RepositoryModelRead:
     return _read(service.get_entry(db, entry_id))
 
 
@@ -68,13 +71,13 @@ def lookup_model(
 
 
 @router.post("/sync", response_model=SyncRunRead)
-def trigger_sync(db: Session = Depends(get_db)) -> SyncRunRead:
+def trigger_sync(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> SyncRunRead:
     # Plain def: FastAPI runs it in a threadpool so the blocking fetch is safe.
     return SyncRunRead.model_validate(service.run_sync(db))
 
 
 @router.post("/map", response_model=dict)
-def map_models(body: dict, db: Session = Depends(get_db)) -> dict:
+def map_models(body: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     """Map discovered model ids to repository entries.
 
     Body: {provider_type?, base_url?, model_ids: [...]}.
@@ -92,5 +95,5 @@ def map_models(body: dict, db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/sync-history", response_model=list[SyncRunRead])
-def get_sync_history(limit: int = 20, db: Session = Depends(get_db)) -> list[SyncRunRead]:
+def get_sync_history(limit: int = 20, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[SyncRunRead]:
     return [SyncRunRead.model_validate(r) for r in service.sync_history(db, limit)]

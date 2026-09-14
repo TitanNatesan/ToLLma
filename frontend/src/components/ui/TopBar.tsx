@@ -14,6 +14,7 @@ import {
   Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { UserMenu } from "./UserMenu";
 
 export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => void }) {
   const pathname = usePathname();
@@ -142,6 +143,9 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
         >
           {mounted ? (isDark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />) : <span className="size-3.5" />}
         </button>
+
+        {/* Session */}
+        <UserMenu />
       </div>
     </header>
   );

@@ -46,31 +46,42 @@ def _invalidate_provider_cache(provider_id: uuid.UUID) -> None:
     )
 
 
-def get_provider(db: Session, provider_id: uuid.UUID) -> Provider:
+def get_provider(db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None = None) -> Provider:
     provider = db.get(Provider, provider_id)
     if provider is None or provider.is_deleted:
+        raise NotFoundError(f"provider {provider_id} not found")
+    if user_id is not None and provider.user_id != user_id:
         raise NotFoundError(f"provider {provider_id} not found")
     return provider
 
 
-def list_providers(db: Session, *, active_only: bool = False) -> list[Provider]:
+def list_providers(
+    db: Session, *, active_only: bool = False, user_id: uuid.UUID | None = None
+) -> list[Provider]:
     stmt = select(Provider).where(Provider.is_deleted.is_(False)).order_by(Provider.created_at)
+    if user_id is not None:
+        stmt = stmt.where(Provider.user_id == user_id)
     if active_only:
         stmt = stmt.where(Provider.is_active.is_(True))
     return list(db.scalars(stmt))
 
 
-def ensure_unique_name(db: Session, name: str, exclude_id: uuid.UUID | None = None) -> None:
+def ensure_unique_name(
+    db: Session, name: str, exclude_id: uuid.UUID | None = None, user_id: uuid.UUID | None = None
+) -> None:
     stmt = select(Provider).where(Provider.is_deleted.is_(False), Provider.name.ilike(name.strip()))
+    if user_id is not None:
+        stmt = stmt.where(Provider.user_id == user_id)
     if exclude_id is not None:
         stmt = stmt.where(Provider.id != exclude_id)
     if db.scalar(stmt) is not None:
         raise ValidationError(f"provider name {name.strip()!r} is already taken")
 
 
-def create_provider(db: Session, data: ProviderCreate) -> Provider:
-    ensure_unique_name(db, data.name)
+def create_provider(db: Session, data: ProviderCreate, user_id: uuid.UUID | None = None) -> Provider:
+    ensure_unique_name(db, data.name, user_id=user_id)
     provider = Provider(
+        user_id=user_id,
         name=data.name,
         provider_type=data.provider_type,
         credentials_encrypted=encrypt(json.dumps(data.credentials)),
@@ -84,10 +95,12 @@ def create_provider(db: Session, data: ProviderCreate) -> Provider:
     return provider
 
 
-def update_provider(db: Session, provider_id: uuid.UUID, data: ProviderUpdate) -> Provider:
-    provider = get_provider(db, provider_id)
+def update_provider(
+    db: Session, provider_id: uuid.UUID, data: ProviderUpdate, user_id: uuid.UUID | None = None
+) -> Provider:
+    provider = get_provider(db, provider_id, user_id)
     if data.name is not None:
-        ensure_unique_name(db, data.name, exclude_id=provider.id)
+        ensure_unique_name(db, data.name, exclude_id=provider.id, user_id=user_id)
         provider.name = data.name
     if data.credentials is not None:
         provider.credentials_encrypted = encrypt(json.dumps(data.credentials))
@@ -102,8 +115,8 @@ def update_provider(db: Session, provider_id: uuid.UUID, data: ProviderUpdate) -
     return provider
 
 
-def delete_provider(db: Session, provider_id: uuid.UUID) -> None:
-    provider = get_provider(db, provider_id)
+def delete_provider(db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None = None) -> None:
+    provider = get_provider(db, provider_id, user_id)
     provider.is_deleted = True
     provider.deleted_at = datetime.now(timezone.utc)
     provider.is_active = False
@@ -113,7 +126,10 @@ def delete_provider(db: Session, provider_id: uuid.UUID) -> None:
 
 
 async def validate_provider(
-    db: Session, provider_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None = None
+    db: Session,
+    provider_id: uuid.UUID,
+    transport: httpx.AsyncBaseTransport | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> tuple[bool, str, float]:
     """Validate via the adapter and persist the result on the provider.
 
@@ -121,7 +137,7 @@ async def validate_provider(
     hits return the last result without re-probing or rewriting the DB.
     Calls with an explicit transport (tests) always probe live.
     """
-    provider = get_provider(db, provider_id)
+    provider = get_provider(db, provider_id, user_id)
     manager = get_manager()
     if transport is None:
         hit = await manager.get(cache_keys.provider_validation(provider.id))
@@ -150,7 +166,10 @@ async def validate_provider(
 
 
 async def discover_provider_models(
-    db: Session, provider_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None = None
+    db: Session,
+    provider_id: uuid.UUID,
+    transport: httpx.AsyncBaseTransport | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> DiscoveryResult:
     """Refresh the provider's discovery cache. Never registers or modifies models.
 
@@ -165,8 +184,8 @@ async def discover_provider_models(
     from tollms.api.models.service import list_models as _list  # avoid import cycle at module load
     from tollms.services.model_repository.mapping import map_models as _map
 
-    provider = get_provider(db, provider_id)
-    registered = {m.model_id for m in _list(db, provider_id=provider.id)}
+    provider = get_provider(db, provider_id, user_id)
+    registered = {m.model_id for m in _list(db, provider_id=provider.id, user_id=user_id)}
     manager = get_manager()
     cache_key = cache_keys.provider_models(provider.id)
     if transport is None:
@@ -317,12 +336,15 @@ async def draft_validate(
     return valid, message, latency, discovered
 
 
-def register_provider(db: Session, data) -> tuple[Provider, list[AIModel], dict[str, int]]:
+def register_provider(
+    db: Session, data, user_id: uuid.UUID | None = None
+) -> tuple[Provider, list[AIModel], dict[str, int]]:
     """Atomic wizard registration: provider + selected models. Nothing persists on failure."""
     from tollms.api.models.service import create_model as _create_model
 
-    ensure_unique_name(db, data.name)
+    ensure_unique_name(db, data.name, user_id=user_id)
     provider = Provider(
+        user_id=user_id,
         name=data.name.strip(),
         provider_type=data.provider_type,
         credentials_encrypted=encrypt(json.dumps(data.credentials)),
@@ -343,6 +365,7 @@ def register_provider(db: Session, data) -> tuple[Provider, list[AIModel], dict[
             _model_create(**payload),
             repository_match=(m.repository_match or None),
             commit=False,
+            user_id=user_id,
         )
         models.append(model)
         match_type = (m.repository_match or {}).get("match_type", "fallback")

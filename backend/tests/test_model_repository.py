@@ -114,7 +114,8 @@ def test_source_failure_never_raises(db: Session, monkeypatch: pytest.MonkeyPatc
     assert any("litellm" in e for e in run.error_details)
 
 
-def test_search_filter_pagination_and_stats(client: TestClient, db: Session) -> None:
+def test_search_filter_pagination_and_stats(client: TestClient, db: Session, user_factory) -> None:
+    user_factory()
     service.run_sync(db, litellm_data=LITELLM_SAMPLE, openrouter_data=OPENROUTER_SAMPLE)
 
     r = client.get("/api/v1/model-repository/stats")

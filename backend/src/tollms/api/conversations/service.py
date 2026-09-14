@@ -33,19 +33,27 @@ def calc_cost(model: AIModel, prompt_tokens: int, completion_tokens: int) -> tup
     return input_cost, output_cost, input_cost + output_cost
 
 
-def get_conversation(db: Session, conversation_id: uuid.UUID) -> Conversation:
+def get_conversation(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> Conversation:
     conv = db.get(Conversation, conversation_id)
     if conv is None or conv.is_deleted:
+        raise NotFoundError(f"conversation {conversation_id} not found")
+    if user_id is not None and conv.user_id != user_id:
         raise NotFoundError(f"conversation {conversation_id} not found")
     return conv
 
 
-def list_conversations(db: Session, *, search: str | None = None) -> list[Conversation]:
+def list_conversations(
+    db: Session, *, search: str | None = None, user_id: uuid.UUID | None = None
+) -> list[Conversation]:
     stmt = (
         select(Conversation)
         .where(Conversation.is_deleted.is_(False))
         .order_by(Conversation.is_pinned.desc(), Conversation.updated_at.desc())
     )
+    if user_id is not None:
+        stmt = stmt.where(Conversation.user_id == user_id)
     if search:
         # Search title OR message content via EXISTS subquery
         content_match = select(Message.id).where(
@@ -57,7 +65,9 @@ def list_conversations(db: Session, *, search: str | None = None) -> list[Conver
     return list(db.scalars(stmt))
 
 
-def get_conversation_with_messages(db: Session, conversation_id: uuid.UUID) -> Conversation:
+def get_conversation_with_messages(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> Conversation:
     stmt = (
         select(Conversation)
         .where(Conversation.id == conversation_id, Conversation.is_deleted.is_(False))
@@ -66,12 +76,21 @@ def get_conversation_with_messages(db: Session, conversation_id: uuid.UUID) -> C
     conv = db.scalar(stmt)
     if conv is None:
         raise NotFoundError(f"conversation {conversation_id} not found")
+    if user_id is not None and conv.user_id != user_id:
+        raise NotFoundError(f"conversation {conversation_id} not found")
     conv.messages = [m for m in conv.messages if not m.is_deleted]
     return conv
 
 
-def create_conversation(db: Session, data: ConversationCreate) -> Conversation:
-    conv = Conversation(title=data.title or "New conversation", provider_id=data.provider_id, model_id=data.model_id)
+def create_conversation(
+    db: Session, data: ConversationCreate, user_id: uuid.UUID | None = None
+) -> Conversation:
+    conv = Conversation(
+        user_id=user_id,
+        title=data.title or "New conversation",
+        provider_id=data.provider_id,
+        model_id=data.model_id,
+    )
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -79,25 +98,31 @@ def create_conversation(db: Session, data: ConversationCreate) -> Conversation:
     return conv
 
 
-def rename_conversation(db: Session, conversation_id: uuid.UUID, title: str) -> Conversation:
-    conv = get_conversation(db, conversation_id)
+def rename_conversation(
+    db: Session, conversation_id: uuid.UUID, title: str, user_id: uuid.UUID | None = None
+) -> Conversation:
+    conv = get_conversation(db, conversation_id, user_id)
     conv.title = title
     db.commit()
     db.refresh(conv)
     return conv
 
 
-def delete_conversation(db: Session, conversation_id: uuid.UUID) -> None:
-    conv = get_conversation(db, conversation_id)
+def delete_conversation(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> None:
+    conv = get_conversation(db, conversation_id, user_id)
     conv.is_deleted = True
     conv.deleted_at = datetime.now(timezone.utc)
     db.commit()
-    cache_delete_sync(cache_keys.usage_totals(conversation_id))
+    cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
     logger.info("conversation soft-deleted: %s", conversation_id)
 
 
-def pin_conversation(db: Session, conversation_id: uuid.UUID, *, pinned: bool) -> Conversation:
-    conv = get_conversation(db, conversation_id)
+def pin_conversation(
+    db: Session, conversation_id: uuid.UUID, *, pinned: bool, user_id: uuid.UUID | None = None
+) -> Conversation:
+    conv = get_conversation(db, conversation_id, user_id)
     conv.is_pinned = pinned
     db.commit()
     db.refresh(conv)
@@ -118,8 +143,10 @@ def add_message(
     extra_usage: tuple[int, int, int] | None = None,
     extra_cost: tuple[Decimal, Decimal, Decimal] | None = None,
     latency_ms: float | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> Message:
     msg = Message(
+        user_id=user_id,
         conversation_id=conversation_id,
         role=role,
         content=content,
@@ -138,12 +165,14 @@ def add_message(
     db.add(msg)
     db.commit()
     db.refresh(msg)
-    cache_delete_sync(cache_keys.usage_totals(conversation_id))
+    cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
     return msg
 
 
-def list_messages(db: Session, conversation_id: uuid.UUID) -> list[Message]:
-    get_conversation(db, conversation_id)
+def list_messages(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> list[Message]:
+    get_conversation(db, conversation_id, user_id)
     stmt = (
         select(Message)
         .where(Message.conversation_id == conversation_id, Message.is_deleted.is_(False))
@@ -152,11 +181,13 @@ def list_messages(db: Session, conversation_id: uuid.UUID) -> list[Message]:
     return list(db.scalars(stmt))
 
 
-def usage_totals(db: Session, conversation_id: uuid.UUID) -> UsageTotals:
+def usage_totals(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> UsageTotals:
     """Aggregate message usage + cost. Cached for cache_ttl.CONVERSATION;
     invalidated by add_message/delete_conversation."""
-    get_conversation(db, conversation_id)  # 404 semantics preserved; cheap PK get
-    key = cache_keys.usage_totals(conversation_id)
+    get_conversation(db, conversation_id, user_id)  # 404 semantics preserved; cheap PK get
+    key = cache_keys.usage_totals(conversation_id, user_id)
     hit = cache_get_sync(key)
     if isinstance(hit, dict):
         try:

@@ -21,7 +21,8 @@ def _models_transport(models: list[dict]) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
-def test_draft_validate_lists_models_without_persisting(db: Session, client: TestClient) -> None:
+def test_draft_validate_lists_models_without_persisting(db: Session, client: TestClient, user_factory) -> None:
+    user_factory()
     before = client.get("/api/v1/providers").json()
     valid, message, _, discovered = asyncio.run(
         draft_validate(
@@ -73,7 +74,8 @@ def test_mapping_priorities(db: Session) -> None:
     assert r["match_type"] == "provider_specific"
 
 
-def test_register_is_atomic_with_match_stats(client: TestClient, db: Session) -> None:
+def test_register_is_atomic_with_match_stats(client: TestClient, db: Session, user_factory) -> None:
+    user_factory()
     run_sync(
         db,
         litellm_data={"openai/gpt-4o": {"input_cost_per_token": 2.5e-06, "litellm_provider": "openai", "mode": "chat"}},

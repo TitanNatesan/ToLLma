@@ -1,0 +1,47 @@
+"""User identity table. Foundation for organizations/teams/RBAC/billing —
+ownership columns on user-owned tables reference this."""
+
+import enum
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, DateTime, Enum, Index, String, Text, text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from tollms.db.base import SoftDeleteMixin, TimestampedModel
+
+if TYPE_CHECKING:
+    from tollms.models.conversation import Conversation
+    from tollms.models.provider import Provider
+
+
+class AuthProvider(str, enum.Enum):
+    EMAIL = "EMAIL"
+    GOOGLE = "GOOGLE"
+
+
+class User(SoftDeleteMixin, TimestampedModel):
+    __tablename__ = "users"
+    __table_args__ = (
+        # Email unique among live rows (lets deleted accounts free the address).
+        Index("uq_users_email_live", "email", unique=True, postgresql_where=text("is_deleted = false")),
+        Index("uq_users_google_id", "google_id", unique=True),
+        Index("ix_users_created", "created_at"),
+    )
+
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)  # null for OAuth-only users
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    auth_provider: Mapped[AuthProvider] = mapped_column(
+        Enum(AuthProvider, name="auth_provider"), default=AuthProvider.EMAIL, nullable=False
+    )
+    google_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    providers: Mapped[list["Provider"]] = relationship(back_populates="owner")
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="owner")

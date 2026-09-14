@@ -17,6 +17,8 @@ REPOSITORY_SEARCH = 3600
 REPOSITORY_MODEL = 86400
 
 # Distributed locks (short; refreshed only by holder paths that need longer).
-LOCK_REPO_SYNC = 3600
+# Repo sync TTL comfortably exceeds a live run (~1-2 min) but recovers from
+# killed workers without an hour-long manual-sync blackout.
+LOCK_REPO_SYNC = 600
 LOCK_PROVIDER_REFRESH = 120
 LOCK_SCHEDULER = 300
