@@ -2,6 +2,7 @@
 
 import uuid
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,10 @@ class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
     message: str = Field(min_length=1)
     system: str | None = None
+    # Capability-aware composer fields. Adapters are text-only today, so the
+    # service accepts, validates, and logs these without forwarding content.
+    reasoning_level: str | None = Field(default=None, max_length=32)
+    attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=10)
 
 
 class ChatResponse(BaseModel):

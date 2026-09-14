@@ -29,11 +29,25 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
+import { ModelCapabilityBar } from "./ModelCapabilityBar";
+import { AttachmentPicker } from "./AttachmentPicker";
+import { UploadPreview } from "./UploadPreview";
+import { ReasoningSelector } from "./ReasoningSelector";
+import { useModelCapabilities } from "./hooks/useModelCapabilities";
+import {
+  defaultReasoningLevel,
+  describeAttachment,
+  uploadKinds,
+  type ChatSendPayload,
+  type ComposerAttachment,
+} from "./capabilities";
+
+export type { ChatSendPayload };
 
 interface ChatComposerProps {
   streaming: boolean;
   disabled?: boolean;
-  onSend: (text: string) => void;
+  onSend: (payload: ChatSendPayload) => void;
   onStop: () => void;
 }
 
@@ -207,9 +221,42 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
   const { providerId, modelId, draft, setDraft } = useChatStore();
   const { data: providers = [] } = useProviders();
   const { data: models = [] } = useModels();
-  const activeModel = models.find((m) => m.id === modelId);
+  const { model: activeModel, caps } = useModelCapabilities(models, modelId);
+  const kinds = uploadKinds(caps);
+
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [reasoningLevel, setReasoningLevel] = useState<string | null>(null);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
+
+  // Model change: reset reasoning to the new model's default and drop
+  // attachments its capabilities no longer support. Draft text is kept.
+  const prevModelId = useRef(modelId);
+  useEffect(() => {
+    if (prevModelId.current === modelId) return;
+    prevModelId.current = modelId;
+    setReasoningLevel(defaultReasoningLevel(caps));
+    setAttachments((prev) => {
+      const kept = prev.filter((a) => kinds.includes(a.kind));
+      for (const dropped of prev.filter((a) => !kinds.includes(a.kind))) {
+        if (dropped.previewUrl) URL.revokeObjectURL(dropped.previewUrl);
+      }
+      return kept;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelId]);
+
+  // Revoke image object URLs on unmount.
+  useEffect(() => {
+    const staged = attachments;
+    return () => {
+      for (const a of staged) {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-resize textarea
   const resize = useCallback(() => {
@@ -228,11 +275,27 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     textareaRef.current?.focus();
   }, []);
 
+  function removeAttachment(id: string) {
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }
+
   function handleSend() {
     const text = draft.trim();
-    if (!text || streaming || !ready) return;
-    onSend(text);
+    if ((!text && attachments.length === 0) || streaming || !ready) return;
+    onSend({
+      text,
+      reasoningLevel: caps.supportsReasoning ? (reasoningLevel ?? defaultReasoningLevel(caps)) : null,
+      attachments: attachments.map(describeAttachment),
+    });
     setDraft("");
+    for (const a of attachments) {
+      if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+    }
+    setAttachments([]);
     // Reset height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -244,6 +307,9 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
       className="border-t border-zinc-200 bg-white px-3 pb-3 pt-2 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="chat-composer"
     >
+      <ModelCapabilityBar caps={caps} hasModel={!!modelId} />
+      <UploadPreview attachments={attachments} onRemove={removeAttachment} />
+
       {/* Textarea */}
       <textarea
         ref={textareaRef}
@@ -283,6 +349,23 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         {/* Unified Model & Provider Selector */}
         <UnifiedModelSelector providers={providers} models={models} />
 
+        {/* Capability-driven upload controls (hidden when unsupported) */}
+        <AttachmentPicker
+          kinds={kinds}
+          currentCount={attachments.length}
+          disabled={!ready || streaming}
+          onAdd={(picked) => setAttachments((prev) => [...prev, ...picked])}
+        />
+
+        {/* Capability-driven reasoning control (hidden when unsupported) */}
+        {caps.supportsReasoning && (
+          <ReasoningSelector
+            levels={caps.reasoningLevels}
+            value={reasoningLevel ?? defaultReasoningLevel(caps)}
+            onChange={setReasoningLevel}
+          />
+        )}
+
         {/* Context and Pricing Info */}
         {activeModel && (
           <div className="hidden sm:flex items-center gap-2 text-[10px] text-zinc-400 font-mono">
@@ -312,7 +395,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
             <Button
               size="sm"
               onClick={handleSend}
-              disabled={!ready || !draft.trim()}
+              disabled={!ready || (!draft.trim() && attachments.length === 0)}
               data-testid="send-button"
               className="gap-1.5 text-xs"
             >

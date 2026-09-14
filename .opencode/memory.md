@@ -978,3 +978,30 @@ Verification:
 ### Verification:
 - `npm test`: 21/21 vitest tests passed across 6 test suites.
 - `npm run build`: Next.js 16.3.5 production build compiled all 10 routes cleanly with 0 TypeScript errors.
+## 2026-09-14 — Capability-Aware Intelligent Composer
+
+### Requirement Completed
+Chat composer now renders upload controls, reasoning selector, and capability badges from the selected model's capability data. Text-only models show text input only; vision/file/audio/video controls, reasoning stepper, and badges appear only when supported. No hardcoded provider/model name checks; extended caps (files/video/reasoning_levels) live in the existing `metadata` JSONB column — no migration, no new endpoint (`GET /api/v1/models` already serves all flags).
+
+### Files Created
+- `frontend/src/app/components/chat/capabilities.ts` (types, ACCEPT maps, `getModelCapabilities`, `uploadKinds`, `kindForFile`)
+- `frontend/src/app/components/chat/hooks/useModelCapabilities.ts`
+- `frontend/src/app/components/chat/ChatComposer.tsx` (moved selector verbatim from ChatInput)
+- `frontend/src/app/components/chat/ModelCapabilityBar.tsx`, `AttachmentPicker.tsx`, `UploadPreview.tsx`, `ReasoningSelector.tsx`
+- `frontend/src/app/components/chat/__tests__/capabilities.test.ts` (9 tests)
+- `frontend/src/app/providers/components/__tests__/metadata.test.ts` (4 tests)
+
+### Files Modified
+- `frontend/src/app/components/ChatInput.tsx` deleted (superseded by `chat/ChatComposer.tsx`)
+- `frontend/src/app/page.tsx` (payload-based `send`, regenerate call sites)
+- `frontend/src/services/api.ts` (`streamChat` accepts `reasoning_level` + `attachments`)
+- `frontend/src/app/providers/components/ModelForm.tsx` (files/video checkboxes + levels input backed by metadata; `existingMetadata` passthrough preserves snapshot keys on update)
+- `backend/src/tollms/api/gateway/schemas.py` (`ChatRequest` + optional `reasoning_level`, `attachments`)
+- `backend/src/tollms/api/gateway/service.py` (logs composer fields; adapters remain text-only)
+- `backend/src/tollms/services/model_repository/lookup.py` (`suggest_payload` seeds `metadata.supports_video_input` from repository entry)
+- `backend/tests/test_gateway.py` (+1 composer payload test)
+
+### Verification
+- `tsc --noEmit` clean; `vitest` 34/34; `next build` clean
+- `pytest` 62/62 (61 + 1 new); `alembic check` clean
+- e2e: chat/manage/providers/wizard specs pass except pre-existing failures (chat-ux 23/43 sidebar testids, wizard:10 `add-provider` — both reproduce on pristine tree via stash)

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { ChatComposer } from "@/app/components/ChatInput";
+import { ChatComposer, type ChatSendPayload } from "@/app/components/chat/ChatComposer";
 import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";
 import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
@@ -53,8 +53,9 @@ export default function Home() {
     }
   }, [allMessages.length, optimisticMessages]);
 
-  const send = useCallback((text: string, conversationId: string | null) => {
+  const send = useCallback((payload: ChatSendPayload, conversationId: string | null) => {
     if (!providerId || !modelId) return;
+    const text = payload.text;
 
     const ts = Date.now();
     const userMsgId = `opt-user-${ts}`;
@@ -82,7 +83,14 @@ export default function Home() {
     let convId = conversationId;
 
     void streamChat(
-      { provider_id: providerId, model_id: modelId, conversation_id: conversationId, message: text },
+      {
+        provider_id: providerId,
+        model_id: modelId,
+        conversation_id: conversationId,
+        message: text,
+        reasoning_level: payload.reasoningLevel,
+        attachments: payload.attachments,
+      },
       {
         signal: ctrl.signal,
         onMeta: (id) => {
@@ -173,7 +181,7 @@ export default function Home() {
                   isStreaming={isStreaming}
                   onRegenerate={
                     !isOpt && m.role === "assistant" && lastUser
-                      ? () => send(lastUser.content, activeConversationId)
+                      ? () => send({ text: lastUser.content, reasoningLevel: null, attachments: [] }, activeConversationId)
                       : undefined
                   }
                 />
@@ -189,7 +197,7 @@ export default function Home() {
               variant="ghost"
               size="sm"
               data-testid="regenerate-button"
-              onClick={() => send(lastUser.content, activeConversationId)}
+              onClick={() => send({ text: lastUser.content, reasoningLevel: null, attachments: [] }, activeConversationId)}
               disabled={!ready}
               className="gap-1.5 text-xs text-zinc-600 dark:text-zinc-400"
             >

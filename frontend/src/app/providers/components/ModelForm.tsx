@@ -39,6 +39,12 @@ export interface ModelFormState {
   release_date: string;
   repository_model_key: string;
   caps: Record<string, boolean>;
+  // Extended composer capabilities, stored in the model's metadata JSONB
+  // (no extra columns). reasoning_levels is comma-separated editor text.
+  meta: { supports_files: boolean; supports_video_input: boolean; reasoning_levels: string };
+  // Untouched metadata keys (repository_snapshot, repository_match, …) that
+  // must survive the full-replace PATCH on update.
+  existingMetadata: Record<string, unknown>;
 }
 
 export const EMPTY_MODEL_FORM: ModelFormState = {
@@ -55,7 +61,27 @@ export const EMPTY_MODEL_FORM: ModelFormState = {
   release_date: "",
   repository_model_key: "",
   caps: { supports_text: true, supports_streaming: true },
+  meta: { supports_files: false, supports_video_input: false, reasoning_levels: "" },
+  existingMetadata: {},
 };
+
+/** Read extended composer capabilities out of model/suggestion metadata. */
+export function metaFromRecord(source: unknown): ModelFormState["meta"] {
+  const md = (source as { metadata?: unknown } | null)?.metadata;
+  const m = (md && typeof md === "object" ? md : {}) as Record<string, unknown>;
+  const levels = Array.isArray(m.reasoning_levels)
+    ? m.reasoning_levels.filter((l): l is string => typeof l === "string")
+    : [];
+  return {
+    supports_files: m.supports_files === true,
+    supports_video_input: m.supports_video_input === true,
+    reasoning_levels: levels.join(", "),
+  };
+}
+
+function parseLevels(text: string): string[] {
+  return text.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 export function ModelForm({
   initial,
@@ -108,6 +134,7 @@ export function ModelForm({
         caps: Object.fromEntries(
           CAPS.map(([k]) => [k, !!(suggested as Record<string, unknown>)[k]]),
         ),
+        meta: metaFromRecord({ metadata: (suggested as Record<string, unknown>).metadata }),
       };
     });
       toast.success(`Imported ${entry.display_name ?? entry.model_key} from repository`);
@@ -248,8 +275,34 @@ export function ModelForm({
                 data-testid={`madd-cap-${key}`}
               />
             ))}
+            <Checkbox
+              label="files"
+              checked={form.meta.supports_files}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, meta: { ...f.meta, supports_files: e.target.checked } }))
+              }
+              data-testid="madd-cap-supports_files"
+            />
+            <Checkbox
+              label="video-in"
+              checked={form.meta.supports_video_input}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, meta: { ...f.meta, supports_video_input: e.target.checked } }))
+              }
+              data-testid="madd-cap-supports_video_input"
+            />
           </div>
         </fieldset>
+        <Field label="Reasoning levels (comma-separated, blank = low, medium, high)">
+          <Input
+            placeholder="low, medium, high"
+            value={form.meta.reasoning_levels}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, meta: { ...f.meta, reasoning_levels: e.target.value } }))
+            }
+            data-testid="madd-reasoning-levels"
+          />
+        </Field>
         <div className="flex gap-2 pt-2">
           <Button
             onClick={() => onSubmit(form)}
@@ -270,6 +323,7 @@ export function ModelForm({
 
 export function toPayload(providerId: string, f: ModelFormState): Record<string, unknown> {
   const caps = Object.fromEntries(CAPS.map(([k]) => [k, !!f.caps[k]]));
+  const levels = parseLevels(f.meta.reasoning_levels);
   return {
     provider_id: providerId,
     name: f.name.trim(),
@@ -285,6 +339,12 @@ export function toPayload(providerId: string, f: ModelFormState): Record<string,
     release_date: f.release_date || null,
     ...(f.repository_model_key ? { repository_model_key: f.repository_model_key } : {}),
     ...caps,
+    metadata: {
+      ...f.existingMetadata,
+      supports_files: f.meta.supports_files,
+      supports_video_input: f.meta.supports_video_input,
+      ...(levels.length > 0 ? { reasoning_levels: levels } : { reasoning_levels: undefined }),
+    },
   };
 }
 
@@ -304,6 +364,8 @@ export function fromModel(m: AIModel): ModelFormState {
     release_date: m.release_date ?? "",
     repository_model_key: m.repository_model_key ?? "",
     caps: Object.fromEntries(CAPS.map(([k]) => [k, (m as unknown as Record<string, boolean>)[k]])),
+    meta: metaFromRecord(m),
+    existingMetadata: { ...((m.metadata ?? {}) as Record<string, unknown>) },
   };
 }
 
@@ -339,5 +401,7 @@ export function fromSuggested(
     release_date: str(suggested.release_date),
     repository_model_key: repositoryModelKey,
     caps: Object.fromEntries(CAPS.map(([k]) => [k, !!suggested[k]])),
+    meta: metaFromRecord({ metadata: suggested.metadata }),
+    existingMetadata: { ...((suggested.metadata ?? {}) as Record<string, unknown>) },
   };
 }

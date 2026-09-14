@@ -75,3 +75,25 @@ def test_stream_emits_deltas_then_done(db: Session, provider_factory, model_fact
     }
     messages = list_messages(db, uuid.UUID(events[0]["conversation_id"]))
     assert len(messages) == 2
+
+
+def test_chat_request_accepts_composer_fields(db: Session, provider_factory, model_factory) -> None:
+    """Capability-aware composer payload: reasoning/attachments validate and send cleanly."""
+    p = provider_factory("Mock")
+    m = model_factory(p["id"])
+
+    req = ChatRequest(
+        provider_id=uuid.UUID(p["id"]),
+        model_id=uuid.UUID(m["id"]),
+        message="hi",
+        reasoning_level="high",
+        attachments=[{"name": "a.png", "size": 12, "mime": "image/png", "kind": "image"}],
+    )
+    assert req.reasoning_level == "high"
+    assert req.attachments[0]["kind"] == "image"
+
+    result = asyncio.run(run_chat(db, req, _transport()))
+    assert result.content == "Hello world"
+
+    # Old clients sending neither field still validate (backward compatible).
+    assert _request(p["id"], m["id"]).attachments == []

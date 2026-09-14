@@ -164,7 +164,14 @@ export interface StreamCallbacks {
 }
 
 export async function streamChat(
-  body: { provider_id: string; model_id: string; conversation_id?: string | null; message: string },
+  body: {
+    provider_id: string;
+    model_id: string;
+    conversation_id?: string | null;
+    message: string;
+    reasoning_level?: string | null;
+    attachments?: { name: string; size: number; mime: string; kind: string }[];
+  },
   cb: StreamCallbacks,
 ): Promise<void> {
   const token = getAccessToken();

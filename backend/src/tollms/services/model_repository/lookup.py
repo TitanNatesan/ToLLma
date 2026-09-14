@@ -181,6 +181,13 @@ def suggest_payload(entry: RepositoryModel) -> dict[str, Any]:
         "supports_tool_calling": entry.supports_tool_calling,
         "supports_reasoning": entry.supports_reasoning,
         "supports_streaming": entry.supports_streaming,
+        # Extended composer capabilities live in model metadata (no extra columns):
+        # video has a real upstream signal; files has none, so it defaults off
+        # and is user-editable per model.
+        "metadata": {
+            "supports_video_input": entry.supports_video_input,
+            "supports_files": False,
+        },
         "context_window": entry.context_window,
         "max_output_tokens": entry.max_output_tokens,
         "release_date": entry.release_date,

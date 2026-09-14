@@ -111,6 +111,11 @@ async def run_chat(
         history.append(ChatMessage(role="user", content=data.message))
         adapter = build_adapter(provider, model, decrypted_credentials(provider), transport)
         logger.info("gateway chat: provider=%s model=%s conv=%s", provider.provider_type, model.model_id, conv_id)
+        if data.reasoning_level or data.attachments:
+            logger.info(
+                "gateway chat composer: reasoning_level=%s attachments=%d (content not forwarded; adapters are text-only)",
+                data.reasoning_level, len(data.attachments),
+            )
         result = await adapter.chat(history)
         latency_ms = (time.monotonic() - start) * 1000
         tokens, total, breakdown, estimated = _finalize_usage(
@@ -173,6 +178,11 @@ async def run_stream(
     yield f"data: {json.dumps({'conversation_id': str(conv_id)})}\n\n"
     adapter = build_adapter(provider, model, decrypted_credentials(provider), transport)
     logger.info("gateway stream: provider=%s model=%s conv=%s", provider.provider_type, model.model_id, conv_id)
+    if data.reasoning_level or data.attachments:
+        logger.info(
+            "gateway stream composer: reasoning_level=%s attachments=%d (content not forwarded; adapters are text-only)",
+            data.reasoning_level, len(data.attachments),
+        )
     parts: list[str] = []
     result = ChatResult(text="")
     try:
