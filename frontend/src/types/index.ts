@@ -15,6 +15,7 @@ export interface User {
 
 export interface AuthResponse {
   user: User;
+  access_token?: string | null;
   debug_verification_token?: string | null;
 }
 

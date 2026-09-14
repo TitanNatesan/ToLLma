@@ -168,9 +168,11 @@ def test_refresh_rotates_access_token(client: TestClient) -> None:
     old_access = client.cookies.get("access_token")
     assert old_access
 
-    r = client.post("/auth/refresh", json={})
+    # Refresh works without body and returns access_token in json
+    r = client.post("/auth/refresh")
     assert r.status_code == 200, r.text
     assert r.cookies.get("access_token")
+    assert r.json().get("access_token")
     assert r.json()["user"]["email"] == "r@tollma.ai"
 
     anon = TestClient(client.app)

@@ -15,6 +15,7 @@ import type {
   User,
   ValidationResult,
 } from "@/types";
+import { getAccessToken, setStoredAccessToken, useAuthStore } from "@/store/auth";
 
 // Server components resolve BACKEND_URL (service name); client components
 // fall back to NEXT_PUBLIC_API_URL (host-mapped port for the browser).
@@ -44,6 +45,10 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
   if (init?.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  const token = getAccessToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
 
   const res = await fetch(`${apiBase()}${path}`, {
     cache: "no-store",
@@ -56,9 +61,18 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
     // Access token may have expired mid-session: one silent refresh, then retry.
     const refreshed = await fetch(`${apiBase()}/auth/refresh`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
       credentials: "include",
     }).catch(() => null);
-    if (refreshed?.ok) return req<T>(path, init, false);
+    if (refreshed?.ok) {
+      const data = await refreshed.json().catch(() => null);
+      if (data?.access_token) {
+        setStoredAccessToken(data.access_token);
+        useAuthStore.getState().setAccessToken(data.access_token);
+      }
+      return req<T>(path, init, false);
+    }
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -115,8 +129,6 @@ export const listModels = (params?: { provider_id?: string; search?: string; cap
 export const createModel = (body: Record<string, unknown>) => post<AIModel>("/api/v1/models", body);
 export const updateModel = (id: string, body: Record<string, unknown>) => patch<AIModel>(`/api/v1/models/${id}`, body);
 export const deleteModel = (id: string) => del<void>(`/api/v1/models/${id}`);
-export const bulkUpdateModels = (ids: string[], changes: Record<string, unknown>) =>
-  patch<{ updated: number }>("/api/v1/models/bulk", { ids, patch: changes });
 export const lookupRepositoryModel = (query: string, providerHint?: string) => {
   const q = new URLSearchParams({ query });
   if (providerHint) q.set("provider_hint", providerHint);
@@ -151,11 +163,17 @@ export async function streamChat(
   body: { provider_id: string; model_id: string; conversation_id?: string | null; message: string },
   cb: StreamCallbacks,
 ): Promise<void> {
+  const token = getAccessToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   let res: Response;
   try {
     res = await fetch(`${apiBase()}/api/v1/gateway/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: cb.signal,
       credentials: "include",
@@ -165,6 +183,36 @@ export async function streamChat(
     cb.onError(e instanceof Error ? e.message : "request failed");
     return;
   }
+
+  // Handle 401 session expiration mid-use with silent refresh and a single retry
+  if (res.status === 401) {
+    try {
+      const refreshed = await fetch(`${apiBase()}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        credentials: "include",
+      });
+      if (refreshed.ok) {
+        const data = await refreshed.json().catch(() => null);
+        if (data?.access_token) {
+          setStoredAccessToken(data.access_token);
+          useAuthStore.getState().setAccessToken(data.access_token);
+          headers["Authorization"] = `Bearer ${data.access_token}`;
+        }
+        res = await fetch(`${apiBase()}/api/v1/gateway/stream`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: cb.signal,
+          credentials: "include",
+        });
+      }
+    } catch {
+      // refresh failed; fall through to error handling
+    }
+  }
+
   if (!res.ok || !res.body) {
     cb.onError(`stream failed with ${res.status}`);
     return;
@@ -203,17 +251,29 @@ export async function streamChat(
 
 export type { ChatMessage };
 
-// --- auth (httpOnly cookies; never touch tokens in JS) ---
+// --- auth (dual mode: httpOnly session cookies + Bearer token fallback) ---
 
-export function signup(email: string, password: string, fullName?: string): Promise<AuthResponse> {
-  return post<AuthResponse>("/auth/signup", { email, password, full_name: fullName || null });
+export async function signup(email: string, password: string, fullName?: string): Promise<AuthResponse> {
+  const res = await post<AuthResponse>("/auth/signup", { email, password, full_name: fullName || null });
+  if (res.access_token) {
+    setStoredAccessToken(res.access_token);
+    useAuthStore.getState().setAccessToken(res.access_token);
+  }
+  return res;
 }
 
-export function login(email: string, password: string): Promise<AuthResponse> {
-  return post<AuthResponse>("/auth/login", { email, password });
+export async function login(email: string, password: string): Promise<AuthResponse> {
+  const res = await post<AuthResponse>("/auth/login", { email, password });
+  if (res.access_token) {
+    setStoredAccessToken(res.access_token);
+    useAuthStore.getState().setAccessToken(res.access_token);
+  }
+  return res;
 }
 
-export function logout(): Promise<{ status: string }> {
+export async function logout(): Promise<{ status: string }> {
+  setStoredAccessToken(null);
+  useAuthStore.getState().reset();
   return post<{ status: string }>("/auth/logout", {});
 }
 

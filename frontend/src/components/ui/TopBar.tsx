@@ -68,12 +68,12 @@ export function TopBar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => 
           className="flex items-center gap-2 group py-0.5"
           data-testid="app-logo"
         >
-          <img
-            src="/tollma.png"
-            alt="ToLLma"
-            className="h-7 w-auto object-contain transition-transform group-hover:scale-105 dark:drop-shadow-[0_1px_2px_rgba(255,255,255,0.25)]"
-          />
-          <span className="sr-only">ToLLma</span>
+          <div className="flex size-7 items-center justify-center rounded-lg bg-zinc-900 text-white font-black text-xs shadow-sm transition-transform group-hover:scale-105 dark:bg-zinc-100 dark:text-zinc-900">
+            T
+          </div>
+          <span className="font-bold text-sm tracking-tight text-zinc-900 dark:text-zinc-100">
+            ToLLma
+          </span>
         </Link>
 
         {/* View switcher tabs */}

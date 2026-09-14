@@ -154,8 +154,20 @@ export function Select({
   disabled,
   ...props
 }: SelectProps) {
+  const widthClasses = className
+    ?.split(/\s+/)
+    .filter((c) => /^(w-|max-w-|min-w-|flex-)/.test(c))
+    .join(" ");
+
   return (
-    <div className={cn("relative inline-flex w-full items-center", disabled && "opacity-50", wrapperClassName)}>
+    <div
+      className={cn(
+        "relative inline-flex items-center",
+        widthClasses || "w-full",
+        disabled && "opacity-50",
+        wrapperClassName,
+      )}
+    >
       <select
         disabled={disabled}
         className={cn(
@@ -164,7 +176,7 @@ export function Select({
           "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400/30 focus-visible:border-zinc-400 dark:focus-visible:ring-zinc-500/30",
           "disabled:cursor-not-allowed",
-          sizeVariant === "sm" ? "h-7.5 pl-2.5 pr-7 text-xs" : "h-9 pl-3 pr-8 text-sm",
+          sizeVariant === "sm" ? "h-8 pl-2.5 pr-7 text-xs" : "h-9 pl-3 pr-8 text-sm",
           "[&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-900 dark:[&>option]:text-zinc-100",
           className,
         )}

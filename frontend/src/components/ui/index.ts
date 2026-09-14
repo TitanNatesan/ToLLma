@@ -17,4 +17,5 @@ export * from "./CommandPalette";
 export * from "./ModelSelector";
 export * from "./ProviderSelector";
 export * from "./UserMenu";
+export * from "./Logo";
 export * from "./AppShell";

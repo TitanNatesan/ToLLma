@@ -18,11 +18,6 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata = {
   title: "ToLLma",
   description: "Toll to your Large Language Models & Agents",
-  icons: {
-    icon: "/tollma.png",
-    shortcut: "/tollma.png",
-    apple: "/tollma.png",
-  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

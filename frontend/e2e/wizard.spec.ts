@@ -41,15 +41,10 @@ test("wizard maps, edits, bulk-updates and registers with match stats", async ({
   await page.getByTestId("madd-save").click();
   await expect(page.getByTestId("wiz-model-mock-disc-a")).toContainText("Disc A Renamed");
 
-  // Bulk edit applies output price to both selected models.
-  await page.getByTestId("wiz-bulk-out").fill("5");
-  await page.getByTestId("wiz-bulk-apply").click();
-  await expect(page.getByTestId("wiz-model-mock-disc-b")).toContainText("out $5/1M");
-
-  // Summary shows match statistics, then registration persists everything.
+  // Summary shows registered models, then registration persists everything.
   await page.getByTestId("wiz-next").click();
   await expect(page.getByTestId("wizard-step-5")).toBeVisible();
-  await expect(page.getByTestId("wiz-summary-matches")).toContainText("Unknown models: 2");
+  await expect(page.getByTestId("wiz-finish-models-list")).toBeVisible();
   await page.getByTestId("wiz-register").click();
   await expect(page.getByTestId("provider-detail")).toContainText(name, { timeout: 15000 });
 

@@ -57,12 +57,14 @@ def _debug_token(token: str) -> str | None:
 async def signup(data: SignupRequest, response: Response, db: Session = Depends(get_db)) -> AuthResponse:
     user, verify_token = await service.signup(db, str(data.email), data.password, data.full_name)
     session_id = await security.create_session(user.id, user.email, "password")
-    _set_session_cookies(
-        response,
-        security.create_access_token(user.id, user.email, session_id),
-        security.create_refresh_token(user.id, session_id),
+    access = security.create_access_token(user.id, user.email, session_id)
+    refresh_tok = security.create_refresh_token(user.id, session_id)
+    _set_session_cookies(response, access, refresh_tok)
+    return AuthResponse(
+        user=service.read_user(user),
+        access_token=access,
+        debug_verification_token=_debug_token(verify_token),
     )
-    return AuthResponse(user=service.read_user(user), debug_verification_token=_debug_token(verify_token))
 
 
 @router.get("/verify", response_model=VerifyResponse)
@@ -75,7 +77,7 @@ async def verify(token: str = Query(...), db: Session = Depends(get_db)) -> Veri
 async def login(data: LoginRequest, response: Response, db: Session = Depends(get_db)) -> AuthResponse:
     user, access, refresh, _ = await service.login(db, str(data.email), data.password)
     _set_session_cookies(response, access, refresh)
-    return AuthResponse(user=service.read_user(user))
+    return AuthResponse(user=service.read_user(user), access_token=access)
 
 
 @router.get("/google/login")
@@ -95,9 +97,9 @@ async def google_callback(code: str = Query(...), state: str = Query(...),
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh(data: RefreshRequest, request: Request, response: Response,
+async def refresh(request: Request, response: Response, data: RefreshRequest | None = None,
                   db: Session = Depends(get_db)) -> RefreshResponse:
-    token = data.refresh_token or request.cookies.get(REFRESH_COOKIE)
+    token = (data.refresh_token if data else None) or request.cookies.get(REFRESH_COOKIE)
     if not token:
         from tollms.core.exceptions import AuthenticationError
 
@@ -105,7 +107,7 @@ async def refresh(data: RefreshRequest, request: Request, response: Response,
     user, access = await service.refresh(db, token)
     response.set_cookie(ACCESS_COOKIE, access,
                         max_age=get_settings().access_token_minutes * 60, **_cookie_flags())
-    return RefreshResponse(user=service.read_user(user))
+    return RefreshResponse(user=service.read_user(user), access_token=access)
 
 
 @router.post("/logout")

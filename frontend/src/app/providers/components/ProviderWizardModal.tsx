@@ -45,6 +45,7 @@ import {
   Layers,
   Loader2,
   Pencil,
+  Search,
   Sparkles,
   XCircle,
 } from "lucide-react";
@@ -367,9 +368,6 @@ export function ProviderWizardModal({
   const [capFilter, setCapFilter] = useState("ALL");
   const [priceFilter, setPriceFilter] = useState<"ALL" | "PRICED" | "FREE">("ALL");
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
-  const [bulkEndpoint, setBulkEndpoint] = useState("");
-  const [bulkIn, setBulkIn] = useState("");
-  const [bulkOut, setBulkOut] = useState("");
 
   // Auto-save draft progress (steps 1-2 carry the draft; nothing persisted server-side).
   useEffect(() => {
@@ -460,24 +458,6 @@ export function ProviderWizardModal({
     });
   }, [mapped, search, matchFilter, capFilter, priceFilter]);
 
-  const matchStats = useMemo(() => {
-    const stats: Record<MatchType, number> & { us: number } = {
-      provider_specific: 0,
-      global: 0,
-      fallback: 0,
-      us: 0,
-    };
-    for (const m of mapped ?? []) {
-      if (selected.has(m.model_id)) {
-        stats[m.match_type] += 1;
-        if (getModelScope(m.model_id, m.match_type, String(m.suggested?.name ?? "")).scope === "US") {
-          stats.us += 1;
-        }
-      }
-    }
-    return stats;
-  }, [mapped, selected]);
-
   const selectedModels = useMemo(() => {
     if (!mapped) return [];
     return mapped.filter((m) => selected.has(m.model_id));
@@ -490,25 +470,6 @@ export function ProviderWizardModal({
       else next.add(id);
       return next;
     });
-  }
-
-  function applyBulk() {
-    if (selected.size === 0) return;
-    setForms((prev) => {
-      const next = { ...prev };
-      for (const id of selected) {
-        const f = next[id];
-        if (!f) continue;
-        next[id] = {
-          ...f,
-          endpoint_type: (bulkEndpoint as ModelFormState["endpoint_type"]) || f.endpoint_type,
-          input_price: bulkIn !== "" ? bulkIn : f.input_price,
-          output_price: bulkOut !== "" ? bulkOut : f.output_price,
-        };
-      }
-      return next;
-    });
-    toast.success(`Bulk update applied to ${selected.size} models`);
   }
 
   async function runValidation() {
@@ -801,61 +762,91 @@ export function ProviderWizardModal({
                       </p>
                     ) : (
                       <>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Input
-                            placeholder="Search models…"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            data-testid="wiz-model-search"
-                            className="max-w-48 text-xs"
-                          />
-                          <Select value={matchFilter} onChange={(e) => setMatchFilter(e.target.value as typeof matchFilter)} data-testid="wiz-match-filter" className="max-w-40 text-xs">
-                            <option value="ALL">All matches</option>
-                            <option value="US">US specific</option>
-                            <option value="global">Global</option>
-                            <option value="EU">EU specific</option>
-                            <option value="APAC">APAC specific</option>
-                            <option value="provider_specific">Provider-specific</option>
-                            <option value="fallback">Unknown</option>
-                          </Select>
-                          <Select value={capFilter} onChange={(e) => setCapFilter(e.target.value)} data-testid="wiz-cap-filter" className="max-w-36 text-xs">
-                            <option value="ALL">All caps</option>
-                            {CAP_FILTERS.map(([k, label]) => (
-                              <option key={k} value={k}>{label}</option>
-                            ))}
-                          </Select>
-                          <Select value={priceFilter} onChange={(e) => setPriceFilter(e.target.value as typeof priceFilter)} data-testid="wiz-price-filter" className="max-w-32 text-xs">
-                            <option value="ALL">Any price</option>
-                            <option value="PRICED">Priced</option>
-                            <option value="FREE">Free</option>
-                          </Select>
-                          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(filtered.map((m) => m.model_id)))} data-testid="wiz-select-filtered" className="text-xs">
-                            Select filtered ({filtered.length})
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => setSelected((s) => { const n = new Set(s); for (const m of filtered) n.delete(m.model_id); return n; })} data-testid="wiz-deselect-filtered" className="text-xs">
-                            Deselect filtered
-                          </Button>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 p-2 dark:border-zinc-800" data-testid="wiz-bulk-bar">
-                            <span className="text-[11px] text-zinc-500">Bulk edit {selected.size} selected:</span>
-                            <Select value={bulkEndpoint} onChange={(e) => setBulkEndpoint(e.target.value)} data-testid="wiz-bulk-endpoint" className="max-w-40 text-xs">
-                              <option value="">Endpoint…</option>
-                              <option value="responses">responses</option>
-                              <option value="chat_completions">chat_completions</option>
-                              <option value="messages">messages</option>
-                              <option value="converse">converse</option>
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="relative flex-1 min-w-[150px]">
+                              <Search className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-zinc-400" />
+                              <Input
+                                placeholder="Search models…"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                data-testid="wiz-model-search"
+                                className="h-8 pl-8 text-xs w-full"
+                              />
+                            </div>
+                            <Select
+                              value={matchFilter}
+                              onChange={(e) => setMatchFilter(e.target.value as typeof matchFilter)}
+                              data-testid="wiz-match-filter"
+                              sizeVariant="sm"
+                              className="w-32 text-xs"
+                            >
+                              <option value="ALL">All matches</option>
+                              <option value="US">US specific</option>
+                              <option value="global">Global</option>
+                              <option value="EU">EU specific</option>
+                              <option value="APAC">APAC specific</option>
+                              <option value="provider_specific">Provider-specific</option>
+                              <option value="fallback">Unknown</option>
                             </Select>
-                            <Input value={bulkIn} onChange={(e) => setBulkIn(e.target.value)} placeholder="In $/1M" data-testid="wiz-bulk-in" className="max-w-28 text-xs" />
-                            <Input value={bulkOut} onChange={(e) => setBulkOut(e.target.value)} placeholder="Out $/1M" data-testid="wiz-bulk-out" className="max-w-28 text-xs" />
-                            <Button size="sm" variant="secondary" onClick={applyBulk} disabled={selected.size === 0} data-testid="wiz-bulk-apply" className="text-xs">
-                              Apply
-                            </Button>
-                        </div>
+                            <Select
+                              value={capFilter}
+                              onChange={(e) => setCapFilter(e.target.value)}
+                              data-testid="wiz-cap-filter"
+                              sizeVariant="sm"
+                              className="w-28 text-xs"
+                            >
+                              <option value="ALL">All caps</option>
+                              {CAP_FILTERS.map(([k, label]) => (
+                                <option key={k} value={k}>{label}</option>
+                              ))}
+                            </Select>
+                            <Select
+                              value={priceFilter}
+                              onChange={(e) => setPriceFilter(e.target.value as typeof priceFilter)}
+                              data-testid="wiz-price-filter"
+                              sizeVariant="sm"
+                              className="w-28 text-xs"
+                            >
+                              <option value="ALL">Any price</option>
+                              <option value="PRICED">Priced</option>
+                              <option value="FREE">Free</option>
+                            </Select>
+                          </div>
 
-                        <p className="text-xs text-zinc-500" data-testid="wiz-selection-count">
-                          {selected.size} of {mapped.length} models selected
-                        </p>
+                          <div className="flex items-center justify-between text-xs text-zinc-500 pt-0.5">
+                            <span data-testid="wiz-selection-count">
+                              {selected.size} of {mapped.length} models selected
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setSelected(new Set(filtered.map((m) => m.model_id)))}
+                                data-testid="wiz-select-filtered"
+                                className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                              >
+                                Select filtered ({filtered.length})
+                              </Button>
+                              <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setSelected((s) => {
+                                    const n = new Set(s);
+                                    for (const m of filtered) n.delete(m.model_id);
+                                    return n;
+                                  })
+                                }
+                                data-testid="wiz-deselect-filtered"
+                                className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                              >
+                                Deselect filtered
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
                         <div className="flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
                           {filtered.map((m) => {
                             const f = forms[m.model_id];
@@ -913,12 +904,6 @@ export function ProviderWizardModal({
                       <p className="font-semibold text-sm">{name || "(unnamed)"} <span className="font-normal text-zinc-500">· {type}</span></p>
                       <p className="mt-1 text-zinc-500">
                         Validation: {validation?.valid ? `valid (${validation.latency_ms.toFixed(0)}ms)` : "not validated"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800" data-testid="wiz-summary-models">
-                      <p className="font-semibold">{selected.size} models selected</p>
-                      <p className="mt-1 text-zinc-500" data-testid="wiz-summary-matches">
-                        Matched provider models: {matchStats.provider_specific} · Matched global models: {matchStats.global}{matchStats.us > 0 ? ` (${matchStats.us} US)` : ""} · Unknown models: {matchStats.fallback}
                       </p>
                     </div>
 

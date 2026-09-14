@@ -747,3 +747,64 @@ Verification:
 - `npx tsc --noEmit`: 0 errors.
 - `npm test`: 19/19 passed across 5 test suites.
 - `docker exec tollms-backend pytest`: 36/36 passed in 3.86s.
+
+---
+
+## 2026-09-14: UI Polish, Bulk Edit Removal, and Chat 401 Stream Failure Resolution
+
+### Requirements Completed:
+1. **Remove Image Logo & Restore Stylized Dummy Logo**:
+   - Removed all `tollma.png` references from the application (TopBar, CommandPalette, layout metadata).
+   - Created a reusable `Logo` component (`frontend/src/components/ui/Logo.tsx`) rendering the clean, modern stylized "T" square badge with "ToLLma" brand text and size variants (`sm`, `md`, `lg`).
+2. **3D Card Flipping Animation for Login & Signup**:
+   - Implemented `AuthCard.tsx` with Framer Motion 3D card flipping (`rotateY: 180`), `preserve-3d`, and `backface-hidden`.
+   - Polished dark UI with subtle ambient glow, responsive inputs with icon adornments (`Mail`, `Lock`, `User`, `Eye`/`EyeOff`), Google SSO button, and smooth switching between Login and Signup.
+   - Updated `/login` and `/signup` routes to render the unified interactive flipping card.
+3. **Aligned Model Filtering Dropdown UI**:
+   - Fixed `Select` primitive in `primitives.tsx` so wrapper container extracts width/flex classes properly instead of hardcoding `w-full`.
+   - Redesigned Step 4 filtering bar in `ProviderWizardModal.tsx` into a clean, horizontal toolbar with search icon input and matching `h-8` dropdowns (`All matches`, `All caps`, `Any price`).
+   - Grouped selection counters and quick actions (`Select filtered`, `Deselect filtered`) neatly above the models list.
+4. **Complete Removal of Bulk Edit (UI & Backend Logic)**:
+   - UI: Removed bulk edit toolbar, inputs, endpoints, and `applyBulk` function from `ProviderWizardModal.tsx`.
+   - Frontend API: Removed `bulkUpdateModels` from `services/api.ts`.
+   - Backend API: Removed `PATCH /api/v1/models/bulk` from `api/models/router.py`.
+   - Backend Service: Removed `bulk_update_models` from `api/models/service.py`.
+   - Tests: Removed `test_bulk_update` from `tests/test_wizard.py` and updated `e2e/wizard.spec.ts`.
+5. **Finish Section Model Count Summary Removal**:
+   - In Step 5 of `ProviderWizardModal.tsx`, removed the redundant summary card (`data-testid="wiz-summary-models"`: "N models selected · Matched provider models..."), leaving a clean review list of configured models.
+6. **Chat Page 401 Stream Failure Resolution**:
+   - Diagnosed root cause: `POST /auth/refresh` failed with 422 Unprocessable Entity because FastAPI required a body for `RefreshRequest`, while client `fetch('/auth/refresh')` sent no body. Consequently, expired access tokens could not be refreshed, causing `/api/v1/gateway/stream` to return 401.
+   - Updated `backend/src/tollms/api/auth/router.py` to allow `data: RefreshRequest | None = None` and return `access_token` in `AuthResponse` and `RefreshResponse`.
+   - Added dual token handling (Bearer authorization header + httpOnly cookie) in frontend auth store (`useAuthStore`) with localStorage fallback.
+   - Added 401 silent token refresh and automatic stream retry to `streamChat()` in `frontend/src/services/api.ts`.
+
+### Files Created:
+- `frontend/src/components/ui/Logo.tsx`
+- `frontend/src/components/auth/AuthCard.tsx`
+
+### Files Modified:
+- `backend/src/tollms/api/auth/router.py`
+- `backend/src/tollms/api/auth/schemas.py`
+- `backend/src/tollms/api/models/router.py`
+- `backend/src/tollms/api/models/service.py`
+- `backend/tests/test_auth.py`
+- `backend/tests/test_wizard.py`
+- `frontend/e2e/wizard.spec.ts`
+- `frontend/src/app/layout.tsx`
+- `frontend/src/app/login/page.tsx`
+- `frontend/src/app/signup/page.tsx`
+- `frontend/src/app/providers/components/ProviderWizardModal.tsx`
+- `frontend/src/components/ui/CommandPalette.tsx`
+- `frontend/src/components/ui/TopBar.tsx`
+- `frontend/src/components/ui/index.ts`
+- `frontend/src/components/ui/primitives.tsx`
+- `frontend/src/services/api.ts`
+- `frontend/src/store/auth.ts`
+- `frontend/src/types/index.ts`
+
+### Verification:
+- `next build`: Success (10/10 static pages compiled, 0 TypeScript errors).
+- `npm test`: 19/19 passed across 5 test suites.
+- `docker exec tollms-backend pytest tests/test_auth.py`: 11/11 passed.
+- `docker exec tollms-backend pytest tests/test_wizard.py`: 3/3 passed.
+- `docker exec tollms-backend pytest`: 61/61 passed in 373s.

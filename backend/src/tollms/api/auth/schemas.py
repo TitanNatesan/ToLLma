@@ -36,6 +36,7 @@ class UserRead(BaseModel):
 
 class AuthResponse(BaseModel):
     user: UserRead
+    access_token: str | None = None
     # Non-prod only: lets e2e/dev complete verification without an inbox.
     debug_verification_token: str | None = None
 
@@ -47,3 +48,4 @@ class VerifyResponse(BaseModel):
 
 class RefreshResponse(BaseModel):
     user: UserRead
+    access_token: str | None = None

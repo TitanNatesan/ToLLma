@@ -123,27 +123,3 @@ def delete_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = N
     model.is_active = False
     db.commit()
     logger.info("model soft-deleted: %s", model.id)
-
-
-def bulk_update_models(
-    db: Session, ids: list[uuid.UUID], data: ModelUpdate, user_id: uuid.UUID | None = None
-) -> int:
-    """Apply one patch to many models. Skips missing/deleted/unowned rows. Returns updated count."""
-    patch = {k: v for k, v in data.model_dump(exclude_unset=True).items() if k != "metadata"}
-    if "metadata" in data.model_dump(exclude_unset=True):
-        patch["metadata_"] = data.metadata
-    owned = _owned_provider_ids(db, user_id)
-    updated = 0
-    for model_id in ids:
-        model = db.get(AIModel, model_id)
-        if model is None or model.is_deleted:
-            continue
-        if owned is not None and model.provider_id not in owned:
-            continue
-        for field, value in patch.items():
-            if value is not None or field in ("description", "context_window", "max_output_tokens", "release_date"):
-                setattr(model, field, value)
-        updated += 1
-    db.commit()
-    logger.info("models bulk-updated: %s", updated)
-    return updated

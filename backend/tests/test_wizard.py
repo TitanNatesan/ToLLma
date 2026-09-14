@@ -1,4 +1,4 @@
-"""Provider registration wizard: draft-validate, mapping, register, bulk."""
+"""Provider registration wizard: draft-validate, mapping, register."""
 
 import asyncio
 import uuid
@@ -114,14 +114,3 @@ def test_register_is_atomic_with_match_stats(client: TestClient, db: Session, us
     r = client.post("/api/v1/providers/register", json={**payload, "models": []})
     assert r.status_code == 422
     assert len(client.get("/api/v1/providers").json()) == 1
-
-
-def test_bulk_update(client: TestClient, provider_factory, model_factory) -> None:
-    p = provider_factory("BulkProv")
-    a = model_factory(p["id"], model_id="a")
-    b = model_factory(p["id"], model_id="b")
-    r = client.patch("/api/v1/models/bulk", json={"ids": [a["id"], b["id"], str(uuid.uuid4())], "patch": {"input_price": "7", "supports_reasoning": True}})
-    assert r.status_code == 200 and r.json() == {"updated": 2}
-    for m in (a["id"], b["id"]):
-        got = client.get(f"/api/v1/models/{m}").json()
-        assert got["input_price"] == "7.000000" and got["supports_reasoning"] is True

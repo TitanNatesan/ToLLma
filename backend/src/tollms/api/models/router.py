@@ -68,13 +68,6 @@ def get(model_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends
     return _read(service.get_model(db, model_id, user.id))
 
 
-@router.patch("/bulk", response_model=dict)
-def bulk_update(data: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    """Apply one patch to many models. Body: {ids: [...], patch: {ModelUpdate fields}}."""
-    ids = [uuid.UUID(i) for i in data.get("ids", [])]
-    updated = service.bulk_update_models(db, ids, ModelUpdate(**data.get("patch", {})), user.id)
-    return {"updated": updated}
-
 
 @router.patch("/{model_id}", response_model=ModelRead)
 def update(model_id: uuid.UUID, data: ModelUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ModelRead:
