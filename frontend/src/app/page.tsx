@@ -8,11 +8,10 @@ import { ChatComposer, type ChatSendPayload } from "@/app/components/chat/ChatCo
 import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";
 import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
-import { Button } from "@/components/ui";
 import { useConversation, useConversationMutations } from "@/hooks/useChat";
 import { streamChat } from "@/services/api";
 import { useChatStore } from "@/store/chat";
-import { RotateCcw, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import type { ChatMessage } from "@/types";
 
 export default function Home() {
@@ -127,6 +126,7 @@ export default function Home() {
   ]);
 
   const lastUser = [...persistedMessages].reverse().find((m) => m.role === "user");
+  const lastAssistantId = [...persistedMessages].reverse().find((m) => m.role === "assistant")?.id;
   const ready = !!providerId && !!modelId;
 
   return (
@@ -139,13 +139,14 @@ export default function Home() {
         {/* Messages area */}
         <div
           ref={scrollRef}
-          className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-6"
+          className="flex flex-1 flex-col overflow-y-auto"
           data-testid="message-list"
           onScroll={(e) => {
             const el = e.currentTarget;
             stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
           }}
         >
+          <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-6">
           {allMessages.length === 0 && !streaming && (
             <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
               <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
@@ -182,7 +183,7 @@ export default function Home() {
                   message={m}
                   isStreaming={isStreaming}
                   onRegenerate={
-                    !isOpt && m.role === "assistant" && lastUser
+                    !isOpt && m.role === "assistant" && m.id === lastAssistantId && lastUser
                       ? () => send({ text: lastUser.content, reasoningLevel: null, attachments: [] }, activeConversationId)
                       : undefined
                   }
@@ -190,31 +191,17 @@ export default function Home() {
               );
             })}
           </AnimatePresence>
+          </div>
         </div>
 
-        {/* Regenerate button (persisted messages only) */}
-        {persistedMessages.length > 0 && !streaming && lastUser && (
-          <div className="flex gap-2 px-4 pb-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              data-testid="regenerate-button"
-              onClick={() => send({ text: lastUser.content, reasoningLevel: null, attachments: [] }, activeConversationId)}
-              disabled={!ready}
-              className="gap-1.5 text-xs text-zinc-600 dark:text-zinc-400"
-            >
-              <RotateCcw className="size-3.5" />
-              Regenerate
-            </Button>
-          </div>
-        )}
-
         {/* Composer */}
+        <div className="mx-auto w-full max-w-[1200px] px-4">
         <ChatComposer
           streaming={streaming}
           onSend={(t) => send(t, activeConversationId)}
           onStop={() => abortRef.current?.abort()}
         />
+        </div>
       </main>
 
       {/* Right Intelligence Panel */}

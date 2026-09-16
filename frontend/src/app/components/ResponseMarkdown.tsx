@@ -406,44 +406,44 @@ function EnhancedThinkBlock({
   };
 
   return (
-    <div className="my-2.5 overflow-hidden rounded-xl border border-amber-200/80 bg-amber-50/50 dark:border-amber-900/40 dark:bg-amber-950/20 shadow-2xs">
-      <div
-        className="flex w-full cursor-pointer items-center justify-between px-3.5 py-2 text-xs font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-100/40 dark:hover:bg-amber-900/20 transition-colors select-none"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <div className="flex items-center gap-2">
-          <div
-            className={cn(
-              "flex size-5 items-center justify-center rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400",
-              isStreaming && "animate-pulse",
-            )}
-          >
-            <Brain className="size-3.5" />
-          </div>
-          <span className="font-semibold tracking-tight">Thinking Process</span>
-          <span className="text-[10px] text-amber-600/70 dark:text-amber-400/70 font-mono">
-            · {words} {words === 1 ? "word" : "words"}
-            {isStreaming ? " · thinking…" : ""}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="rounded p-1 text-amber-600 hover:bg-amber-200/50 dark:text-amber-400 dark:hover:bg-amber-900/40 transition-colors"
-            title="Copy thought process"
-          >
-            {copied ? (
-              <Check className="size-3 text-tollma-600 dark:text-tollma-400" />
-            ) : (
-              <Copy className="size-3" />
-            )}
-          </button>
-          <span className="flex items-center gap-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
-            {open ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-          </span>
-        </div>
+    <div className="my-1.5" data-testid="thinking-block">
+      {/* Collapsed: compact pill — secondary to the final answer */}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className={cn(
+            "inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50/80 py-0 pl-2 pr-1.5 text-xs text-zinc-500 transition-colors",
+            "hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-700",
+            "dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200",
+          )}
+        >
+          <Brain className={cn("size-3 shrink-0 text-amber-500", isStreaming && "animate-pulse")} />
+          <span className="font-medium">Thinking</span>
+          {words > 0 && (
+            <span className="truncate font-mono text-[10px] text-zinc-400">
+              · {words} {words === 1 ? "word" : "words"}
+              {isStreaming ? " · thinking…" : ""}
+            </span>
+          )}
+          {open ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
+        </button>
+        <button
+          type="button"
+          onClick={handleCopy}
+          title="Copy thought process"
+          aria-label="Copy thought process"
+          className="flex size-6 items-center justify-center rounded-full text-zinc-400 opacity-0 transition-all hover:bg-zinc-100 hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+        >
+          {copied ? (
+            <Check className="size-3 text-tollma-600 dark:text-tollma-400" />
+          ) : (
+            <Copy className="size-3" />
+          )}
+        </button>
       </div>
+      {/* Expanded: clean panel, subtle accent glow */}
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
@@ -451,9 +451,9 @@ function EnhancedThinkBlock({
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="border-t border-amber-200/60 dark:border-amber-900/40"
+            className="overflow-hidden"
           >
-            <div className="prose text-xs text-amber-900/90 dark:text-amber-200/90 p-3.5 leading-relaxed bg-amber-50/30 dark:bg-amber-950/10">
+            <div className="mt-1.5 rounded-lg border border-amber-200/60 bg-amber-50/40 px-2.5 py-2 text-xs leading-relaxed text-amber-900/90 shadow-[0_0_16px_-6px_rgba(217,119,6,0.35)] dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-200/90 dark:shadow-[0_0_16px_-6px_rgba(217,119,6,0.25)]">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {content}
               </ReactMarkdown>

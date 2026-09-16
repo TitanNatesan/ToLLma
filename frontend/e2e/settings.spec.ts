@@ -16,19 +16,17 @@ test("change provider and model in chat settings", async ({ page, request }) => 
   const mb = await apiCreateModel(page.request, b.id, `pw-smodel-b-${stamp}`);
 
   await page.goto("/");
-  // The intelligence panel is now the right sidebar (data-testid="right-sidebar")
-  const panel = page.getByTestId("right-sidebar");
   await selectProviderModel(page, a.id, ma.id);
 
-  // Intelligence panel shows the selected model's details (model name visible).
-  await expect(panel.getByTestId("model-details-name")).toContainText(`pw-smodel-a-${stamp}`, { timeout: 10000 });
+  // Composer selector shows the selected model (panel Model card was removed).
+  await expect(page.getByTestId("model-selector")).toContainText(`pw-smodel-a-${stamp}`, { timeout: 10000 });
   await sendMessage(page, `route a ${stamp}`);
   await expect(page.getByTestId("message-assistant").last()).toContainText("Hello from mock", { timeout: 20000 });
 
   // Switch pair mid-session: new chat routes to B.
   await page.getByTestId("new-chat").click();
   await selectProviderModel(page, b.id, mb.id);
-  await expect(panel.getByTestId("model-details-name")).toContainText(`pw-smodel-b-${stamp}`, { timeout: 10000 });
+  await expect(page.getByTestId("model-selector")).toContainText(`pw-smodel-b-${stamp}`, { timeout: 10000 });
   await sendMessage(page, `route b ${stamp}`);
   await expect(page.getByTestId("message-assistant").last()).toContainText("Hello from mock", { timeout: 20000 });
 

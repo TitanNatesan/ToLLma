@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { motion } from "framer-motion";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useConversation, useUsage } from "@/hooks/useChat";
 import { useChatStore } from "@/store/chat";
 import { Badge, Button, Tooltip } from "@/components/ui";
 import {
-  Bot,
   Brain,
   Cpu,
   Layers,
@@ -31,7 +30,7 @@ function Section({
   children,
 }: {
   title: string;
-  icon?: typeof Bot;
+  icon?: ComponentType<{ className?: string }>;
   badge?: React.ReactNode;
   testid?: string;
   children: React.ReactNode;
@@ -172,33 +171,8 @@ export function IntelligencePanel() {
             </div>
           </div>
 
-          {/* Scrollable Content */}
+          {/* Scrollable Content — starts with Current Conversation */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {/* Model card — kept at top, single source of model identity */}
-            {model ? (
-              <Section title="Model" icon={Bot} testid="intelligence-model">
-                <div className="flex flex-col gap-1">
-                  <p
-                    className="truncate text-xs font-bold text-zinc-900 dark:text-zinc-100"
-                    data-testid="model-details-name"
-                  >
-                    {model.name}
-                  </p>
-                  <p className="text-[10px] text-zinc-400 font-mono truncate">
-                    {model.model_id}
-                  </p>
-                  {provider && (
-                    <StatRow label="Provider" value={provider.name} />
-                  )}
-                  <StatRow label="Endpoint" value={model.endpoint_type} mono />
-                </div>
-              </Section>
-            ) : (
-              <Section title="Model" icon={Bot} testid="intelligence-model">
-                <p className="text-xs text-zinc-400 py-2">No model selected</p>
-              </Section>
-            )}
-
             {/* 1. Current Conversation — top priority */}
             <Section title="Current Conversation" icon={Workflow} testid="intelligence-conversation">
               <div className="flex flex-col gap-1" data-testid="usage-summary">

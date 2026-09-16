@@ -65,26 +65,29 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
 
 function ThinkBlock({ content }: { content: string }) {
   const [open, setOpen] = useState(false);
+  const words = content.trim().split(/\s+/).filter(Boolean).length;
   return (
-    <div className="my-2 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20">
+    <div className="my-1.5" data-testid="thinking-block">
       <button
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-amber-700 dark:text-amber-400"
+        type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50/80 py-0 pl-2 pr-1.5 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
       >
-        <Brain className="size-3.5 text-amber-600 dark:text-amber-400" />
-        <span>Reasoning</span>
-        <span className="ml-auto flex items-center gap-1 text-[10px] text-amber-500">
-          {open ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-          <span>{open ? "hide" : "show"}</span>
-        </span>
+        <Brain className="size-3 shrink-0 text-amber-500" />
+        <span className="font-medium">Thinking</span>
+        {words > 0 && (
+          <span className="truncate font-mono text-[10px] text-zinc-400">
+            · {words} {words === 1 ? "word" : "words"}
+          </span>
+        )}
+        {open ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
       </button>
       {open && (
-        <div className="border-t border-amber-200 px-3 py-2 dark:border-amber-900/50">
-          <div className="prose text-xs text-amber-800 dark:text-amber-300">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {content}
-            </ReactMarkdown>
-          </div>
+        <div className="mt-1.5 rounded-lg border border-amber-200/60 bg-amber-50/40 px-2.5 py-2 text-xs leading-relaxed text-amber-900/90 shadow-[0_0_16px_-6px_rgba(217,119,6,0.35)] dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-200/90 dark:shadow-[0_0_16px_-6px_rgba(217,119,6,0.25)]">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {content}
+          </ReactMarkdown>
         </div>
       )}
     </div>
@@ -258,7 +261,12 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
       </div>
 
       {/* Bubble */}
-      <div className={cn("flex min-w-0 max-w-[85%] flex-col gap-1", isUser && "items-end")}>
+      <div
+        className={cn(
+          "flex min-w-0 flex-col gap-1",
+          isUser ? "max-w-[70%] items-end max-sm:max-w-[85%]" : "max-w-[75%] max-sm:max-w-[92%]",
+        )}
+      >
         {/* Header */}
         <div className={cn("flex items-center gap-2 text-[10px] text-zinc-400", isUser && "flex-row-reverse")}>
           <span className="font-semibold uppercase tracking-wide">

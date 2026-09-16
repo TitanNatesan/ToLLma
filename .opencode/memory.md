@@ -1095,3 +1095,22 @@ Composer stripped to message-creation controls only (model selector, thinking sl
 - `tsc` clean; `eslint` clean on touched files (2 pre-existing errors in provider wizard files)
 - `vitest` 41/41; `next build` passes; e2e chat-ux+navigation 22 passed (2 pin skips, no convos)
 - Screenshots `/tmp/shot-chat-final.png`, `/tmp/shot-intelligence-final.png` reviewed
+
+## 2026-09-17 — Chat UI polish pass (frontend-only)
+
+### Requirement Completed
+Regenerate row removed (last-assistant-message action only); Grok-style thinking pill; 300ms reasoning-slider close delay; Model card removed from intelligence panel; centered 1200px conversation container with tighter spacing and narrower bubbles. No backend/API/auth changes.
+
+### Files Modified
+- `frontend/src/app/page.tsx` (deleted standalone regenerate row; `onRegenerate` only for last persisted assistant message; centered `max-w-[1200px]` message container `gap-4→gap-3`; composer wrapped in same container)
+- `frontend/src/app/components/ResponseMarkdown.tsx` (`EnhancedThinkBlock` → compact pill + copy-on-hover + low-padding glowing panel)
+- `frontend/src/app/components/MessageView.tsx` (legacy `ThinkBlock` aligned to pill style; user bubble `max-w-[70%]`, assistant `max-w-[75%]`, responsive fallbacks)
+- `frontend/src/app/components/chat/ReasoningSelector.tsx` (JS-driven open state, instant expand, 300ms close delay, `reasoning-scale` testid)
+- `frontend/src/app/components/ChatSettingsPanel.tsx` (Model card deleted; panel starts at Current Conversation)
+- `frontend/e2e/settings.spec.ts` (assert selected model via composer selector, not removed card)
+- `frontend/tests/chat-ux.spec.ts` (setup-hint empty state; first-card-is-conversation assertion)
+
+### Verification
+- `tsc`/`eslint` clean on touched files; `vitest` 41/41; `next build` passes
+- e2e chat-ux+navigation+settings+chat+intelligence: 27 passed (2 pre-existing pin skips)
+- Zero horizontal overflow at 1920/2560/1440/1366; dark-theme screenshots `/tmp/polish-1920.png`, `/tmp/polish-1366.png`, `/tmp/polish-thinking-collapsed.png`, `/tmp/polish-thinking-expanded.png`

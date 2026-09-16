@@ -1,13 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/** How long the scale stays open after the cursor leaves (ms). */
+export const REASONING_CLOSE_DELAY_MS = 300;
+
 /** Slider generated from the model's reasoning_levels — never hardcoded.
  *  Compact indicator by default; full scale reveals on hover / focus /
- *  drag like a volume control. Hidden entirely when the model has no
- *  levels (caller also gates on supports_reasoning). */
+ *  drag like a volume control. Expand is instant, collapse waits
+ *  REASONING_CLOSE_DELAY_MS so accidental cursor slips don't close it.
+ *  Hidden entirely when the model has no levels (caller also gates on
+ *  supports_reasoning). */
 export function ReasoningSelector({
   levels,
   value,
@@ -18,16 +23,44 @@ export function ReasoningSelector({
   onChange: (level: string) => void;
 }) {
   const [dragging, setDragging] = useState(false);
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const t = closeTimer.current;
+    return () => {
+      if (t) clearTimeout(t);
+    };
+  }, []);
+
+  function handleEnter() {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    setOpen(true);
+  }
+
+  function handleLeave() {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setOpen(false), REASONING_CLOSE_DELAY_MS);
+  }
+
   if (levels.length === 0) return null;
   const index = Math.max(0, levels.indexOf(value ?? levels[0]));
   const current = levels[index];
+  const expanded = open || dragging;
 
   return (
     <div
-      className="group relative flex items-center"
+      className="relative flex items-center"
       data-testid="reasoning-selector"
       role="group"
       aria-label="Thinking level"
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+      onFocus={handleEnter}
+      onBlur={handleLeave}
     >
       {/* Compact indicator — the only thing visible at rest */}
       <span
@@ -38,16 +71,17 @@ export function ReasoningSelector({
         <span className="font-medium capitalize">{current}</span>
       </span>
 
-      {/* Expanded scale — hover / keyboard focus / drag only */}
+      {/* Expanded scale — hover / keyboard focus / drag, with close delay */}
       {levels.length > 1 && (
         <div
+          data-testid="reasoning-scale"
           className={cn(
             "absolute bottom-full left-0 z-20 mb-2 w-56 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg",
             "dark:border-zinc-700 dark:bg-zinc-900",
-            "pointer-events-none translate-y-1 opacity-0 transition-all duration-150",
-            "group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100",
-            "group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100",
-            dragging && "pointer-events-auto translate-y-0 opacity-100",
+            "transition-all duration-150",
+            expanded
+              ? "pointer-events-auto translate-y-0 opacity-100"
+              : "pointer-events-none translate-y-1 opacity-0",
           )}
         >
           <div className="mb-2 flex items-center justify-between">
