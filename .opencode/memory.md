@@ -1032,3 +1032,42 @@ Attachments are first-class entities: upload stores bytes + DB row, gateway forw
 
 ### Verification
 - `pytest` 80/80 (62 + 18 new); `alembic check` clean; `tsc` clean; `vitest` 34/34; `next build` clean; e2e chat+history 3/3.
+
+## 2026-09-14 — Navigation Refactor (ChatGPT-Style Sidebar Layout)
+
+### Requirement Completed
+Removed the top navigation bar entirely; all app navigation now lives in a context-aware left sidebar with a sticky profile footer. Chat (`/`) is home with no Chat nav button. New `components/Sidebar/` module (9 files) renders per-route context via `usePathname()`: conversations on `/`, provider tools on `/providers`, report shortcuts on `/analytics`, settings sections on `/settings`. Added minimal `/analytics` + `/settings` landing pages (anchored sections, working theme toggle). Profile shows avatar/name/email with settings + logout (`logout()` + `reset()` + push `/`). Command palette (Ctrl+K) and theme toggle moved into the sidebar header. Mobile behavior unchanged (collapsible sidebar, no drawer existed).
+
+### Files Created
+- `frontend/src/components/Sidebar/`: `Sidebar.tsx`, `SidebarHeader.tsx`, `SidebarNavigation.tsx`, `SidebarConversations.tsx`, `SidebarProviders.tsx`, `SidebarAnalytics.tsx`, `SidebarSettings.tsx`, `SidebarProfile.tsx`, `SidebarFooter.tsx`
+- `frontend/src/app/analytics/page.tsx`, `frontend/src/app/settings/page.tsx`
+- `frontend/e2e/navigation.spec.ts` (topbar absence, per-route context, profile, logo-home)
+
+### Files Modified
+- `frontend/src/components/ui/AppShell.tsx` (row layout, no TopBar, palette trigger to Sidebar)
+- `frontend/src/components/ui/Sidebar.tsx` (re-export shim), `frontend/src/components/ui/index.ts` (drop TopBar/UserMenu)
+- `frontend/tests/chat-ux.spec.ts` (scope duplicate toggle testids instead of relying on strict-mode singles)
+
+### Files Removed
+- `frontend/src/components/ui/TopBar.tsx`, `frontend/src/components/ui/UserMenu.tsx` (logic moved: nav->SidebarNavigation, theme->SidebarHeader, session->SidebarProfile; `user-avatar`/`logout-btn`/`theme-toggle-btn` testids preserved)
+
+### Verification
+- `tsc` clean, `eslint` clean on touched files, `vitest` 34/34, `next build` clean (incl. new routes)
+- e2e: 39 passed incl. new navigation spec; auth/chat/manage/history green; screenshots of all 4 pages reviewed
+- Pre-existing failure (unchanged, unrelated): `e2e/wizard.spec.ts:10` (`wiz-match-mock-disc-a` scope badge — mapping/scope heuristics + backend data, dialog itself opens fine through new sidebar)
+- Fixed pre-existing strict-mode collisions in `chat-ux` toggle tests (duplicate `left/right-sidebar-toggle` testids existed identically on HEAD — proven via `git show HEAD`)
+- No backend/docker/database/api files touched (verified via `git status`)
+
+## 2026-09-14 — Sidebar nav hidden behind profile gear toggle
+
+### Requirement Completed
+Navigation links (Providers/Analytics/Settings) are invisible by default and reveal only when the profile footer gear icon is clicked; clicking again (or navigating) hides them. Gear keeps its `profile-settings-btn` testid, gains active styling + `aria-expanded`, and no longer routes to `/settings` (reached via the revealed Settings link instead).
+
+### Files Modified
+- `frontend/src/components/Sidebar/Sidebar.tsx` (route-keyed `navPath` state: open only on the route it was toggled; no ref/effect, lint-clean)
+- `frontend/src/components/Sidebar/SidebarNavigation.tsx` (`open` prop gates render)
+- `frontend/src/components/Sidebar/SidebarProfile.tsx` (gear becomes toggle button), `SidebarFooter.tsx` (passes state through)
+- `frontend/e2e/navigation.spec.ts` (hidden-by-default, toggle open/close, per-route flow via gear)
+
+### Verification
+- `tsc`/`eslint` clean; navigation e2e green; auth/chat/chat-ux regressions green (24 passed); screenshots of both toggle states reviewed.

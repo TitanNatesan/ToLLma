@@ -23,18 +23,17 @@ test.describe("Three-panel layout", () => {
   test("left sidebar collapse toggle works", async ({ page }) => {
     await goto(page);
     const sidebar = page.getByTestId("left-sidebar");
-    const toggle = page.getByTestId("left-sidebar-toggle");
 
     // Should be open by default
     await expect(sidebar).toBeVisible();
-    await toggle.click();
+    await sidebar.getByTestId("left-sidebar-toggle").click();
     // Width animates to 0 – sidebar box still exists but has width ~0
     await page.waitForTimeout(400); // animation
     const box = await sidebar.boundingBox();
     expect(box?.width ?? 0).toBeLessThan(10);
 
-    // Reopen
-    await toggle.click();
+    // Reopen via the chat header affordance
+    await page.getByRole("button", { name: "Open sidebar" }).click();
     await page.waitForTimeout(400);
     const boxOpen = await sidebar.boundingBox();
     expect(boxOpen?.width ?? 0).toBeGreaterThan(100);
@@ -43,15 +42,15 @@ test.describe("Three-panel layout", () => {
   test("right panel collapse toggle works", async ({ page }) => {
     await goto(page);
     const panel = page.getByTestId("right-sidebar");
-    const toggle = page.getByTestId("right-sidebar-toggle");
 
     await expect(panel).toBeVisible();
-    await toggle.click();
+    await panel.getByTestId("right-sidebar-toggle").click();
     await page.waitForTimeout(400);
     const box = await panel.boundingBox();
     expect(box?.width ?? 0).toBeLessThan(10);
 
-    await toggle.click();
+    // Reopen via the chat header affordance
+    await page.getByRole("button", { name: "Show intelligence panel" }).click();
     await page.waitForTimeout(400);
     const boxOpen = await panel.boundingBox();
     expect(boxOpen?.width ?? 0).toBeGreaterThan(100);
