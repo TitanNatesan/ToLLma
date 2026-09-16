@@ -1,43 +1,44 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useChatStore } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import {
   Button,
-  Badge,
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { uploadChatAttachment } from "@/services/api";
 import type { AIModel, Provider } from "@/types";
 
-import type { ComponentType } from "react";
 import {
   Bot,
-  Brain,
   ChevronDown,
   CornerDownLeft,
   Cpu,
-  Eye,
-  Image as ImageIcon,
-  Mic,
   Search,
   Square,
-  Wrench,
-  Zap,
+  X,
 } from "lucide-react";
-import { ModelCapabilityBar } from "./ModelCapabilityBar";
 import { AttachmentPicker } from "./AttachmentPicker";
 import { UploadPreview } from "./UploadPreview";
 import { ReasoningSelector } from "./ReasoningSelector";
 import { useModelCapabilities } from "./hooks/useModelCapabilities";
 import {
+  MAX_ATTACHMENTS,
+  MAX_ATTACHMENT_BYTES,
+  combinedAccept,
   defaultReasoningLevel,
   describeAttachment,
+  kindForFile,
+  suggestModels,
+  unsupportedMessage,
   uploadKinds,
+  type AttachmentKind,
   type ChatSendPayload,
   type ComposerAttachment,
 } from "./capabilities";
@@ -51,15 +52,6 @@ interface ChatComposerProps {
   onStop: () => void;
 }
 
-const CAP_ICONS: Record<string, { icon: ComponentType<{ className?: string }>; label: string }> = {
-  supports_vision: { icon: Eye, label: "Vision" },
-  supports_reasoning: { icon: Brain, label: "Reasoning" },
-  supports_tool_calling: { icon: Wrench, label: "Tool calling" },
-  supports_streaming: { icon: Zap, label: "Streaming" },
-  supports_audio_input: { icon: Mic, label: "Audio input" },
-  supports_image_generation: { icon: ImageIcon, label: "Image generation" },
-};
-
 function UnifiedModelSelector({
   providers,
   models,
@@ -72,12 +64,6 @@ function UnifiedModelSelector({
 
   const activeProvider = providers.find((p) => p.id === providerId);
   const activeModel = models.find((m) => m.id === modelId);
-
-  const caps = activeModel
-    ? Object.entries(CAP_ICONS)
-        .filter(([k]) => (activeModel as unknown as Record<string, boolean>)[k])
-        .map(([, item]) => item)
-    : [];
 
   const q = search.trim().toLowerCase();
 
@@ -122,13 +108,6 @@ function UnifiedModelSelector({
               {activeProvider.name}
             </span>
           )}
-          {caps.length > 0 && (
-            <span className="hidden items-center gap-1 md:flex">
-              {caps.slice(0, 3).map(({ icon: Icon, label }) => (
-                <Icon key={label} className="size-2.5 text-zinc-400" />
-              ))}
-            </span>
-          )}
           <ChevronDown className="size-3 text-zinc-400" />
         </button>
       </DropdownMenuTrigger>
@@ -159,24 +138,15 @@ function UnifiedModelSelector({
             groups.map(({ provider, models: pModels }) => (
               <div key={provider.id} className="mb-2 last:mb-0">
                 {/* Provider group header */}
-                <div className="sticky top-0 z-10 flex items-center justify-between rounded bg-zinc-100/95 px-2 py-1 text-[11px] font-semibold text-zinc-600 backdrop-blur-sm dark:bg-zinc-900/95 dark:text-zinc-400">
-                  <span className="flex items-center gap-1.5 truncate">
-                    <Cpu className="size-3 text-zinc-400" />
-                    <span className="truncate">{provider.name}</span>
-                  </span>
-                  <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 font-normal">
-                    {provider.provider_type}
-                  </Badge>
+                <div className="sticky top-0 z-10 flex items-center gap-1.5 rounded bg-zinc-100/95 px-2 py-1 text-[11px] font-semibold text-zinc-600 backdrop-blur-sm dark:bg-zinc-900/95 dark:text-zinc-400">
+                  <Cpu className="size-3 text-zinc-400" />
+                  <span className="truncate">{provider.name}</span>
                 </div>
 
                 {/* Models in provider */}
                 <div className="mt-0.5 space-y-0.5">
                   {pModels.map((m) => {
                     const isSelected = modelId === m.id;
-                    const mCaps = Object.entries(CAP_ICONS)
-                      .filter(([k]) => (m as unknown as Record<string, boolean>)[k])
-                      .map(([, item]) => item);
-
                     return (
                       <DropdownMenuItem
                         key={m.id}
@@ -186,24 +156,13 @@ function UnifiedModelSelector({
                         }}
                         data-testid={`model-option-${m.id}`}
                         className={cn(
-                          "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-xs transition-colors",
+                          "flex cursor-pointer items-center rounded px-2 py-1.5 text-xs transition-colors",
                           isSelected
                             ? "bg-tollma-100 font-medium text-tollma-900 dark:bg-tollma-900 dark:text-tollma-100"
                             : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                         )}
                       >
-                        <div className="flex flex-1 flex-col gap-0.5 overflow-hidden pr-2">
-                          <span className="truncate">{m.name}</span>
-                          <span className="text-[10px] text-zinc-400">
-                            {m.context_window ? `ctx ${m.context_window.toLocaleString()}` : ""}
-                            {m.input_price !== "0.000000" ? ` · $${m.input_price}/1M in` : ""}
-                          </span>
-                        </div>
-                        <span className="flex shrink-0 items-center gap-1">
-                          {mCaps.slice(0, 3).map(({ icon: Icon, label }) => (
-                            <Icon key={label} className="size-3 text-zinc-400" />
-                          ))}
-                        </span>
+                        <span className="flex-1 truncate">{m.name}</span>
                       </DropdownMenuItem>
                     );
                   })}
@@ -217,15 +176,30 @@ function UnifiedModelSelector({
   );
 }
 
+interface Rejection {
+  message: string;
+  kind: AttachmentKind | null;
+  suggestions: AIModel[];
+}
+
 export function ChatComposer({ streaming, disabled = false, onSend, onStop }: ChatComposerProps) {
-  const { providerId, modelId, draft, setDraft, activeConversationId } = useChatStore();
+  const {
+    providerId,
+    modelId,
+    draft,
+    setDraft,
+    setProvider,
+    setModel,
+    activeConversationId,
+  } = useChatStore();
   const { data: providers = [] } = useProviders();
   const { data: models = [] } = useModels();
-  const { model: activeModel, caps } = useModelCapabilities(models, modelId);
+  const { caps } = useModelCapabilities(models, modelId);
   const kinds = uploadKinds(caps);
 
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [reasoningLevel, setReasoningLevel] = useState<string | null>(null);
+  const [rejection, setRejection] = useState<Rejection | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
@@ -237,6 +211,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     if (prevModelId.current === modelId) return;
     prevModelId.current = modelId;
     setReasoningLevel(defaultReasoningLevel(caps));
+    setRejection(null);
     setAttachments((prev) => {
       const kept = prev.filter((a) => kinds.includes(a.kind));
       for (const dropped of prev.filter((a) => !kinds.includes(a.kind))) {
@@ -283,6 +258,64 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     });
   }
 
+  function reject(kind: AttachmentKind | null, fileName: string) {
+    const message = unsupportedMessage(kind, fileName);
+    const suggestions = suggestModels(models, kind, modelId);
+    setRejection({ message, kind, suggestions });
+    toast.error(message);
+  }
+
+  /** Single pipeline for picker, drag-drop, and clipboard files. */
+  async function handleIncomingFiles(list: FileList | File[]) {
+    const files = Array.from(list);
+    if (files.length === 0) return;
+    setRejection(null);
+    const staged: ComposerAttachment[] = [];
+    for (const file of files) {
+      if (attachments.length + staged.length >= MAX_ATTACHMENTS) {
+        toast.error(`Maximum ${MAX_ATTACHMENTS} attachments`);
+        break;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        toast.error(`${file.name} exceeds 25 MB`);
+        continue;
+      }
+      const kind = kindForFile(file);
+      if (!kind || !kinds.includes(kind)) {
+        reject(kind, file.name);
+        continue;
+      }
+      try {
+        const up = await uploadChatAttachment(file, activeConversationId);
+        staged.push({
+          id: crypto.randomUUID(),
+          name: up.filename,
+          size: up.size,
+          mime: up.mime_type,
+          kind,
+          attachmentId: up.attachment_id,
+          previewUrl: kind === "image" ? URL.createObjectURL(file) : undefined,
+        });
+      } catch (e) {
+        toast.error(`Upload failed: ${file.name}`, {
+          description: e instanceof Error ? e.message : "unknown error",
+        });
+      }
+    }
+    if (staged.length > 0) setAttachments((prev) => [...prev, ...staged]);
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) void handleIncomingFiles(files);
+  }
+
+  function switchToModel(m: AIModel) {
+    setProvider(m.provider_id);
+    setModel(m.id);
+    setRejection(null);
+  }
+
   function handleSend() {
     const text = draft.trim();
     if ((!text && attachments.length === 0) || streaming || !ready) return;
@@ -292,6 +325,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
       attachments: attachments.map(describeAttachment),
     });
     setDraft("");
+    setRejection(null);
     for (const a of attachments) {
       if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
     }
@@ -307,7 +341,45 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
       className="border-t border-zinc-200 bg-white px-3 pb-3 pt-2 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="chat-composer"
     >
-      <ModelCapabilityBar caps={caps} hasModel={!!modelId} />
+      {/* Unsupported-upload warning with model suggestions */}
+      {rejection && (
+        <div
+          className="mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+          data-testid="upload-warning"
+          role="alert"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">{rejection.message}</p>
+            {rejection.suggestions.length > 0 && (
+              <p className="mt-1">
+                <span className="text-amber-600 dark:text-amber-400">Suggested Models: </span>
+                {rejection.suggestions.map((s, i) => (
+                  <span key={s.id}>
+                    {i > 0 && ", "}
+                    <button
+                      type="button"
+                      data-testid={`suggestion-model-${s.id}`}
+                      onClick={() => switchToModel(s)}
+                      className="font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100"
+                    >
+                      {s.name}
+                    </button>
+                  </span>
+                ))}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            aria-label="Dismiss upload warning"
+            onClick={() => setRejection(null)}
+            className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-amber-100 dark:hover:bg-amber-900/40"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+
       <UploadPreview attachments={attachments} onRemove={removeAttachment} />
 
       {/* Textarea */}
@@ -318,6 +390,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
           setDraft(e.target.value);
           resize();
         }}
+        onPaste={handlePaste}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -344,21 +417,11 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         style={{ minHeight: 44, maxHeight: 200, overflow: "auto" }}
       />
 
-      {/* Toolbar */}
+      {/* Toolbar: message-creation controls only */}
       <div className="mt-2 flex items-center gap-2">
-        {/* Unified Model & Provider Selector */}
         <UnifiedModelSelector providers={providers} models={models} />
 
-        {/* Capability-driven upload controls (hidden when unsupported) */}
-        <AttachmentPicker
-          kinds={kinds}
-          currentCount={attachments.length}
-          disabled={!ready || streaming}
-          conversationId={activeConversationId}
-          onAdd={(picked) => setAttachments((prev) => [...prev, ...picked])}
-        />
-
-        {/* Capability-driven reasoning control (hidden when unsupported) */}
+        {/* Thinking slider — hidden entirely unless the model reasons */}
         {caps.supportsReasoning && (
           <ReasoningSelector
             levels={caps.reasoningLevels}
@@ -367,17 +430,12 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
           />
         )}
 
-        {/* Context and Pricing Info */}
-        {activeModel && (
-          <div className="hidden sm:flex items-center gap-2 text-[10px] text-zinc-400 font-mono">
-            {activeModel.context_window && (
-              <span>ctx {(activeModel.context_window / 1000).toFixed(0)}k</span>
-            )}
-            {activeModel.input_price !== "0.000000" && (
-              <span>· ${activeModel.input_price}/1M</span>
-            )}
-          </div>
-        )}
+        {/* Single upload button — hidden for text-only models */}
+        <AttachmentPicker
+          accept={kinds.length > 0 ? combinedAccept(kinds) : null}
+          disabled={!ready || streaming}
+          onPick={(files) => void handleIncomingFiles(files)}
+        />
 
         {/* Right side: Send / Stop button */}
         <div className="ml-auto flex items-center gap-2">

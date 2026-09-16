@@ -2,7 +2,7 @@
 
 import { Activity, ArrowDown, ArrowUp, Cpu } from "lucide-react";
 import { Card, CardContent } from "./primitives";
-import { cn } from "@/lib/utils";
+import { cn, fmtTokens, stripTrailingZeros } from "@/lib/utils";
 
 export interface UsageCardProps {
   promptTokens?: number | null;
@@ -13,6 +13,10 @@ export interface UsageCardProps {
   latencyMs?: number | null;
   compact?: boolean;
   className?: string;
+}
+
+function fmtLatency(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${stripTrailingZeros((ms / 1000).toFixed(1))}s`;
 }
 
 export function UsageCard({
@@ -33,13 +37,13 @@ export function UsageCard({
         <span className="flex items-center gap-1">
           <Activity className="size-3 text-zinc-400" />
           <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            {tot.toLocaleString()}
+            {fmtTokens(tot)}
           </span>{" "}
           tokens
         </span>
         {latencyMs != null && (
           <span>
-            {latencyMs < 1000 ? `${Math.round(latencyMs)}ms` : `${(latencyMs / 1000).toFixed(1)}s`}
+            {fmtLatency(latencyMs)}
           </span>
         )}
       </div>
@@ -56,7 +60,7 @@ export function UsageCard({
           </span>
           {latencyMs != null && (
             <span className="text-[10px] text-zinc-400 font-mono">
-              {latencyMs < 1000 ? `${Math.round(latencyMs)}ms` : `${(latencyMs / 1000).toFixed(1)}s`}
+              {fmtLatency(latencyMs)}
             </span>
           )}
         </div>
@@ -67,7 +71,7 @@ export function UsageCard({
               <ArrowDown className="size-2.5" /> Prompt
             </div>
             <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-              {(promptTokens ?? 0).toLocaleString()}
+              {fmtTokens(promptTokens ?? 0)}
             </p>
           </div>
 
@@ -76,14 +80,14 @@ export function UsageCard({
               <ArrowUp className="size-2.5" /> Completion
             </div>
             <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-              {(completionTokens ?? 0).toLocaleString()}
+              {fmtTokens(completionTokens ?? 0)}
             </p>
           </div>
 
           <div className="rounded bg-zinc-100 p-1.5 dark:bg-zinc-800/60">
             <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Total</div>
             <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-              {tot.toLocaleString()}
+              {fmtTokens(tot)}
             </p>
           </div>
         </div>
@@ -91,10 +95,10 @@ export function UsageCard({
         {(reasoningTokens || cacheReadTokens) && (
           <div className="mt-2 flex items-center justify-between border-t border-zinc-100 pt-2 text-[10px] text-zinc-500 dark:border-zinc-800/60">
             {reasoningTokens ? (
-              <span>Reasoning: {reasoningTokens.toLocaleString()} tok</span>
+              <span>Reasoning: {fmtTokens(reasoningTokens)} tok</span>
             ) : null}
             {cacheReadTokens ? (
-              <span>Cache Read: {cacheReadTokens.toLocaleString()} tok</span>
+              <span>Cache Read: {fmtTokens(cacheReadTokens)} tok</span>
             ) : null}
           </div>
         )}

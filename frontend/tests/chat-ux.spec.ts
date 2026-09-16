@@ -101,6 +101,19 @@ test.describe("Chat composer", () => {
     await expect(page.getByTestId("send-button")).toBeDisabled();
   });
 
+  test("composer holds creation controls only (no info duplication)", async ({ page }) => {
+    await page.addInitScript(() => localStorage.clear());
+    await goto(page);
+    const composer = page.getByTestId("chat-composer");
+    await expect(composer).toBeVisible();
+    await expect(page.getByTestId("model-selector")).toBeVisible();
+    await expect(page.getByTestId("chat-input")).toBeVisible();
+    await expect(page.getByTestId("send-button")).toBeVisible();
+    // Informational elements live in the intelligence panel, not the composer
+    await expect(page.getByTestId("capability-bar")).toHaveCount(0);
+    await expect(composer.getByText(/\/1M/)).toHaveCount(0);
+    await expect(composer.getByText(/Context Window/)).toHaveCount(0);
+  });
   test("model dropdown shows search input and grouped providers with min-height", async ({ page }) => {
     await goto(page);
     await page.getByTestId("model-selector").click();
@@ -248,5 +261,20 @@ test.describe("Intelligence panel", () => {
     await expect(page.getByTestId("right-sidebar")).toBeVisible();
     // No model selected → helpful prompt text
     await expect(page.locator("text=No model selected")).toBeVisible();
+  });
+
+  test("conversation card leads and panel is resizable", async ({ page }) => {
+    await page.addInitScript(() => localStorage.clear());
+    await goto(page);
+    const panel = page.getByTestId("right-sidebar");
+    await expect(panel.getByTestId("intelligence-model")).toBeVisible();
+    await expect(panel.getByTestId("intelligence-conversation")).toBeVisible();
+    await expect(panel.getByTestId("intelligence-reasoning")).toBeVisible();
+    // Conversation (usage) comes before Reasoning & Tooling in DOM order
+    const convBox = await panel.getByTestId("intelligence-conversation").boundingBox();
+    const reasBox = await panel.getByTestId("intelligence-reasoning").boundingBox();
+    expect(convBox?.y ?? 0).toBeLessThan(reasBox?.y ?? 0);
+    // Drag handle present
+    await expect(panel.getByTestId("intelligence-resizer")).toBeVisible();
   });
 });

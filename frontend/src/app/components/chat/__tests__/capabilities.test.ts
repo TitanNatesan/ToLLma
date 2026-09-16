@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AIModel } from "@/types";
 import {
+  combinedAccept,
   defaultReasoningLevel,
   getModelCapabilities,
   kindForFile,
+  suggestModels,
+  unsupportedMessage,
   uploadKinds,
 } from "../capabilities";
 
@@ -98,5 +101,49 @@ describe("kindForFile", () => {
     expect(kindForFile(f("a.mp4", "video/mp4"))).toBe("video");
     expect(kindForFile(f("a.pdf", "application/pdf"))).toBe("file");
     expect(kindForFile(f("a.bin", "application/octet-stream"))).toBeNull();
+  });
+
+  it("matches the spec upload matrix", () => {
+    for (const ext of ["jpg", "jpeg", "png", "webp", "gif"])
+      expect(kindForFile(f(`a.${ext}`, "application/octet-stream"))).toBe("image");
+    for (const ext of ["mp3", "wav", "ogg", "m4a"])
+      expect(kindForFile(f(`a.${ext}`, "application/octet-stream"))).toBe("audio");
+    for (const ext of ["mp4", "mov", "avi", "webm"])
+      expect(kindForFile(f(`a.${ext}`, "application/octet-stream"))).toBe("video");
+    for (const ext of ["pdf", "docx", "txt", "md", "csv", "xlsx", "json"])
+      expect(kindForFile(f(`a.${ext}`, "application/octet-stream"))).toBe("file");
+  });
+});
+
+describe("combinedAccept", () => {
+  it("joins only the supported kinds", () => {
+    expect(combinedAccept([])).toBe("");
+    expect(combinedAccept(["image"])).toContain("image/png");
+    expect(combinedAccept(["image"])).not.toContain("audio/");
+    expect(combinedAccept(["file", "video"])).toContain(".pdf");
+    expect(combinedAccept(["file", "video"])).toContain("video/mp4");
+  });
+});
+
+describe("unsupportedMessage", () => {
+  it("names the rejected type", () => {
+    expect(unsupportedMessage("image", "a.png")).toBe("This model does not support image inputs.");
+    expect(unsupportedMessage("file", "report.pdf")).toBe("This model does not support PDF files.");
+    expect(unsupportedMessage("audio", "a.mp3")).toContain("MP3");
+    expect(unsupportedMessage("video", "a.mp4")).toContain("MP4");
+  });
+});
+
+describe("suggestModels", () => {
+  const vision = () => model({ id: "v", name: "Vision One", supports_vision: true });
+  it("suggests only active models supporting the kind, excluding current", () => {
+    const models = [
+      vision(),
+      model({ id: "t", name: "Text Only" }),
+      model({ id: "off", name: "Vision Off", supports_vision: true, is_active: false }),
+    ];
+    expect(suggestModels(models, "image", "v").map((m) => m.id)).toEqual([]);
+    expect(suggestModels(models, "image", "t").map((m) => m.id)).toEqual(["v"]);
+    expect(suggestModels(models, null, "t")).toEqual([]);
   });
 });

@@ -23,7 +23,7 @@ import { attachmentContentUrl } from "@/services/api";
 import type { ChatAttachment, ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
-import { cn } from "@/lib/utils";
+import { cn, fmtCost, fmtTokens, stripTrailingZeros } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 
 // Allow rendering both persisted ChatMessage and in-flight OptimisticMessage
@@ -205,12 +205,12 @@ function formatCost(val: string | null): string | null {
   const n = parseFloat(val);
   if (isNaN(n)) return null;
   if (n === 0) return null;
-  return n < 0.001 ? `$${n.toExponential(2)}` : `$${n.toFixed(4)}`;
+  return fmtCost(n);
 }
 
 function formatLatency(ms: number | null): string | null {
   if (!ms) return null;
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${stripTrailingZeros((ms / 1000).toFixed(1))}s`;
 }
 
 export function MessageView({ message, isStreaming, onRegenerate, onDelete }: ChatMessageProps) {
@@ -274,7 +274,7 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
           )}
           {!isUser && msg.total_tokens != null && (
             <span data-testid="message-usage" title={usageTitle}>
-              {msg.total_tokens.toLocaleString()} tok
+              {fmtTokens(msg.total_tokens)} tok
             </span>
           )}
           {!isUser && costStr && (

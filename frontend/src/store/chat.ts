@@ -20,6 +20,7 @@ interface ChatState {
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
   sidebarWidth: number;
+  rightSidebarWidth: number;
   draft: string;
   optimisticMessages: OptimisticMessage[];
   addProviderOpen: boolean;
@@ -35,6 +36,7 @@ interface ChatState {
   setLeftSidebar: (open: boolean) => void;
   setRightSidebar: (open: boolean) => void;
   setSidebarWidth: (w: number) => void;
+  setRightSidebarWidth: (w: number) => void;
   setDraft: (text: string) => void;
   addOptimistic: (msg: OptimisticMessage) => void;
   updateOptimisticStreaming: (id: string, delta: string) => void;
@@ -56,6 +58,7 @@ export const useChatStore = create<ChatState>()(
       leftSidebarOpen: true,
       rightSidebarOpen: true,
       sidebarWidth: 260,
+      rightSidebarWidth: 380,
       draft: "",
       optimisticMessages: [],
       addProviderOpen: false,
@@ -71,6 +74,7 @@ export const useChatStore = create<ChatState>()(
       setLeftSidebar: (leftSidebarOpen) => set({ leftSidebarOpen }),
       setRightSidebar: (rightSidebarOpen) => set({ rightSidebarOpen }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
+      setRightSidebarWidth: (rightSidebarWidth) => set({ rightSidebarWidth }),
       setDraft: (draft) => set({ draft }),
       addOptimistic: (msg) =>
         set((s) => ({ optimisticMessages: [...s.optimisticMessages, msg] })),
@@ -95,6 +99,7 @@ export const useChatStore = create<ChatState>()(
         leftSidebarOpen: s.leftSidebarOpen,
         rightSidebarOpen: s.rightSidebarOpen,
         sidebarWidth: s.sidebarWidth,
+        rightSidebarWidth: s.rightSidebarWidth,
         draft: s.draft,
         selectedProviderId: s.selectedProviderId,
       }),

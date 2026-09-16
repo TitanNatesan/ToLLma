@@ -48,10 +48,10 @@ export interface ChatSendPayload {
  *  data-driven default: providers that expose levels via metadata win. */
 export const DEFAULT_REASONING_LEVELS = ["low", "medium", "high"];
 
-const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
-const FILE_EXTS = ["pdf", "docx", "txt", "csv", "xlsx", "pptx", "json", "md"];
-const AUDIO_EXTS = ["mp3", "wav", "ogg", "m4a", "flac"];
-const VIDEO_EXTS = ["mp4", "webm", "mov", "avi"];
+const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
+const FILE_EXTS = ["pdf", "docx", "txt", "md", "csv", "xlsx", "json"];
+const AUDIO_EXTS = ["mp3", "wav", "ogg", "m4a"];
+const VIDEO_EXTS = ["mp4", "mov", "avi", "webm"];
 
 export const ACCEPT_BY_KIND: Record<AttachmentKind, { accept: string; exts: string[] }> = {
   image: { accept: "image/png,image/jpeg,image/gif,image/webp", exts: IMAGE_EXTS },
@@ -136,9 +136,59 @@ export function kindForFile(file: File): AttachmentKind | null {
   if (file.type.startsWith("audio/") || AUDIO_EXTS.includes(ext)) return "audio";
   if (file.type.startsWith("video/") || VIDEO_EXTS.includes(ext)) return "video";
   if (FILE_EXTS.includes(ext)) return "file";
+  // Backend also extracts pptx/xlsx-adjacent office docs; accept the kind
+  // even when the extension list above doesn't offer it in the picker.
+  if (["pptx", "flac"].includes(ext)) return ext === "flac" ? "audio" : "file";
   return null;
 }
 
 export function describeAttachment(a: ComposerAttachment): AttachmentDescriptor {
   return { name: a.name, size: a.size, mime: a.mime, kind: a.kind, attachmentId: a.attachmentId };
+}
+
+/** Combined file-dialog accept string for the single upload button. */
+export function combinedAccept(kinds: AttachmentKind[]): string {
+  return kinds.map((k) => ACCEPT_BY_KIND[k].accept).join(",");
+}
+
+/** Human message for a rejected drop/pick/paste. */
+export function unsupportedMessage(kind: AttachmentKind | null, fileName: string): string {
+  if (kind === "image") return "This model does not support image inputs.";
+  const ext = fileName.split(".").pop()?.toUpperCase() ?? "FILE";
+  if (kind === "audio") return `This model does not support ${ext} audio.`;
+  if (kind === "video") return `This model does not support ${ext} video.`;
+  return `This model does not support ${ext} files.`;
+}
+
+/** Capability a rejected kind needs, for model suggestions. */
+export function capabilityForKind(kind: AttachmentKind | null): keyof ModelCapabilities | null {
+  switch (kind) {
+    case "image":
+      return "supportsVision";
+    case "file":
+      return "supportsFiles";
+    case "audio":
+      return "supportsAudioInput";
+    case "video":
+      return "supportsVideoInput";
+    default:
+      return null;
+  }
+}
+
+/** Up to 3 registered+active models (not the current one) supporting the
+ *  rejected input kind. Client-side over the already-fetched registry —
+ *  no new endpoint. */
+export function suggestModels(
+  models: AIModel[],
+  kind: AttachmentKind | null,
+  excludeId: string | null,
+  limit = 3,
+): AIModel[] {
+  const need = capabilityForKind(kind);
+  if (!need) return [];
+  return models
+    .filter((m) => m.is_active && m.id !== excludeId && getModelCapabilities(m)[need])
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, limit);
 }

@@ -30,6 +30,7 @@ import { useConversation, useConversationMutations, useUsage } from "@/hooks/use
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useChatStore } from "@/store/chat";
 import { cn } from "@/lib/utils";
+import { fmtCost, fmtTokens } from "@/lib/utils";
 
 export function ChatHeader() {
   const {
@@ -113,13 +114,7 @@ export function ChatHeader() {
     }
   }
 
-  const costNumber = usage?.total_cost ? parseFloat(usage.total_cost) : 0;
-  const costFormatted =
-    costNumber > 0
-      ? costNumber < 0.0001
-        ? `$${costNumber.toExponential(2)}`
-        : `$${costNumber.toFixed(4)}`
-      : "$0";
+  const costFormatted = fmtCost(usage?.total_cost);
 
   return (
     <header className="flex h-12 w-full shrink-0 items-center justify-between border-b border-zinc-200 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/80">
@@ -190,7 +185,7 @@ export function ChatHeader() {
         {usage && usage.total_tokens > 0 && (
           <div className="hidden md:flex items-center gap-3 text-xs text-zinc-500 font-mono pr-2 border-r border-zinc-200 dark:border-zinc-800">
             <span title="Total tokens used in this conversation">
-              {usage.total_tokens.toLocaleString()} tok
+              {fmtTokens(usage.total_tokens)} tok
             </span>
             <span title="Total estimated cost" className="text-tollma-600 dark:text-tollma-400 font-semibold">
               {costFormatted}

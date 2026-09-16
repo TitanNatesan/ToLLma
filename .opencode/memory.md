@@ -1071,3 +1071,27 @@ Navigation links (Providers/Analytics/Settings) are invisible by default and rev
 
 ### Verification
 - `tsc`/`eslint` clean; navigation e2e green; auth/chat/chat-ux regressions green (24 passed); screenshots of both toggle states reviewed.
+
+## 2026-09-17 — Chat refinement: minimal composer + intelligence as single info source
+
+### Requirement Completed
+Composer stripped to message-creation controls only (model selector, thinking slider, single upload button, input, send); all model/conversation info moved to the intelligence panel. No backend changes.
+
+### Files Created
+- None (deleted `frontend/src/app/components/chat/ModelCapabilityBar.tsx`)
+
+### Files Modified
+- `frontend/src/lib/utils.ts` (+`fmtCost/fmtTokens/fmtCompactTokens`; `stripTrailingZeros/fmtPrice` kept)
+- `frontend/src/app/components/chat/capabilities.ts` (spec upload matrix, `combinedAccept/unsupportedMessage/suggestModels/capabilityForKind`)
+- `frontend/src/app/components/chat/ReasoningSelector.tsx` (dynamic hover slider, native range, tick buttons keep `reasoning-level-*` testids)
+- `frontend/src/app/components/chat/AttachmentPicker.tsx` (single dumb button, `attach-button`)
+- `frontend/src/app/components/chat/ChatComposer.tsx` (no badges/ctx/pricing; shared picker+paste pipeline; rejection banner with model switch)
+- `frontend/src/app/components/ChatSettingsPanel.tsx` (order Model/Conversation/Limits/Pricing/Reasoning&Tooling; resizable 320-700 default 380 via left-edge handle)
+- `frontend/src/store/chat.ts` (`rightSidebarWidth` persisted in `tollma-chat`)
+- `frontend/src/app/components/{ChatHeader,MessageView}.tsx`, `frontend/src/components/ui/{CostCard,UsageCard}.tsx` (centralized formatters)
+- Tests: `utils.test.ts`, `capabilities.test.ts`, `tests/chat-ux.spec.ts` (no-dup composer test, panel order+resizer test)
+
+### Verification
+- `tsc` clean; `eslint` clean on touched files (2 pre-existing errors in provider wizard files)
+- `vitest` 41/41; `next build` passes; e2e chat-ux+navigation 22 passed (2 pin skips, no convos)
+- Screenshots `/tmp/shot-chat-final.png`, `/tmp/shot-intelligence-final.png` reviewed

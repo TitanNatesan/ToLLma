@@ -2,7 +2,7 @@
 
 import { DollarSign, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "./primitives";
-import { cn } from "@/lib/utils";
+import { cn, fmtCost } from "@/lib/utils";
 
 export interface CostCardProps {
   totalCost?: string | null;
@@ -16,10 +16,7 @@ export interface CostCardProps {
 }
 
 function fmt(val?: string | null): string {
-  if (!val) return "$0";
-  const n = parseFloat(val);
-  if (isNaN(n) || n === 0) return "$0";
-  return n < 0.0001 ? `$${n.toExponential(2)}` : `$${n.toFixed(4)}`;
+  return fmtCost(val);
 }
 
 export function CostCard({
