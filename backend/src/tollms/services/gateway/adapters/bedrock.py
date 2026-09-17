@@ -5,7 +5,14 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk
+from tollms.services.gateway.adapters.base import (
+    THINK_CLOSE,
+    THINK_OPEN,
+    BaseProviderAdapter,
+    ChatMessage,
+    DiscoveredModel,
+    StreamChunk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,18 +177,18 @@ class BedrockAdapter(BaseProviderAdapter):
                     text = delta_obj.get("text")
                     if reasoning:
                         if not in_reasoning:
-                            yield StreamChunk(delta="<think>\n")
+                            yield StreamChunk(delta=THINK_OPEN)
                             in_reasoning = True
                         yield StreamChunk(delta=reasoning)
                     elif text:
                         if in_reasoning:
-                            yield StreamChunk(delta="\n</think>\n\n")
+                            yield StreamChunk(delta=THINK_CLOSE)
                             in_reasoning = False
                         has_text = True
                         yield StreamChunk(delta=text)
                 elif "contentBlockStop" in event:
                     if in_reasoning:
-                        yield StreamChunk(delta="\n</think>\n\n")
+                        yield StreamChunk(delta=THINK_CLOSE)
                         in_reasoning = False
                 elif "modelStreamErrorException" in event:
                     # Bedrock delivers model output errors as stream events
@@ -208,7 +215,7 @@ class BedrockAdapter(BaseProviderAdapter):
                             total_tokens=usage.get("totalTokens"),
                         )
             if in_reasoning:
-                yield StreamChunk(delta="\n</think>\n\n")
+                yield StreamChunk(delta=THINK_CLOSE)
             # If only reasoning was produced with no answer text, emit a notice so the
             # conversation record is non-empty and the user gets meaningful feedback.
             if not has_text:

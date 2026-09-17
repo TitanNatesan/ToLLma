@@ -6,7 +6,15 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk, usage_extras
+from tollms.services.gateway.adapters.base import (
+    THINK_CLOSE,
+    THINK_OPEN,
+    BaseProviderAdapter,
+    ChatMessage,
+    DiscoveredModel,
+    StreamChunk,
+    usage_extras,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +42,31 @@ def _gemini_text(item: dict) -> str:
         return item["candidates"][0]["content"]["parts"][0].get("text", "")
     except (KeyError, IndexError, TypeError):
         return ""
+
+
+def _gemini_thought_and_text(item: dict) -> tuple[str, str]:
+    """Split a response chunk into (thought text, answer text).
+
+    Thinking models mark reasoning parts with thought:true (thought
+    signatures carry no text and are skipped). Unknown future part shapes
+    with text default to answer text — never silently dropped.
+    """
+    thought: list[str] = []
+    answer: list[str] = []
+    try:
+        parts = item["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError, TypeError):
+        return "", ""
+    if not isinstance(parts, list):
+        return "", ""
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text") or ""
+        if not text:
+            continue
+        (thought if part.get("thought") is True else answer).append(text)
+    return "".join(thought), "".join(answer)
 
 
 class GeminiAdapter(BaseProviderAdapter):
@@ -94,6 +127,7 @@ class GeminiAdapter(BaseProviderAdapter):
                     detail = (await resp.aread()).decode()[:500]
                     logger.warning("gemini error %s: %s", resp.status_code, detail)
                     raise RuntimeError(f"provider error {resp.status_code}: {detail}")
+                in_reasoning = False
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -101,8 +135,16 @@ class GeminiAdapter(BaseProviderAdapter):
                         item = json.loads(line[5:].strip())
                     except json.JSONDecodeError:
                         continue
-                    text = _gemini_text(item)
+                    thought, text = _gemini_thought_and_text(item)
+                    if thought:
+                        if not in_reasoning:
+                            yield StreamChunk(delta=THINK_OPEN)
+                            in_reasoning = True
+                        yield StreamChunk(delta=thought)
                     if text:
+                        if in_reasoning:
+                            yield StreamChunk(delta=THINK_CLOSE)
+                            in_reasoning = False
                         yield StreamChunk(delta=text)
                     meta = item.get("usageMetadata") or {}
                     if meta.get("totalTokenCount"):
@@ -114,6 +156,8 @@ class GeminiAdapter(BaseProviderAdapter):
                             cache_read_tokens=extras["cache_read_tokens"],
                             reasoning_tokens=extras["reasoning_tokens"],
                         )
+                if in_reasoning:
+                    yield StreamChunk(delta=THINK_CLOSE)
         except RuntimeError:
             raise
         except Exception as e:
@@ -223,6 +267,7 @@ class VertexAdapter(BaseProviderAdapter):
                     detail = (await resp.aread()).decode()[:500]
                     logger.warning("vertex error %s: %s", resp.status_code, detail)
                     raise RuntimeError(f"provider error {resp.status_code}: {detail}")
+                in_reasoning = False
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -230,8 +275,16 @@ class VertexAdapter(BaseProviderAdapter):
                         item = json.loads(line[5:].strip())
                     except json.JSONDecodeError:
                         continue
-                    text = _gemini_text(item)
+                    thought, text = _gemini_thought_and_text(item)
+                    if thought:
+                        if not in_reasoning:
+                            yield StreamChunk(delta=THINK_OPEN)
+                            in_reasoning = True
+                        yield StreamChunk(delta=thought)
                     if text:
+                        if in_reasoning:
+                            yield StreamChunk(delta=THINK_CLOSE)
+                            in_reasoning = False
                         yield StreamChunk(delta=text)
                     meta = item.get("usageMetadata") or {}
                     if meta.get("totalTokenCount"):
@@ -243,6 +296,8 @@ class VertexAdapter(BaseProviderAdapter):
                             cache_read_tokens=extras["cache_read_tokens"],
                             reasoning_tokens=extras["reasoning_tokens"],
                         )
+                if in_reasoning:
+                    yield StreamChunk(delta=THINK_CLOSE)
         except RuntimeError:
             raise
         except Exception as e:

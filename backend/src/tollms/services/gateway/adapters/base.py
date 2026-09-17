@@ -49,6 +49,18 @@ class ChatResult:
     reasoning_tokens: int = 0
 
 
+# Reasoning normalization contract (provider-agnostic rendering).
+#
+# Every adapter maps its wire-specific reasoning format into <think> spans
+# embedded in the delta text — the same convention Bedrock established.
+# Gateway, SSE, persistence, and the frontend all treat these spans
+# identically, so reasoning-capable models work with zero provider-specific
+# handling downstream. The chat UI renders <think>…</think> as the
+# collapsible Thinking pill for every provider.
+THINK_OPEN = "<think>\n"
+THINK_CLOSE = "\n</think>\n\n"
+
+
 @dataclass
 class DiscoveredModel:
     """Normalized model discovery entry. endpoint_type matches EndpointType values."""
@@ -66,6 +78,10 @@ class BaseProviderAdapter:
     model_id: str
     transport: httpx.AsyncBaseTransport | None = None
     timeout: float = 120.0
+    # Composer-selected reasoning level (e.g. "low"/"medium"/"high"/None).
+    # Adapters that must explicitly request thinking (Anthropic) read it;
+    # others ignore it. Never inspected for model names.
+    reasoning_level: str | None = None
 
     # Native wire support per media kind. Document text needs no wire support:
     # the gateway injects extracted text as plain content (supports_files=True).

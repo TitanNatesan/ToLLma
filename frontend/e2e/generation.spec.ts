@@ -162,3 +162,27 @@ test("user messages have no avatar, assistant keeps its icon", async ({ page }) 
   });
   await expect(page.getByTestId("message-assistant").last().locator(".rounded-full").first()).toBeVisible();
 });
+
+test("reasoning model shows collapsible Thinking pill, preserved on refresh", async ({ page }) => {
+  await apiLoginAs(page, "genthink");
+  const stamp = Date.now();
+  const p = await apiCreateProvider(page.request, `pw-genthink-${stamp}`);
+  const m = await apiCreateModel(page.request, p.id, `thinker-${stamp}`);
+  await page.goto("/");
+  await page.waitForLoadState("networkidle");
+  await selectProviderModel(page, p.id, m.id);
+  await sendMessage(page, "think step by step");
+  const assistant = page.getByTestId("message-assistant").last();
+  await expect(assistant).toContainText("Thoughtful answer.", { timeout: 20000 });
+  // Same Thinking pill the DeepSeek path renders — provider-blind.
+  const pill = assistant.getByTestId("thinking-block");
+  await expect(pill.getByRole("button", { name: /Thinking/ })).toBeVisible();
+  await expect(pill).toContainText("4 words");
+  await pill.getByRole("button", { name: /Thinking/ }).click();
+  await expect(pill).toContainText("Considering the options carefully.");
+  // Refresh: persisted <think> span restores the pill.
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const restored = page.getByTestId("message-assistant").last().getByTestId("thinking-block");
+  await expect(restored.getByRole("button", { name: /Thinking/ })).toBeVisible({ timeout: 10000 });
+});

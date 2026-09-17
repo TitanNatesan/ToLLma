@@ -6,6 +6,8 @@ import time
 from collections.abc import AsyncIterator
 
 from tollms.services.gateway.adapters.base import (
+    THINK_CLOSE,
+    THINK_OPEN,
     BaseProviderAdapter,
     ChatMessage,
     DiscoveredModel,
@@ -17,14 +19,20 @@ from tollms.services.gateway.adapters.base import (
 logger = logging.getLogger(__name__)
 
 
-def _parse_chat_sse(payload: str) -> tuple[str, dict]:
+def _parse_chat_sse(payload: str) -> tuple[str, str, dict]:
+    """(answer text, reasoning text, usage). Reasoning arrives as
+    delta.reasoning_content on reasoning models (DeepSeek, o-series via
+    compatible APIs, Grok); empty string when absent."""
     data = json.loads(payload)
     text = ""
+    reasoning = ""
     try:
-        text = data["choices"][0].get("delta", {}).get("content") or ""
+        delta = data["choices"][0].get("delta", {})
+        text = delta.get("content") or ""
+        reasoning = delta.get("reasoning_content") or ""
     except (KeyError, IndexError, TypeError):
         pass
-    return text, data.get("usage") or {}
+    return text, reasoning, data.get("usage") or {}
 
 
 class OpenAIChatAdapter(BaseProviderAdapter):
@@ -93,6 +101,7 @@ class OpenAIChatAdapter(BaseProviderAdapter):
             "stream_options": {"include_usage": True},
         }
         headers = self._headers()
+        in_reasoning = False
         try:
             async with self._client() as client, client.stream(
                 "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
@@ -104,19 +113,32 @@ class OpenAIChatAdapter(BaseProviderAdapter):
                 async for line in resp.aiter_lines():
                     for payload in sse_data_lines(line):
                         try:
-                            text, usage = _parse_chat_sse(payload)
+                            text, reasoning, usage = _parse_chat_sse(payload)
                         except json.JSONDecodeError:
                             continue
-                        if text or usage:
+                        if reasoning:
+                            if not in_reasoning:
+                                yield StreamChunk(delta=THINK_OPEN)
+                                in_reasoning = True
+                            yield StreamChunk(delta=reasoning)
+                            continue
+                        if text:
+                            if in_reasoning:
+                                yield StreamChunk(delta=THINK_CLOSE)
+                                in_reasoning = False
+                            yield StreamChunk(delta=text)
+                            continue
+                        if usage:
                             extras = usage_extras(usage)
                             yield StreamChunk(
-                                delta=text,
                                 prompt_tokens=usage.get("prompt_tokens"),
                                 completion_tokens=usage.get("completion_tokens"),
                                 total_tokens=usage.get("total_tokens"),
                                 cache_read_tokens=extras["cache_read_tokens"],
                                 reasoning_tokens=extras["reasoning_tokens"],
                             )
+                if in_reasoning:
+                    yield StreamChunk(delta=THINK_CLOSE)
         except RuntimeError:
             raise
         except Exception as e:
@@ -149,6 +171,7 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
             "stream": True,
         }
         headers = {"Authorization": f"Bearer {self.credentials['api_key']}"}
+        in_reasoning = False
         try:
             async with self._client() as client, client.stream(
                 "POST", "https://api.openai.com/v1/responses", json=body, headers=headers
@@ -167,9 +190,32 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
                         event = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
-                    if event.get("type") == "response.output_text.delta":
+                    etype = event.get("type", "")
+                    if etype in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+                        # Encrypted reasoning internals never stream as text;
+                        # summaries do. Unknown future reasoning event types
+                        # carrying text fall through to the prefix check below.
+                        text = event.get("delta") or event.get("text") or ""
+                        if text:
+                            if not in_reasoning:
+                                yield StreamChunk(delta=THINK_OPEN)
+                                in_reasoning = True
+                            yield StreamChunk(delta=text)
+                    elif etype.startswith("response.reasoning") and isinstance(event.get("delta"), str):
+                        if event["delta"]:
+                            if not in_reasoning:
+                                yield StreamChunk(delta=THINK_OPEN)
+                                in_reasoning = True
+                            yield StreamChunk(delta=event["delta"])
+                    elif etype == "response.output_text.delta":
+                        if in_reasoning:
+                            yield StreamChunk(delta=THINK_CLOSE)
+                            in_reasoning = False
                         yield StreamChunk(delta=event.get("delta", ""))
-                    elif event.get("type") == "response.completed":
+                    elif etype == "response.completed":
+                        if in_reasoning:
+                            yield StreamChunk(delta=THINK_CLOSE)
+                            in_reasoning = False
                         usage = (event.get("response") or {}).get("usage") or {}
                         extras = usage_extras(usage)
                         yield StreamChunk(
@@ -179,6 +225,8 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
                             cache_read_tokens=extras["cache_read_tokens"],
                             reasoning_tokens=extras["reasoning_tokens"],
                         )
+                if in_reasoning:
+                    yield StreamChunk(delta=THINK_CLOSE)
         except RuntimeError:
             raise
         except Exception as e:

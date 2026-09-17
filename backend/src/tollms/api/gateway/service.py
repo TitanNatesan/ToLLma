@@ -282,6 +282,7 @@ async def run_chat(
     try:
         credentials = decrypted_credentials(provider)
         adapter = build_adapter(provider, model, credentials, transport)
+        adapter.reasoning_level = data.reasoning_level
         transcriber = _transcriber(provider, credentials)
         rows = attachment_service.get_many(db, data.attachment_ids, user_id)
         if data.conversation_id is None:
@@ -379,6 +380,7 @@ async def _setup_generation(
     provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
+    adapter.reasoning_level = data.reasoning_level
     transcriber = _transcriber(provider, credentials)
     rows = attachment_service.get_many(db, data.attachment_ids, user_id)
     if data.conversation_id is None:

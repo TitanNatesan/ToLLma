@@ -5,9 +5,28 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessage, DiscoveredModel, StreamChunk, usage_extras
+from tollms.services.gateway.adapters.base import (
+    THINK_CLOSE,
+    THINK_OPEN,
+    BaseProviderAdapter,
+    ChatMessage,
+    DiscoveredModel,
+    StreamChunk,
+    usage_extras,
+)
 
 logger = logging.getLogger(__name__)
+
+# Composer reasoning level -> Anthropic thinking budget (tokens). Unknown
+# levels fall back to medium; "none"/unset leaves thinking disabled.
+THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 10000, "ultra": 32000}
+THINKING_HEADROOM = 4096  # max_tokens must exceed the thinking budget
+
+
+def thinking_budget(level: str | None) -> int | None:
+    if not level or level == "none":
+        return None
+    return THINKING_BUDGETS.get(level, THINKING_BUDGETS["medium"])
 
 
 class AnthropicAdapter(BaseProviderAdapter):
@@ -71,6 +90,12 @@ class AnthropicAdapter(BaseProviderAdapter):
         body: dict = {"model": self.model_id, "messages": rest, "stream": True, "max_tokens": 4096}
         if system:
             body["system"] = system
+        budget = thinking_budget(self.reasoning_level)
+        if budget is not None:
+            # Extended thinking must be explicitly requested or Claude emits
+            # no thinking blocks at all. max_tokens must exceed the budget.
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            body["max_tokens"] = budget + THINKING_HEADROOM
         headers = self._headers()
         try:
             async with self._client() as client, client.stream(
@@ -80,6 +105,7 @@ class AnthropicAdapter(BaseProviderAdapter):
                     detail = (await resp.aread()).decode()[:500]
                     logger.warning("anthropic error %s: %s", resp.status_code, detail)
                     raise RuntimeError(f"provider error {resp.status_code}: {detail}")
+                in_reasoning = False
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -100,9 +126,35 @@ class AnthropicAdapter(BaseProviderAdapter):
                                 cache_read_tokens=extras["cache_read_tokens"],
                                 cache_write_tokens=extras["cache_write_tokens"],
                             )
+                    elif etype == "content_block_start":
+                        block = event.get("content_block") or {}
+                        if block.get("type") == "redacted_thinking":
+                            # Safety redaction: show a placeholder, not silence.
+                            if not in_reasoning:
+                                yield StreamChunk(delta=THINK_OPEN)
+                                in_reasoning = True
+                            yield StreamChunk(delta="(Thinking redacted by the provider)")
                     elif etype == "content_block_delta":
-                        if (event.get("delta") or {}).get("type") == "text_delta":
-                            yield StreamChunk(delta=event["delta"].get("text", ""))
+                        delta = event.get("delta") or {}
+                        dtype = delta.get("type")
+                        if dtype == "text_delta":
+                            if in_reasoning:
+                                yield StreamChunk(delta=THINK_CLOSE)
+                                in_reasoning = False
+                            yield StreamChunk(delta=delta.get("text", ""))
+                        elif dtype == "thinking_delta":
+                            # Signature deltas carry integrity tokens for
+                            # multi-turn continuity, not displayable text.
+                            thinking = delta.get("thinking", "")
+                            if thinking:
+                                if not in_reasoning:
+                                    yield StreamChunk(delta=THINK_OPEN)
+                                    in_reasoning = True
+                                yield StreamChunk(delta=thinking)
+                    elif etype in ("content_block_stop", "message_stop"):
+                        if in_reasoning:
+                            yield StreamChunk(delta=THINK_CLOSE)
+                            in_reasoning = False
                     elif etype == "message_delta":
                         usage = event.get("usage") or {}
                         if usage.get("output_tokens"):
@@ -111,6 +163,8 @@ class AnthropicAdapter(BaseProviderAdapter):
                                 completion_tokens=usage["output_tokens"],
                                 reasoning_tokens=extras["reasoning_tokens"],
                             )
+                if in_reasoning:
+                    yield StreamChunk(delta=THINK_CLOSE)
         except RuntimeError:
             raise
         except Exception as e:

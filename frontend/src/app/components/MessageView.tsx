@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
 import { ResponseMarkdown } from "./ResponseMarkdown";
+import { countThinkWords, splitThinkBlocks } from "./thinkBlocks";
 import { attachmentContentUrl } from "@/services/api";
 import type { ChatAttachment, ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
@@ -66,7 +67,7 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
 
 function ThinkBlock({ content }: { content: string }) {
   const [open, setOpen] = useState(false);
-  const words = content.trim().split(/\s+/).filter(Boolean).length;
+  const words = countThinkWords(content);
   return (
     <div className="my-1.5" data-testid="thinking-block">
       <button
@@ -96,18 +97,7 @@ function ThinkBlock({ content }: { content: string }) {
 }
 
 function renderContent(content: string) {
-  // Split <think>...</think> blocks from the rest
-  const parts: Array<{ type: "think" | "text"; content: string }> = [];
-  const regex = /<think>([\s\S]*?)<\/think>/g;
-  let last = 0;
-  let m;
-  while ((m = regex.exec(content)) !== null) {
-    if (m.index > last) parts.push({ type: "text", content: content.slice(last, m.index) });
-    parts.push({ type: "think", content: m[1] });
-    last = m.index + m[0].length;
-  }
-  if (last < content.length) parts.push({ type: "text", content: content.slice(last) });
-  return parts;
+  return splitThinkBlocks(content);
 }
 
 function formatBytes(bytes: number): string {

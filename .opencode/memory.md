@@ -1173,3 +1173,16 @@ Generation state moved into the backend: assistant row created RUNNING before st
 ### Verification
 - Backend pytest 95/95; alembic check green; frontend tsc/eslint-touched/vitest 42/build green; e2e 48 passed (wizard.spec:10 pre-existing fail, untouched paths).
 - Metrics: backend setup=58ms/first-delta=70ms/total=103ms (instant provider); e2e first rendered token 369ms; cancel-vs-hung <5s asserted.
+
+## 2026-09-17 — Provider-agnostic reasoning display (unified <think> pipeline)
+
+### Root Cause
+Only Bedrock normalized reasoning into `<think>` spans. Anthropic dropped thinking_delta/signature events (and never requested thinking), OpenAI chat dropped reasoning_content, Responses dropped reasoning summaries, Gemini dropped thought parts. Frontend renders <think> fine — it never received any.
+
+### Changes
+- Backend `adapters/base.py`: THINK_OPEN/CLOSE contract + reasoning_level field; `anthropic.py`: thinking budgets + thinking_delta/signature/redacted parsing, thinking param request; `openai.py`: reasoning_content + reasoning summary deltas; `gemini.py`: thought/text split shared by Gemini+Vertex; `bedrock.py`: shared constants; gateway sets adapter.reasoning_level (chat + stream).
+- Frontend: shared `thinkBlocks.ts` (split + word count) used by both renderers; `thinkBlocks.test.ts` (5 tests); e2e mock think-mode + Thinking-pill UI test (expand + refresh restore).
+- Tests: `backend/tests/test_reasoning.py` (11 tests incl. gateway persistence e2e + cross-provider shape identity).
+
+### Verification
+- Backend pytest 106/106; frontend vitest 47/47, tsc/eslint-touched/build clean; e2e 49 passed (wizard.spec:10 pre-existing fail).

@@ -23,6 +23,7 @@ import {
   WrapText,
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
+import { countThinkWords, splitThinkBlocks } from "./thinkBlocks";
 import { cn } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 
@@ -394,7 +395,7 @@ function EnhancedThinkBlock({
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const words = content.trim().split(/\s+/).filter(Boolean).length;
+  const words = countThinkWords(content);
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -466,17 +467,7 @@ function EnhancedThinkBlock({
 }
 
 function renderContent(content: string) {
-  const parts: Array<{ type: "think" | "text"; content: string }> = [];
-  const regex = /<think>([\s\S]*?)<\/think>/g;
-  let last = 0;
-  let m;
-  while ((m = regex.exec(content)) !== null) {
-    if (m.index > last) parts.push({ type: "text", content: content.slice(last, m.index) });
-    parts.push({ type: "think", content: m[1] });
-    last = m.index + m[0].length;
-  }
-  if (last < content.length) parts.push({ type: "text", content: content.slice(last) });
-  return parts;
+  return splitThinkBlocks(content);
 }
 
 export function ResponseMarkdown({

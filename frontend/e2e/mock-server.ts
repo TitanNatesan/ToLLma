@@ -37,6 +37,19 @@ export async function startMockLLM(port = 4899): Promise<string> {
             }, 150);
             return;
           }
+          // Thinking mode (model id contains "think"): reasoning_content
+          // deltas first (DeepSeek-style), then the final answer.
+          if (typeof parsed.model === "string" && parsed.model.includes("think")) {
+            res.write('data: {"choices": [{"delta": {"reasoning_content": "Considering the options "}}]}\n\n');
+            res.write('data: {"choices": [{"delta": {"reasoning_content": "carefully."}}]}\n\n');
+            res.write('data: {"choices": [{"delta": {"content": "Thoughtful answer."}}]}\n\n');
+            res.write(
+              'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 8, "completion_tokens": 6, "total_tokens": 14}}\n\n',
+            );
+            res.write("data: [DONE]\n\n");
+            res.end();
+            return;
+          }
           res.write('data: {"choices": [{"delta": {"content": "Hello from **mock** "}}]}\n\n');
           res.write('data: {"choices": [{"delta": {"content": "`code`"}}]}\n\n');
           res.write(
