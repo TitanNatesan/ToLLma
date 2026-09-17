@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import { toast } from "sonner";
 import { useChatStore } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import {
   Button,
+  Badge,
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
@@ -17,12 +18,18 @@ import type { AIModel, Provider } from "@/types";
 
 import {
   Bot,
+  Brain,
   ChevronDown,
   CornerDownLeft,
   Cpu,
+  Eye,
+  Image as ImageIcon,
+  Mic,
   Search,
   Square,
+  Wrench,
   X,
+  Zap,
 } from "lucide-react";
 import { AttachmentPicker } from "./AttachmentPicker";
 import { UploadPreview } from "./UploadPreview";
@@ -52,6 +59,15 @@ interface ChatComposerProps {
   onStop: () => void;
 }
 
+const CAP_ICONS: Record<string, { icon: ComponentType<{ className?: string }>; label: string }> = {
+  supports_vision: { icon: Eye, label: "Vision" },
+  supports_reasoning: { icon: Brain, label: "Reasoning" },
+  supports_tool_calling: { icon: Wrench, label: "Tool calling" },
+  supports_streaming: { icon: Zap, label: "Streaming" },
+  supports_audio_input: { icon: Mic, label: "Audio input" },
+  supports_image_generation: { icon: ImageIcon, label: "Image generation" },
+};
+
 function UnifiedModelSelector({
   providers,
   models,
@@ -64,6 +80,12 @@ function UnifiedModelSelector({
 
   const activeProvider = providers.find((p) => p.id === providerId);
   const activeModel = models.find((m) => m.id === modelId);
+
+  const caps = activeModel
+    ? Object.entries(CAP_ICONS)
+        .filter(([k]) => (activeModel as unknown as Record<string, boolean>)[k])
+        .map(([, item]) => item)
+    : [];
 
   const q = search.trim().toLowerCase();
 
@@ -108,6 +130,13 @@ function UnifiedModelSelector({
               {activeProvider.name}
             </span>
           )}
+          {caps.length > 0 && (
+            <span className="hidden items-center gap-1 md:flex">
+              {caps.slice(0, 3).map(({ icon: Icon, label }) => (
+                <Icon key={label} className="size-2.5 text-zinc-400" />
+              ))}
+            </span>
+          )}
           <ChevronDown className="size-3 text-zinc-400" />
         </button>
       </DropdownMenuTrigger>
@@ -138,15 +167,24 @@ function UnifiedModelSelector({
             groups.map(({ provider, models: pModels }) => (
               <div key={provider.id} className="mb-2 last:mb-0">
                 {/* Provider group header */}
-                <div className="sticky top-0 z-10 flex items-center gap-1.5 rounded bg-zinc-100/95 px-2 py-1 text-[11px] font-semibold text-zinc-600 backdrop-blur-sm dark:bg-zinc-900/95 dark:text-zinc-400">
-                  <Cpu className="size-3 text-zinc-400" />
-                  <span className="truncate">{provider.name}</span>
+                <div className="sticky top-0 z-10 flex items-center justify-between rounded bg-zinc-100/95 px-2 py-1 text-[11px] font-semibold text-zinc-600 backdrop-blur-sm dark:bg-zinc-900/95 dark:text-zinc-400">
+                  <span className="flex items-center gap-1.5 truncate">
+                    <Cpu className="size-3 text-zinc-400" />
+                    <span className="truncate">{provider.name}</span>
+                  </span>
+                  <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 font-normal">
+                    {provider.provider_type}
+                  </Badge>
                 </div>
 
                 {/* Models in provider */}
                 <div className="mt-0.5 space-y-0.5">
                   {pModels.map((m) => {
                     const isSelected = modelId === m.id;
+                    const mCaps = Object.entries(CAP_ICONS)
+                      .filter(([k]) => (m as unknown as Record<string, boolean>)[k])
+                      .map(([, item]) => item);
+
                     return (
                       <DropdownMenuItem
                         key={m.id}
@@ -156,13 +194,26 @@ function UnifiedModelSelector({
                         }}
                         data-testid={`model-option-${m.id}`}
                         className={cn(
-                          "flex cursor-pointer items-center rounded px-2 py-1.5 text-xs transition-colors",
+                          "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-xs transition-colors",
                           isSelected
                             ? "bg-tollma-100 font-medium text-tollma-900 dark:bg-tollma-900 dark:text-tollma-100"
                             : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                         )}
                       >
-                        <span className="flex-1 truncate">{m.name}</span>
+                        <div className="flex flex-1 flex-col gap-0.5 overflow-hidden pr-2">
+                          <span className="truncate">{m.name}</span>
+                          <span className="text-[10px] text-zinc-400">
+                            {m.context_window ? `ctx ${m.context_window.toLocaleString()}` : ""}
+                            {m.input_price !== "0.000000" ? ` · $${m.input_price}/1M in` : ""}
+                          </span>
+                        </div>
+                        <span className="flex shrink-0 items-center gap-1">
+                          {mCaps.slice(0, 3).map(({ icon: Icon, label }) => (
+                            <span key={label} title={label} className="inline-flex">
+                              <Icon className="size-3 text-zinc-400" />
+                            </span>
+                          ))}
+                        </span>
                       </DropdownMenuItem>
                     );
                   })}

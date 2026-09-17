@@ -1114,3 +1114,23 @@ Regenerate row removed (last-assistant-message action only); Grok-style thinking
 - `tsc`/`eslint` clean on touched files; `vitest` 41/41; `next build` passes
 - e2e chat-ux+navigation+settings+chat+intelligence: 27 passed (2 pre-existing pin skips)
 - Zero horizontal overflow at 1920/2560/1440/1366; dark-theme screenshots `/tmp/polish-1920.png`, `/tmp/polish-1366.png`, `/tmp/polish-thinking-collapsed.png`, `/tmp/polish-thinking-expanded.png`
+
+## 2026-09-17 — Restore Model Selection Dropdown UI (Frontend-Only)
+
+### Requirement Completed
+Restored ONLY the model selection dropdown UI (`UnifiedModelSelector` in `frontend/src/app/components/chat/ChatComposer.tsx`) to its previous behavior and appearance prior to the composer refactor in commit `58257e3`.
+- Restored model capability icons inside the model dropdown options (vision, reasoning, tools, streaming, audio, image generation).
+- Restored the 2-line model option layout with context window (`ctx <tokens>`) and pricing (`$<price>/1M in`).
+- Restored the sticky provider group header with provider type outline badge (`provider.provider_type`).
+- Restored the capability preview icons in the selector trigger button for selected models.
+- Intentionally preserved all recent composer logic: reasoning level controls, attachment handling, capability-aware upload constraints, upload rejection warnings with model recommendations, clipboard paste support, and drag-and-drop.
+- No backend, API, database, or conversation UI changes.
+
+### Files Modified
+- `frontend/src/app/components/chat/ChatComposer.tsx` (`UnifiedModelSelector` component restored to previous rich UI rendering, added `CAP_ICONS`, imported `Badge` and capability icons).
+
+### Verification
+- `npm run build` (`next build`): Completed successfully with 0 TypeScript and build errors.
+- `vitest` unit tests: 41/41 passed across all 8 test suites.
+- Playwright verification: Captured before/after screenshots confirming exact restoration of provider badge, model metadata (context window, input pricing), capability icons with tooltips, and trigger button preview icons upon selection.
+
