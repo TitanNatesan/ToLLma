@@ -499,7 +499,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
               className="gap-1.5 text-xs text-red-600 hover:text-red-700 border-red-200 dark:border-red-900"
             >
               <Square className="size-3 fill-current" />
-              Stop
+              Stop Generating
             </Button>
           ) : (
             <Button

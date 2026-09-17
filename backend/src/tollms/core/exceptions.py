@@ -24,6 +24,10 @@ class ProviderError(Exception):
     pass
 
 
+class ConflictError(Exception):
+    pass
+
+
 def register_handlers(app: FastAPI) -> None:
     @app.exception_handler(NotFoundError)
     async def _not_found(_: Request, e: NotFoundError) -> JSONResponse:
@@ -43,3 +47,8 @@ def register_handlers(app: FastAPI) -> None:
     async def _provider_error(_: Request, e: ProviderError) -> JSONResponse:
         logger.exception("provider error: %s", e)
         return JSONResponse(status_code=502, content={"detail": str(e)})
+
+    @app.exception_handler(ConflictError)
+    async def _conflict(_: Request, e: ConflictError) -> JSONResponse:
+        logger.warning("conflict: %s", e)
+        return JSONResponse(status_code=409, content={"detail": str(e)})

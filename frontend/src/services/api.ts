@@ -1,4 +1,5 @@
 import type {
+  ActiveGeneration,
   AIModel,
   AuthResponse,
   ChatMessage,
@@ -11,6 +12,7 @@ import type {
   RegisterResult,
   RepositoryLookup,
   StreamDone,
+  StreamMeta,
   UsageTotals,
   User,
   ValidationResult,
@@ -155,9 +157,15 @@ export const deleteConversation = (id: string) => del<void>(`/api/v1/conversatio
 export const getUsage = (id: string) => get<UsageTotals>(`/api/v1/conversations/${id}/usage`);
 
 // --- Gateway streaming (client-side; ReadableStream for stop/abort support) ---
+//
+// The backend owns generation state. This client only renders progress:
+// - POST /gateway/stream creates the generation; meta carries its ids.
+// - GET /gateway/stream/{id} reattaches after refresh (snapshot + live).
+// - POST /gateway/generations/{id}/cancel stops the provider stream.
 export interface StreamCallbacks {
   signal: AbortSignal;
-  onMeta?: (conversationId: string) => void;
+  onMeta?: (meta: StreamMeta) => void;
+  onSnapshot?: (content: string) => void;
   onDelta: (text: string) => void;
   onDone: (done: StreamDone) => void;
   onError: (message: string) => void;
@@ -207,6 +215,52 @@ export async function streamChat(
   },
   cb: StreamCallbacks,
 ): Promise<void> {
+  return postStream("/api/v1/gateway/stream", body, cb);
+}
+
+/** Refresh recovery: reattach to a running generation (snapshot + live). */
+export async function streamGeneration(generationId: string, cb: StreamCallbacks): Promise<void> {
+  const token = getAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/api/v1/gateway/stream/${generationId}`, {
+      headers,
+      signal: cb.signal,
+      credentials: "include",
+    });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") return;
+    cb.onError(e instanceof Error ? e.message : "request failed");
+    return;
+  }
+  await consumeStream(res, cb);
+}
+
+/** User stop: cancel the backend generation (partial text persists). */
+export function cancelGeneration(generationId: string): Promise<{ generation_id: string; status: string }> {
+  return post(`/api/v1/gateway/generations/${generationId}/cancel`, {});
+}
+
+/** Recovery lookup: the running generation for a conversation, if any. */
+export async function getActiveGeneration(conversationId: string): Promise<ActiveGeneration | null> {
+  try {
+    return await get<ActiveGeneration>(`/api/v1/conversations/${conversationId}/active-generation`);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Single-generation status (running or terminal), ownership-checked. */
+export function getGeneration(generationId: string): Promise<ActiveGeneration> {
+  return get<ActiveGeneration>(`/api/v1/gateway/generations/${generationId}`);
+}
+
+async function postStream(path: string, body: unknown, cb: StreamCallbacks): Promise<void> {
   const token = getAccessToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) {
@@ -215,7 +269,7 @@ export async function streamChat(
 
   let res: Response;
   try {
-    res = await fetch(`${apiBase()}/api/v1/gateway/stream`, {
+    res = await fetch(`${apiBase()}${path}`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -244,7 +298,7 @@ export async function streamChat(
           useAuthStore.getState().setAccessToken(data.access_token);
           headers["Authorization"] = `Bearer ${data.access_token}`;
         }
-        res = await fetch(`${apiBase()}/api/v1/gateway/stream`, {
+        res = await fetch(`${apiBase()}${path}`, {
           method: "POST",
           headers,
           body: JSON.stringify(body),
@@ -257,6 +311,10 @@ export async function streamChat(
     }
   }
 
+  await consumeStream(res, cb);
+}
+
+async function consumeStream(res: Response, cb: StreamCallbacks): Promise<void> {
   if (!res.ok || !res.body) {
     cb.onError(`stream failed with ${res.status}`);
     return;
@@ -281,9 +339,10 @@ export async function streamChat(
           continue;
         }
         if (typeof event.delta === "string") cb.onDelta(event.delta);
-        else if (typeof event.conversation_id === "string") cb.onMeta?.(event.conversation_id);
+        else if (typeof event.content === "string") cb.onSnapshot?.(event.content);
+        else if (typeof event.conversation_id === "string") cb.onMeta?.(event as unknown as StreamMeta);
         else if (event.done) cb.onDone(event as unknown as StreamDone);
-        else if (typeof event.error === "string") cb.onError(event.error);
+        else if (typeof event.error === "string" && !event.done) cb.onError(event.error);
       }
     }
   } catch (e) {

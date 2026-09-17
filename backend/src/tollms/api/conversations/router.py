@@ -17,6 +17,7 @@ from tollms.api.conversations.schemas import (
     MessageRead,
     UsageTotals,
 )
+from tollms.api.gateway.schemas import ActiveGenerationRead
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
 
@@ -68,3 +69,12 @@ def messages(conversation_id: uuid.UUID, db: Session = Depends(get_db), user: Us
 @router.get("/{conversation_id}/usage", response_model=UsageTotals)
 def usage(conversation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> UsageTotals:
     return service.usage_totals(db, conversation_id, user.id)
+
+
+@router.get("/{conversation_id}/active-generation", response_model=ActiveGenerationRead)
+def active_generation(conversation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ActiveGenerationRead:
+    """Refresh recovery: the running generation, if any. 404 means refresh-from-DB."""
+    # Deferred: gateway.service imports conversations.service at module level.
+    from tollms.api.gateway import service as gateway_service
+
+    return gateway_service.active_generation(db, conversation_id, user.id)

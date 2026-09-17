@@ -66,6 +66,15 @@ def usage_totals(conversation_id: object, user_id: object | None = None) -> str:
     return _key("conversation", f"usage:{scope}:{conversation_id}")
 
 
+# --- generations (active-state cache; DB rows are permanent storage) --------
+def generation(generation_id: object) -> str:
+    return _key("generation", str(generation_id))
+
+
+def generation_by_conversation(conversation_id: object) -> str:
+    return _key("generation", f"conv:{conversation_id}")
+
+
 # --- auth sessions -------------------------------------------------------
 def session(session_id: str) -> str:
     return _key("session", session_id)

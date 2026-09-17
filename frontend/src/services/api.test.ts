@@ -43,21 +43,52 @@ describe("api client", () => {
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream)));
     const deltas: string[] = [];
-    let meta = "";
+    let meta: unknown = null;
     let done: unknown = null;
     await streamChat(
       { provider_id: "p", model_id: "m", message: "hi" },
       {
         signal: new AbortController().signal,
-        onMeta: (id) => (meta = id),
+        onMeta: (m) => (meta = m),
         onDelta: (d) => deltas.push(d),
         onDone: (d) => (done = d),
         onError: () => {},
       },
     );
-    expect(meta).toBe("c1");
+    expect(meta).toMatchObject({ conversation_id: "c1" });
     expect(deltas.join("")).toBe("Hello world");
     expect(done).toMatchObject({ done: true });
+  });
+
+  it("routes snapshot events to onSnapshot (reattach)", async () => {
+    const sse =
+      'data: {"conversation_id": "c1", "generation_id": "g1", "message_id": "m1", "status": "running"}\n\n' +
+      'data: {"content": "partial", "status": "running"}\n\n' +
+      'data: {"delta": " rest"}\n\n' +
+      'data: {"done": true, "generation_id": "g1", "message_id": "m1", "status": "completed"}\n\n';
+    const stream = new ReadableStream({
+      start: (c) => {
+        c.enqueue(new TextEncoder().encode(sse));
+        c.close();
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream)));
+    let snapshot = "";
+    const deltas: string[] = [];
+    let done: unknown = null;
+    await streamChat(
+      { provider_id: "p", model_id: "m", message: "hi" },
+      {
+        signal: new AbortController().signal,
+        onSnapshot: (s) => (snapshot = s),
+        onDelta: (d) => deltas.push(d),
+        onDone: (d) => (done = d),
+        onError: () => {},
+      },
+    );
+    expect(snapshot).toBe("partial");
+    expect(deltas.join("")).toBe(" rest");
+    expect(done).toMatchObject({ done: true, status: "completed" });
   });
 
   it("surfaces provider errors", async () => {

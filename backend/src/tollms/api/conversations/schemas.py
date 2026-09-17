@@ -7,7 +7,7 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 from tollms.api.attachments.schemas import AttachmentRead
-from tollms.models.message import Role
+from tollms.models.message import MessageStatus, Role
 
 
 class ConversationCreate(BaseModel):
@@ -28,6 +28,10 @@ class MessageRead(BaseModel):
     id: uuid.UUID
     role: Role
     content: str
+    status: MessageStatus = MessageStatus.COMPLETED
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
     provider_id: uuid.UUID | None
     model_id: uuid.UUID | None
     prompt_tokens: int | None

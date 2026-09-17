@@ -2,10 +2,11 @@
 
 import enum
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, Float, ForeignKey, Index, Numeric, Text
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Numeric, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +22,24 @@ class Role(str, enum.Enum):
     ASSISTANT = "assistant"
 
 
+class MessageStatus(str, enum.Enum):
+    """Backend-owned generation lifecycle for assistant messages.
+
+    The generation IS the assistant message row: generation_id == message id.
+    User messages are always COMPLETED. Only the generation engine (plus the
+    startup sweep) transitions these states — never the frontend.
+    """
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+TERMINAL_STATUSES = frozenset({MessageStatus.COMPLETED, MessageStatus.CANCELLED, MessageStatus.FAILED})
+
+
 class Message(SoftDeleteMixin, TimestampedModel):
     __tablename__ = "messages"
     __table_args__ = (
@@ -28,6 +47,7 @@ class Message(SoftDeleteMixin, TimestampedModel):
         Index("ix_messages_created", "created_at"),
         Index("ix_messages_role", "role"),
         Index("ix_messages_user", "user_id"),
+        Index("ix_messages_status", "status"),
     )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -40,6 +60,13 @@ class Message(SoftDeleteMixin, TimestampedModel):
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     provider_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("providers.id"), nullable=True)
     model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=True)
+    status: Mapped[MessageStatus] = mapped_column(
+        Enum(MessageStatus, name="message_status"), nullable=False,
+        default=MessageStatus.COMPLETED, server_default=MessageStatus.COMPLETED.name,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(nullable=True)

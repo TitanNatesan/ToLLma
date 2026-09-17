@@ -18,6 +18,25 @@ export async function startMockLLM(port = 4899): Promise<string> {
         const parsed = JSON.parse(body || "{}");
         if (parsed.stream) {
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+          // Slow mode (model id contains "slow"): 20 paced chunks so tests can
+          // stop mid-stream and refresh mid-generation. Production-only path.
+          if (typeof parsed.model === "string" && parsed.model.includes("slow")) {
+            let i = 0;
+            const timer = setInterval(() => {
+              i += 1;
+              if (i <= 20) {
+                res.write(`data: {"choices": [{"delta": {"content": "slow-word-${i} "}}]}\n\n`);
+              } else {
+                clearInterval(timer);
+                res.write(
+                  'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 8, "completion_tokens": 6, "total_tokens": 14}}\n\n',
+                );
+                res.write("data: [DONE]\n\n");
+                res.end();
+              }
+            }, 150);
+            return;
+          }
           res.write('data: {"choices": [{"delta": {"content": "Hello from **mock** "}}]}\n\n');
           res.write('data: {"choices": [{"delta": {"content": "`code`"}}]}\n\n');
           res.write(

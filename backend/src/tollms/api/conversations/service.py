@@ -15,7 +15,7 @@ from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_delete_sync, cache_get_sync, cache_set_sync
 from tollms.models.conversation import Conversation
-from tollms.models.message import Message, Role
+from tollms.models.message import Message, MessageStatus, Role
 from tollms.api.conversations.schemas import (
     ConversationCreate,
     ConversationRead,
@@ -147,6 +147,9 @@ def add_message(
     extra_usage: tuple[int, int, int] | None = None,
     extra_cost: tuple[Decimal, Decimal, Decimal] | None = None,
     latency_ms: float | None = None,
+    status: MessageStatus = MessageStatus.COMPLETED,
+    started_at: datetime | None = None,
+    completed_at: datetime | None = None,
     user_id: uuid.UUID | None = None,
 ) -> Message:
     msg = Message(
@@ -157,6 +160,9 @@ def add_message(
         provider_id=provider_id,
         model_id=model_id,
         latency_ms=latency_ms,
+        status=status,
+        started_at=started_at,
+        completed_at=completed_at,
     )
     if usage is not None:
         msg.prompt_tokens, msg.completion_tokens, msg.total_tokens = usage
@@ -171,6 +177,33 @@ def add_message(
     db.refresh(msg)
     cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
     return msg
+
+
+def get_message(db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None = None) -> Message:
+    """Single message, ownership-checked. Cross-owner reads 404 (no oracle)."""
+    msg = db.get(Message, message_id)
+    if msg is None or msg.is_deleted:
+        raise NotFoundError(f"message {message_id} not found")
+    if user_id is not None and msg.user_id != user_id:
+        raise NotFoundError(f"message {message_id} not found")
+    return msg
+
+
+def active_assistant_message(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> Message | None:
+    """The conversation's non-terminal assistant message, if any."""
+    get_conversation(db, conversation_id, user_id)
+    return db.scalar(
+        select(Message)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.is_deleted.is_(False),
+            Message.role == Role.ASSISTANT,
+            Message.status.in_([MessageStatus.QUEUED, MessageStatus.RUNNING]),
+        )
+        .order_by(Message.created_at.desc())
+    )
 
 
 def list_messages(

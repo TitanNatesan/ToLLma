@@ -1134,3 +1134,26 @@ Restored ONLY the model selection dropdown UI (`UnifiedModelSelector` in `fronte
 - `vitest` unit tests: 41/41 passed across all 8 test suites.
 - Playwright verification: Captured before/after screenshots confirming exact restoration of provider badge, model metadata (context window, input pricing), capability icons with tooltips, and trigger button preview icons upon selection.
 
+
+## 2026-09-17 — Backend-owned generation lifecycle (cancel/persist/recover)
+
+### Requirement Completed
+Generation state moved into the backend: assistant row created RUNNING before streaming, background task drives provider stream with progressive persistence, disconnect never stops generation, refresh reattaches, Stop cancels provider + keeps partial, user avatars removed.
+
+### Files Created
+- `backend/alembic/versions/f3a7c9e1b2d4_generation_lifecycle.py` (message_status enum + started/completed/error + index)
+- `backend/src/tollms/services/generation.py` (lifecycle engine: registry, subscribers, Valkey active-state, progressive flush, cancel, sweep)
+- `backend/tests/test_generations.py` (10 lifecycle tests, slow fake adapter)
+- `frontend/e2e/generation.spec.ts` (stop/refresh/navigate/avatar scenarios, slow-mock mode)
+
+### Files Modified
+- Backend: `models/message.py` (MessageStatus), `services/cache/keys.py` (generation keys), `core/exceptions.py` (409 ConflictError), `api/conversations/{service,schemas,router}.py` (message helpers, status fields, active-generation route), `api/gateway/{service,schemas,router}.py` (start/cancel/reattach flow), `main.py` (startup sweep + shutdown), `tests/conftest.py` (test session factory for engine)
+- Frontend: `types`, `services/api{,.test}.ts` (cancel/active/reattach/snapshot), `store/chat.ts` (activeGeneration), `app/page.tsx` (viewer flow + recovery effect), `app/components/MessageView.tsx` (no user avatar, Stopped/failed states), `app/components/chat/ChatComposer.tsx` ("Stop Generating"), `e2e/mock-server.ts` (slow mode)
+
+### Architecture Decisions
+- generation_id == assistant message id (no second table); Valkey `tollma:generation:{id}` + `tollma:generation:conv:{conv}` is active-state cache with TTL, DB is truth; single-process task registry documented; reattach snapshot reads driver buffer (gapless); cancel is idempotent; second concurrent start 409s; enum stores NAMES like message_role precedent
+
+### Verification
+- `alembic upgrade head` + `alembic check` green; backend `pytest` 90/90 (80 existing + 10 new)
+- Frontend `tsc`/`eslint`(touched)/`vitest` 42/42/`build` green; e2e 45 passed incl. 5 new generation scenarios; wizard.spec:10 still fails pre-existing (providers UI, untouched paths, clean backend logs)
+- Screenshots `/tmp/gen-stopped.png` (partial + Stopped badge), `/tmp/gen-completed.png` reviewed

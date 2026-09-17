@@ -110,6 +110,8 @@ export interface AIModel {
 
 export type Role = "system" | "user" | "assistant";
 
+export type MessageStatus = "queued" | "running" | "completed" | "cancelled" | "failed";
+
 export interface ChatAttachment {
   id: string;
   filename: string;
@@ -125,6 +127,10 @@ export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  status?: MessageStatus | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error?: string | null;
   attachments?: ChatAttachment[];
   provider_id: string | null;
   model_id: string | null;
@@ -200,11 +206,31 @@ export interface RepositoryLookup {
 export interface StreamDone {
   done: boolean;
   message_id?: string;
+  generation_id?: string;
+  status?: MessageStatus | null;
+  content?: string;
+  error?: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   cost?: { input_cost: string; output_cost: string; total_cost: string };
   usage_estimated?: boolean;
   latency_ms?: number;
   empty?: boolean;
+}
+
+export interface StreamMeta {
+  conversation_id: string;
+  generation_id?: string;
+  message_id?: string;
+  status?: MessageStatus | null;
+}
+
+export interface ActiveGeneration {
+  generation_id: string;
+  message_id: string;
+  conversation_id: string;
+  status: MessageStatus;
+  current_content: string;
+  started_at: string | null;
 }
 
 export type MatchType = "provider_specific" | "global" | "fallback";

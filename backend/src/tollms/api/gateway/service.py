@@ -1,24 +1,36 @@
-"""Unified gateway: route -> stream -> usage/cost -> persist. All adapters behave the same."""
+"""Unified gateway: route -> stream -> usage/cost -> persist. All adapters behave the same.
+
+Streaming is backend-owned: POST /stream creates the user + assistant rows
+(assistant starts RUNNING) and spawns a background generation task. The HTTP
+connection only subscribes to progress events — disconnects never stop the
+generation, and refresh reattaches to it.
+"""
 
 import base64
 import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
+import asyncio
 
 import httpx
 from sqlalchemy.orm import Session
 
 from tollms.api.attachments import service as attachment_service
-from tollms.core.exceptions import NotFoundError, ProviderError, ValidationError
-from tollms.models.message import Role
-from tollms.models.provider import ProviderType
+from tollms.core.exceptions import ConflictError, NotFoundError, ProviderError, ValidationError
+from tollms.models.message import MessageStatus, Role, TERMINAL_STATUSES
+from tollms.models.provider import Provider, ProviderType
+from tollms.models.registered_model import AIModel
 from tollms.api.conversations.service import (
+    active_assistant_message,
     add_message,
     create_conversation,
     get_conversation,
+    get_message,
     list_messages,
     touch,
 )
@@ -27,7 +39,15 @@ from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessa
 from tollms.services.gateway import attachments as attachment_engine
 from tollms.services.gateway.costing import CostBreakdown, UsageTokens, calculate, prices_for_model
 from tollms.services.gateway.factory import build_adapter
-from tollms.api.gateway.schemas import ChatRequest, ChatResponse
+from tollms.api.gateway.schemas import (
+    ActiveGenerationRead,
+    ChatRequest,
+    ChatResponse,
+    GenerationCancelRead,
+    GenerationStarted,
+)
+from tollms.services import generation as generation_engine
+from tollms.services.generation import GenerationSpec
 from tollms.services.model_repository.lookup import find_for_model
 from tollms.api.models.service import get_model
 from tollms.api.providers.service import decrypted_credentials, get_provider
@@ -256,6 +276,7 @@ async def run_chat(
     """Non-streaming chat. Persists user + assistant messages, usage, cost."""
     provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
     start = time.monotonic()
+    started_at = datetime.now(timezone.utc)
     try:
         credentials = decrypted_credentials(provider)
         adapter = build_adapter(provider, model, credentials, transport)
@@ -303,6 +324,8 @@ async def run_chat(
             db, conv_id, Role.ASSISTANT, result.text,
             provider_id=provider.id, model_id=model.id, usage=usage, cost=cost,
             extra_usage=extra_usage, extra_cost=extra_cost, latency_ms=latency_ms,
+            status=MessageStatus.COMPLETED, started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
             user_id=user_id,
         )
         touch(db, conv)
@@ -327,15 +350,31 @@ async def run_chat(
         raise ProviderError(str(e)) from e
 
 
-async def run_stream(
+@dataclass
+class _Setup:
+    """Validated setup: rows not yet created, provider call not yet made."""
+
+    conv_id: uuid.UUID
+    provider: Provider
+    model: AIModel
+    adapter: BaseProviderAdapter
+    rows: list
+    history: list[ChatMessage]
+    history_text: str
+
+
+async def _setup_generation(
     db: Session,
     data: ChatRequest,
-    transport: httpx.AsyncBaseTransport | None = None,
-    user_id: uuid.UUID | None = None,
-) -> AsyncIterator[str]:
-    """SSE stream. Persists messages once the stream completes (or partial text on error)."""
+    transport: httpx.AsyncBaseTransport | None,
+    user_id: uuid.UUID | None,
+) -> _Setup:
+    """Resolve, create conv if needed, assemble history + attachments.
+
+    Raises 404/422 before any row exists. Row creation happens in
+    start_generation under the conversation lock (409 on active generation).
+    """
     provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
-    start = time.monotonic()
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
     transcriber = _transcriber(provider, credentials)
@@ -357,56 +396,239 @@ async def run_stream(
     )
     content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
     history.append(ChatMessage(role="user", content=content, media=media))
-    yield f"data: {json.dumps({'conversation_id': str(conv_id)})}\n\n"
     logger.info(
         "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d",
         provider.provider_type, model.model_id, conv_id, len(rows), len(media),
     )
-    parts: list[str] = []
-    result = ChatResult(text="")
-    try:
-        async for chunk in adapter.chat_stream(history):
-            parts.append(chunk.delta)
-            if chunk.prompt_tokens is not None:
-                result.prompt_tokens = chunk.prompt_tokens
-            if chunk.completion_tokens is not None:
-                result.completion_tokens = chunk.completion_tokens
-            if chunk.total_tokens is not None:
-                result.total_tokens = chunk.total_tokens
-            if chunk.cache_read_tokens is not None:
-                result.cache_read_tokens = chunk.cache_read_tokens
-            if chunk.cache_write_tokens is not None:
-                result.cache_write_tokens = chunk.cache_write_tokens
-            if chunk.reasoning_tokens is not None:
-                result.reasoning_tokens = chunk.reasoning_tokens
-            if chunk.delta:
-                yield f"data: {json.dumps({'delta': chunk.delta})}\n\n"
-    except Exception as e:
-        logger.exception("gateway stream failed mid-response")
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-    result.text = "".join(parts)
-    latency_ms = (time.monotonic() - start) * 1000
-    if result.text:
-        tokens, total, breakdown, estimated = _finalize_usage(
-            db, provider, model, "".join(m.content for m in history), result
+    return _Setup(
+        conv_id=conv_id, provider=provider, model=model, adapter=adapter,
+        rows=rows, history=history, history_text="".join(m.content for m in history),
+    )
+
+
+async def start_generation(
+    db: Session,
+    data: ChatRequest,
+    transport: httpx.AsyncBaseTransport | None = None,
+    user_id: uuid.UUID | None = None,
+    session_factory=None,
+) -> GenerationStarted:
+    """Synchronous setup + background spawn. The assistant row exists as
+    RUNNING before this returns — the frontend never invents messages."""
+    setup = await _setup_generation(db, data, transport, user_id)
+    provider, model = setup.provider, setup.model
+    conv_id = setup.conv_id
+    started_at = datetime.now(timezone.utc)
+    async with generation_engine.manager.conv_lock(conv_id):
+        if generation_engine.manager.is_active(conv_id) is not None:
+            raise ConflictError(f"conversation {conv_id} already has an active generation")
+        if active_assistant_message(db, conv_id, user_id) is not None:
+            raise ConflictError(f"conversation {conv_id} already has an active generation")
+        user_msg = add_message(
+            db, conv_id, Role.USER, data.message,
+            provider_id=provider.id, model_id=model.id, user_id=user_id,
         )
-        usage = (tokens.prompt, tokens.completion, total)
-        cost = breakdown.legacy_triplet()
-        user_msg = add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id,
-                    user_id=user_id)
-        for row in rows:
+        for row in setup.rows:
             attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
-        db.commit()
         assistant = add_message(
-            db, conv_id, Role.ASSISTANT, result.text,
-            provider_id=provider.id, model_id=model.id, usage=usage, cost=cost,
-            extra_usage=(tokens.cache_read, tokens.cache_write, tokens.reasoning),
-            extra_cost=(breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost),
-            latency_ms=latency_ms,
+            db, conv_id, Role.ASSISTANT, "",
+            provider_id=provider.id, model_id=model.id,
+            status=MessageStatus.RUNNING, started_at=started_at,
             user_id=user_id,
         )
-        touch(db, conv)
-        logger.info("gateway stream done: conv=%s tokens=%s/%s cost=%s", conv_id, usage[0], usage[1], cost[2])
-        yield f"data: {json.dumps({'done': True, 'message_id': str(assistant.id), 'usage': {'prompt_tokens': usage[0], 'completion_tokens': usage[1], 'total_tokens': usage[2], 'cache_read_tokens': tokens.cache_read, 'cache_write_tokens': tokens.cache_write, 'reasoning_tokens': tokens.reasoning}, 'cost': {'input_cost': str(cost[0]), 'output_cost': str(cost[1]), 'total_cost': str(cost[2]), 'cache_read_cost': str(breakdown.cache_read_cost), 'cache_write_cost': str(breakdown.cache_write_cost), 'reasoning_cost': str(breakdown.reasoning_cost)}, 'usage_estimated': estimated, 'latency_ms': latency_ms})}\n\n"
-    else:
-        yield f"data: {json.dumps({'done': True, 'empty': True})}\n\n"
+        touch(db, get_conversation(db, conv_id, user_id))
+        spec = GenerationSpec(
+            generation_id=assistant.id,
+            conversation_id=conv_id,
+            user_id=user_id,
+            adapter=setup.adapter,
+            history=setup.history,
+            history_text=setup.history_text,
+            provider_type=provider.provider_type.value,
+            model_label=model.model_id,
+            input_price=str(model.input_price),
+            output_price=str(model.output_price),
+            cache_read_price=str(model.cache_read_price),
+            cache_write_price=str(model.cache_write_price),
+        )
+        generation_engine.manager.spawn(spec, session_factory=session_factory)
+    logger.info("generation started: %s conv=%s", assistant.id, conv_id)
+    return GenerationStarted(
+        conversation_id=conv_id, generation_id=assistant.id, message_id=assistant.id,
+    )
+
+
+async def _drain_to_sse(
+    db: Session,
+    generation_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    is_disconnected: Callable[[], Awaitable[bool]],
+    snapshot: bool,
+) -> AsyncIterator[str]:
+    """Shared SSE body: meta (+snapshot) then live deltas until terminal.
+
+    Disconnect only unsubscribes — the background generation keeps running.
+    """
+    msg = get_message(db, generation_id, user_id)
+    db.refresh(msg)  # DB is truth; never trust a reused session's cache
+    if msg.role != Role.ASSISTANT:
+        raise NotFoundError(f"generation {generation_id} not found")
+    if msg.status in TERMINAL_STATUSES:
+        yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
+        if snapshot:
+            yield f"data: {json.dumps({'content': msg.content, 'status': msg.status.value})}\n\n"
+        yield f"data: {json.dumps(_terminal_from_row(msg))}\n\n"
+        return
+    # Subscribe + snapshot with no await between: the snapshot covers exactly
+    # the deltas emitted before subscription — gapless by construction.
+    queue = generation_engine.manager.subscribe(msg.id)
+    buffered = generation_engine.manager.current_buffer(msg.id)
+    if queue is None or buffered is None:
+        # Task gone but row still running (crash between sweep and read):
+        # fail it now so the client sees a terminal state, never a hang.
+        generation_engine.sweep_stale_running(db, reason="generation process lost")
+        db.refresh(msg)
+        yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
+        if snapshot:
+            yield f"data: {json.dumps({'content': msg.content, 'status': msg.status.value})}\n\n"
+        yield f"data: {json.dumps(_terminal_from_row(msg))}\n\n"
+        return
+    yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
+    if snapshot:
+        yield f"data: {json.dumps({'content': buffered, 'status': msg.status.value})}\n\n"
+    try:
+        while True:
+            if await is_disconnected():
+                return
+            try:
+                kind, payload = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            if kind == "delta":
+                yield f"data: {json.dumps({'delta': payload})}\n\n"
+            elif kind == "terminal":
+                yield f"data: {json.dumps(payload)}\n\n"
+                return
+    finally:
+        generation_engine.manager.unsubscribe(msg.id, queue)
+
+
+def _terminal_from_row(msg) -> dict:
+    return {
+        "done": True,
+        "generation_id": str(msg.id),
+        "message_id": str(msg.id),
+        "status": msg.status.value,
+        "content": msg.content,
+        **({"error": msg.error} if msg.error else {}),
+    }
+
+
+async def stream_events(
+    db: Session,
+    generation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+    is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+) -> AsyncIterator[str]:
+    """Live SSE for the request that started the generation (no snapshot)."""
+    async for raw in _drain_to_sse(db, generation_id, user_id, is_disconnected or _never_disconnected, snapshot=False):
+        yield raw
+
+
+async def reattach_events(
+    db: Session,
+    generation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+    is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+) -> AsyncIterator[str]:
+    """Recovery SSE: current partial content first, then live deltas."""
+    async for raw in _drain_to_sse(db, generation_id, user_id, is_disconnected or _never_disconnected, snapshot=True):
+        yield raw
+
+
+async def _never_disconnected() -> bool:
+    return False
+
+
+async def cancel_generation(
+    db: Session,
+    generation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+) -> GenerationCancelRead:
+    """User stop: signal the driver, persist partial text, end CANCELLED.
+
+    Idempotent — cancelling a terminal generation returns its status.
+    """
+    msg = get_message(db, generation_id, user_id)
+    db.refresh(msg)  # DB is truth; never trust a reused session's cache
+    if msg.role != Role.ASSISTANT:
+        raise NotFoundError(f"generation {generation_id} not found")
+    if msg.status in TERMINAL_STATUSES:
+        return GenerationCancelRead(
+            generation_id=msg.id, message_id=msg.id, status=msg.status.value,
+        )
+    active = generation_engine.manager.get(msg.id)
+    if active is not None:
+        active.cancel_event.set()
+    await generation_engine.manager.request_cancel_flag(msg.id)
+    logger.info("generation cancel requested: %s", msg.id)
+    return GenerationCancelRead(generation_id=msg.id, message_id=msg.id, status=MessageStatus.CANCELLED.value)
+
+
+def active_generation(    db: Session,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+) -> ActiveGenerationRead:
+    """Recovery lookup. 404 when nothing is running (frontend: refresh-from-DB)."""
+    get_conversation(db, conversation_id, user_id)
+    gen_id = generation_engine.manager.is_active(conversation_id)
+    if gen_id is None:
+        row = active_assistant_message(db, conversation_id, user_id)
+        if row is None:
+            raise NotFoundError(f"conversation {conversation_id} has no active generation")
+        gen_id = row.id
+    msg = get_message(db, gen_id, user_id)
+    db.refresh(msg)  # DB is truth; never trust a reused session's cache
+    if msg.status in TERMINAL_STATUSES:
+        raise NotFoundError(f"conversation {conversation_id} has no active generation")
+    return ActiveGenerationRead(
+        generation_id=msg.id,
+        message_id=msg.id,
+        conversation_id=msg.conversation_id,
+        status=msg.status.value,
+        current_content=msg.content,
+        started_at=msg.started_at,
+    )
+
+
+def generation_status(
+    db: Session,
+    generation_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+) -> ActiveGenerationRead:
+    """Single-generation lookup (running or terminal), ownership-checked."""
+    msg = get_message(db, generation_id, user_id)
+    db.refresh(msg)  # DB is truth; never trust a reused session's cache
+    if msg.role != Role.ASSISTANT:
+        raise NotFoundError(f"generation {generation_id} not found")
+    return ActiveGenerationRead(
+        generation_id=msg.id,
+        message_id=msg.id,
+        conversation_id=msg.conversation_id,
+        status=msg.status.value,
+        current_content=msg.content,
+        started_at=msg.started_at,
+    )
+
+
+async def run_stream(
+    db: Session,
+    data: ChatRequest,
+    transport: httpx.AsyncBaseTransport | None = None,
+    user_id: uuid.UUID | None = None,
+    session_factory=None,
+) -> AsyncIterator[str]:
+    """Start + stream to completion. Kept for non-HTTP drivers (tests, CLI)."""
+    started = await start_generation(db, data, transport, user_id, session_factory)
+    async for raw in stream_events(db, started.generation_id, user_id):
+        yield raw

@@ -20,16 +20,49 @@ from tollms.api.repository.router import router as repository_router
 from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
 from tollms.services import cache as cache_service
+from tollms.services import generation as generation_engine
 from tollms.services.model_repository import scheduler as repository_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await cache_service.connect()
+    _sweep_stale_generations("backend restarted")
+    await generation_engine.manager.clear_all_cached_state()
     repository_scheduler.start()
     yield
+    await _shutdown_generations()
     repository_scheduler.shutdown()
     await cache_service.disconnect()
+
+
+def _sweep_stale_generations(reason: str) -> None:
+    """Startup: tasks are gone, so any RUNNING row is dead — mark FAILED."""
+    from tollms.db.session import SessionLocal
+    from tollms.services.generation import sweep_stale_running
+
+    db = SessionLocal()
+    try:
+        sweep_stale_running(db, reason=reason)
+    finally:
+        db.close()
+
+
+async def _shutdown_generations() -> None:
+    """Shutdown: stop drivers, persist partial text as FAILED."""
+    import asyncio
+
+    from tollms.db.session import SessionLocal
+    from tollms.services.generation import sweep_stale_running
+
+    tasks = generation_engine.manager.shutdown_tasks("backend shutting down")
+    if tasks:
+        await asyncio.wait(tasks, timeout=10.0)
+    db = SessionLocal()
+    try:
+        sweep_stale_running(db, reason="backend shutting down")
+    finally:
+        db.close()
 
 
 def create_app() -> FastAPI:

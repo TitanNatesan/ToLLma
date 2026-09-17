@@ -1,6 +1,7 @@
 """Gateway request/response models."""
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, model_validator
@@ -42,3 +43,29 @@ class ChatResponse(BaseModel):
     reasoning_cost: Decimal = Decimal(0)
     usage_estimated: bool
     latency_ms: float
+
+
+class GenerationStarted(BaseModel):
+    """Synchronous setup result. The assistant row already exists as RUNNING."""
+
+    conversation_id: uuid.UUID
+    generation_id: uuid.UUID
+    message_id: uuid.UUID
+    status: str = "running"
+
+
+class ActiveGenerationRead(BaseModel):
+    """Recovery payload: what the frontend needs to reattach."""
+
+    generation_id: uuid.UUID
+    message_id: uuid.UUID
+    conversation_id: uuid.UUID
+    status: str
+    current_content: str
+    started_at: datetime | None = None
+
+
+class GenerationCancelRead(BaseModel):
+    generation_id: uuid.UUID
+    message_id: uuid.UUID
+    status: str

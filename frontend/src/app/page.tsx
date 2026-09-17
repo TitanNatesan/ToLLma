@@ -9,10 +9,17 @@ import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";
 import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
 import { useConversation, useConversationMutations } from "@/hooks/useChat";
-import { streamChat } from "@/services/api";
+import {
+  cancelGeneration,
+  getActiveGeneration,
+  getGeneration,
+  streamChat,
+  streamGeneration,
+  type StreamCallbacks,
+} from "@/services/api";
 import { useChatStore } from "@/store/chat";
 import { Sparkles } from "lucide-react";
-import type { ChatMessage } from "@/types";
+import type { ChatMessage, MessageStatus } from "@/types";
 
 export default function Home() {
   const {
@@ -25,7 +32,9 @@ export default function Home() {
     setStreaming,
     addOptimistic,
     updateOptimisticStreaming,
+    setOptimisticContent,
     clearOptimistic,
+    setActiveGeneration,
   } = useChatStore();
 
   const { data: conversation, error: convError } = useConversation(activeConversationId);
@@ -43,7 +52,13 @@ export default function Home() {
   }, [convError, setConversation]);
 
   const persistedMessages: ChatMessage[] = conversation?.messages ?? [];
-  const allMessages = [...persistedMessages, ...optimisticMessages] as ChatMessage[];
+  // Optimistic entries carry backend-issued ids: they replace (never duplicate)
+  // the persisted rows. History itself always comes from the backend.
+  const optimisticIds = new Set(optimisticMessages.map((m) => m.id));
+  const allMessages = [
+    ...persistedMessages.filter((m) => !optimisticIds.has(m.id)),
+    ...optimisticMessages,
+  ] as ChatMessage[];
 
   // Auto-scroll to bottom on message updates
   useEffect(() => {
@@ -52,34 +67,90 @@ export default function Home() {
     }
   }, [allMessages.length, optimisticMessages]);
 
+  /** Terminal state for any watched stream: drop local overlays, reload truth. */
+  const finishGeneration = useCallback((convId: string | null, status?: MessageStatus | null, error?: string | null) => {
+    setStreaming(false);
+    setActiveGeneration(null);
+    clearOptimistic();
+    mutations.refresh(convId);
+    if (status === "failed") {
+      toast.error("Generation failed", { description: error ?? undefined });
+    }
+  }, [
+    setStreaming,
+    setActiveGeneration,
+    clearOptimistic,
+    mutations,
+  ]);
+
+  /** Callbacks shared by fresh sends and refresh-reattach subscriptions. */
+  const streamCallbacks = useCallback((ctrl: AbortController): StreamCallbacks => ({
+    signal: ctrl.signal,
+    onMeta: (meta) => {
+      setConversation(meta.conversation_id);
+      const genId = meta.generation_id;
+      const msgId = meta.message_id ?? genId;
+      if (genId && msgId) {
+        setActiveGeneration({ id: genId, messageId: msgId });
+        addOptimistic({
+          id: msgId,
+          role: "assistant",
+          content: "",
+          isStreaming: true,
+          created_at: new Date().toISOString(),
+        });
+      }
+    },
+    onSnapshot: (content) => {
+      const mid = useChatStore.getState().activeGeneration?.messageId;
+      if (mid) setOptimisticContent(mid, content);
+    },
+    onDelta: (d) => {
+      const mid = useChatStore.getState().activeGeneration?.messageId;
+      if (mid) updateOptimisticStreaming(mid, d);
+    },
+    onDone: (done) => {
+      finishGeneration(useChatStore.getState().activeConversationId, done.status, done.error);
+    },
+    onError: (m) => {
+      const convId = useChatStore.getState().activeConversationId;
+      setStreaming(false);
+      setActiveGeneration(null);
+      clearOptimistic();
+      toast.error("Chat failed", { description: m });
+      mutations.refresh(convId);
+    },
+  }), [
+    setConversation,
+    setActiveGeneration,
+    addOptimistic,
+    setOptimisticContent,
+    updateOptimisticStreaming,
+    finishGeneration,
+    setStreaming,
+    clearOptimistic,
+    mutations,
+  ]);
+
   const send = useCallback((payload: ChatSendPayload, conversationId: string | null) => {
     if (!providerId || !modelId) return;
     const text = payload.text;
 
     const ts = Date.now();
     const userMsgId = `opt-user-${ts}`;
-    const assistantMsgId = `opt-assistant-${ts + 1}`;
 
-    // Optimistic user message
+    // Optimistic user echo only — the assistant row is created by the backend
+    // and arrives via stream meta (never invented client-side).
     addOptimistic({
       id: userMsgId,
       role: "user",
       content: text,
       created_at: new Date(ts).toISOString(),
     });
-    // Optimistic assistant placeholder
-    addOptimistic({
-      id: assistantMsgId,
-      role: "assistant",
-      content: "",
-      isStreaming: true,
-      created_at: new Date(ts + 1).toISOString(),
-    });
 
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    let convId = conversationId;
 
     void streamChat(
       {
@@ -92,42 +163,123 @@ export default function Home() {
           .map((a) => a.attachmentId)
           .filter((id): id is string => !!id),
       },
-      {
-        signal: ctrl.signal,
-        onMeta: (id) => {
-          convId = id;
-          setConversation(id);
-        },
-        onDelta: (d) => {
-          updateOptimisticStreaming(assistantMsgId, d);
-        },
-        onDone: (_done) => {
-          setStreaming(false);
-          clearOptimistic();
-          mutations.refresh(convId);
-        },
-        onError: (m) => {
-          setStreaming(false);
-          clearOptimistic();
-          toast.error("Chat failed", { description: m });
-          mutations.refresh(convId);
-        },
-      },
+      streamCallbacks(ctrl),
     );
   }, [
     providerId,
     modelId,
     addOptimistic,
     setStreaming,
-    setConversation,
-    updateOptimisticStreaming,
-    clearOptimistic,
-    mutations,
+    streamCallbacks,
   ]);
 
   const lastUser = [...persistedMessages].reverse().find((m) => m.role === "user");
   const lastAssistantId = [...persistedMessages].reverse().find((m) => m.role === "assistant")?.id;
   const ready = !!providerId && !!modelId;
+
+  /** User stop: cancel the backend generation, then reload truth.
+   *  The local SSE abort only drops this tab's subscription. */
+  const stop = useCallback(() => {
+    const gen = useChatStore.getState().activeGeneration;
+    abortRef.current?.abort();
+    setStreaming(false);
+    const settle = () => {
+      setActiveGeneration(null);
+      clearOptimistic();
+      mutations.refresh(useChatStore.getState().activeConversationId);
+    };
+    if (!gen) {
+      settle();
+      return;
+    }
+    void (async () => {
+      try {
+        await cancelGeneration(gen.id);
+      } catch {
+        // Cancel is best-effort; the refresh below still shows backend truth.
+      }
+      // Wait for the terminal state so the refresh never shows stale running.
+      for (let i = 0; i < 30; i++) {
+        try {
+          const current = await getGeneration(gen.id);
+          if (current.status !== "running" && current.status !== "queued") break;
+        } catch {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      settle();
+    })();
+  }, [
+    setStreaming,
+    setActiveGeneration,
+    clearOptimistic,
+    mutations,
+  ]);
+
+  // Refresh recovery: a generation running on the backend (started here or
+  // in another tab before reload) reattaches its stream automatically.
+  // NOTE: callbacks go through a ref — their identity churns with renders
+  // and must never re-trigger (or abort) this effect. Same for `streaming`:
+  // the subscription itself flips it, so it is read via ref and kept out
+  // of deps (its presence there aborted recovery on the first re-render).
+  const streamCallbacksRef = useRef(streamCallbacks);
+  useEffect(() => {
+    streamCallbacksRef.current = streamCallbacks;
+  });
+  const streamingRef = useRef(streaming);
+  useEffect(() => {
+    streamingRef.current = streaming;
+  });
+  const recoveredFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeConversationId || streamingRef.current || recoveredFor.current === activeConversationId) return;
+    recoveredFor.current = activeConversationId;
+    let settled = false;
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    void (async () => {
+      let active = null;
+      try {
+        active = await getActiveGeneration(activeConversationId);
+      } catch {
+        active = null;
+      }
+      if (!active || (active.status !== "running" && active.status !== "queued")) {
+        recoveredFor.current = null;
+        return;
+      }
+      setStreaming(true);
+      setActiveGeneration({ id: active.generation_id, messageId: active.message_id });
+      addOptimistic({
+        id: active.message_id,
+        role: "assistant",
+        content: active.current_content,
+        isStreaming: true,
+        created_at: new Date().toISOString(),
+      });
+      const cbs = streamCallbacksRef.current(ctrl);
+      const prevDone = cbs.onDone;
+      await streamGeneration(active.generation_id, {
+        ...cbs,
+        onDone: (done) => {
+          settled = true;
+          prevDone(done);
+        },
+        onError: (m) => {
+          settled = true;
+          cbs.onError(m);
+        },
+      });
+    })().catch(() => {});
+    return () => {
+      if (!settled) {
+        recoveredFor.current = null;
+        ctrl.abort();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationId]);
 
   return (
     <div className="flex h-full flex-1 overflow-hidden">
@@ -176,7 +328,10 @@ export default function Home() {
           <AnimatePresence initial={false}>
             {allMessages.map((m) => {
               const isOpt = m.id.startsWith("opt-");
-              const isStreaming = isOpt && (m as { isStreaming?: boolean }).isStreaming && streaming;
+              // Backend running rows stream too (recovery window before the
+              // optimistic overlay with the same id arrives and replaces them).
+              const backendRunning = !isOpt && (m as ChatMessage).status === "running";
+              const isStreaming = (isOpt && (m as { isStreaming?: boolean }).isStreaming && streaming) || (backendRunning && streaming);
               return (
                 <MessageView
                   key={m.id}
@@ -199,7 +354,7 @@ export default function Home() {
         <ChatComposer
           streaming={streaming}
           onSend={(t) => send(t, activeConversationId)}
-          onStop={() => abortRef.current?.abort()}
+          onStop={stop}
         />
         </div>
       </main>

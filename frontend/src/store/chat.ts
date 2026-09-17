@@ -11,6 +11,11 @@ export interface OptimisticMessage {
   created_at: string;
 }
 
+export interface ActiveGenerationRef {
+  id: string;
+  messageId: string;
+}
+
 interface ChatState {
   providerId: string | null;
   modelId: string | null;
@@ -23,6 +28,8 @@ interface ChatState {
   rightSidebarWidth: number;
   draft: string;
   optimisticMessages: OptimisticMessage[];
+  /** Backend-owned generation the UI is currently subscribed to (if any). */
+  activeGeneration: ActiveGenerationRef | null;
   addProviderOpen: boolean;
   providerSearch: string;
   providerTypeFilter: string;
@@ -40,9 +47,10 @@ interface ChatState {
   setDraft: (text: string) => void;
   addOptimistic: (msg: OptimisticMessage) => void;
   updateOptimisticStreaming: (id: string, delta: string) => void;
+  setOptimisticContent: (id: string, content: string) => void;
   clearOptimistic: () => void;
-  setAddProviderOpen: (open: boolean) => void;
-  setProviderSearch: (s: string) => void;
+  setActiveGeneration: (gen: ActiveGenerationRef | null) => void;
+  setAddProviderOpen: (open: boolean) => void;  setProviderSearch: (s: string) => void;
   setProviderTypeFilter: (t: string) => void;
   setSelectedProviderId: (id: string | null) => void;
 }
@@ -61,6 +69,7 @@ export const useChatStore = create<ChatState>()(
       rightSidebarWidth: 380,
       draft: "",
       optimisticMessages: [],
+      activeGeneration: null,
       addProviderOpen: false,
       providerSearch: "",
       providerTypeFilter: "ALL",
@@ -84,7 +93,14 @@ export const useChatStore = create<ChatState>()(
             m.id === id ? { ...m, content: m.content + delta } : m,
           ),
         })),
+      setOptimisticContent: (id, content) =>
+        set((s) => ({
+          optimisticMessages: s.optimisticMessages.map((m) =>
+            m.id === id ? { ...m, content } : m,
+          ),
+        })),
       clearOptimistic: () => set({ optimisticMessages: [] }),
+      setActiveGeneration: (activeGeneration) => set({ activeGeneration }),
       setAddProviderOpen: (addProviderOpen) => set({ addProviderOpen }),
       setProviderSearch: (providerSearch) => set({ providerSearch }),
       setProviderTypeFilter: (providerTypeFilter) => set({ providerTypeFilter }),

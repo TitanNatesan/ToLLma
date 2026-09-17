@@ -7,15 +7,16 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
+  AlertCircle,
   Brain,
   ChevronDown,
   ChevronUp,
   Copy,
+  OctagonX,
   Paperclip,
   RotateCcw,
   Sparkles,
   Trash2,
-  User,
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
 import { ResponseMarkdown } from "./ResponseMarkdown";
@@ -248,17 +249,12 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
       className={cn("group flex gap-3", isUser && "flex-row-reverse")}
       data-testid={`message-${message.role}`}
     >
-      {/* Avatar */}
-      <div
-        className={cn(
-          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold",
-          isUser
-            ? "bg-zinc-700 text-white dark:bg-zinc-300 dark:text-zinc-900"
-            : "bg-gradient-to-br from-violet-500 to-indigo-500 text-white",
-        )}
-      >
-        {isUser ? <User className="size-3.5" /> : <Sparkles className="size-3.5" />}
-      </div>
+      {/* Assistant icon only — user messages carry no avatar. */}
+      {!isUser && (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 text-xs font-bold text-white">
+          <Sparkles className="size-3.5" />
+        </div>
+      )}
 
       {/* Bubble */}
       <div
@@ -309,6 +305,42 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
             <ResponseMarkdown content={message.content} isStreaming={isStreaming} />
           )}
         </div>
+
+        {/* Terminal generation states (backend-owned; never hover-only) */}
+        {!isUser && (msg as ChatMessage).status === "cancelled" && (
+          <div
+            className="flex items-center gap-1 text-[10px] text-zinc-400"
+            data-testid={`stopped-${message.id}`}
+          >
+            <OctagonX className="size-3" />
+            <span>Stopped — partial response kept</span>
+          </div>
+        )}
+        {!isUser && (msg as ChatMessage).status === "failed" && (
+          <div
+            className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-300"
+            data-testid={`failed-${message.id}`}
+            role="alert"
+          >
+            <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+              <AlertCircle className="size-3.5 shrink-0" />
+              <span className="truncate">
+                Generation failed{(msg as ChatMessage).error ? `: ${(msg as ChatMessage).error}` : ""}
+              </span>
+            </span>
+            {onRegenerate && (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                data-testid={`retry-${message.id}`}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-700"
+              >
+                <RotateCcw className="size-3" />
+                Retry
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Action bar */}
         <div className={cn("flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100", isUser && "flex-row-reverse")}>

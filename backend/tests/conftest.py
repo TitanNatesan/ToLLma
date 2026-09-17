@@ -75,6 +75,21 @@ def _flush_cache():
         pass
 
 
+@pytest.fixture(autouse=True)
+def _generation_test_sessions(db: Session):
+    """Background generation tasks must write to the test database, not the
+    real one: bind the generation engine to the test engine for each test."""
+    from sqlalchemy.orm import sessionmaker
+
+    from tollms.services import generation as generation_engine
+
+    maker = sessionmaker(bind=db.get_bind())
+    previous = generation_engine.manager._sessions
+    generation_engine.manager.configure(maker)
+    yield
+    generation_engine.manager.configure(previous)
+
+
 @pytest.fixture()
 def user_factory(client: TestClient):
     def _make(email: str = "u@tollma.ai", password: str = "password123", **kw) -> dict:
