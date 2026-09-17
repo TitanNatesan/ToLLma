@@ -1157,3 +1157,19 @@ Generation state moved into the backend: assistant row created RUNNING before st
 - `alembic upgrade head` + `alembic check` green; backend `pytest` 90/90 (80 existing + 10 new)
 - Frontend `tsc`/`eslint`(touched)/`vitest` 42/42/`build` green; e2e 45 passed incl. 5 new generation scenarios; wizard.spec:10 still fails pre-existing (providers UI, untouched paths, clean backend logs)
 - Screenshots `/tmp/gen-stopped.png` (partial + Stopped badge), `/tmp/gen-completed.png` reviewed
+
+## 2026-09-17 — Streaming duplication root-cause fix + latency pass
+
+### Root Causes Found
+- R1 (screenshot twins): pre-meta refresh orphans a generation (frontend never learns conv id) + resend creates twin conversations; 409 path nuked the live overlay and wedged later sends.
+- R2 (latent 2x/3x): double-subscription vectors (effect churn aborting recovery, regenerate double-click 409).
+- R3: no DB-level message identity; provider fetch uninterruptible on stop; per-delta full-list re-renders; per-chunk O(n) buffer copy.
+
+### Changes
+- Backend: messages.client_key + partial unique indexes (one live assistant/conv, one row per user+key) + migration a1b2c3d4e5f6 (stale sweep); same-key adoption + IntegrityError→409; abortable provider fetch (race + aclose); shared parts buffer; ttfb/total logs; ChatRequest.client_key; GET by-client endpoint.
+- Frontend: client_key sends + sessionStorage pending + boot adoption; 409→adopt (echo removed, live generation attached); single-flight send guard; stable callbacks via useQueryClient refresh; cancel-before-abort stop order; MessageView memo w/ presence comparator; lib/perf.ts marks + window.__tollmaPerf.
+- Tests: backend 15 lifecycle tests (incl. hung-provider abort <5s w/ close proof, exact-timing test, index backstop); e2e generation.spec 8 tests (incl. byte-exact no-dup refresh, regenerate double-click adopt, 369ms first-token timing).
+
+### Verification
+- Backend pytest 95/95; alembic check green; frontend tsc/eslint-touched/vitest 42/build green; e2e 48 passed (wizard.spec:10 pre-existing fail, untouched paths).
+- Metrics: backend setup=58ms/first-delta=70ms/total=103ms (instant provider); e2e first rendered token 369ms; cancel-vs-hung <5s asserted.

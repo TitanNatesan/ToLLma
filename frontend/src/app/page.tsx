@@ -4,22 +4,47 @@ import { useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChatComposer, type ChatSendPayload } from "@/app/components/chat/ChatComposer";
 import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";
 import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
-import { useConversation, useConversationMutations } from "@/hooks/useChat";
+import { useConversation } from "@/hooks/useChat";
 import {
   cancelGeneration,
   getActiveGeneration,
   getGeneration,
+  getGenerationByClientKey,
   streamChat,
   streamGeneration,
   type StreamCallbacks,
 } from "@/services/api";
+import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
 import { Sparkles } from "lucide-react";
-import type { ChatMessage, MessageStatus } from "@/types";
+import type { ActiveGeneration, ChatMessage, MessageStatus } from "@/types";
+
+const PENDING_SEND_KEY = "tollma-pending-send";
+
+function readPendingSend(): { key: string; ts: number } | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_SEND_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { key?: string; ts?: number };
+    if (typeof parsed.key !== "string" || typeof parsed.ts !== "number") return null;
+    return { key: parsed.key, ts: parsed.ts };
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingSend(): void {
+  try {
+    sessionStorage.removeItem(PENDING_SEND_KEY);
+  } catch {
+    // storage unavailable — idempotency degrades, nothing breaks
+  }
+}
 
 export default function Home() {
   const {
@@ -33,12 +58,21 @@ export default function Home() {
     addOptimistic,
     updateOptimisticStreaming,
     setOptimisticContent,
+    removeOptimistic,
     clearOptimistic,
     setActiveGeneration,
   } = useChatStore();
 
   const { data: conversation, error: convError } = useConversation(activeConversationId);
-  const mutations = useConversationMutations();
+  const qc = useQueryClient();
+  // Stable refresh (useConversationMutations returns a new object per render,
+  // which would churn every callback/effect below — queryClient is stable).
+  const refreshAll = useCallback((id: string | null) => {
+    if (!id) return;
+    void qc.invalidateQueries({ queryKey: ["conversation", id] });
+    void qc.invalidateQueries({ queryKey: ["usage", id] });
+    void qc.invalidateQueries({ queryKey: ["conversations"] });
+  }, [qc]);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -72,7 +106,9 @@ export default function Home() {
     setStreaming(false);
     setActiveGeneration(null);
     clearOptimistic();
-    mutations.refresh(convId);
+    clearPendingSend();
+    refreshAll(convId);
+    perfDone(status);
     if (status === "failed") {
       toast.error("Generation failed", { description: error ?? undefined });
     }
@@ -80,13 +116,19 @@ export default function Home() {
     setStreaming,
     setActiveGeneration,
     clearOptimistic,
-    mutations,
+    refreshAll,
   ]);
 
   /** Callbacks shared by fresh sends and refresh-reattach subscriptions. */
   const streamCallbacks = useCallback((ctrl: AbortController): StreamCallbacks => ({
     signal: ctrl.signal,
     onMeta: (meta) => {
+      // Adopted an already-terminal generation (same-key retry race):
+      // nothing to watch, just reload truth.
+      if (meta.status && meta.status !== "running" && meta.status !== "queued") {
+        finishGeneration(meta.conversation_id, meta.status);
+        return;
+      }
       setConversation(meta.conversation_id);
       const genId = meta.generation_id;
       const msgId = meta.message_id ?? genId;
@@ -102,10 +144,12 @@ export default function Home() {
       }
     },
     onSnapshot: (content) => {
+      perfSnapshot(content.length);
       const mid = useChatStore.getState().activeGeneration?.messageId;
       if (mid) setOptimisticContent(mid, content);
     },
     onDelta: (d) => {
+      perfDelta();
       const mid = useChatStore.getState().activeGeneration?.messageId;
       if (mid) updateOptimisticStreaming(mid, d);
     },
@@ -117,8 +161,10 @@ export default function Home() {
       setStreaming(false);
       setActiveGeneration(null);
       clearOptimistic();
+      clearPendingSend();
+      perfDone("error");
       toast.error("Chat failed", { description: m });
-      mutations.refresh(convId);
+      refreshAll(convId);
     },
   }), [
     setConversation,
@@ -129,15 +175,72 @@ export default function Home() {
     finishGeneration,
     setStreaming,
     clearOptimistic,
-    mutations,
+    refreshAll,
+  ]);
+
+  /**
+   * Subscribe to a backend generation the UI doesn't own yet (refresh
+   * recovery, conflict adoption, pending-key boot). Exactly one subscriber
+   * per generation per tab: callers funnel through here and the recovery
+   * effect's recoveredFor guard, so deltas can never double-apply.
+   * Stable (all deps are stable), so effects can depend on it safely.
+   */
+  const attachToGeneration = useCallback((
+    convId: string,
+    active: ActiveGeneration,
+    ctrl: AbortController,
+    onSettled?: () => void,
+  ) => {
+    setConversation(convId);
+    setStreaming(true);
+    setActiveGeneration({ id: active.generation_id, messageId: active.message_id });
+    addOptimistic({
+      id: active.message_id,
+      role: "assistant",
+      content: active.current_content,
+      isStreaming: true,
+      created_at: new Date().toISOString(),
+    });
+    perfSend();
+    const cbs = streamCallbacks(ctrl);
+    const prevDone = cbs.onDone;
+    const prevError = cbs.onError;
+    void streamGeneration(active.generation_id, {
+      ...cbs,
+      onDone: (done) => {
+        onSettled?.();
+        prevDone(done);
+      },
+      onError: (m) => {
+        onSettled?.();
+        prevError(m);
+      },
+    }).catch(() => {});
+  }, [
+    setConversation,
+    setStreaming,
+    setActiveGeneration,
+    addOptimistic,
+    streamCallbacks,
   ]);
 
   const send = useCallback((payload: ChatSendPayload, conversationId: string | null) => {
     if (!providerId || !modelId) return;
+    // Single-flight: the composer already guards, this kills programmatic
+    // double-sends (double-clicked regenerate) before a second POST exists.
+    if (useChatStore.getState().streaming) return;
     const text = payload.text;
 
     const ts = Date.now();
     const userMsgId = `opt-user-${ts}`;
+    // Idempotency key: a lost response (refresh before meta) retries with the
+    // same key and adopts the existing generation instead of duplicating.
+    const clientKey = crypto.randomUUID();
+    try {
+      sessionStorage.setItem(PENDING_SEND_KEY, JSON.stringify({ key: clientKey, ts }));
+    } catch {
+      // storage unavailable — idempotency degrades, nothing breaks
+    }
 
     // Optimistic user echo only — the assistant row is created by the backend
     // and arrives via stream meta (never invented client-side).
@@ -149,9 +252,11 @@ export default function Home() {
     });
 
     setStreaming(true);
+    perfSend();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
+    const cbs = streamCallbacks(ctrl);
     void streamChat(
       {
         provider_id: providerId,
@@ -162,15 +267,41 @@ export default function Home() {
         attachment_ids: payload.attachments
           .map((a) => a.attachmentId)
           .filter((id): id is string => !!id),
+        client_key: clientKey,
       },
-      streamCallbacks(ctrl),
+      {
+        ...cbs,
+        onConflict: () => {
+          // Another generation owns this conversation: drop the unpersisted
+          // echo and adopt the live generation — never reset, never duplicate.
+          removeOptimistic(userMsgId);
+          const convId = conversationId ?? useChatStore.getState().activeConversationId;
+          void (async () => {
+            const live = convId ? await getActiveGeneration(convId).catch(() => null) : null;
+            if (live && (live.status === "running" || live.status === "queued") && convId) {
+              const adoptCtrl = new AbortController();
+              abortRef.current = adoptCtrl;
+              attachToGeneration(convId, live, adoptCtrl);
+            } else {
+              setStreaming(false);
+              setActiveGeneration(null);
+              clearPendingSend();
+              refreshAll(convId);
+            }
+          })();
+        },
+      },
     );
   }, [
     providerId,
     modelId,
     addOptimistic,
+    removeOptimistic,
     setStreaming,
     streamCallbacks,
+    attachToGeneration,
+    setActiveGeneration,
+    refreshAll,
   ]);
 
   const lastUser = [...persistedMessages].reverse().find((m) => m.role === "user");
@@ -178,26 +309,24 @@ export default function Home() {
   const ready = !!providerId && !!modelId;
 
   /** User stop: cancel the backend generation, then reload truth.
-   *  The local SSE abort only drops this tab's subscription. */
+   *  Cancel is fired before the local abort so it reaches the provider even
+   *  if anything below throws; the abort only drops this tab's subscription. */
   const stop = useCallback(() => {
     const gen = useChatStore.getState().activeGeneration;
+    const cancelReq = gen ? cancelGeneration(gen.id).catch(() => null) : null;
     abortRef.current?.abort();
     setStreaming(false);
     const settle = () => {
       setActiveGeneration(null);
       clearOptimistic();
-      mutations.refresh(useChatStore.getState().activeConversationId);
+      refreshAll(useChatStore.getState().activeConversationId);
     };
     if (!gen) {
       settle();
       return;
     }
     void (async () => {
-      try {
-        await cancelGeneration(gen.id);
-      } catch {
-        // Cancel is best-effort; the refresh below still shows backend truth.
-      }
+      await cancelReq;
       // Wait for the terminal state so the refresh never shows stale running.
       for (let i = 0; i < 30; i++) {
         try {
@@ -214,72 +343,72 @@ export default function Home() {
     setStreaming,
     setActiveGeneration,
     clearOptimistic,
-    mutations,
+    refreshAll,
   ]);
 
-  // Refresh recovery: a generation running on the backend (started here or
-  // in another tab before reload) reattaches its stream automatically.
-  // NOTE: callbacks go through a ref — their identity churns with renders
-  // and must never re-trigger (or abort) this effect. Same for `streaming`:
-  // the subscription itself flips it, so it is read via ref and kept out
-  // of deps (its presence there aborted recovery on the first re-render).
-  const streamCallbacksRef = useRef(streamCallbacks);
-  useEffect(() => {
-    streamCallbacksRef.current = streamCallbacks;
-  });
-  const streamingRef = useRef(streaming);
-  useEffect(() => {
-    streamingRef.current = streaming;
-  });
+  // Refresh recovery (single-subscriber, single path):
+  // - known conversation -> probe active-generation, reattach if running.
+  // - unknown conversation + pending send key -> adopt the orphaned send
+  //   by client key (refresh lost the response, not the generation).
   const recoveredFor = useRef<string | null>(null);
+  const pendingChecked = useRef(false);
   useEffect(() => {
-    if (!activeConversationId || streamingRef.current || recoveredFor.current === activeConversationId) return;
-    recoveredFor.current = activeConversationId;
-    let settled = false;
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+    if (useChatStore.getState().streaming) return;
+    if (activeConversationId) {
+      if (recoveredFor.current === activeConversationId) return;
+      recoveredFor.current = activeConversationId;
+      let settled = false;
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      void (async () => {
+        let active = null;
+        try {
+          active = await getActiveGeneration(activeConversationId);
+        } catch {
+          active = null;
+        }
+        if (!active || (active.status !== "running" && active.status !== "queued")) {
+          recoveredFor.current = null;
+          return;
+        }
+        attachToGeneration(activeConversationId, active, ctrl, () => {
+          settled = true;
+        });
+      })().catch(() => {});
+      return () => {
+        if (!settled) {
+          recoveredFor.current = null;
+          ctrl.abort();
+        }
+      };
+    }
+    // No conversation learned (refresh before meta): adopt by idempotency key.
+    const pending = readPendingSend();
+    if (!pending || pendingChecked.current) return;
+    if (Date.now() - pending.ts > 10 * 60 * 1000) {
+      clearPendingSend();
+      pendingChecked.current = true;
+      return;
+    }
+    pendingChecked.current = true;
     void (async () => {
-      let active = null;
-      try {
-        active = await getActiveGeneration(activeConversationId);
-      } catch {
-        active = null;
-      }
-      if (!active || (active.status !== "running" && active.status !== "queued")) {
-        recoveredFor.current = null;
+      const found = await getGenerationByClientKey(pending.key).catch(() => null);
+      if (!found) {
+        clearPendingSend();
         return;
       }
-      setStreaming(true);
-      setActiveGeneration({ id: active.generation_id, messageId: active.message_id });
-      addOptimistic({
-        id: active.message_id,
-        role: "assistant",
-        content: active.current_content,
-        isStreaming: true,
-        created_at: new Date().toISOString(),
-      });
-      const cbs = streamCallbacksRef.current(ctrl);
-      const prevDone = cbs.onDone;
-      await streamGeneration(active.generation_id, {
-        ...cbs,
-        onDone: (done) => {
-          settled = true;
-          prevDone(done);
-        },
-        onError: (m) => {
-          settled = true;
-          cbs.onError(m);
-        },
-      });
-    })().catch(() => {});
-    return () => {
-      if (!settled) {
-        recoveredFor.current = null;
-        ctrl.abort();
+      if (found.status === "running" || found.status === "queued") {
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        recoveredFor.current = found.conversation_id;
+        attachToGeneration(found.conversation_id, found, ctrl);
+      } else {
+        clearPendingSend();
+        setConversation(found.conversation_id);
+        refreshAll(found.conversation_id);
       }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationId]);
+    })().catch(() => {});
+  }, [activeConversationId, attachToGeneration, refreshAll, setConversation]);
 
   return (
     <div className="flex h-full flex-1 overflow-hidden">

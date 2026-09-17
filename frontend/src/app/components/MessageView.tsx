@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -217,7 +217,7 @@ function formatLatency(ms: number | null): string | null {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${stripTrailingZeros((ms / 1000).toFixed(1))}s`;
 }
 
-export function MessageView({ message, isStreaming, onRegenerate, onDelete }: ChatMessageProps) {
+function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: ChatMessageProps) {
   const isUser = message.role === "user";
   const msg = message as ChatMessage;
   const costStr = formatCost(msg.total_cost ?? null);
@@ -379,3 +379,16 @@ export function MessageView({ message, isStreaming, onRegenerate, onDelete }: Ch
     </motion.div>
   );
 }
+
+/**
+ * Per-delta renders hit only the streaming bubble: persisted message objects
+ * keep referential identity across store updates, and the regenerate/delete
+ * callbacks are compared by presence (they flip exactly when last-message
+ * status changes, which always coincides with a message-list change).
+ */
+export const MessageView = memo(MessageViewInner, (prev, next) => (
+  prev.message === next.message &&
+  prev.isStreaming === next.isStreaming &&
+  !!prev.onRegenerate === !!next.onRegenerate &&
+  !!prev.onDelete === !!next.onDelete
+));

@@ -18,6 +18,7 @@ from decimal import Decimal
 import asyncio
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tollms.api.attachments import service as attachment_service
@@ -29,6 +30,7 @@ from tollms.api.conversations.service import (
     active_assistant_message,
     add_message,
     create_conversation,
+    find_assistant_by_client_key,
     get_conversation,
     get_message,
     list_messages,
@@ -414,45 +416,88 @@ async def start_generation(
     session_factory=None,
 ) -> GenerationStarted:
     """Synchronous setup + background spawn. The assistant row exists as
-    RUNNING before this returns — the frontend never invents messages."""
+    RUNNING before this returns — the frontend never invents messages.
+
+    Same client_key retries adopt the existing generation (terminal rows
+    return as-is; no new rows, no new task). Concurrent same-conversation
+    starts 409.
+    """
+    setup_start = time.monotonic()
+    if data.client_key:
+        existing = find_assistant_by_client_key(db, user_id, data.client_key)
+        if existing is not None:
+            db.refresh(existing)
+            logger.info(
+                "generation adopted by client_key: %s status=%s", existing.id, existing.status.value,
+            )
+            return GenerationStarted(
+                conversation_id=existing.conversation_id,
+                generation_id=existing.id,
+                message_id=existing.id,
+                status=existing.status.value,
+            )
     setup = await _setup_generation(db, data, transport, user_id)
     provider, model = setup.provider, setup.model
     conv_id = setup.conv_id
     started_at = datetime.now(timezone.utc)
-    async with generation_engine.manager.conv_lock(conv_id):
-        if generation_engine.manager.is_active(conv_id) is not None:
-            raise ConflictError(f"conversation {conv_id} already has an active generation")
+    try:
+        async with generation_engine.manager.conv_lock(conv_id):
+            if generation_engine.manager.is_active(conv_id) is not None:
+                raise ConflictError(f"conversation {conv_id} already has an active generation")
+            if active_assistant_message(db, conv_id, user_id) is not None:
+                raise ConflictError(f"conversation {conv_id} already has an active generation")
+            user_msg = add_message(
+                db, conv_id, Role.USER, data.message,
+                provider_id=provider.id, model_id=model.id, user_id=user_id,
+            )
+            for row in setup.rows:
+                attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
+            assistant = add_message(
+                db, conv_id, Role.ASSISTANT, "",
+                provider_id=provider.id, model_id=model.id,
+                status=MessageStatus.RUNNING, started_at=started_at,
+                user_id=user_id,
+            )
+            if data.client_key:
+                assistant.client_key = data.client_key
+                db.commit()
+                db.refresh(assistant)
+            touch(db, get_conversation(db, conv_id, user_id))
+    except IntegrityError:
+        # Lost a same-key/in-flight race: adopt the winner, never duplicate.
+        db.rollback()
+        if data.client_key:
+            winner = find_assistant_by_client_key(db, user_id, data.client_key)
+            if winner is not None:
+                logger.info("generation race adopted by client_key: %s", winner.id)
+                return GenerationStarted(
+                    conversation_id=winner.conversation_id,
+                    generation_id=winner.id,
+                    message_id=winner.id,
+                    status=winner.status.value,
+                )
         if active_assistant_message(db, conv_id, user_id) is not None:
             raise ConflictError(f"conversation {conv_id} already has an active generation")
-        user_msg = add_message(
-            db, conv_id, Role.USER, data.message,
-            provider_id=provider.id, model_id=model.id, user_id=user_id,
-        )
-        for row in setup.rows:
-            attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
-        assistant = add_message(
-            db, conv_id, Role.ASSISTANT, "",
-            provider_id=provider.id, model_id=model.id,
-            status=MessageStatus.RUNNING, started_at=started_at,
-            user_id=user_id,
-        )
-        touch(db, get_conversation(db, conv_id, user_id))
-        spec = GenerationSpec(
-            generation_id=assistant.id,
-            conversation_id=conv_id,
-            user_id=user_id,
-            adapter=setup.adapter,
-            history=setup.history,
-            history_text=setup.history_text,
-            provider_type=provider.provider_type.value,
-            model_label=model.model_id,
-            input_price=str(model.input_price),
-            output_price=str(model.output_price),
-            cache_read_price=str(model.cache_read_price),
-            cache_write_price=str(model.cache_write_price),
-        )
-        generation_engine.manager.spawn(spec, session_factory=session_factory)
-    logger.info("generation started: %s conv=%s", assistant.id, conv_id)
+        raise
+    spec = GenerationSpec(
+        generation_id=assistant.id,
+        conversation_id=conv_id,
+        user_id=user_id,
+        adapter=setup.adapter,
+        history=setup.history,
+        history_text=setup.history_text,
+        provider_type=provider.provider_type.value,
+        model_label=model.model_id,
+        input_price=str(model.input_price),
+        output_price=str(model.output_price),
+        cache_read_price=str(model.cache_read_price),
+        cache_write_price=str(model.cache_write_price),
+    )
+    generation_engine.manager.spawn(spec, session_factory=session_factory)
+    logger.info(
+        "generation started: %s conv=%s setup=%.0fms",
+        assistant.id, conv_id, (time.monotonic() - setup_start) * 1000,
+    )
     return GenerationStarted(
         conversation_id=conv_id, generation_id=assistant.id, message_id=assistant.id,
     )
@@ -611,6 +656,26 @@ def generation_status(
     db.refresh(msg)  # DB is truth; never trust a reused session's cache
     if msg.role != Role.ASSISTANT:
         raise NotFoundError(f"generation {generation_id} not found")
+    return ActiveGenerationRead(
+        generation_id=msg.id,
+        message_id=msg.id,
+        conversation_id=msg.conversation_id,
+        status=msg.status.value,
+        current_content=msg.content,
+        started_at=msg.started_at,
+    )
+
+
+def generation_by_client_key(
+    db: Session,
+    client_key: str,
+    user_id: uuid.UUID | None = None,
+) -> ActiveGenerationRead:
+    """Idempotency recovery: the generation a client_key send created (404 if
+    unknown). Lets a tab that lost its response adopt instead of duplicating."""
+    msg = find_assistant_by_client_key(db, user_id, client_key)
+    if msg is None:
+        raise NotFoundError(f"generation with client key {client_key} not found")
     return ActiveGenerationRead(
         generation_id=msg.id,
         message_id=msg.id,

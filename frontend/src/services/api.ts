@@ -169,6 +169,8 @@ export interface StreamCallbacks {
   onDelta: (text: string) => void;
   onDone: (done: StreamDone) => void;
   onError: (message: string) => void;
+  /** 409: another generation owns the conversation — adopt it, don't reset. */
+  onConflict?: () => void;
 }
 
 export interface UploadedAttachment {
@@ -212,6 +214,7 @@ export async function streamChat(
     message: string;
     reasoning_level?: string | null;
     attachment_ids?: string[];
+    client_key?: string | null;
   },
   cb: StreamCallbacks,
 ): Promise<void> {
@@ -258,6 +261,18 @@ export async function getActiveGeneration(conversationId: string): Promise<Activ
 /** Single-generation status (running or terminal), ownership-checked. */
 export function getGeneration(generationId: string): Promise<ActiveGeneration> {
   return get<ActiveGeneration>(`/api/v1/gateway/generations/${generationId}`);
+}
+
+/** Idempotency recovery: the generation a client_key send created (if any). */
+export async function getGenerationByClientKey(clientKey: string): Promise<ActiveGeneration | null> {
+  try {
+    return await get<ActiveGeneration>(
+      `/api/v1/gateway/generations/by-client/${encodeURIComponent(clientKey)}`,
+    );
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
 }
 
 async function postStream(path: string, body: unknown, cb: StreamCallbacks): Promise<void> {
@@ -315,6 +330,13 @@ async function postStream(path: string, body: unknown, cb: StreamCallbacks): Pro
 }
 
 async function consumeStream(res: Response, cb: StreamCallbacks): Promise<void> {
+  if (res.status === 409) {
+    // Another generation owns this conversation (double-clicked regenerate,
+    // retried send). The caller adopts it — never a reset, never a duplicate.
+    await res.text().catch(() => null);
+    cb.onConflict?.();
+    return;
+  }
   if (!res.ok || !res.body) {
     cb.onError(`stream failed with ${res.status}`);
     return;

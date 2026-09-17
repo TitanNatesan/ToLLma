@@ -206,6 +206,25 @@ def active_assistant_message(
     )
 
 
+def find_assistant_by_client_key(
+    db: Session, user_id: uuid.UUID | None, client_key: str
+) -> Message | None:
+    """Idempotency lookup: the assistant row a same-key send created before.
+
+    Ownership-checked like everything else (None user = unscoped, tests only).
+    """
+    stmt = select(Message).where(
+        Message.client_key == client_key,
+        Message.is_deleted.is_(False),
+        Message.role == Role.ASSISTANT,
+    )
+    if user_id is not None:
+        stmt = stmt.where(Message.user_id == user_id)
+    else:
+        stmt = stmt.where(Message.user_id.is_(None))
+    return db.scalar(stmt)
+
+
 def list_messages(
     db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
 ) -> list[Message]:

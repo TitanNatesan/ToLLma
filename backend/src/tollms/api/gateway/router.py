@@ -58,6 +58,13 @@ async def cancel_generation(
     return await service.cancel_generation(db, generation_id, user.id)
 
 
+@router.get("/generations/by-client/{client_key}", response_model=ActiveGenerationRead)
+async def generation_by_client_key(
+    client_key: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> ActiveGenerationRead:
+    return service.generation_by_client_key(db, client_key, user.id)
+
+
 @router.get("/generations/{generation_id}", response_model=ActiveGenerationRead)
 async def generation_status(
     generation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)

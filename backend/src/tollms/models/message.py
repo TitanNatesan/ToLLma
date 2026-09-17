@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Numeric, Text
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Numeric, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,6 +48,20 @@ class Message(SoftDeleteMixin, TimestampedModel):
         Index("ix_messages_role", "role"),
         Index("ix_messages_user", "user_id"),
         Index("ix_messages_status", "status"),
+        # Identity safeguards (generation lifecycle):
+        # - one live assistant message per conversation — a second insert
+        #   fails instead of duplicating (IntegrityError -> 409 adopt).
+        # - one row per (user, client_key) — same-key retries adopt.
+        Index(
+            "ix_one_active_assistant", "conversation_id", unique=True,
+            postgresql_where=text(
+                "role = 'ASSISTANT' AND status IN ('QUEUED', 'RUNNING') AND is_deleted IS FALSE"
+            ),
+        ),
+        Index(
+            "ix_messages_client_key", "user_id", "client_key", unique=True,
+            postgresql_where=text("client_key IS NOT NULL"),
+        ),
     )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -67,6 +81,9 @@ class Message(SoftDeleteMixin, TimestampedModel):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Client idempotency key for the send that created this row. Same-key
+    # retries adopt the existing generation instead of duplicating rows.
+    client_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(nullable=True)

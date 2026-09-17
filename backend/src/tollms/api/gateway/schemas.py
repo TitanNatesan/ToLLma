@@ -17,6 +17,9 @@ class ChatRequest(BaseModel):
     # Uploaded attachments (POST /api/v1/chat/attachments first). Content is
     # resolved, ownership-checked, and forwarded by the gateway.
     attachment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
+    # Idempotency key for this send. Retries/refreshes carrying the same key
+    # adopt the existing generation instead of duplicating rows.
+    client_key: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def _message_or_attachments(self) -> "ChatRequest":

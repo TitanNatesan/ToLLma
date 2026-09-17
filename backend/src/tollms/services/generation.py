@@ -70,9 +70,9 @@ class ActiveGeneration:
     subscribers: set[asyncio.Queue] = field(default_factory=set)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     session_factory: Callable | None = None
-    # Exact text emitted so far. Reattach snapshots read this (not the DB,
-    # which lags by one flush) — snapshot + later deltas stay gapless.
-    buffer: str = ""
+    # Emitted text chunks (shared with the driver loop — no per-chunk copy).
+    # Reattach snapshots join this (rare) instead of the DB (stale by a flush).
+    parts: list = field(default_factory=list)
 
 
 SubscriberEvent = tuple[str, object]  # ("delta", str) | ("terminal", dict)
@@ -197,7 +197,7 @@ class GenerationManager:
         active = self._active.get(generation_id)
         if active is None or _task_done(active.task):
             return None
-        return active.buffer
+        return "".join(active.parts)
 
     def _emit(self, active: ActiveGeneration, event: SubscriberEvent) -> None:
         for queue in list(active.subscribers):
@@ -234,20 +234,23 @@ class GenerationManager:
     async def _run(self, active: ActiveGeneration) -> None:
         spec = active.spec
         db = (active.session_factory or self._sessions)()
-        parts: list[str] = []
+        parts: list[str] = active.parts
         result = ChatResult(text="")
         chunks_since_flush = 0
         last_flush = time.monotonic()
         terminal: dict | None = None
+        ttfb_ms: float | None = None
         provider_iter = spec.adapter.chat_stream(spec.history)
+        run_wall = time.monotonic()
         try:
             try:
                 await self._cache_write_state(spec, MessageStatus.RUNNING.value, "")
                 async for chunk in _cancellable_stream(provider_iter, active, self, spec.generation_id):
+                    if ttfb_ms is None and chunk.delta:
+                        ttfb_ms = (time.monotonic() - run_wall) * 1000
                     parts.append(chunk.delta)
                     _accumulate(result, chunk)
                     if chunk.delta:
-                        active.buffer += chunk.delta
                         self._emit(active, ("delta", chunk.delta))
                     chunks_since_flush += 1
                     if chunks_since_flush >= FLUSH_EVERY_CHUNKS or (time.monotonic() - last_flush) >= FLUSH_EVERY_SECONDS:
@@ -278,7 +281,12 @@ class GenerationManager:
             if terminal is not None:
                 self._emit(active, ("terminal", terminal))
                 await self._cache_clear_state(spec)
-                logger.info("generation %s ended: status=%s", spec.generation_id, terminal.get("status"))
+                total_ms = (time.monotonic() - run_wall) * 1000
+                logger.info(
+                    "generation %s ended: status=%s chunks=%d chars=%d ttfb=%s total=%.0fms",
+                    spec.generation_id, terminal.get("status"), len(parts), len(result.text),
+                    f"{ttfb_ms:.0f}ms" if ttfb_ms is not None else "n/a", total_ms,
+                )
             self._active.pop(spec.generation_id, None)
 
     async def _flush(
@@ -419,19 +427,55 @@ def _accumulate(result: ChatResult, chunk) -> None:
     if chunk.reasoning_tokens is not None: result.reasoning_tokens = chunk.reasoning_tokens
 
 
-async def _cancellable_stream(provider_iter, active: ActiveGeneration, manager: GenerationManager, gen_id: uuid.UUID):
-    """Yield provider chunks; raise _GenerationCancelled on user/shutdown cancel."""
+async def _cancellable_stream(
+    provider_iter: AsyncIterator,
+    active: ActiveGeneration,
+    manager: GenerationManager,
+    gen_id: uuid.UUID,
+):
+    """Yield provider chunks; abort promptly on cancel — including mid-fetch.
+
+    A cancel during a hung provider read races the fetch against the cancel
+    event, then closes the provider iterator so no further chunks arrive or
+    persist. In-flight chunks already emitted may still persist (documented).
+    """
     seen = 0
+    pending: asyncio.Task | None = None
     while True:
         if active.cancel_event.is_set():
+            if pending is not None:
+                pending.cancel()
+            await _aclose_quietly(provider_iter)
+            raise _GenerationCancelled()
+        if pending is None:
+            pending = asyncio.ensure_future(provider_iter.__anext__())
+        fetch: asyncio.Task = pending
+        waiter = asyncio.ensure_future(active.cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait({fetch, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            if not waiter.done():
+                waiter.cancel()
+        if waiter in done:
+            fetch.cancel()
+            try:
+                await fetch
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            except Exception:
+                logger.warning("generation %s: cancelled fetch raised", gen_id, exc_info=True)
+            pending = None
+            await _aclose_quietly(provider_iter)
             raise _GenerationCancelled()
         try:
-            chunk = await provider_iter.__anext__()
+            chunk = fetch.result()
         except StopAsyncIteration:
             return
+        pending = None
         yield chunk
         seen += 1
         if seen % CANCEL_POLL_EVERY_CHUNKS == 0 and await manager._cache_cancel_requested(gen_id):
+            await _aclose_quietly(provider_iter)
             raise _GenerationCancelled()
 
 

@@ -313,3 +313,145 @@ def test_sweep_marks_stale_running_failed(db: Session, provider_factory, model_f
 def test_cancel_unknown_generation_404s(db: Session) -> None:
     with pytest.raises(NotFoundError):
         asyncio.run(gateway_service.cancel_generation(db, uuid.uuid4()))
+
+
+def _keyed_request(provider_id: str, model_id: str, client_key: str) -> ChatRequest:
+    return ChatRequest(
+        provider_id=uuid.UUID(provider_id), model_id=uuid.UUID(model_id),
+        message="go", client_key=client_key,
+    )
+
+
+def test_same_client_key_adopts_single_row(db: Session, provider_factory, model_factory, slow, maker) -> None:
+    """Lost-response retry with the same key: no duplicate rows or tasks."""
+    p = provider_factory("Mock")
+    m = model_factory(p["id"])
+    key = f"key-{uuid.uuid4().hex}"
+
+    async def _main():
+        first = await gateway_service.start_generation(db, _keyed_request(p["id"], m["id"], key))
+        second = await gateway_service.start_generation(db, _keyed_request(p["id"], m["id"], key))
+        assert second.generation_id == first.generation_id
+        assert second.conversation_id == first.conversation_id
+        await _await_task(first.generation_id)
+        return first
+
+    started = asyncio.run(_main())
+    rows = [msg for msg in list_messages(db, started.conversation_id) if msg.role.value == "assistant"]
+    assert len(rows) == 1
+    assert rows[0].status == MessageStatus.COMPLETED
+    # Terminal adoption: same key after completion returns the finished row.
+    adopted = asyncio.run(
+        gateway_service.start_generation(db, _keyed_request(p["id"], m["id"], key))
+    )
+    assert adopted.generation_id == started.generation_id
+    assert adopted.status == "completed"
+
+
+def test_generation_by_client_key_lookup(db: Session, provider_factory, model_factory, slow) -> None:
+    p = provider_factory("Mock")
+    m = model_factory(p["id"])
+    key = f"key-{uuid.uuid4().hex}"
+
+    async def _main():
+        started = await gateway_service.start_generation(db, _keyed_request(p["id"], m["id"], key))
+        found = gateway_service.generation_by_client_key(db, key)
+        assert found.generation_id == started.generation_id
+        assert found.status == "running"
+        await _await_task(started.generation_id)
+        return started
+
+    asyncio.run(_main())
+    with pytest.raises(NotFoundError):
+        gateway_service.generation_by_client_key(db, "no-such-key")
+
+
+class HungAdapter(BaseProviderAdapter):
+    """Provider stuck mid-stream: cancel must still land promptly."""
+
+    def __init__(self) -> None:
+        super().__init__(credentials={}, model_id="hung-mock")
+        self.closed = False
+
+    async def chat_stream(self, messages):
+        yield StreamChunk(delta="first ")
+        try:
+            await asyncio.sleep(3600)
+            yield StreamChunk(delta="never arrives")
+        finally:
+            self.closed = True
+
+
+def test_cancel_aborts_hung_provider_promptly(
+    db: Session, provider_factory, model_factory, monkeypatch, maker
+) -> None:
+    """Stop must reach the provider: a hung fetch ends fast and closes."""
+    import time
+
+    p = provider_factory("Mock")
+    m = model_factory(p["id"])
+    hung = HungAdapter()
+    monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: hung)
+
+    async def _main():
+        started = await gateway_service.start_generation(db, _request(p["id"], m["id"]))
+        await asyncio.sleep(0.3)  # first chunk emitted, fetch now hung
+        begin = time.monotonic()
+        await gateway_service.cancel_generation(db, started.generation_id)
+        await asyncio.wait_for(_await_task(started.generation_id), timeout=10.0)
+        return started, time.monotonic() - begin
+
+    started, cancel_s = asyncio.run(_main())
+    assert cancel_s < 5.0, f"cancel took {cancel_s:.1f}s against a hung provider"
+    assert hung.closed, "provider iterator was not closed on cancel"
+    row = _fresh(maker, started.message_id)
+    assert row.status == MessageStatus.CANCELLED
+    assert row.content == "first "
+    assert "never arrives" not in row.content
+
+
+def test_active_unique_index_rejects_second_live_row(
+    db: Session, provider_factory, model_factory
+) -> None:
+    """DB backstop: two RUNNING assistants in one conversation is impossible."""
+    from sqlalchemy.exc import IntegrityError
+
+    from tollms.api.conversations.schemas import ConversationCreate
+    from tollms.api.conversations.service import add_message, create_conversation
+    from tollms.models.message import Role
+
+    conv = create_conversation(db, ConversationCreate(title="guarded"))
+    add_message(db, conv.id, Role.ASSISTANT, "", status=MessageStatus.RUNNING)
+    with pytest.raises(IntegrityError):
+        add_message(db, conv.id, Role.ASSISTANT, "", status=MessageStatus.RUNNING)
+    db.rollback()
+
+
+def test_stream_timing_instant_provider(db: Session, provider_factory, model_factory, monkeypatch) -> None:
+    """Latency instrumentation baseline: setup, first-delta, and total times."""
+    import json
+    import time
+
+    p = provider_factory("Mock")
+    m = model_factory(p["id"])
+    adapter = SlowAdapter(["tok "] * 5)
+    monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: adapter)
+
+    async def _main():
+        t0 = time.monotonic()
+        started = await gateway_service.start_generation(db, _request(p["id"], m["id"]))
+        setup_ms = (time.monotonic() - t0) * 1000
+        first_delta_ms: float | None = None
+        async for raw in gateway_service.stream_events(db, started.generation_id):
+            event = json.loads(raw[6:])
+            if first_delta_ms is None and "delta" in event:
+                first_delta_ms = (time.monotonic() - t0) * 1000
+            if event.get("done"):
+                break
+        total_ms = (time.monotonic() - t0) * 1000
+        return setup_ms, first_delta_ms, total_ms
+
+    setup_ms, first_delta_ms, total_ms = asyncio.run(_main())
+    print(f"\n[TIMING] setup={setup_ms:.0f}ms first-delta={first_delta_ms:.0f}ms total={total_ms:.0f}ms")
+    assert first_delta_ms is not None and first_delta_ms < 5000
+    assert total_ms < 10000

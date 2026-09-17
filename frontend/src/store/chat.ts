@@ -48,6 +48,7 @@ interface ChatState {
   addOptimistic: (msg: OptimisticMessage) => void;
   updateOptimisticStreaming: (id: string, delta: string) => void;
   setOptimisticContent: (id: string, content: string) => void;
+  removeOptimistic: (id: string) => void;
   clearOptimistic: () => void;
   setActiveGeneration: (gen: ActiveGenerationRef | null) => void;
   setAddProviderOpen: (open: boolean) => void;  setProviderSearch: (s: string) => void;
@@ -98,6 +99,10 @@ export const useChatStore = create<ChatState>()(
           optimisticMessages: s.optimisticMessages.map((m) =>
             m.id === id ? { ...m, content } : m,
           ),
+        })),
+      removeOptimistic: (id) =>
+        set((s) => ({
+          optimisticMessages: s.optimisticMessages.filter((m) => m.id !== id),
         })),
       clearOptimistic: () => set({ optimisticMessages: [] }),
       setActiveGeneration: (activeGeneration) => set({ activeGeneration }),
