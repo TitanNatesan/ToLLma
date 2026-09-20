@@ -60,6 +60,11 @@ class ChatResult:
 THINK_OPEN = "<think>\n"
 THINK_CLOSE = "\n</think>\n\n"
 
+# Composer levels that mean "do not request reasoning". "none" is the
+# explicit UI off switch; "default" predates it and maps the same way, so
+# adapters omit thinking/reasoning request fields for either.
+REASONING_OFF_LEVELS = ("none", "default")
+
 # Composer reasoning level -> thinking token budgets (Claude semantics; used
 # by both the native Anthropic API and Bedrock Converse).
 THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 10000, "ultra": 32000}
@@ -70,7 +75,7 @@ THINKING_HEADROOM = 4096  # max_tokens must exceed the thinking budget
 def thinking_budget(level: str | None) -> int | None:
     """Composer level -> thinking budget. Off for none/default/unset;
     unknown future levels fall back to medium."""
-    if not level or level in ("none", "default"):
+    if not level or level in REASONING_OFF_LEVELS:
         return None
     return THINKING_BUDGETS.get(level, THINKING_BUDGETS["medium"])
 
@@ -100,7 +105,7 @@ def reasoning_effort(level: str | None) -> str | None:
     OpenAI-compatible surfaces (native OpenAI, LiteLLM, OpenRouter, vLLM)
     accept minimal/low/medium/high. Composer-only levels clamp to high.
     """
-    if not level or level in ("none", "default"):
+    if not level or level in REASONING_OFF_LEVELS:
         return None
     if level in ("minimal", "low", "medium", "high"):
         return level

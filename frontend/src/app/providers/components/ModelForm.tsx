@@ -293,7 +293,7 @@ export function ModelForm({
             />
           </div>
         </fieldset>
-        <Field label="Reasoning levels (comma-separated, blank = low, medium, high)">
+        <Field label="Reasoning levels (comma-separated, blank = low, medium, high; None is always offered)">
           <Input
             placeholder="low, medium, high"
             value={form.meta.reasoning_levels}

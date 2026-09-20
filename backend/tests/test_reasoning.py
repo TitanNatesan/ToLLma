@@ -467,11 +467,105 @@ def test_openai_chat_parses_openrouter_reasoning_shapes() -> None:
     assert text == f"{THINK_OPEN}Legacy string. Detail A. Detail B. Plus content.{THINK_CLOSE}Final."
 
 
+# --- "none": explicit off switch on the request side ------------------------
+
+def test_anthropic_none_level_sends_no_thinking_fields() -> None:
+    """None is an explicit off switch: no thinking field and max_tokens stays
+    untouched even when the model declares a large max output."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _sse_response(
+            'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hi"}}',
+            'data: {"type": "message_stop"}',
+        )
+
+    for level in ("none", "default"):
+        adapter = AnthropicAdapter(
+            credentials={"api_key": "k"}, model_id="claude-x", reasoning_level=level,
+            max_output_tokens=64000, transport=_transport(handler),
+        )
+        text, _ = _run(adapter)
+        assert text == "Hi"
+        body = bodies[-1]
+        assert "thinking" not in body, level
+        assert body["max_tokens"] == 4096, level  # never bumped for a budget
+
+
+def test_openai_responses_none_level_omits_reasoning_object() -> None:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _sse_response('data: {"type": "response.completed", "response": {}}')
+
+    for level in (None, "none", "default"):
+        adapter = OpenAIResponsesAdapter(
+            credentials={"api_key": "k"}, model_id="o4", reasoning_level=level,
+            transport=_transport(handler),
+        )
+        _run(adapter)
+        assert "reasoning" not in bodies[-1], level
+
+
+def test_deepseek_none_requests_no_reasoning_effort_but_still_normalizes() -> None:
+    """DeepSeek reasoners are always-on: "none" omits the request parameter
+    (DeepSeek rejects reasoning_effort) while provider-emitted reasoning is
+    still rendered — off means "not requested", never "hide output"."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=(
+            'data: {"choices": [{"delta": {"reasoning_content": "R"}}]}\n\n'
+            'data: {"choices": [{"delta": {"content": "A"}}]}\n\n'
+            "data: [DONE]\n\n"
+        ).encode())
+
+    adapter = OpenAIChatAdapter(
+        credentials={"api_key": "k"}, model_id="deepseek-reasoner",
+        reasoning_level="none", transport=_transport(handler),
+    )
+    text, _ = _run(adapter)
+    assert "reasoning_effort" not in bodies[-1]
+    assert text == f"{THINK_OPEN}R{THINK_CLOSE}A"
+
+
+def test_gemini_never_sends_reasoning_config() -> None:
+    """Gemini/Vertex thinking is model-controlled: ToLLma never requests it, so
+    "none" (and every other level) is a no-op on the wire rather than a
+    provider-specific hack."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _sse_response(_gemini_item(text="Hi"))
+
+    for level in ("none", "high"):
+        adapter = GeminiAdapter(
+            credentials={"api_key": "k"}, model_id="gemini-x", reasoning_level=level,
+            transport=_transport(handler),
+        )
+        _run(adapter)
+        body = bodies[-1]
+        assert "generationConfig" not in body, level
+        assert "thinkingConfig" not in body, level
+
+
+def test_bedrock_none_level_sends_no_thinking_fields_end_to_end() -> None:
+    text, payload = _bedrock_stream(BEDROCK_REASONING_EVENTS, BEDROCK_HAIKU, "none", 64000)
+    assert "additionalModelRequestFields" not in payload
+    assert "inferenceConfig" not in payload
+    # Always-on reasoners (or models that ignore the off switch) still render:
+    # none disables the request, never the display of provider-emitted reasoning.
+    assert text == f"{THINK_OPEN}Check facts.{THINK_CLOSE}Answer."
+
+
 # --- Gateway forwarding of composer level + model max output ----------------
 
-def test_gateway_forwards_level_and_max_output(db, provider_factory, model_factory, monkeypatch) -> None:
-    """The composer level and the model's declared max output reach the
-    adapter — the two values that enable Claude thinking with a valid budget."""
+def _forward_adapter(db, provider_factory, model_factory, monkeypatch, level: str | None):
+    """Start a generation with `level` and return the adapter the gateway built."""
     import uuid as _uuid
 
     from tollms.api.gateway import service as gateway_service
@@ -495,7 +589,7 @@ def test_gateway_forwards_level_and_max_output(db, provider_factory, model_facto
     m = model_factory(p["id"], max_output_tokens=64000)
     req = ChatRequest(
         provider_id=_uuid.UUID(p["id"]), model_id=_uuid.UUID(m["id"]),
-        message="hi", reasoning_level="high",
+        message="hi", reasoning_level=level,
     )
 
     async def _main():
@@ -505,9 +599,22 @@ def test_gateway_forwards_level_and_max_output(db, provider_factory, model_facto
         await active.task
 
     asyncio.run(_main())
-    adapter = captured["adapter"]
+    return captured["adapter"]
+
+
+def test_gateway_forwards_level_and_max_output(db, provider_factory, model_factory, monkeypatch) -> None:
+    """The composer level and the model's declared max output reach the
+    adapter — the two values that enable Claude thinking with a valid budget."""
+    adapter = _forward_adapter(db, provider_factory, model_factory, monkeypatch, "high")
     assert adapter.reasoning_level == "high"
     assert adapter.max_output_tokens == 64000
+
+
+def test_gateway_forwards_none_level_to_adapter(db, provider_factory, model_factory, monkeypatch) -> None:
+    """The explicit off selection reaches the adapter as "none" — never
+    silently dropped as a falsy value."""
+    adapter = _forward_adapter(db, provider_factory, model_factory, monkeypatch, "none")
+    assert adapter.reasoning_level == "none"
 
 
 # --- Persisted reasoning duration (messages.thinking_ms) --------------------

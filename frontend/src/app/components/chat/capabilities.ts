@@ -1,5 +1,7 @@
 import type { AIModel } from "@/types";
 
+import { REASONING_OFF_LEVEL, normalizeReasoningLevels } from "./reasoningLevels";
+
 // ponytail: extended caps (files/video/levels) live in the metadata JSONB
 // column — no migration, no new endpoint. GET /api/v1/models already serves
 // every flag below, so the composer derives everything client-side.
@@ -50,7 +52,8 @@ export interface ChatSendPayload {
 }
 
 /** Fallback levels when a reasoning model declares none. Filed under
- *  data-driven default: providers that expose levels via metadata win. */
+ *  data-driven default: providers that expose levels via metadata win.
+ *  "none" is always prepended (see normalizeReasoningLevels). */
 export const DEFAULT_REASONING_LEVELS = ["low", "medium", "high"];
 
 const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
@@ -113,9 +116,7 @@ export function getModelCapabilities(model: AIModel | null | undefined): ModelCa
     supportsStreaming: model.supports_streaming === true,
     supportsToolCalling: model.supports_tool_calling === true,
     reasoningLevels: supportsReasoning
-      ? levels.length > 0
-        ? levels
-        : [...DEFAULT_REASONING_LEVELS]
+      ? normalizeReasoningLevels(levels.length > 0 ? levels : DEFAULT_REASONING_LEVELS)
       : [],
   };
 }
@@ -130,9 +131,16 @@ export function uploadKinds(caps: ModelCapabilities): AttachmentKind[] {
   return kinds;
 }
 
-/** Default reasoning selection: first declared level (cheapest assumption). */
+/** Default reasoning selection: first level that is not the off switch
+ *  (cheapest on-level), so adding "none" never silently disables reasoning
+ *  for models that reasoned by default. Off-only level sets fall back to
+ *  "none". */
 export function defaultReasoningLevel(caps: ModelCapabilities): string | null {
-  return caps.reasoningLevels.length > 0 ? caps.reasoningLevels[0] : null;
+  return (
+    caps.reasoningLevels.find((level) => level !== REASONING_OFF_LEVEL) ??
+    caps.reasoningLevels[0] ??
+    null
+  );
 }
 
 export function kindForFile(file: File): AttachmentKind | null {

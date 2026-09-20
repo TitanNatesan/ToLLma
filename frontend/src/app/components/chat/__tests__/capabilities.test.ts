@@ -67,25 +67,34 @@ describe("getModelCapabilities", () => {
     expect(uploadKinds(caps)).toEqual(["video"]);
   });
 
-  it("reasoning without declared levels falls back to low/medium/high", () => {
+  it("reasoning without declared levels falls back to none/low/medium/high", () => {
     const caps = getModelCapabilities(model({ supports_reasoning: true }));
-    expect(caps.reasoningLevels).toEqual(["low", "medium", "high"]);
+    expect(caps.reasoningLevels).toEqual(["none", "low", "medium", "high"]);
+    // Adding "none" must not change the previous default (low).
     expect(defaultReasoningLevel(caps)).toBe("low");
   });
 
-  it("reasoning honors per-model levels from metadata", () => {
+  it("reasoning honors per-model levels from metadata, with none first", () => {
     const caps = getModelCapabilities(
       model({ supports_reasoning: true, metadata: { reasoning_levels: ["default", "low", "medium", "high", "ultra"] } }),
     );
-    expect(caps.reasoningLevels).toEqual(["default", "low", "medium", "high", "ultra"]);
+    expect(caps.reasoningLevels).toEqual(["none", "default", "low", "medium", "high", "ultra"]);
     expect(defaultReasoningLevel(caps)).toBe("default");
+  });
+
+  it("does not duplicate a declared none level", () => {
+    const caps = getModelCapabilities(
+      model({ supports_reasoning: true, metadata: { reasoning_levels: ["low", "none", "high"] } }),
+    );
+    expect(caps.reasoningLevels).toEqual(["none", "low", "high"]);
+    expect(defaultReasoningLevel(caps)).toBe("low");
   });
 
   it("ignores malformed reasoning_levels instead of crashing", () => {
     const caps = getModelCapabilities(
       model({ supports_reasoning: true, metadata: { reasoning_levels: "high" } }),
     );
-    expect(caps.reasoningLevels).toEqual(["low", "medium", "high"]);
+    expect(caps.reasoningLevels).toEqual(["none", "low", "medium", "high"]);
   });
 
   it("null model yields safe empty capabilities", () => {

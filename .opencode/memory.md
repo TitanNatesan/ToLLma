@@ -1275,3 +1275,45 @@ Architectural analysis and selective integration of Vercel AI SDK Elements compo
 - `npm run build` (`next build`): Turbopack production compilation succeeded (12/12 static pages generated, 0 TypeScript errors).
 - Playwright E2E (`npx playwright test e2e/elements.spec.ts`): 4/4 passed (auth setup, reasoning states & live duration, attachment drag-and-drop & ready state, scroll-to-bottom affordance).
 - Visual verification: Captured screenshots in brain directory showing full chat layout, active message with expanded `ChainOfThought`, and metadata telemetry.
+
+---
+
+## 2026-09-20 — Thinking Level Selector: None Mode, Click-Cycle, Discrete Stops, Wheel Stepping
+
+### Requirement Completed
+Extended the existing composer `ReasoningSelector` (no rewrite, hover UX preserved) with an explicit "None" level and four new interactions:
+- **None → Low → Medium → High** order; "none" is forced first by `normalizeReasoningLevels` even when metadata omits it.
+- **Click-to-cycle**: clicking the compact indicator wraps High → None → Low without opening the scale (mouse focus-open suppressed via `pointerFocus` ref; keyboard focus still opens).
+- **Discrete stop points**: native range `step=1` snaps to integer stops; stop dots + labels share native thumb-travel geometry (`calc(8px + (100% - 16px) * pct)`) — pixel-verified thumb center == active dot center at every stop.
+- **Wheel stepping**: non-passive native `wheel` listener on the selector wrapper; only active while expanded (over the component), `preventDefault` stops page scroll, 24px accumulated delta + 120ms cooldown prevent accidental rapid changes; clamps at both ends (no wrap).
+- **Labels**: aligned under stops, click selects immediately, active label/dot highlighted with `transition-colors`.
+- **Capability awareness**: selector stays hidden for `!supports_reasoning` models; declared metadata levels are honored with "none" prepended, duplicates dropped.
+- **Backend**: `reasoning_level="none"` is an explicit off switch end-to-end; `REASONING_OFF_LEVELS = ("none", "default")` centralized in `base.py`. Providers: Anthropic/Bedrock Claude omit `thinking` (max_tokens untouched), OpenAI chat/responses omit `reasoning_effort`/`reasoning`, Gemini/Vertex never send thinking config (model-controlled), DeepSeek omits the parameter but always-on `reasoning_content` still renders.
+
+### Files Created
+- `frontend/src/app/components/chat/reasoningLevels.ts` (normalize/cycle/clamp-step pure helpers)
+- `frontend/src/app/components/chat/__tests__/reasoningLevels.test.ts` (9 tests)
+- `frontend/e2e/reasoning-selector.spec.ts` (7 Playwright tests)
+
+### Files Modified
+- `frontend/src/app/components/chat/ReasoningSelector.tsx`
+- `frontend/src/app/components/chat/capabilities.ts` (`normalizeReasoningLevels`, none-skipping default so "Low" stays default)
+- `frontend/src/app/components/chat/__tests__/capabilities.test.ts`
+- `frontend/src/app/providers/components/ModelForm.tsx` (reasoning-levels hint)
+- `backend/src/tollms/services/gateway/adapters/base.py`
+- `backend/tests/test_reasoning.py` (+6 tests: Anthropic/OpenAI-responses/Gemini/DeepSeek/Bedrock none, gateway forwards none)
+- `.opencode/memory.md`
+
+### Decisions
+- Default level stays **Low** (first non-none): adding "none" must not silently disable reasoning. Regenerate still sends null.
+- Click never opens the scale; hover (300ms close delay) and keyboard focus keep the original UX. On touch, tapping cycles through all levels (all four are reachable without the slider).
+- Wheel clamps instead of wrapping (accident prevention); click-cycle wraps per spec.
+- No new dependencies; no DB/API schema changes.
+
+### Verification
+- Backend `docker compose exec backend pytest -q`: **127/127** (was 121).
+- Frontend `vitest`: **73/73**; `tsc --noEmit` clean; eslint touched-files clean; `next build` green.
+- Playwright `e2e/reasoning-selector.spec.ts`: **7/7 passed** (cycle-without-open, hover+delay, keyboard snap/Home/End, label alignment (<2px) & selection, wheel stepping/clamping/outside-noop, none/low request payload via captured `POST /api/v1/gateway/stream`, capability hide + metadata levels).
+- Regression subset `e2e/elements|chat|generation + tests/chat-ux`: 30 passed, 2 skipped; 3 command-palette failures reproduced the known dev-server hydration flake (pass standalone, unrelated code path).
+- Pixel analysis of `/tmp/reasoning-expanded-{low,none,high}.png`: native thumb center matches active stop dot center (95.5/95.5, 34.5/34.5, 216.5/216.5).
+- Artifacts: `/tmp/reasoning-collapsed.png`, `/tmp/reasoning-expanded-{low,none,high}.png`, `/tmp/reasoning-selector-demo.gif` (trimmed interaction recording).
