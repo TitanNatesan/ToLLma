@@ -12,9 +12,39 @@ from tollms.services.gateway.adapters.base import (
     ChatMessage,
     DiscoveredModel,
     StreamChunk,
+    reasoning_effort,
+    thinking_params,
 )
 
 logger = logging.getLogger(__name__)
+
+# Claude generations that accept ONLY adaptive thinking: manual
+# {type: enabled, budget_tokens} returns a 400 ValidationException on these.
+# Model-generation routing is a wire-level concern (same as
+# resolve_bedrock_model_id); non-Claude families never get thinking fields.
+_ADAPTIVE_ONLY = ("sonnet-5", "opus-5", "opus-4-7", "opus-4-8", "mythos", "fable")
+
+
+def bedrock_thinking_fields(
+    model_id: str, level: str | None, max_output_tokens: int | None = None
+) -> tuple[dict, int | None] | None:
+    """(additionalModelRequestFields, maxTokens) for Claude extended thinking.
+
+    Returns None when thinking is off or the model is not Claude — other
+    Bedrock families (DeepSeek, MiniMax, Titan, ...) reject the thinking
+    field with a ValidationException. DeepSeek-R1 reasons unconditionally
+    without any request fields, which is why it worked before this.
+    """
+    effort = reasoning_effort(level)
+    if effort is None or "anthropic" not in model_id.lower():
+        return None
+    if any(tag in model_id.lower() for tag in _ADAPTIVE_ONLY):
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}, None
+    params = thinking_params(level, max_output_tokens)
+    if params is None:
+        return None
+    budget, max_tokens = params
+    return {"thinking": {"type": "enabled", "budget_tokens": budget}}, max_tokens
 
 
 def resolve_bedrock_model_id(model_id: str, region: str) -> str:
@@ -166,6 +196,18 @@ class BedrockAdapter(BaseProviderAdapter):
         payload: dict = {"modelId": resolved_model_id, "messages": rest}
         if system:
             payload["system"] = system
+        thinking = bedrock_thinking_fields(
+            resolved_model_id, self.reasoning_level, self.max_output_tokens
+        )
+        if thinking is not None:
+            # Claude only streams reasoningContent when thinking is requested.
+            fields, max_tokens = thinking
+            payload["additionalModelRequestFields"] = fields
+            if max_tokens is not None:
+                payload["inferenceConfig"] = {"maxTokens": max_tokens}
+            logger.info(
+                "bedrock thinking enabled for %s: %s", resolved_model_id, fields.get("thinking"),
+            )
         try:
             stream = await asyncio.to_thread(self._stream_events, payload)
             in_reasoning = False
@@ -173,7 +215,14 @@ class BedrockAdapter(BaseProviderAdapter):
             for event in stream:
                 if "contentBlockDelta" in event:
                     delta_obj = event["contentBlockDelta"].get("delta") or {}
-                    reasoning = (delta_obj.get("reasoningContent") or {}).get("text")
+                    reasoning_content = delta_obj.get("reasoningContent") or {}
+                    # Signature deltas carry integrity tokens, not displayable
+                    # text; redacted blocks are replaced with a placeholder.
+                    reasoning = reasoning_content.get("text") or (
+                        "(Thinking redacted by the provider)"
+                        if reasoning_content.get("redactedContent")
+                        else None
+                    )
                     text = delta_obj.get("text")
                     if reasoning:
                         if not in_reasoning:

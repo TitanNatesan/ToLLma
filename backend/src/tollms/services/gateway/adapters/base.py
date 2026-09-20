@@ -60,6 +60,52 @@ class ChatResult:
 THINK_OPEN = "<think>\n"
 THINK_CLOSE = "\n</think>\n\n"
 
+# Composer reasoning level -> thinking token budgets (Claude semantics; used
+# by both the native Anthropic API and Bedrock Converse).
+THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 10000, "ultra": 32000}
+THINKING_MIN_BUDGET = 1024
+THINKING_HEADROOM = 4096  # max_tokens must exceed the thinking budget
+
+
+def thinking_budget(level: str | None) -> int | None:
+    """Composer level -> thinking budget. Off for none/default/unset;
+    unknown future levels fall back to medium."""
+    if not level or level in ("none", "default"):
+        return None
+    return THINKING_BUDGETS.get(level, THINKING_BUDGETS["medium"])
+
+
+def thinking_params(
+    level: str | None, max_output_tokens: int | None = None
+) -> tuple[int, int] | None:
+    """Valid (budget_tokens, max_tokens) pair, or None when thinking is off.
+
+    Providers require budget < max_tokens. The model's declared max output
+    (when known) keeps the budget in range without capping long answers.
+    """
+    budget = thinking_budget(level)
+    if budget is None:
+        return None
+    if max_output_tokens is None:
+        return budget, budget + THINKING_HEADROOM
+    if max_output_tokens <= THINKING_MIN_BUDGET:
+        return None  # no room for thinking on this model
+    budget = min(budget, max(THINKING_MIN_BUDGET, max_output_tokens - THINKING_HEADROOM))
+    return budget, max_output_tokens
+
+
+def reasoning_effort(level: str | None) -> str | None:
+    """Composer level -> OpenAI-style effort, or None when thinking is off.
+
+    OpenAI-compatible surfaces (native OpenAI, LiteLLM, OpenRouter, vLLM)
+    accept minimal/low/medium/high. Composer-only levels clamp to high.
+    """
+    if not level or level in ("none", "default"):
+        return None
+    if level in ("minimal", "low", "medium", "high"):
+        return level
+    return "high"
+
 
 @dataclass
 class DiscoveredModel:
@@ -79,9 +125,13 @@ class BaseProviderAdapter:
     transport: httpx.AsyncBaseTransport | None = None
     timeout: float = 120.0
     # Composer-selected reasoning level (e.g. "low"/"medium"/"high"/None).
-    # Adapters that must explicitly request thinking (Anthropic) read it;
-    # others ignore it. Never inspected for model names.
+    # Adapters that must explicitly request thinking (Anthropic, Bedrock
+    # Claude, OpenAI-style effort) read it; others ignore it. Never inspected
+    # for model names.
     reasoning_level: str | None = None
+    # Registered model's declared max output; lets thinking budgets clamp
+    # without capping long answers. None = unknown.
+    max_output_tokens: int | None = None
 
     # Native wire support per media kind. Document text needs no wire support:
     # the gateway injects extracted text as plain content (supports_files=True).

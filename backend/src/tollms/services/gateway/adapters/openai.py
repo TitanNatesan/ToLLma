@@ -12,6 +12,7 @@ from tollms.services.gateway.adapters.base import (
     ChatMessage,
     DiscoveredModel,
     StreamChunk,
+    reasoning_effort,
     sse_data_lines,
     usage_extras,
 )
@@ -19,17 +20,40 @@ from tollms.services.gateway.adapters.base import (
 logger = logging.getLogger(__name__)
 
 
+def _reasoning_text(delta: dict) -> str:
+    """Reasoning text across OpenAI-compatible surfaces.
+
+    - reasoning_content: DeepSeek native, LiteLLM, many gateways
+    - reasoning: OpenRouter legacy / various proxies
+    - reasoning_details: OpenRouter normalized entries — reasoning.text and
+      reasoning.summary carry text; reasoning.encrypted carries opaque data
+      (not displayable) and is skipped.
+    """
+    out: list[str] = []
+    for key in ("reasoning_content", "reasoning"):
+        value = delta.get(key)
+        if isinstance(value, str) and value:
+            out.append(value)
+    details = delta.get("reasoning_details")
+    if isinstance(details, list):
+        for item in details:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text") or item.get("summary")
+            if isinstance(text, str) and text:
+                out.append(text)
+    return "".join(out)
+
+
 def _parse_chat_sse(payload: str) -> tuple[str, str, dict]:
-    """(answer text, reasoning text, usage). Reasoning arrives as
-    delta.reasoning_content on reasoning models (DeepSeek, o-series via
-    compatible APIs, Grok); empty string when absent."""
+    """(answer text, reasoning text, usage). Empty strings when absent."""
     data = json.loads(payload)
     text = ""
     reasoning = ""
     try:
         delta = data["choices"][0].get("delta", {})
         text = delta.get("content") or ""
-        reasoning = delta.get("reasoning_content") or ""
+        reasoning = _reasoning_text(delta)
     except (KeyError, IndexError, TypeError):
         pass
     return text, reasoning, data.get("usage") or {}
@@ -100,6 +124,12 @@ class OpenAIChatAdapter(BaseProviderAdapter):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        effort = reasoning_effort(self.reasoning_level)
+        if effort:
+            # Reasoning-capable models on OpenAI-compatible surfaces
+            # (native, LiteLLM, OpenRouter, vLLM) enable thinking here;
+            # always-on reasoners ignore it.
+            body["reasoning_effort"] = effort
         headers = self._headers()
         in_reasoning = False
         try:
@@ -170,6 +200,9 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
             "input": [{"role": m.role, "content": self._content(m)} for m in messages],
             "stream": True,
         }
+        effort = reasoning_effort(self.reasoning_level)
+        if effort:
+            body["reasoning"] = {"effort": effort}
         headers = {"Authorization": f"Bearer {self.credentials['api_key']}"}
         in_reasoning = False
         try:

@@ -17,8 +17,19 @@ describe("think-block contract (mirrors backend THINK_OPEN/THINK_CLOSE)", () => 
   it("handles multiple spans and unclosed spans safely", () => {
     const parts = splitThinkBlocks("a<think>\n1\n</think>\n\nb<think>\n2\n</think>\n\nc");
     expect(parts.filter((p) => p.type === "think").map((p) => p.content)).toEqual(["\n1\n", "\n2\n"]);
-    // Unclosed span: no think part (renders as plain text, never lost).
-    expect(splitThinkBlocks("answer <think>\ncut off").every((p) => p.type === "text")).toBe(true);
+    // Mid-stream open span renders as thinking (never leaks into the answer).
+    expect(splitThinkBlocks("answer <think>\nstill thinking")).toEqual([
+      { type: "text", content: "answer " },
+      { type: "think", content: "\nstill thinking" },
+    ]);
+    expect(splitThinkBlocks("<think>\nonly thinking so far")).toEqual([
+      { type: "think", content: "\nonly thinking so far" },
+    ]);
+    // Completing the span keeps the same shape (pill persists, grows).
+    expect(splitThinkBlocks("<think>\ndone\n</think>\n\nAnswer")).toEqual([
+      { type: "think", content: "\ndone\n" },
+      { type: "text", content: "\n\nAnswer" },
+    ]);
   });
 
   it("renders any provider's normalized output identically", () => {

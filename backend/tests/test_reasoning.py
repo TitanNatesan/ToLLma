@@ -10,8 +10,16 @@ import json
 
 import httpx
 
-from tollms.services.gateway.adapters.anthropic import AnthropicAdapter, thinking_budget
-from tollms.services.gateway.adapters.base import THINK_CLOSE, THINK_OPEN, ChatMessage
+from tollms.services.gateway.adapters.anthropic import AnthropicAdapter
+from tollms.services.gateway.adapters.base import (
+    THINK_CLOSE,
+    THINK_OPEN,
+    ChatMessage,
+    reasoning_effort,
+    thinking_budget,
+    thinking_params,
+)
+from tollms.services.gateway.adapters.bedrock import BedrockAdapter, bedrock_thinking_fields
 from tollms.services.gateway.adapters.gemini import GeminiAdapter, VertexAdapter
 from tollms.services.gateway.adapters.openai import OpenAIChatAdapter, OpenAIResponsesAdapter
 
@@ -272,3 +280,228 @@ def test_gateway_persists_think_span_end_to_end(db, provider_factory, model_fact
     assert assistants[0].content == (
         f"{THINK_OPEN}Let me consider the options.{THINK_CLOSE}The answer."
     )
+
+
+# --- Bedrock: the reported failing path (Claude via Converse) ---------------
+
+BEDROCK_HAIKU = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+BEDROCK_SONNET = "global.anthropic.claude-sonnet-4-6"
+
+
+def test_bedrock_claude_thinking_fields_requested() -> None:
+    """Root cause: Claude on Bedrock emits reasoningContent only when
+    additionalModelRequestFields.thinking is set. budget < maxTokens."""
+    medium = bedrock_thinking_fields(BEDROCK_HAIKU, "medium", 64000)
+    assert medium == ({"thinking": {"type": "enabled", "budget_tokens": 4096}}, 64000)
+    low = bedrock_thinking_fields(BEDROCK_SONNET, "low", 64000)
+    assert low == ({"thinking": {"type": "enabled", "budget_tokens": 1024}}, 64000)
+    # No level / thinking disabled -> nothing sent.
+    assert bedrock_thinking_fields(BEDROCK_HAIKU, None, 64000) is None
+    assert bedrock_thinking_fields(BEDROCK_HAIKU, "none", 64000) is None
+
+
+def test_bedrock_non_claude_never_gets_thinking_fields() -> None:
+    """DeepSeek-R1/MiniMax reject the thinking field; they reason without it."""
+    assert bedrock_thinking_fields("us.deepseek.r1-v1:0", "medium", 4096) is None
+    assert bedrock_thinking_fields("minimax.minimax-m2.5", "high", 8192) is None
+    assert bedrock_thinking_fields("amazon.titan-text-premier-v1:0", "low", 3072) is None
+
+
+def test_bedrock_adaptive_only_models_use_adaptive_shape() -> None:
+    """Sonnet 5 / Opus 4.7+ 400 on manual budget_tokens: use adaptive+effort."""
+    assert bedrock_thinking_fields("global.anthropic.claude-sonnet-5", "ultra", 64000) == (
+        {"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}, None,
+    )
+    assert bedrock_thinking_fields("global.anthropic.claude-opus-4-7", "medium", 64000) == (
+        {"thinking": {"type": "adaptive"}, "output_config": {"effort": "medium"}}, None,
+    )
+
+
+def test_bedrock_budget_clamped_to_model_max_output() -> None:
+    assert bedrock_thinking_fields(BEDROCK_SONNET, "ultra", 4096) == (
+        {"thinking": {"type": "enabled", "budget_tokens": 1024}}, 4096,
+    )
+    # Too small for any thinking budget: disabled rather than a 400.
+    assert bedrock_thinking_fields(BEDROCK_SONNET, "high", 1024) is None
+
+
+def _bedrock_stream(events: list[dict], model_id: str, level: str | None, max_output: int | None = None):
+    """Run the real adapter with a stubbed boto3 stream; capture the payload."""
+    adapter = BedrockAdapter(
+        credentials={"region": "us-east-1"}, model_id=model_id,
+        reasoning_level=level, max_output_tokens=max_output,
+    )
+    captured: dict = {}
+
+    def fake_stream_events(payload: dict):
+        captured.update(payload)
+        return iter(events)
+
+    adapter._stream_events = fake_stream_events  # type: ignore[method-assign]
+
+    async def _main() -> str:
+        parts = []
+        async for chunk in adapter.chat_stream([ChatMessage(role="user", content="hi")]):
+            parts.append(chunk.delta)
+        return "".join(parts)
+
+    return asyncio.run(_main()), captured
+
+
+BEDROCK_REASONING_EVENTS = [
+    {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Check "}}}},
+    {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "opaque"}}}},
+    {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "facts."}}}},
+    {"contentBlockStop": {}},
+    {"contentBlockDelta": {"delta": {"text": "Answer."}}},
+    {"metadata": {"usage": {"totalTokens": 9}}},
+]
+
+
+def test_bedrock_claude_end_to_end_normalized() -> None:
+    text, payload = _bedrock_stream(BEDROCK_REASONING_EVENTS, BEDROCK_HAIKU, "medium", 64000)
+    assert payload["additionalModelRequestFields"] == {
+        "thinking": {"type": "enabled", "budget_tokens": 4096}
+    }
+    assert payload["inferenceConfig"] == {"maxTokens": 64000}
+    assert text == f"{THINK_OPEN}Check facts.{THINK_CLOSE}Answer."
+
+
+def test_bedrock_deepseek_no_thinking_fields_but_reasoning_parsed() -> None:
+    text, payload = _bedrock_stream(BEDROCK_REASONING_EVENTS, "us.deepseek.r1-v1:0", "medium", 4096)
+    assert "additionalModelRequestFields" not in payload
+    assert "inferenceConfig" not in payload
+    assert text == f"{THINK_OPEN}Check facts.{THINK_CLOSE}Answer."
+
+
+def test_bedrock_redacted_reasoning_placeholder() -> None:
+    events = [
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"redactedContent": b"\x01\x02"}}}},
+        {"contentBlockDelta": {"delta": {"text": "Safe answer."}}},
+    ]
+    text, _ = _bedrock_stream(events, "us.deepseek.r1-v1:0", None)
+    assert text == f"{THINK_OPEN}(Thinking redacted by the provider){THINK_CLOSE}Safe answer."
+
+
+# --- Thinking/effort mapping shared helpers ---------------------------------
+
+def test_thinking_params_clamp_and_disable() -> None:
+    assert thinking_params("medium", 64000) == (4096, 64000)
+    assert thinking_params("ultra", 4096) == (1024, 4096)
+    assert thinking_params("low") == (1024, 1024 + 4096)
+    assert thinking_params(None) is None
+    assert thinking_params("none") is None
+    assert thinking_params("default") is None
+    assert thinking_params("ultra", 1024) is None
+
+
+def test_reasoning_effort_mapping() -> None:
+    assert reasoning_effort(None) is None
+    assert reasoning_effort("none") is None
+    assert reasoning_effort("default") is None
+    assert reasoning_effort("low") == "low"
+    assert reasoning_effort("medium") == "medium"
+    assert reasoning_effort("high") == "high"
+    assert reasoning_effort("ultra") == "high"  # clamps to the broad max
+    assert reasoning_effort("max") == "high"
+
+
+# --- OpenAI-compatible request-side enablement ------------------------------
+
+def test_openai_chat_sends_reasoning_effort_when_level_set() -> None:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=b"data: [DONE]\n\n")
+
+    def run(level: str | None) -> dict:
+        adapter = OpenAIChatAdapter(
+            credentials={"api_key": "k"}, model_id="m", reasoning_level=level,
+            transport=_transport(handler),
+        )
+        _run(adapter)
+        return bodies[-1]
+
+    assert run("high")["reasoning_effort"] == "high"
+    assert run("ultra")["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in run(None)
+    assert "reasoning_effort" not in run("none")
+
+
+def test_openai_responses_sends_reasoning_object() -> None:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _sse_response('data: {"type": "response.completed", "response": {}}')
+
+    adapter = OpenAIResponsesAdapter(
+        credentials={"api_key": "k"}, model_id="o4", reasoning_level="low",
+        transport=_transport(handler),
+    )
+    _run(adapter)
+    assert bodies[-1]["reasoning"] == {"effort": "low"}
+
+
+def test_openai_chat_parses_openrouter_reasoning_shapes() -> None:
+    body = (
+        'data: {"choices": [{"delta": {"reasoning": "Legacy string. "}}]}\n\n'
+        'data: {"choices": [{"delta": {"reasoning_details": ['
+        '{"type": "reasoning.text", "text": "Detail A. "},'
+        '{"type": "reasoning.encrypted", "data": "opaque"},'
+        '{"type": "reasoning.text", "text": "Detail B."}]}}]}\n\n'
+        'data: {"choices": [{"delta": {"reasoning_content": " Plus content."}}]}\n\n'
+        'data: {"choices": [{"delta": {"content": "Final."}}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body.encode())
+
+    adapter = OpenAIChatAdapter(credentials={"api_key": "k"}, model_id="m", transport=_transport(handler))
+    text, _ = _run(adapter)
+    assert text == f"{THINK_OPEN}Legacy string. Detail A. Detail B. Plus content.{THINK_CLOSE}Final."
+
+
+# --- Gateway forwarding of composer level + model max output ----------------
+
+def test_gateway_forwards_level_and_max_output(db, provider_factory, model_factory, monkeypatch) -> None:
+    """The composer level and the model's declared max output reach the
+    adapter — the two values that enable Claude thinking with a valid budget."""
+    import uuid as _uuid
+
+    from tollms.api.gateway import service as gateway_service
+    from tollms.api.gateway.schemas import ChatRequest
+    from tollms.services import generation as generation_engine
+    from tollms.services.gateway.adapters.base import StreamChunk
+
+    captured: dict = {}
+
+    class CapturingAdapter(OpenAIChatAdapter):
+        async def chat_stream(self, messages):
+            yield StreamChunk(delta="done")
+
+    def fake_build(*args, **kwargs) -> CapturingAdapter:
+        adapter = CapturingAdapter(credentials={"api_key": "k"}, model_id="m")
+        captured["adapter"] = adapter
+        return adapter
+
+    monkeypatch.setattr(gateway_service, "build_adapter", fake_build)
+    p = provider_factory("Cap")
+    m = model_factory(p["id"], max_output_tokens=64000)
+    req = ChatRequest(
+        provider_id=_uuid.UUID(p["id"]), model_id=_uuid.UUID(m["id"]),
+        message="hi", reasoning_level="high",
+    )
+
+    async def _main():
+        started = await gateway_service.start_generation(db, req)
+        active = generation_engine.manager.get(started.generation_id)
+        assert active is not None and active.task is not None
+        await active.task
+
+    asyncio.run(_main())
+    adapter = captured["adapter"]
+    assert adapter.reasoning_level == "high"
+    assert adapter.max_output_tokens == 64000

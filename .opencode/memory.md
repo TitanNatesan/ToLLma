@@ -1186,3 +1186,21 @@ Only Bedrock normalized reasoning into `<think>` spans. Anthropic dropped thinki
 
 ### Verification
 - Backend pytest 106/106; frontend vitest 47/47, tsc/eslint-touched/build clean; e2e 49 passed (wizard.spec:10 pre-existing fail).
+
+## 2026-09-20 — Claude (Bedrock Converse) reasoning: root cause + fix
+
+### Root Cause (empirical)
+User's DB: provider `dsddd` = BEDROCK_CONVERSE; models `global.anthropic.claude-haiku-4-5-*`, `global.anthropic.claude-sonnet-4-6`. Native Anthropic path was already fixed, but Claude here runs through Bedrock Converse, where thinking was never requested. Bedrock Claude emits `reasoningContent` ONLY when `additionalModelRequestFields.thinking` is set (DeepSeek-R1 emits unconditionally → the asymmetry). Confirmed via botocore service model: ReasoningContentBlockDelta={text,redactedContent,signature}, ConverseStreamRequest has additionalModelRequestFields/inferenceConfig; AWS docs: Haiku 4.5 manual thinking, Sonnet 4.6 manual (deprecated)+adaptive, Sonnet5/Opus4.7+ adaptive-only (400 on manual). Second defect: mid-stream unclosed `<think>` leaked reasoning into answer text.
+
+### Changes
+- base.py: thinking_budget/thinking_params/reasoning_effort helpers + reasoning_level/max_output_tokens fields (maxTokens clamp)
+- bedrock.py: bedrock_thinking_fields (Claude-only gate, adaptive-only list, inferenceConfig maxTokens) + payload wiring + redacted placeholder
+- anthropic.py: shared helpers, max-output clamp
+- openai.py: parse reasoning/reasoning_details (+skip encrypted), request reasoning_effort / reasoning.effort
+- gateway/service.py: forward model.max_output_tokens
+- frontend thinkBlocks.ts: unclosed trailing <think> renders as thinking (live pill)
+- tests: test_reasoning 24 (13 new); test_generations flake hardened (_await_task tolerates finished task; cancel test polls flush); thinkBlocks streaming cases; e2e mock paced think mode + live-pill-before-answer assertion
+
+### Verification
+- Backend 119/119; frontend tsc/vitest 47/47/build; focused e2e generation+chat+settings 10/10
+- Not live-tested against real AWS (no creds in env): payload verified against botocore shapes + AWS docs; recommend live spot check on `dsddd`

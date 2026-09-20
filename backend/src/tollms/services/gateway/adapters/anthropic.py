@@ -12,21 +12,11 @@ from tollms.services.gateway.adapters.base import (
     ChatMessage,
     DiscoveredModel,
     StreamChunk,
+    thinking_params,
     usage_extras,
 )
 
 logger = logging.getLogger(__name__)
-
-# Composer reasoning level -> Anthropic thinking budget (tokens). Unknown
-# levels fall back to medium; "none"/unset leaves thinking disabled.
-THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 10000, "ultra": 32000}
-THINKING_HEADROOM = 4096  # max_tokens must exceed the thinking budget
-
-
-def thinking_budget(level: str | None) -> int | None:
-    if not level or level == "none":
-        return None
-    return THINKING_BUDGETS.get(level, THINKING_BUDGETS["medium"])
 
 
 class AnthropicAdapter(BaseProviderAdapter):
@@ -90,12 +80,13 @@ class AnthropicAdapter(BaseProviderAdapter):
         body: dict = {"model": self.model_id, "messages": rest, "stream": True, "max_tokens": 4096}
         if system:
             body["system"] = system
-        budget = thinking_budget(self.reasoning_level)
-        if budget is not None:
+        params = thinking_params(self.reasoning_level, self.max_output_tokens)
+        if params is not None:
             # Extended thinking must be explicitly requested or Claude emits
             # no thinking blocks at all. max_tokens must exceed the budget.
+            budget, max_tokens = params
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            body["max_tokens"] = budget + THINKING_HEADROOM
+            body["max_tokens"] = max_tokens
         headers = self._headers()
         try:
             async with self._client() as client, client.stream(

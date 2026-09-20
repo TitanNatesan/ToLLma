@@ -37,17 +37,26 @@ export async function startMockLLM(port = 4899): Promise<string> {
             }, 150);
             return;
           }
-          // Thinking mode (model id contains "think"): reasoning_content
-          // deltas first (DeepSeek-style), then the final answer.
+          // Thinking mode (model id contains "think"): paced reasoning_content
+          // deltas first (DeepSeek/OpenRouter/Bedrock-normalized shape), then
+          // the final answer — lets tests observe the Thinking pill streaming
+          // before any answer text exists.
           if (typeof parsed.model === "string" && parsed.model.includes("think")) {
-            res.write('data: {"choices": [{"delta": {"reasoning_content": "Considering the options "}}]}\n\n');
-            res.write('data: {"choices": [{"delta": {"reasoning_content": "carefully."}}]}\n\n');
-            res.write('data: {"choices": [{"delta": {"content": "Thoughtful answer."}}]}\n\n');
-            res.write(
-              'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 8, "completion_tokens": 6, "total_tokens": 14}}\n\n',
-            );
-            res.write("data: [DONE]\n\n");
-            res.end();
+            res.write('data: {"choices": [{"delta": {"reasoning_content": "Considering "}}]}\n\n');
+            setTimeout(() => {
+              res.write('data: {"choices": [{"delta": {"reasoning_content": "the options "}}]}\n\n');
+            }, 250);
+            setTimeout(() => {
+              res.write('data: {"choices": [{"delta": {"reasoning_content": "carefully."}}]}\n\n');
+            }, 500);
+            setTimeout(() => {
+              res.write('data: {"choices": [{"delta": {"content": "Thoughtful answer."}}]}\n\n');
+              res.write(
+                'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 8, "completion_tokens": 6, "total_tokens": 14}}\n\n',
+              );
+              res.write("data: [DONE]\n\n");
+              res.end();
+            }, 900);
             return;
           }
           res.write('data: {"choices": [{"delta": {"content": "Hello from **mock** "}}]}\n\n');

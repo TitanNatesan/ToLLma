@@ -283,6 +283,7 @@ async def run_chat(
         credentials = decrypted_credentials(provider)
         adapter = build_adapter(provider, model, credentials, transport)
         adapter.reasoning_level = data.reasoning_level
+        adapter.max_output_tokens = model.max_output_tokens
         transcriber = _transcriber(provider, credentials)
         rows = attachment_service.get_many(db, data.attachment_ids, user_id)
         if data.conversation_id is None:
@@ -381,6 +382,7 @@ async def _setup_generation(
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
     adapter.reasoning_level = data.reasoning_level
+    adapter.max_output_tokens = model.max_output_tokens
     transcriber = _transcriber(provider, credentials)
     rows = attachment_service.get_many(db, data.attachment_ids, user_id)
     if data.conversation_id is None:

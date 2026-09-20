@@ -68,8 +68,12 @@ def _fresh(maker, row_id: uuid.UUID):
 
 
 async def _await_task(generation_id: uuid.UUID) -> None:
+    """Wait for the driver task. Already finished (fast cancels pop the
+    registry entry before this runs) — nothing to wait for; the DB row holds
+    the terminal state the caller asserts."""
     active = generation_engine.manager.get(generation_id)
-    assert active is not None and active.task is not None
+    if active is None or active.task is None:
+        return
     await active.task
 
 def _drain(events):
@@ -156,7 +160,12 @@ def test_cancel_persists_partial_as_cancelled(
 
     async def _main():
         started = await gateway_service.start_generation(db, _request(p["id"], m["id"]))
-        await asyncio.sleep(0.25)
+        # Wait until at least one progress flush landed (load-independent),
+        # then cancel mid-stream: the partial text must survive.
+        for _ in range(200):
+            if _fresh(maker, started.message_id).content:
+                break
+            await asyncio.sleep(0.01)
         cancelled = await gateway_service.cancel_generation(db, started.generation_id)
         assert cancelled.status == "cancelled"
         await _await_task(started.generation_id)
