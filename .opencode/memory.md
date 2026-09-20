@@ -1219,3 +1219,59 @@ User's DB: provider `dsddd` = BEDROCK_CONVERSE; models `global.anthropic.claude-
 ### Verification
 - Backend 121/121; frontend tsc/eslint-touched/vitest 51/51/build; full e2e 49 passed (wizard.spec:10 pre-existing; palette hydration flakes pass standalone/on retry); e2e first-token 340–490ms focused, 561ms full-suite.
 - Repo e2e failures during investigation were data drift (sync run with 2 source errors deactivated 4237 models); manual sync restored 4237 updated/0 errors — not code.
+
+---
+
+## 2026-09-20 — AI SDK Elements Integration: Composable Message, Chain-of-Thought, Citations, Sources, Tools & Context
+
+### Requirement Completed
+Architectural analysis and selective integration of Vercel AI SDK Elements components and patterns into the ToLLma chat frontend. Evolved ToLLma into a modular, composable chat architecture while strictly preserving FastAPI SSE streaming, Valkey caching, PostgreSQL schema, UnifiedModelSelector capabilities, ReasoningSelector slider, and ToLLma design aesthetics (`#066E09` green accent, zinc palettes, dark/light modes).
+
+### Components Integrated
+1. **Message Architecture (`frontend/src/app/components/chat/message/Message.tsx`)**:
+   - Decomposed monolithic `MessageView.tsx` into composable primitives: `MessageRoot`, `MessageHeader`, `MessageAvatar`, `MessageContent`, `MessageAttachments`, `MessageActions`.
+   - Retained exact memoization, test IDs, and styling contracts.
+2. **Reasoning & Chain-of-Thought (`frontend/src/app/components/chat/reasoning/ChainOfThought.tsx`, `reasoning.ts`)**:
+   - 5 normalized states: `thinking`, `streaming`, `complete`, `interrupted`, `failed`.
+   - Live elapsed duration timer during streaming, word & token count telemetry, step extraction (`extractReasoningSteps`), copy-to-clipboard button, and smooth accordion drawer.
+   - Backward-compatible `Reasoning.tsx` re-export.
+3. **Inline Citations & Sources (`frontend/src/app/components/chat/citations/InlineCitation.tsx`, `frontend/src/app/components/chat/sources/Sources.tsx`)**:
+   - Interactive citation badge pill (`[1]`, `[2]`, `[Doc]`) with Radix popover previewing source title, quote snippet, author, and external link.
+   - Dedicated collapsible sources section (compact badge chips when collapsed, card grid when expanded). Renders conditionally when sources exist.
+4. **Tool Execution (`frontend/src/app/components/chat/tools/ToolCall.tsx`)**:
+   - Structured tool invocation component with states (`running`, `completed`, `failed`), execution duration, parameters view, and expandable JSON/markdown results.
+5. **Context (`frontend/src/app/components/chat/context/MessageContext.tsx`)**:
+   - Renders system prompt context, RAG documents, or conversational memory in a collapsible badge. Hidden when empty.
+6. **Attachments & Dropzone (`frontend/src/app/components/chat/attachments/DropzoneOverlay.tsx`)**:
+   - Drag-and-drop backdrop overlay with upload hint, animated icon, and accept label.
+   - Connected drag/drop handlers in `ChatComposer.tsx` while preserving `UnifiedModelSelector`, `ReasoningSelector`, and capability rejection switcher.
+7. **Conversation & Scroll Navigation (`frontend/src/app/components/chat/conversation/ScrollToBottom.tsx`)**:
+   - Floating jump-to-bottom button with smooth scrolling.
+
+### Files Created
+- `frontend/src/app/components/chat/message/Message.tsx`
+- `frontend/src/app/components/chat/reasoning/ChainOfThought.tsx`
+- `frontend/src/app/components/chat/citations/InlineCitation.tsx`
+- `frontend/src/app/components/chat/sources/Sources.tsx`
+- `frontend/src/app/components/chat/tools/ToolCall.tsx`
+- `frontend/src/app/components/chat/context/MessageContext.tsx`
+- `frontend/src/app/components/chat/attachments/DropzoneOverlay.tsx`
+- `frontend/src/app/components/chat/conversation/ScrollToBottom.tsx`
+- `frontend/src/app/components/chat/__tests__/reasoning.test.ts`
+- `frontend/src/app/components/chat/__tests__/citationsAndSources.test.ts`
+- `frontend/src/app/components/chat/__tests__/toolCall.test.ts`
+
+### Files Modified
+- `frontend/src/app/components/MessageView.tsx`
+- `frontend/src/app/components/Reasoning.tsx`
+- `frontend/src/app/components/reasoning.ts`
+- `frontend/src/app/components/chat/ChatComposer.tsx`
+- `frontend/src/app/page.tsx`
+- `frontend/src/components/ui/CommandPalette.tsx`
+- `.opencode/memory.md`
+
+### Verification
+- `npm test` (`vitest`): 63/63 tests passed across 13 test suites.
+- `npm run build` (`next build`): Turbopack production compilation succeeded (12/12 static pages generated, 0 TypeScript errors).
+- Playwright E2E (`npx playwright test e2e/elements.spec.ts`): 4/4 passed (auth setup, reasoning states & live duration, attachment drag-and-drop & ready state, scroll-to-bottom affordance).
+- Visual verification: Captured screenshots in brain directory showing full chat layout, active message with expanded `ChainOfThought`, and metadata telemetry.

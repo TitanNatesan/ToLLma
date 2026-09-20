@@ -1,7 +1,6 @@
 "use client";
 
-import { memo, useState } from "react";
-import { motion } from "framer-motion";
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -12,19 +11,28 @@ import {
   OctagonX,
   Paperclip,
   RotateCcw,
-  Sparkles,
-  Trash2,
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
 import { ResponseMarkdown } from "./ResponseMarkdown";
-import { Reasoning } from "./Reasoning";
+import { ChainOfThought } from "./chat/reasoning/ChainOfThought";
+import { Sources } from "./chat/sources/Sources";
+import { ToolCall } from "./chat/tools/ToolCall";
+import { MessageContext } from "./chat/context/MessageContext";
+import {
+  MessageRoot,
+  MessageAvatar,
+  MessageBubble,
+  MessageHeader,
+  MessageBodyContainer,
+  MessageActions,
+} from "./chat/message/Message";
 import { splitThinkBlocks } from "./thinkBlocks";
 import type { ReasoningStatus } from "./reasoning";
 import { attachmentContentUrl } from "@/services/api";
 import type { ChatAttachment, ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
-import { cn, fmtCost, fmtTokens, stripTrailingZeros } from "@/lib/utils";
+import { fmtCost, fmtTokens, stripTrailingZeros } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 
 // Allow rendering both persisted ChatMessage and in-flight OptimisticMessage
@@ -35,7 +43,11 @@ function extractText(node: React.ReactNode): string {
   if (typeof node === "number") return String(node);
   if (!node) return "";
   if (Array.isArray(node)) return node.map(extractText).join("");
-  if (typeof node === "object" && "props" in node && (node as { props?: { children?: React.ReactNode } }).props?.children) {
+  if (
+    typeof node === "object" &&
+    "props" in node &&
+    (node as { props?: { children?: React.ReactNode } }).props?.children
+  ) {
     return extractText((node as { props: { children: React.ReactNode } }).props.children);
   }
   return "";
@@ -70,8 +82,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Persisted attachment cards: images render inline, everything else links
- * to the owned download endpoint (session cookie authenticates). */
+/** Persisted attachment cards: images render inline, documents link to download. */
 function MessageAttachments({ attachments }: { attachments?: ChatAttachment[] }) {
   if (!attachments || attachments.length === 0) return null;
   return (
@@ -107,11 +118,10 @@ function MessageAttachments({ attachments }: { attachments?: ChatAttachment[] })
   );
 }
 
-/** User content is plain text — only assistant output carries normalized
- *  <think> spans, so no reasoning parsing here. */
+/** User content is plain text or user markdown. */
 function MessageContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
   return (
-    <div className={cn("prose text-sm leading-relaxed", isStreaming && "streaming-cursor")}>
+    <div className={isStreaming ? "streaming-cursor" : undefined}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
@@ -144,8 +154,7 @@ function MessageContent({ content, isStreaming }: { content: string; isStreaming
   );
 }
 
-/** Composable assistant body (AI SDK Elements Message composition pattern):
- *  reasoning parts first, then answer parts — one passthrough per provider. */
+/** Composable assistant body: reasoning parts first, then answer parts. */
 function AssistantContent({
   content,
   isStreaming,
@@ -163,7 +172,7 @@ function AssistantContent({
     <>
       {splitThinkBlocks(content).map((part, i) =>
         part.type === "think" ? (
-          <Reasoning
+          <ChainOfThought
             key={i}
             content={part.content}
             status={status}
@@ -180,7 +189,7 @@ function AssistantContent({
   );
 }
 
-interface ChatMessageProps {
+export interface ChatMessageProps {
   message: MessageLike;
   isStreaming?: boolean;
   onCopy?: () => void;
@@ -191,8 +200,7 @@ interface ChatMessageProps {
 function formatCost(val: string | null): string | null {
   if (!val) return null;
   const n = parseFloat(val);
-  if (isNaN(n)) return null;
-  if (n === 0) return null;
+  if (isNaN(n) || n === 0) return null;
   return fmtCost(n);
 }
 
@@ -212,6 +220,7 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
   const { data: providers } = useProviders();
   const modelName = !isUser ? models?.find((m) => m.id === msg.model_id)?.name : null;
   const providerName = !isUser ? providers?.find((p) => p.id === msg.provider_id)?.name : null;
+
   const usageTitle = [
     `in: ${msg.prompt_tokens ?? 0}`,
     `out: ${msg.completion_tokens ?? 0}`,
@@ -222,90 +231,74 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
     .filter(Boolean)
     .join(" / ");
   const costTitle = [`in: ${inCostStr ?? "$0"}`, `out: ${outCostStr ?? "$0"}`].join(" / ");
-  // Backend-owned generation status mapped to reasoning states. Live streams
-  // are "streaming"; persisted terminal rows carry their own status.
+
+  // Mapped generation lifecycle status for reasoning
   const reasoningStatus: ReasoningStatus = isStreaming
-    ? "streaming"
+    ? (message.content.includes("<think>") && !message.content.includes("</think>") ? "streaming" : "thinking")
     : msg.status === "cancelled"
       ? "interrupted"
       : msg.status === "failed"
         ? "failed"
         : "complete";
 
+  // Optional attached metadata for sources, tools, and context
+  const metadata = (msg as unknown as { metadata?: Record<string, unknown> })?.metadata;
+  const sources = (metadata?.sources as Array<import("./chat/citations/InlineCitation").CitationSource>) ?? undefined;
+  const toolCalls = (metadata?.tool_calls as Array<import("./chat/tools/ToolCall").ToolCallProps>) ?? undefined;
+  const contextItems = (metadata?.context_items as Array<import("./chat/context/MessageContext").ContextItem>) ?? undefined;
+
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -4 }}
-      transition={{ duration: 0.2, ease: "easeOut" }}
-      className={cn("group flex gap-3", isUser && "flex-row-reverse")}
-      data-testid={`message-${message.role}`}
-    >
-      {/* Assistant icon only — user messages carry no avatar. */}
-      {!isUser && (
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 text-xs font-bold text-white">
-          <Sparkles className="size-3.5" />
-        </div>
-      )}
+    <MessageRoot role={message.role as "user" | "assistant" | "system"} id={message.id}>
+      <MessageAvatar role={message.role as "user" | "assistant" | "system"} />
 
-      {/* Bubble */}
-      <div
-        className={cn(
-          "flex min-w-0 flex-col gap-1",
-          isUser ? "max-w-[70%] items-end max-sm:max-w-[85%]" : "max-w-[75%] max-sm:max-w-[92%]",
-        )}
-      >
-        {/* Header */}
-        <div className={cn("flex items-center gap-2 text-[10px] text-zinc-400", isUser && "flex-row-reverse")}>
-          <span className="font-semibold uppercase tracking-wide">
-            {isUser ? "You" : "Assistant"}
-          </span>
-          <time dateTime={message.created_at} title={message.created_at}>
-            {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </time>
-          {!isUser && (modelName || providerName) && (
-            <span data-testid="message-model" title={`${providerName ?? ""} / ${modelName ?? ""}`}>
-              {[modelName, providerName].filter(Boolean).join(" · ")}
-            </span>
-          )}
-          {!isUser && msg.total_tokens != null && (
-            <span data-testid="message-usage" title={usageTitle}>
-              {fmtTokens(msg.total_tokens)} tok
-            </span>
-          )}
-          {!isUser && costStr && (
-            <span data-testid="message-cost" title={costTitle}>
-              {costStr}
-            </span>
-          )}
-          {!isUser && latencyStr && <span>{latencyStr}</span>}
-        </div>
+      <MessageBubble role={message.role as "user" | "assistant" | "system"}>
+        {/* Header Metadata */}
+        <MessageHeader
+          role={message.role as "user" | "assistant" | "system"}
+          timestamp={message.created_at}
+          modelName={modelName}
+          providerName={providerName}
+          tokens={msg.total_tokens}
+          tokensTooltip={usageTitle}
+          cost={costStr}
+          costTooltip={costTitle}
+          latency={latencyStr}
+        />
 
-        {/* Content */}
-        <div
-          className={cn(
-            "rounded-2xl px-3 py-2.5 text-sm",
-            isUser
-              ? "rounded-tr-sm bg-zinc-100 dark:bg-zinc-800"
-              : "rounded-tl-sm border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900",
-          )}
-        >
+        {/* Bubble Body */}
+        <MessageBodyContainer role={message.role as "user" | "assistant" | "system"}>
+          {/* Attachments */}
           <MessageAttachments attachments={msg.attachments} />
+
+          {/* Context Used (if any) */}
+          <MessageContext contextItems={contextItems} />
+
+          {/* User Content vs Assistant Composed Body */}
           {isUser ? (
             <MessageContent content={message.content} isStreaming={isStreaming} />
           ) : (
-            <AssistantContent
-              content={message.content}
-              isStreaming={isStreaming}
-              status={reasoningStatus}
-              thinkingMs={msg.thinking_ms}
-              reasoningTokens={msg.reasoning_tokens}
-            />
-          )}
-        </div>
+            <>
+              {/* Tool calls (if any) */}
+              {toolCalls?.map((tool, idx) => (
+                <ToolCall key={idx} {...tool} />
+              ))}
 
-        {/* Terminal generation states (backend-owned; never hover-only) */}
+              {/* Reasoning + Markdown Response */}
+              <AssistantContent
+                content={message.content}
+                isStreaming={isStreaming}
+                status={reasoningStatus}
+                thinkingMs={msg.thinking_ms}
+                reasoningTokens={msg.reasoning_tokens}
+              />
+
+              {/* Sources / Citations (if any) */}
+              <Sources sources={sources} />
+            </>
+          )}
+        </MessageBodyContainer>
+
+        {/* Terminal generation states (backend-owned) */}
         {!isUser && (msg as ChatMessage).status === "cancelled" && (
           <div
             className="flex items-center gap-1 text-[10px] text-zinc-400"
@@ -342,48 +335,20 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
         )}
 
         {/* Action bar */}
-        <div className={cn("flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100", isUser && "flex-row-reverse")}>
-          <button
-            className="flex items-center gap-1 rounded p-1 text-[10px] text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            onClick={() => copyText(message.content)}
-            title="Copy"
-            data-testid={`copy-button-${message.id}`}
-          >
-            <Copy className="size-3" />
-            <span>Copy</span>
-          </button>
-          {!isUser && onRegenerate && (
-            <button
-              className="flex items-center gap-1 rounded p-1 text-[10px] text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-              onClick={onRegenerate}
-              title="Regenerate"
-              data-testid={`regenerate-button-${message.id}`}
-            >
-              <RotateCcw className="size-3" />
-              <span>Regenerate</span>
-            </button>
-          )}
-          {onDelete && (
-            <button
-              className="rounded p-1 text-[10px] text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-              onClick={onDelete}
-              title="Delete"
-              data-testid={`delete-message-${message.id}`}
-            >
-              <Trash2 className="size-3" />
-            </button>
-          )}
-        </div>
-      </div>
-    </motion.div>
+        <MessageActions
+          role={message.role as "user" | "assistant" | "system"}
+          contentToCopy={message.content}
+          onRegenerate={onRegenerate}
+          onDelete={onDelete}
+          id={message.id}
+        />
+      </MessageBubble>
+    </MessageRoot>
   );
 }
 
 /**
- * Per-delta renders hit only the streaming bubble: persisted message objects
- * keep referential identity across store updates, and the regenerate/delete
- * callbacks are compared by presence (they flip exactly when last-message
- * status changes, which always coincides with a message-list change).
+ * Optimized memoization: unchanged messages do not re-render during streaming.
  */
 export const MessageView = memo(MessageViewInner, (prev, next) => (
   prev.message === next.message &&

@@ -210,7 +210,7 @@ export function useCommandPalette() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "k" && (e.ctrlKey || e.metaKey)) {
+      if ((e.key === "k" || e.key === "K" || e.code === "KeyK") && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setOpen((v) => !v);
       }

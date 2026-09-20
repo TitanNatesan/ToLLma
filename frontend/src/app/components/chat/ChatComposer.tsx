@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { AttachmentPicker } from "./AttachmentPicker";
 import { UploadPreview } from "./UploadPreview";
+import { DropzoneOverlay } from "./attachments/DropzoneOverlay";
 import { ReasoningSelector } from "./ReasoningSelector";
 import { useModelCapabilities } from "./hooks/useModelCapabilities";
 import {
@@ -462,14 +463,10 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
       onDrop={handleDrop}
     >
       {/* Drop overlay — only while a valid drag is over the composer */}
-      {dragActive && (
-        <div
-          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-tollma-400 bg-tollma-50/80 text-xs font-medium text-tollma-700 backdrop-blur-[1px] dark:border-tollma-600 dark:bg-tollma-950/70 dark:text-tollma-300"
-          data-testid="composer-dropzone"
-        >
-          Drop files to attach
-        </div>
-      )}
+      <DropzoneOverlay
+        isDragging={dragActive}
+        acceptLabel={kinds.join(", ")}
+      />
 
       {/* Unsupported-upload warning with model suggestions */}
       {rejection && (
@@ -522,7 +519,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         }}
         onPaste={handlePaste}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if ((e.key === "Enter" && !e.shiftKey) || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
             e.preventDefault();
             handleSend();
           }

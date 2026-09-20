@@ -21,7 +21,8 @@ import {
 } from "@/services/api";
 import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
-import { Sparkles, ArrowDown } from "lucide-react";
+import { ScrollToBottom } from "@/app/components/chat/conversation/ScrollToBottom";
+import { Sparkles } from "lucide-react";
 import type { ActiveGeneration, ChatMessage, MessageStatus } from "@/types";
 
 const PENDING_SEND_KEY = "tollma-pending-send";
@@ -492,19 +493,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Jump to latest — AI SDK Conversation pattern, shown only when the
-            user scrolled away (never covers the composer). */}
-        {showScrollDown && (
-          <button
-            type="button"
-            onClick={scrollToBottom}
-            aria-label="Scroll to latest"
-            data-testid="scroll-to-bottom"
-            className="absolute bottom-3 left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 shadow-md transition-colors hover:bg-zinc-50 hover:text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-          >
-            <ArrowDown className="size-4" />
-          </button>
-        )}
+        {/* Jump to latest — AI SDK Conversation pattern */}
+        <ScrollToBottom visible={showScrollDown} onClick={scrollToBottom} />
         </div>
 
         {/* Composer */}
