@@ -28,6 +28,11 @@ export interface ComposerAttachment {
   attachmentId: string | null;
   /** Object URL for image thumbnails; undefined otherwise. */
   previewUrl?: string;
+  /** Upload lifecycle: the entry exists immediately, the file uploads behind
+   *  it (AI SDK Attachments pattern). Send is blocked while uploading. */
+  status: "uploading" | "ready" | "error";
+  progress?: number;
+  error?: string;
 }
 
 export interface AttachmentDescriptor {
@@ -144,6 +149,11 @@ export function kindForFile(file: File): AttachmentKind | null {
 
 export function describeAttachment(a: ComposerAttachment): AttachmentDescriptor {
   return { name: a.name, size: a.size, mime: a.mime, kind: a.kind, attachmentId: a.attachmentId };
+}
+
+/** Attachments the backend accepted — the only ones a send may reference. */
+export function readyAttachments(attachments: ComposerAttachment[]): ComposerAttachment[] {
+  return attachments.filter((a) => a.status === "ready" && a.attachmentId);
 }
 
 /** Combined file-dialog accept string for the single upload button. */

@@ -8,9 +8,6 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
   AlertCircle,
-  Brain,
-  ChevronDown,
-  ChevronUp,
   Copy,
   OctagonX,
   Paperclip,
@@ -20,7 +17,9 @@ import {
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
 import { ResponseMarkdown } from "./ResponseMarkdown";
-import { countThinkWords, splitThinkBlocks } from "./thinkBlocks";
+import { Reasoning } from "./Reasoning";
+import { splitThinkBlocks } from "./thinkBlocks";
+import type { ReasoningStatus } from "./reasoning";
 import { attachmentContentUrl } from "@/services/api";
 import type { ChatAttachment, ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
@@ -63,41 +62,6 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
       <pre className="overflow-x-auto p-3 text-sm text-zinc-100">{children}</pre>
     </div>
   );
-}
-
-function ThinkBlock({ content }: { content: string }) {
-  const [open, setOpen] = useState(false);
-  const words = countThinkWords(content);
-  return (
-    <div className="my-1.5" data-testid="thinking-block">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50/80 py-0 pl-2 pr-1.5 text-xs text-zinc-500 transition-colors hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
-      >
-        <Brain className="size-3 shrink-0 text-amber-500" />
-        <span className="font-medium">Thinking</span>
-        {words > 0 && (
-          <span className="truncate font-mono text-[10px] text-zinc-400">
-            · {words} {words === 1 ? "word" : "words"}
-          </span>
-        )}
-        {open ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
-      </button>
-      {open && (
-        <div className="mt-1.5 rounded-lg border border-amber-200/60 bg-amber-50/40 px-2.5 py-2 text-xs leading-relaxed text-amber-900/90 shadow-[0_0_16px_-6px_rgba(217,119,6,0.35)] dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-200/90 dark:shadow-[0_0_16px_-6px_rgba(217,119,6,0.25)]">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {content}
-          </ReactMarkdown>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function renderContent(content: string) {
-  return splitThinkBlocks(content);
 }
 
 function formatBytes(bytes: number): string {
@@ -143,46 +107,76 @@ function MessageAttachments({ attachments }: { attachments?: ChatAttachment[] })
   );
 }
 
+/** User content is plain text — only assistant output carries normalized
+ *  <think> spans, so no reasoning parsing here. */
 function MessageContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
-  const parts = renderContent(content);
   return (
     <div className={cn("prose text-sm leading-relaxed", isStreaming && "streaming-cursor")}>
-      {parts.map((part, i) =>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{
+          pre: ({ children }) => <>{children}</>,
+          code: ({ className, children, ...props }) => {
+            const codeStr = extractText(children);
+            const isMermaid =
+              className === "language-mermaid" ||
+              className?.includes("mermaid") ||
+              (className?.startsWith("language-") &&
+                /^\s*(graph\s+(TD|TB|BT|RL|LR)|flowchart\s+(TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap)\b/m.test(codeStr));
+            if (isMermaid) {
+              return <MermaidBlock chart={codeStr} />;
+            }
+            const isBlock = className?.startsWith("language-");
+            return isBlock ? (
+              <CodeBlock className={className}>{children}</CodeBlock>
+            ) : (
+              <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-xs dark:bg-zinc-800" {...props}>
+                {children}
+              </code>
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+/** Composable assistant body (AI SDK Elements Message composition pattern):
+ *  reasoning parts first, then answer parts — one passthrough per provider. */
+function AssistantContent({
+  content,
+  isStreaming,
+  status,
+  thinkingMs,
+  reasoningTokens,
+}: {
+  content: string;
+  isStreaming?: boolean;
+  status: ReasoningStatus;
+  thinkingMs?: number | null;
+  reasoningTokens?: number | null;
+}) {
+  return (
+    <>
+      {splitThinkBlocks(content).map((part, i) =>
         part.type === "think" ? (
-          <ThinkBlock key={i} content={part.content} />
-        ) : (
-          <ReactMarkdown
+          <Reasoning
             key={i}
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
-            components={{
-              pre: ({ children }) => <>{children}</>,
-              code: ({ className, children, ...props }) => {
-                const codeStr = extractText(children);
-                const isMermaid =
-                  className === "language-mermaid" ||
-                  className?.includes("mermaid") ||
-                  (className?.startsWith("language-") &&
-                    /^\s*(graph\s+(TD|TB|BT|RL|LR)|flowchart\s+(TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap)\b/m.test(codeStr));
-                if (isMermaid) {
-                  return <MermaidBlock chart={codeStr} />;
-                }
-                const isBlock = className?.startsWith("language-");
-                return isBlock ? (
-                  <CodeBlock className={className}>{children}</CodeBlock>
-                ) : (
-                  <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-xs dark:bg-zinc-800" {...props}>
-                    {children}
-                  </code>
-                );
-              },
-            }}
-          >
-            {part.content}
-          </ReactMarkdown>
+            content={part.content}
+            status={status}
+            durationMs={thinkingMs}
+            tokens={reasoningTokens}
+          />
+        ) : (
+          part.content.trim() && (
+            <ResponseMarkdown key={i} content={part.content} isStreaming={isStreaming} />
+          )
         ),
       )}
-    </div>
+    </>
   );
 }
 
@@ -228,6 +222,15 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
     .filter(Boolean)
     .join(" / ");
   const costTitle = [`in: ${inCostStr ?? "$0"}`, `out: ${outCostStr ?? "$0"}`].join(" / ");
+  // Backend-owned generation status mapped to reasoning states. Live streams
+  // are "streaming"; persisted terminal rows carry their own status.
+  const reasoningStatus: ReasoningStatus = isStreaming
+    ? "streaming"
+    : msg.status === "cancelled"
+      ? "interrupted"
+      : msg.status === "failed"
+        ? "failed"
+        : "complete";
 
   return (
     <motion.div
@@ -292,7 +295,13 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
           {isUser ? (
             <MessageContent content={message.content} isStreaming={isStreaming} />
           ) : (
-            <ResponseMarkdown content={message.content} isStreaming={isStreaming} />
+            <AssistantContent
+              content={message.content}
+              isStreaming={isStreaming}
+              status={reasoningStatus}
+              thinkingMs={msg.thinking_ms}
+              reasoningTokens={msg.reasoning_tokens}
+            />
           )}
         </div>
 

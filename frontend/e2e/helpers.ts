@@ -40,6 +40,7 @@ export async function apiCreateModel(
   name: string,
   inputPrice = "2",
   outputPrice = "8",
+  extra: Record<string, unknown> = {},
 ): Promise<{ id: string }> {
   const res = await request.post(`${API}/api/v1/models`, {
     data: {
@@ -49,6 +50,7 @@ export async function apiCreateModel(
       endpoint_type: "chat_completions",
       input_price: inputPrice,
       output_price: outputPrice,
+      ...extra,
     },
   });
   if (!res.ok()) throw new Error(`create model failed: ${await res.text()}`);

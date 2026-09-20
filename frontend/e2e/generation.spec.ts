@@ -176,16 +176,16 @@ test("reasoning model shows collapsible Thinking pill, preserved on refresh", as
   // Live streaming: the pill appears with the first reasoning delta and the
   // answer has not arrived yet (mock paces the answer ~900ms behind).
   const pill = assistant.getByTestId("thinking-block");
-  await expect(pill.getByRole("button", { name: /Thinking/ })).toBeVisible({ timeout: 5000 });
+  await expect(assistant.getByTestId("reasoning-toggle")).toBeVisible({ timeout: 5000 });
   await expect(assistant).not.toContainText("Thoughtful answer.");
-  // Completion: same pill persists, same Thinking UI DeepSeek uses.
+  // Completion: same pill persists, same Reasoning UI every provider uses.
   await expect(assistant).toContainText("Thoughtful answer.", { timeout: 20000 });
   await expect(pill).toContainText("4 words");
-  await pill.getByRole("button", { name: /Thinking/ }).click();
+  await assistant.getByTestId("reasoning-toggle").click();
   await expect(pill).toContainText("Considering the options carefully.");
   // Refresh: persisted <think> span restores the pill.
   await page.reload();
   await page.waitForLoadState("networkidle");
   const restored = page.getByTestId("message-assistant").last().getByTestId("thinking-block");
-  await expect(restored.getByRole("button", { name: /Thinking/ })).toBeVisible({ timeout: 10000 });
+  await expect(restored.getByTestId("reasoning-toggle")).toBeVisible({ timeout: 10000 });
 });

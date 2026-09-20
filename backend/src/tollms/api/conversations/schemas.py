@@ -32,6 +32,7 @@ class MessageRead(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
+    thinking_ms: int | None = None
     provider_id: uuid.UUID | None
     model_id: uuid.UUID | None
     prompt_tokens: int | None

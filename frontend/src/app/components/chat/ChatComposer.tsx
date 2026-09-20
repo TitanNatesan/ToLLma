@@ -42,6 +42,7 @@ import {
   defaultReasoningLevel,
   describeAttachment,
   kindForFile,
+  readyAttachments,
   suggestModels,
   unsupportedMessage,
   uploadKinds,
@@ -254,6 +255,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
+  const uploading = attachments.some((a) => a.status === "uploading");
 
   // Model change: reset reasoning to the new model's default and drop
   // attachments its capabilities no longer support. Draft text is kept.
@@ -309,6 +311,10 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     });
   }
 
+  function updateAttachment(id: string, patch: Partial<ComposerAttachment>) {
+    setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+  }
+
   function reject(kind: AttachmentKind | null, fileName: string) {
     const message = unsupportedMessage(kind, fileName);
     const suggestions = suggestModels(models, kind, modelId);
@@ -316,14 +322,18 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     toast.error(message);
   }
 
-  /** Single pipeline for picker, drag-drop, and clipboard files. */
+  /**
+   * Single pipeline for picker, drag-drop, and clipboard files.
+   * Entries render immediately with an upload state (AI SDK Attachments
+   * pattern) — validation and capability checks stay exactly as before.
+   */
   async function handleIncomingFiles(list: FileList | File[]) {
     const files = Array.from(list);
     if (files.length === 0) return;
     setRejection(null);
-    const staged: ComposerAttachment[] = [];
+    const accepted: Array<{ file: File; kind: AttachmentKind; entry: ComposerAttachment }> = [];
     for (const file of files) {
-      if (attachments.length + staged.length >= MAX_ATTACHMENTS) {
+      if (attachments.length + accepted.length >= MAX_ATTACHMENTS) {
         toast.error(`Maximum ${MAX_ATTACHMENTS} attachments`);
         break;
       }
@@ -336,24 +346,46 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         reject(kind, file.name);
         continue;
       }
-      try {
-        const up = await uploadChatAttachment(file, activeConversationId);
-        staged.push({
+      accepted.push({
+        file,
+        kind,
+        entry: {
           id: crypto.randomUUID(),
+          name: file.name,
+          size: file.size,
+          mime: file.type || kind,
+          kind,
+          attachmentId: null,
+          previewUrl: kind === "image" ? URL.createObjectURL(file) : undefined,
+          status: "uploading",
+          progress: 0,
+        },
+      });
+    }
+    if (accepted.length === 0) return;
+    setAttachments((prev) => [...prev, ...accepted.map((a) => a.entry)]);
+
+    // Upload sequentially: deterministic order, bounded concurrency on the
+    // server, and per-file state updates stay simple.
+    for (const { file, entry } of accepted) {
+      try {
+        const up = await uploadChatAttachment(file, useChatStore.getState().activeConversationId, (fraction) =>
+          updateAttachment(entry.id, { progress: fraction }),
+        );
+        updateAttachment(entry.id, {
+          attachmentId: up.attachment_id,
           name: up.filename,
           size: up.size,
           mime: up.mime_type,
-          kind,
-          attachmentId: up.attachment_id,
-          previewUrl: kind === "image" ? URL.createObjectURL(file) : undefined,
+          status: "ready",
+          progress: 1,
         });
       } catch (e) {
-        toast.error(`Upload failed: ${file.name}`, {
-          description: e instanceof Error ? e.message : "unknown error",
-        });
+        const message = e instanceof Error ? e.message : "unknown error";
+        updateAttachment(entry.id, { status: "error", error: message });
+        toast.error(`Upload failed: ${file.name}`, { description: message });
       }
     }
-    if (staged.length > 0) setAttachments((prev) => [...prev, ...staged]);
   }
 
   function handlePaste(e: React.ClipboardEvent) {
@@ -369,11 +401,12 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
 
   function handleSend() {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || streaming || !ready) return;
+    const readyFiles = readyAttachments(attachments);
+    if ((!text && readyFiles.length === 0) || uploading || streaming || !ready) return;
     onSend({
       text,
       reasoningLevel: caps.supportsReasoning ? (reasoningLevel ?? defaultReasoningLevel(caps)) : null,
-      attachments: attachments.map(describeAttachment),
+      attachments: readyFiles.map(describeAttachment),
     });
     setDraft("");
     setRejection(null);
@@ -387,11 +420,57 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     }
   }
 
+  // --- Drag & drop (AI SDK Attachments pattern, capability-gated) ---
+  const canDrop = ready && !streaming && kinds.length > 0;
+  const dragDepth = useRef(0);
+  const [dragActive, setDragActive] = useState(false);
+
+  function handleDragEnter(e: React.DragEvent) {
+    if (!canDrop) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragActive(true);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (!canDrop) return;
+    e.preventDefault();
+  }
+
+  function handleDragLeave() {
+    if (!canDrop) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragActive(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    if (!canDrop) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragActive(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) void handleIncomingFiles(files);
+  }
+
   return (
     <div
-      className="border-t border-zinc-200 bg-white px-3 pb-3 pt-2 dark:border-zinc-800 dark:bg-zinc-950"
+      className="relative border-t border-zinc-200 bg-white px-3 pb-3 pt-2 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="chat-composer"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {/* Drop overlay — only while a valid drag is over the composer */}
+      {dragActive && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-tollma-400 bg-tollma-50/80 text-xs font-medium text-tollma-700 backdrop-blur-[1px] dark:border-tollma-600 dark:bg-tollma-950/70 dark:text-tollma-300"
+          data-testid="composer-dropzone"
+        >
+          Drop files to attach
+        </div>
+      )}
+
       {/* Unsupported-upload warning with model suggestions */}
       {rejection && (
         <div
@@ -505,7 +584,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
             <Button
               size="sm"
               onClick={handleSend}
-              disabled={!ready || (!draft.trim() && attachments.length === 0)}
+              disabled={!ready || uploading || (!draft.trim() && readyAttachments(attachments).length === 0)}
               data-testid="send-button"
               className="gap-1.5 text-xs"
             >

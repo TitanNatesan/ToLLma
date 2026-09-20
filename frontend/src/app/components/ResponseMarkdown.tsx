@@ -4,15 +4,11 @@ import React, { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import {
   AlertCircle,
   AlertTriangle,
-  Brain,
   Check,
-  ChevronDown,
-  ChevronUp,
   Copy,
   Download,
   ExternalLink,
@@ -23,7 +19,6 @@ import {
   WrapText,
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
-import { countThinkWords, splitThinkBlocks } from "./thinkBlocks";
 import { cn } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 
@@ -386,90 +381,6 @@ function RichTable({ children }: { children: React.ReactNode }) {
   );
 }
 
-function EnhancedThinkBlock({
-  content,
-  isStreaming,
-}: {
-  content: string;
-  isStreaming?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const words = countThinkWords(content);
-
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    void navigator.clipboard.writeText(content).then(() => {
-      setCopied(true);
-      toast.success("Reasoning copied!");
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  return (
-    <div className="my-1.5" data-testid="thinking-block">
-      {/* Collapsed: compact pill — secondary to the final answer */}
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className={cn(
-            "inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50/80 py-0 pl-2 pr-1.5 text-xs text-zinc-500 transition-colors",
-            "hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-700",
-            "dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200",
-          )}
-        >
-          <Brain className={cn("size-3 shrink-0 text-amber-500", isStreaming && "animate-pulse")} />
-          <span className="font-medium">Thinking</span>
-          {words > 0 && (
-            <span className="truncate font-mono text-[10px] text-zinc-400">
-              · {words} {words === 1 ? "word" : "words"}
-              {isStreaming ? " · thinking…" : ""}
-            </span>
-          )}
-          {open ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
-        </button>
-        <button
-          type="button"
-          onClick={handleCopy}
-          title="Copy thought process"
-          aria-label="Copy thought process"
-          className="flex size-6 items-center justify-center rounded-full text-zinc-400 opacity-0 transition-all hover:bg-zinc-100 hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-        >
-          {copied ? (
-            <Check className="size-3 text-tollma-600 dark:text-tollma-400" />
-          ) : (
-            <Copy className="size-3" />
-          )}
-        </button>
-      </div>
-      {/* Expanded: clean panel, subtle accent glow */}
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="mt-1.5 rounded-lg border border-amber-200/60 bg-amber-50/40 px-2.5 py-2 text-xs leading-relaxed text-amber-900/90 shadow-[0_0_16px_-6px_rgba(217,119,6,0.35)] dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-200/90 dark:shadow-[0_0_16px_-6px_rgba(217,119,6,0.25)]">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {content}
-              </ReactMarkdown>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function renderContent(content: string) {
-  return splitThinkBlocks(content);
-}
-
 export function ResponseMarkdown({
   content,
   isStreaming,
@@ -477,135 +388,122 @@ export function ResponseMarkdown({
   content: string;
   isStreaming?: boolean;
 }) {
-  const parts = renderContent(content);
-
   return (
     <div className={cn("prose text-sm leading-relaxed", isStreaming && "streaming-cursor")}>
-      {parts.map((part, i) =>
-        part.type === "think" ? (
-          <EnhancedThinkBlock
-            key={i}
-            content={part.content}
-            isStreaming={isStreaming}
-          />
-        ) : (
-          <ReactMarkdown
-            key={i}
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
-            components={{
-              pre: ({ children }) => <>{children}</>,
-              code: ({ className, children, ...props }) => {
-                const codeStr = extractText(children);
-                const isMermaid =
-                  className === "language-mermaid" ||
-                  className?.includes("mermaid") ||
-                  (className?.startsWith("language-") &&
-                    /^\s*(graph\s+(TD|TB|BT|RL|LR)|flowchart\s+(TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap)\b/m.test(
-                      codeStr,
-                    ));
-                if (isMermaid) {
-                  return <MermaidBlock chart={codeStr} />;
-                }
-                const isBlock = className?.startsWith("language-");
-                return isBlock ? (
-                  <RichCodeBlock className={className}>
-                    {children}
-                  </RichCodeBlock>
-                ) : (
-                  <code
-                    className="rounded-md border border-zinc-200/80 bg-zinc-100/90 px-1.5 py-0.5 font-mono text-[11px] text-zinc-900 shadow-2xs dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200"
-                    {...props}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{
+          pre: ({ children }) => <>{children}</>,
+          code: ({ className, children, ...props }) => {
+            const codeStr = extractText(children);
+            const isMermaid =
+              className === "language-mermaid" ||
+              className?.includes("mermaid") ||
+              (className?.startsWith("language-") &&
+                /^\s*(graph\s+(TD|TB|BT|RL|LR)|flowchart\s+(TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap)\b/m.test(
+                  codeStr,
+                ));
+            if (isMermaid) {
+              return <MermaidBlock chart={codeStr} />;
+            }
+            const isBlock = className?.startsWith("language-");
+            return isBlock ? (
+              <RichCodeBlock className={className}>
+                {children}
+              </RichCodeBlock>
+            ) : (
+              <code
+                className="rounded-md border border-zinc-200/80 bg-zinc-100/90 px-1.5 py-0.5 font-mono text-[11px] text-zinc-900 shadow-2xs dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200"
+                {...props}
+              >
+                {children}
+              </code>
+            );
+          },
+          blockquote: ({ children }) => (
+            <RichBlockquote>{children}</RichBlockquote>
+          ),
+          table: ({ children }) => (
+            <RichTable>{children}</RichTable>
+          ),
+          th: ({ children }) => (
+            <th className="border-b border-zinc-200 bg-zinc-100/60 px-3.5 py-2.5 text-[11px] font-semibold text-zinc-700 uppercase tracking-wider dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border-b border-zinc-100 px-3.5 py-2.5 text-xs text-zinc-800 dark:border-zinc-800/40 dark:text-zinc-200">
+              {children}
+            </td>
+          ),
+          tr: ({ children }) => (
+            <tr className="transition-colors hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
+              {children}
+            </tr>
+          ),
+          input: ({ type, checked, disabled, ...props }) => {
+            if (type === "checkbox") {
+              return (
+                <span className="inline-flex items-center mr-2 align-middle">
+                  <span
+                    className={cn(
+                      "flex size-3.5 items-center justify-center rounded border transition-colors",
+                      checked
+                        ? "border-tollma-500 bg-tollma-500 text-white"
+                        : "border-zinc-400 bg-transparent dark:border-zinc-600",
+                    )}
                   >
-                    {children}
-                  </code>
-                );
-              },
-              blockquote: ({ children }) => (
-                <RichBlockquote>{children}</RichBlockquote>
-              ),
-              table: ({ children }) => (
-                <RichTable>{children}</RichTable>
-              ),
-              th: ({ children }) => (
-                <th className="border-b border-zinc-200 bg-zinc-100/60 px-3.5 py-2.5 text-[11px] font-semibold text-zinc-700 uppercase tracking-wider dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
-                  {children}
-                </th>
-              ),
-              td: ({ children }) => (
-                <td className="border-b border-zinc-100 px-3.5 py-2.5 text-xs text-zinc-800 dark:border-zinc-800/40 dark:text-zinc-200">
-                  {children}
-                </td>
-              ),
-              tr: ({ children }) => (
-                <tr className="transition-colors hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
-                  {children}
-                </tr>
-              ),
-              input: ({ type, checked, disabled, ...props }) => {
-                if (type === "checkbox") {
-                  return (
-                    <span className="inline-flex items-center mr-2 align-middle">
-                      <span
-                        className={cn(
-                          "flex size-3.5 items-center justify-center rounded border transition-colors",
-                          checked
-                            ? "border-tollma-500 bg-tollma-500 text-white"
-                            : "border-zinc-400 bg-transparent dark:border-zinc-600",
-                        )}
-                      >
-                        {checked && <Check className="size-2.5 stroke-[3]" />}
-                      </span>
-                    </span>
-                  );
-                }
-                return <input type={type} disabled={disabled} {...props} />;
-              },
-              a: ({ href, children, ...props }) => {
-                const isExternal =
-                  href?.startsWith("http://") || href?.startsWith("https://");
-                return (
-                  <a
-                    href={href}
-                    target={isExternal ? "_blank" : undefined}
-                    rel={isExternal ? "noopener noreferrer" : undefined}
-                    className="inline-flex items-center gap-0.5 font-medium text-tollma-500 hover:text-tollma-600 dark:text-tollma-400 dark:hover:text-tollma-300 underline underline-offset-2 transition-colors"
-                    {...props}
-                  >
-                    <span>{children}</span>
-                    {isExternal && <ExternalLink className="size-2.5 opacity-70" />}
-                  </a>
-                );
-              },
-              h1: ({ children }) => (
-                <h1 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100 mt-5 mb-2.5 pb-1.5 border-b border-zinc-200 dark:border-zinc-800">
-                  {children}
-                </h1>
-              ),
-              h2: ({ children }) => (
-                <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 mt-4 mb-2 pb-1 border-b border-zinc-200/60 dark:border-zinc-800/60">
-                  {children}
-                </h2>
-              ),
-              h3: ({ children }) => (
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mt-3 mb-1.5">
-                  {children}
-                </h3>
-              ),
-              h4: ({ children }) => (
-                <h4 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 mt-2 mb-1">
-                  {children}
-                </h4>
-              ),
-              hr: () => (
-                <hr className="my-4 border-t border-zinc-200 dark:border-zinc-800" />
-              ),
-            }}
-          >
-            {part.content}
-          </ReactMarkdown>
-        ),
-      )}
+                    {checked && <Check className="size-2.5 stroke-[3]" />}
+                  </span>
+                </span>
+              );
+            }
+            return <input type={type} disabled={disabled} {...props} />;
+          },
+          a: ({ href, children, ...props }) => {
+            const isExternal =
+              href?.startsWith("http://") || href?.startsWith("https://");
+            return (
+              <a
+                href={href}
+                target={isExternal ? "_blank" : undefined}
+                rel={isExternal ? "noopener noreferrer" : undefined}
+                className="inline-flex items-center gap-0.5 font-medium text-tollma-500 hover:text-tollma-600 dark:text-tollma-400 dark:hover:text-tollma-300 underline underline-offset-2 transition-colors"
+                {...props}
+              >
+                <span>{children}</span>
+                {isExternal && <ExternalLink className="size-2.5 opacity-70" />}
+              </a>
+            );
+          },
+          h1: ({ children }) => (
+            <h1 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100 mt-5 mb-2.5 pb-1.5 border-b border-zinc-200 dark:border-zinc-800">
+              {children}
+            </h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 mt-4 mb-2 pb-1 border-b border-zinc-200/60 dark:border-zinc-800/60">
+              {children}
+            </h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mt-3 mb-1.5">
+              {children}
+            </h3>
+          ),
+          h4: ({ children }) => (
+            <h4 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 mt-2 mb-1">
+              {children}
+            </h4>
+          ),
+          hr: () => (
+            <hr className="my-4 border-t border-zinc-200 dark:border-zinc-800" />
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }

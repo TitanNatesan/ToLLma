@@ -45,10 +45,10 @@ export async function startMockLLM(port = 4899): Promise<string> {
             res.write('data: {"choices": [{"delta": {"reasoning_content": "Considering "}}]}\n\n');
             setTimeout(() => {
               res.write('data: {"choices": [{"delta": {"reasoning_content": "the options "}}]}\n\n');
-            }, 250);
+            }, 400);
             setTimeout(() => {
               res.write('data: {"choices": [{"delta": {"reasoning_content": "carefully."}}]}\n\n');
-            }, 500);
+            }, 800);
             setTimeout(() => {
               res.write('data: {"choices": [{"delta": {"content": "Thoughtful answer."}}]}\n\n');
               res.write(
@@ -56,7 +56,7 @@ export async function startMockLLM(port = 4899): Promise<string> {
               );
               res.write("data: [DONE]\n\n");
               res.end();
-            }, 900);
+            }, 2400);
             return;
           }
           res.write('data: {"choices": [{"delta": {"content": "Hello from **mock** "}}]}\n\n');

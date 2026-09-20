@@ -1204,3 +1204,18 @@ User's DB: provider `dsddd` = BEDROCK_CONVERSE; models `global.anthropic.claude-
 ### Verification
 - Backend 119/119; frontend tsc/vitest 47/47/build; focused e2e generation+chat+settings 10/10
 - Not live-tested against real AWS (no creds in env): payload verified against botocore shapes + AWS docs; recommend live spot check on `dsddd`
+
+## 2026-09-20 — AI SDK Elements: selective integration (reasoning, attachments, conversation)
+
+### Analysis → adopted/rejected
+- Adopted: Reasoning/Chain-of-Thought (one provider-blind component w/ states+duration+tokens), Attachments (DnD + XHR progress + upload states), Prompt Input (kept minimal, added DnD/keyboard), Conversation (scroll-to-bottom), Message composition (reasoning/answer split).
+- Rejected: Inline Citation/Sources/Context/Tool (no backend data — rendering would fabricate; attachment cards already cover "sources"), Streamdown/`ai`/shadcn (stack churn, parallel message model).
+
+### Changes
+- Backend: messages.thinking_ms (migration c9d4e8f2a3b7) measured by generation engine from normalized THINK_OPEN/CLOSE span timing (provider-agnostic); exposed in MessageRead; 2 tests (completed + interrupted).
+- Frontend: new Reasoning.tsx + reasoning.ts helpers; MessageView/ResponseMarkdown refactored to one split + one component (removed 2 duplicated pills); user content no longer mis-parses <think>; composer drag&drop + per-file upload states + real progress via XHR (uploadChatAttachment onProgress); UploadPreview progress/error chips; scroll-to-bottom affordance (strict 24px vs 120px stickiness); fixed live isStreaming bug (optimistic assistant keyed by backend id was never "streaming").
+- Tests: reasoning.test.ts, api.test.ts XHR progress, e2e/elements.spec.ts (3), generation.spec updated, mock think pacing.
+
+### Verification
+- Backend 121/121; frontend tsc/eslint-touched/vitest 51/51/build; full e2e 49 passed (wizard.spec:10 pre-existing; palette hydration flakes pass standalone/on retry); e2e first-token 340–490ms focused, 561ms full-suite.
+- Repo e2e failures during investigation were data drift (sync run with 2 source errors deactivated 4237 models); manual sync restored 4237 updated/0 errors — not code.

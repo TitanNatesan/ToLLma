@@ -84,6 +84,9 @@ class Message(SoftDeleteMixin, TimestampedModel):
     # Client idempotency key for the send that created this row. Same-key
     # retries adopt the existing generation instead of duplicating rows.
     client_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Wall-clock duration of the normalized <think> phase, measured by the
+    # generation engine (provider-agnostic). None when no reasoning streamed.
+    thinking_ms: Mapped[int | None] = mapped_column(nullable=True)
 
     prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(nullable=True)

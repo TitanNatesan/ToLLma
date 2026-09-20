@@ -181,25 +181,52 @@ export interface UploadedAttachment {
   size: number;
 }
 
-export async function uploadChatAttachment(file: File, conversationId?: string | null): Promise<UploadedAttachment> {
+/**
+ * Multipart upload with real progress. XHR is the only browser transport that
+ * exposes upload progress events; fetch does not. Cookies + bearer ride along
+ * exactly like the fetch version it replaces.
+ */
+export function uploadChatAttachment(
+  file: File,
+  conversationId?: string | null,
+  onProgress?: (fraction: number) => void,
+): Promise<UploadedAttachment> {
   const form = new FormData();
   form.append("file", file, file.name);
   if (conversationId) form.append("conversation_id", conversationId);
   const token = getAccessToken();
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  // No JSON Content-Type: the browser sets multipart boundaries. Cookies ride along.
-  const res = await fetch(`${apiBase()}/api/v1/chat/attachments`, {
-    method: "POST",
-    headers,
-    body: form,
-    credentials: "include",
+
+  return new Promise<UploadedAttachment>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${apiBase()}/api/v1/chat/attachments`);
+    xhr.withCredentials = true;
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (onProgress && e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as UploadedAttachment);
+        } catch {
+          reject(new ApiError(xhr.status, xhr.statusText, xhr.responseText, `upload ${file.name}: invalid response`));
+        }
+        return;
+      }
+      reject(
+        new ApiError(
+          xhr.status,
+          xhr.statusText,
+          xhr.responseText,
+          `upload ${file.name} -> ${xhr.status} ${xhr.responseText.slice(0, 200)}`,
+        ),
+      );
+    };
+    xhr.onerror = () => reject(new Error(`upload ${file.name} failed: network error`));
+    xhr.onabort = () => reject(new Error(`upload ${file.name} aborted`));
+    // No JSON Content-Type: the browser sets multipart boundaries.
+    xhr.send(form);
   });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new ApiError(res.status, res.statusText, detail, `upload ${file.name} -> ${res.status} ${detail.slice(0, 200)}`);
-  }
-  return res.json() as Promise<UploadedAttachment>;
 }
 
 export function attachmentContentUrl(attachmentId: string): string {

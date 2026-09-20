@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listProviders, streamChat } from "@/services/api";
+import { listProviders, streamChat, uploadChatAttachment } from "@/services/api";
 
 const originalBackendUrl = process.env.BACKEND_URL;
 const originalApiUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -110,5 +110,85 @@ describe("api client", () => {
       },
     );
     expect(err).toBe("boom");
+  });
+});
+
+describe("uploadChatAttachment (XHR progress)", () => {
+  class FakeXHR {
+    static instances: FakeXHR[] = [];
+    upload = { onprogress: null as ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    status = 201;
+    statusText = "Created";
+    responseText = "";
+    withCredentials = false;
+    method = "";
+    url = "";
+    headers: Record<string, string> = {};
+
+    constructor() {
+      FakeXHR.instances.push(this);
+    }
+
+    open(method: string, url: string) {
+      this.method = method;
+      this.url = url;
+    }
+
+    setRequestHeader(name: string, value: string) {
+      this.headers[name] = value;
+    }
+
+    send() {
+      setTimeout(() => {
+        this.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
+        this.upload.onprogress?.({ lengthComputable: true, loaded: 100, total: 100 });
+        this.responseText = JSON.stringify({
+          attachment_id: "att-1",
+          filename: "shot.png",
+          mime_type: "image/png",
+          kind: "image",
+          size: 50,
+        });
+        this.onload?.();
+      }, 0);
+    }
+  }
+
+  afterEach(() => {
+    FakeXHR.instances = [];
+  });
+
+  it("reports real upload progress and resolves the upload", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXHR);
+    const fractions: number[] = [];
+    const result = await uploadChatAttachment(
+      new File(["x".repeat(50)], "shot.png", { type: "image/png" }),
+      "conv-1",
+      (f) => fractions.push(f),
+    );
+    expect(result.attachment_id).toBe("att-1");
+    expect(fractions).toEqual([0.5, 1]);
+    const xhr = FakeXHR.instances[0];
+    expect(xhr.method).toBe("POST");
+    expect(xhr.url).toContain("/api/v1/chat/attachments");
+    expect(xhr.withCredentials).toBe(true);
+  });
+
+  it("rejects with the server status on failure", async () => {
+    class FailingXHR extends FakeXHR {
+      send() {
+        setTimeout(() => {
+          this.status = 422;
+          this.statusText = "Unprocessable Entity";
+          this.responseText = '{"detail":"unsupported"}';
+          this.onload?.();
+        }, 0);
+      }
+    }
+    vi.stubGlobal("XMLHttpRequest", FailingXHR);
+    await expect(uploadChatAttachment(new File(["x"], "a.bin"), null)).rejects.toThrow(/422/);
   });
 });

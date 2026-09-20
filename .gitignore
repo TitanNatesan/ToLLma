@@ -19,3 +19,5 @@ storage/*
 
 # Playwright UI-suite session state
 frontend/tests/.auth/
+backend/storage
+.playwright-mcp/

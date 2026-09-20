@@ -30,7 +30,13 @@ from tollms.models.conversation import Conversation
 from tollms.models.message import TERMINAL_STATUSES, Message, MessageStatus
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import get_manager
-from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessage, ChatResult
+from tollms.services.gateway.adapters.base import (
+    THINK_CLOSE,
+    THINK_OPEN,
+    BaseProviderAdapter,
+    ChatMessage,
+    ChatResult,
+)
 from tollms.services.gateway.costing import UsageTokens, calculate, prices_for_model
 from tollms.services.model_repository.lookup import find_for_model
 
@@ -59,6 +65,11 @@ class GenerationSpec:
     output_price: str
     cache_read_price: str
     cache_write_price: str
+    # Normalized <think> span timing (set by the driver; persisted as
+    # messages.thinking_ms — provider-agnostic because every adapter
+    # normalizes reasoning into these spans).
+    think_started_at: float | None = None
+    think_ended_at: float | None = None
 
 
 @dataclass
@@ -80,6 +91,28 @@ SubscriberEvent = tuple[str, object]  # ("delta", str) | ("terminal", dict)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _observe_thinking(spec: GenerationSpec, delta: str) -> None:
+    """Track normalized <think> span timing. Adapters emit THINK_OPEN/CLOSE
+    as whole deltas, so substring checks are exact."""
+    if spec.think_started_at is None and THINK_OPEN in delta:
+        spec.think_started_at = time.monotonic()
+    if (
+        spec.think_started_at is not None
+        and spec.think_ended_at is None
+        and THINK_CLOSE in delta
+    ):
+        spec.think_ended_at = time.monotonic()
+
+
+def _thinking_duration_ms(spec: GenerationSpec) -> int | None:
+    """Reasoning phase duration. Interrupted reasoning (cancel/fail mid-think)
+    ends at finalization time, so 'stopped after Xs' stays truthful."""
+    if spec.think_started_at is None:
+        return None
+    end = spec.think_ended_at if spec.think_ended_at is not None else time.monotonic()
+    return max(0, int((end - spec.think_started_at) * 1000))
 
 
 def _estimate_tokens(text: str) -> int:
@@ -251,6 +284,7 @@ class GenerationManager:
                     parts.append(chunk.delta)
                     _accumulate(result, chunk)
                     if chunk.delta:
+                        _observe_thinking(spec, chunk.delta)
                         self._emit(active, ("delta", chunk.delta))
                     chunks_since_flush += 1
                     if chunks_since_flush >= FLUSH_EVERY_CHUNKS or (time.monotonic() - last_flush) >= FLUSH_EVERY_SECONDS:
@@ -385,6 +419,9 @@ class GenerationManager:
             row.status = status
             row.completed_at = _utcnow()
             row.error = error
+            thinking_ms = _thinking_duration_ms(spec)
+            if thinking_ms is not None:
+                row.thinking_ms = thinking_ms
             row.prompt_tokens, row.completion_tokens, row.total_tokens = (
                 tokens.prompt, tokens.completion, tokens.prompt + tokens.completion,
             )

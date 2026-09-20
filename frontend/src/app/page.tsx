@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -21,7 +21,7 @@ import {
 } from "@/services/api";
 import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
-import { Sparkles } from "lucide-react";
+import { Sparkles, ArrowDown } from "lucide-react";
 import type { ActiveGeneration, ChatMessage, MessageStatus } from "@/types";
 
 const PENDING_SEND_KEY = "tollma-pending-send";
@@ -76,6 +76,12 @@ export default function Home() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const scrollToBottom = useCallback(() => {
+    // Instant jump: predictable for a "latest" affordance (streaming updates
+    // keep their own smooth auto-scroll).
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, []);
 
   useEffect(() => {
     if (!convError) return;
@@ -418,13 +424,20 @@ export default function Home() {
         <ChatHeader />
 
         {/* Messages area */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollRef}
           className="flex flex-1 flex-col overflow-y-auto"
           data-testid="message-list"
           onScroll={(e) => {
             const el = e.currentTarget;
-            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+            const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+            // Two thresholds on purpose: generous for stream stickiness (don't
+            // yank the user mid-read), strict for the jump button (show it as
+            // soon as the user is meaningfully away from the latest message).
+            stickRef.current = distance < 120;
+            const next = distance > 24;
+            setShowScrollDown((prev) => (prev === next ? prev : next));
           }}
         >
           <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-6">
@@ -457,10 +470,11 @@ export default function Home() {
           <AnimatePresence initial={false}>
             {allMessages.map((m) => {
               const isOpt = m.id.startsWith("opt-");
-              // Backend running rows stream too (recovery window before the
-              // optimistic overlay with the same id arrives and replaces them).
+              // Live state: the optimistic overlay (keyed by backend id) or a
+              // persisted RUNNING row, while the store says we're streaming.
+              const optStreaming = Boolean((m as { isStreaming?: boolean }).isStreaming);
               const backendRunning = !isOpt && (m as ChatMessage).status === "running";
-              const isStreaming = (isOpt && (m as { isStreaming?: boolean }).isStreaming && streaming) || (backendRunning && streaming);
+              const isStreaming = streaming && (optStreaming || backendRunning);
               return (
                 <MessageView
                   key={m.id}
@@ -476,6 +490,21 @@ export default function Home() {
             })}
           </AnimatePresence>
           </div>
+        </div>
+
+        {/* Jump to latest — AI SDK Conversation pattern, shown only when the
+            user scrolled away (never covers the composer). */}
+        {showScrollDown && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            aria-label="Scroll to latest"
+            data-testid="scroll-to-bottom"
+            className="absolute bottom-3 left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 shadow-md transition-colors hover:bg-zinc-50 hover:text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          >
+            <ArrowDown className="size-4" />
+          </button>
+        )}
         </div>
 
         {/* Composer */}

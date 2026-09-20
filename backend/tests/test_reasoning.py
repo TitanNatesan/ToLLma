@@ -7,6 +7,7 @@ Gemini GenerateContentResponse JSON).
 
 import asyncio
 import json
+import uuid
 
 import httpx
 
@@ -14,7 +15,9 @@ from tollms.services.gateway.adapters.anthropic import AnthropicAdapter
 from tollms.services.gateway.adapters.base import (
     THINK_CLOSE,
     THINK_OPEN,
+    BaseProviderAdapter,
     ChatMessage,
+    StreamChunk,
     reasoning_effort,
     thinking_budget,
     thinking_params,
@@ -505,3 +508,90 @@ def test_gateway_forwards_level_and_max_output(db, provider_factory, model_facto
     adapter = captured["adapter"]
     assert adapter.reasoning_level == "high"
     assert adapter.max_output_tokens == 64000
+
+
+# --- Persisted reasoning duration (messages.thinking_ms) --------------------
+
+class _ThinkingAdapter(BaseProviderAdapter):
+    """Paced normalized thinking: THINK_OPEN → reasoning → THINK_CLOSE → answer."""
+
+    def __init__(self, hold_s: float = 0.15, cancel_after_s: float | None = None) -> None:
+        super().__init__(credentials={}, model_id="thinking-mock")
+        self._hold = hold_s
+        self._cancel_after = cancel_after_s
+
+    async def chat_stream(self, messages):
+        yield StreamChunk(delta=THINK_OPEN)
+        await asyncio.sleep(self._hold)
+        if self._cancel_after is not None:
+            await asyncio.sleep(10)  # cancelled while thinking
+        yield StreamChunk(delta="pondering the question")
+        await asyncio.sleep(self._hold)
+        yield StreamChunk(delta=THINK_CLOSE)
+        yield StreamChunk(delta="Answer.")
+
+
+def _row(db, generation_id):
+    from sqlalchemy.orm import sessionmaker
+
+    from tollms.api.conversations.service import get_message
+
+    maker = sessionmaker(bind=db.get_bind())
+    session = maker()
+    try:
+        return get_message(session, generation_id)
+    finally:
+        session.close()
+
+
+def test_thinking_duration_persisted_on_completion(db, provider_factory, model_factory, monkeypatch) -> None:
+    from tollms.api.gateway import service as gateway_service
+    from tollms.api.gateway.schemas import ChatRequest
+    from tollms.services import generation as generation_engine
+
+    adapter = _ThinkingAdapter(hold_s=0.15)
+    monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: adapter)
+    p = provider_factory("Think")
+    m = model_factory(p["id"])
+    req = ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]), message="hi")
+
+    async def _main():
+        started = await gateway_service.start_generation(db, req)
+        active = generation_engine.manager.get(started.generation_id)
+        assert active is not None and active.task is not None
+        await active.task
+        return started
+
+    started = asyncio.run(_main())
+    row = _row(db, started.generation_id)
+    assert row.status.value == "completed"
+    assert row.thinking_ms is not None and row.thinking_ms >= 200  # two 150ms holds
+    assert row.content == f"{THINK_OPEN}pondering the question{THINK_CLOSE}Answer."
+
+
+def test_thinking_duration_persisted_when_interrupted(db, provider_factory, model_factory, monkeypatch) -> None:
+    """Cancel mid-think: 'stopped after Xs' stays truthful."""
+    from tollms.api.gateway import service as gateway_service
+    from tollms.api.gateway.schemas import ChatRequest
+    from tollms.services import generation as generation_engine
+
+    adapter = _ThinkingAdapter(hold_s=0.15, cancel_after_s=True)
+    monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: adapter)
+    p = provider_factory("Think")
+    m = model_factory(p["id"])
+    req = ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]), message="hi")
+
+    async def _main():
+        started = await gateway_service.start_generation(db, req)
+        await asyncio.sleep(0.15)  # inside the thinking hold
+        await gateway_service.cancel_generation(db, started.generation_id)
+        active = generation_engine.manager.get(started.generation_id)
+        if active is not None and active.task is not None:
+            await active.task
+        return started
+
+    started = asyncio.run(_main())
+    row = _row(db, started.generation_id)
+    assert row.status.value == "cancelled"
+    assert row.thinking_ms is not None and row.thinking_ms >= 100
+    assert row.content == THINK_OPEN  # partial reasoning kept

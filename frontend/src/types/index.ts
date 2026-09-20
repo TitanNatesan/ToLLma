@@ -131,6 +131,7 @@ export interface ChatMessage {
   started_at?: string | null;
   completed_at?: string | null;
   error?: string | null;
+  thinking_ms?: number | null;
   attachments?: ChatAttachment[];
   provider_id: string | null;
   model_id: string | null;
