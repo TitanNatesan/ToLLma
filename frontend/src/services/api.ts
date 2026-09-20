@@ -1,13 +1,25 @@
 import type {
   ActiveGeneration,
   AIModel,
+  AnalyticsBreakdown,
+  AnalyticsConversations,
+  AnalyticsDataset,
+  AnalyticsGranularity,
+  AnalyticsHeatmap,
+  AnalyticsModels,
+  AnalyticsPerformance,
+  AnalyticsRangeParams,
+  AnalyticsSummary,
+  AnalyticsTimeseries,
   AuthResponse,
   ChatMessage,
   Conversation,
   DiscoveryResult,
   DraftValidation,
   HealthResponse,
+  LoginSession,
   MappedModel,
+  ModelSort,
   Provider,
   RegisterResult,
   RepositoryLookup,
@@ -15,6 +27,7 @@ import type {
   StreamMeta,
   UsageTotals,
   User,
+  UserPreferences,
   ValidationResult,
 } from "@/types";
 import { getAccessToken, setStoredAccessToken, useAuthStore } from "@/store/auth";
@@ -442,4 +455,81 @@ export function verifyEmail(token: string, signal?: AbortSignal): Promise<{ user
 
 export function googleLoginUrl(): string {
   return `${apiBase()}/auth/google/login`;
+}
+
+// --- settings ---------------------------------------------------------------
+
+export const getPreferences = () => get<UserPreferences>("/api/v1/settings/preferences");
+export const updatePreferences = (body: Partial<UserPreferences>) =>
+  patch<UserPreferences>("/api/v1/settings/preferences", body);
+export const updateProfile = (body: {
+  full_name?: string | null;
+  username?: string | null;
+  email?: string;
+  avatar_url?: string | null;
+}) => patch<User>("/api/v1/settings/profile", body);
+export const changePassword = (body: { current_password: string; new_password: string }) =>
+  post<{ status: string; revoked_sessions: number }>("/api/v1/settings/password", body);
+export interface SessionsResponse {
+  sessions: LoginSession[];
+  total: number;
+}
+export const listSessions = () => get<SessionsResponse>("/api/v1/settings/sessions");
+export const revokeSession = (sessionId: string) =>
+  del<{ status: string; session_id: string }>(`/api/v1/settings/sessions/${sessionId}`);
+export const revokeOtherSessions = () =>
+  post<{ revoked: number }>("/api/v1/settings/sessions/revoke-others", {});
+
+// --- analytics --------------------------------------------------------------
+
+function analyticsQuery(params: AnalyticsRangeParams, extra?: Record<string, string | undefined>): string {
+  const q = new URLSearchParams({ range: params.preset, tz: params.tz });
+  if (params.preset === "custom") {
+    if (params.start) q.set("start", params.start);
+    if (params.end) q.set("end", params.end);
+  }
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (value) q.set(key, value);
+  }
+  return q.toString();
+}
+
+export const getAnalyticsSummary = (params: AnalyticsRangeParams) =>
+  get<AnalyticsSummary>(`/api/v1/analytics/summary?${analyticsQuery(params)}`);
+export const getAnalyticsTimeseries = (params: AnalyticsRangeParams, granularity?: AnalyticsGranularity) =>
+  get<AnalyticsTimeseries>(`/api/v1/analytics/timeseries?${analyticsQuery(params, { granularity })}`);
+export const getAnalyticsBreakdown = (params: AnalyticsRangeParams) =>
+  get<AnalyticsBreakdown>(`/api/v1/analytics/breakdown?${analyticsQuery(params)}`);
+export const getAnalyticsModels = (params: AnalyticsRangeParams, sort: ModelSort) =>
+  get<AnalyticsModels>(`/api/v1/analytics/models?${analyticsQuery(params, { sort })}`);
+export const getAnalyticsHeatmap = (params: AnalyticsRangeParams) =>
+  get<AnalyticsHeatmap>(`/api/v1/analytics/heatmap?${analyticsQuery(params)}`);
+export const getAnalyticsPerformance = (params: AnalyticsRangeParams) =>
+  get<AnalyticsPerformance>(`/api/v1/analytics/performance?${analyticsQuery(params)}`);
+export const getAnalyticsConversations = (params: AnalyticsRangeParams) =>
+  get<AnalyticsConversations>(`/api/v1/analytics/conversations?${analyticsQuery(params)}`);
+
+/** Server-rendered export (CSV today, PDF-ready): fetch as a blob and download. */
+export async function downloadAnalyticsExport(
+  params: AnalyticsRangeParams,
+  dataset: AnalyticsDataset,
+  format: "csv" | "json",
+): Promise<void> {
+  const url = `${apiBase()}/api/v1/analytics/export?${analyticsQuery(params, { dataset, format })}`;
+  const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { headers, credentials: "include", cache: "no-store" });
+  if (!res.ok) throw new ApiError(res.status, res.statusText, null, `export failed (${res.status})`);
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = match?.[1] ?? `tollma-${dataset}.${format}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
 }

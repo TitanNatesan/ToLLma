@@ -80,12 +80,27 @@ def session(session_id: str) -> str:
     return _key("session", session_id)
 
 
+def user_sessions(user_id: object) -> str:
+    """Valkey SET of live session ids for one user (enables listing/revocation)."""
+    return _key("sessions", str(user_id))
+
+
 def verify_email(token_hash: str) -> str:
     return _key("verify_email", token_hash)
 
 
 def oauth_state(state: str) -> str:
     return _key("oauth_state", state)
+
+
+# --- analytics --------------------------------------------------------------
+def analytics(user_id: object, digest: str) -> str:
+    """One aggregated analytics payload (digest covers range/granularity/sort)."""
+    return _key("analytics", f"{user_id}:{digest}")
+
+
+def analytics_pattern(user_id: object) -> str:
+    return _key("analytics", f"{user_id}:*")
 
 
 # --- future SaaS surface (reserved; no writers yet) ------------------------

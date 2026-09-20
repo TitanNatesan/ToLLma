@@ -1317,3 +1317,37 @@ Extended the existing composer `ReasoningSelector` (no rewrite, hover UX preserv
 - Regression subset `e2e/elements|chat|generation + tests/chat-ux`: 30 passed, 2 skipped; 3 command-palette failures reproduced the known dev-server hydration flake (pass standalone, unrelated code path).
 - Pixel analysis of `/tmp/reasoning-expanded-{low,none,high}.png`: native thumb center matches active stop dot center (95.5/95.5, 34.5/34.5, 216.5/216.5).
 - Artifacts: `/tmp/reasoning-collapsed.png`, `/tmp/reasoning-expanded-{low,none,high}.png`, `/tmp/reasoning-selector-demo.gif` (trimmed interaction recording).
+
+---
+
+## 2026-09-20 — Analytics Page, Settings Page & Global Shortcuts Overlay
+
+### Requirement Completed
+Production Analytics + Settings modules backed entirely by backend aggregation, a dynamic accent-color theme system, per-user chat preferences, session management, and a global Ctrl+/ shortcuts overlay.
+
+**Analytics** (`/api/v1/analytics/*`): date-range presets (today/yesterday/7d/30d/this_month/last_month/90d/custom) resolved server-side in the caller's IANA timezone with previous-period comparison; KPI summary (10 tiles incl. spend/requests/tokens/active models-providers/avg cost/avg tokens/avg response/streamed sessions/projected month spend/cache), backend-generated insights, spend timeseries (hour/day/week/month + drag-to-zoom), provider donut + model ranked bars, top-10 expensive conversations, usage timeline + 7×24 heatmap with peak/quiet, token analytics (prompt/completion/cache read/cache write/reasoning/total + by provider/model), performance (TTFB/completion/stream duration/response length/thinking; tool calls reported as "not tracked"), model rankings via backend `sort` param, provider table with error rates, five conversation leaderboards, CSV/JSON export (PDF-ready).
+**Settings**: profile (name/username/email/avatar URL with validation; email change re-verifies), password change with strength meter + current-password verification revoking other sessions, appearance (theme + 7 accent presets + custom hex picker applied globally via the `tollma-*` CSS variables, no reload), chat preferences (Enter behavior, default thinking level, auto-scroll, stream animations) persisted per user and honored by the composer/page, session management (device/browser/OS/IP/last activity/created/requests/tokens, current badge, revoke, revoke-all-others).
+**Shortcuts overlay**: Ctrl+/ searchable cmdk overlay with 17 categorized shortcuts; window handler owns Ctrl+K/Ctrl+/, G→C/A/S sequences, pane toggles, focus/regenerate/stop/model/thinking commands via `tollma:*` events.
+
+### Files Created
+Backend: `alembic/versions/b8f1c2d3e4a5_analytics_settings.py`, `api/analytics/{__init__,router,schemas,service}.py`, `api/settings/{__init__,router,schemas,service}.py`, `tests/test_analytics.py` (12), `tests/test_settings.py` (6).
+Frontend: `lib/accent.ts`, `lib/password.ts`, `lib/shortcuts.ts`, `store/settings.ts`, `hooks/useAnalytics.ts`, `hooks/useSettings.ts`, `hooks/useShortcuts.ts`, `components/charts/{AreaChart,BarChart,DonutChart,Heatmap,Sparkline,palette,useElementSize,index}`, `components/ui/ShortcutsOverlay.tsx`, `app/analytics/{format.ts,components/{KpiCard,RangePicker,AnalyticsTables}}`, `app/settings/components/{SettingsCard,ProfileSection,AppearanceSection,ChatPreferencesSection,PasswordSection,SessionsSection,ProvidersSection}`, unit tests `lib/__tests__/{accent,password,shortcuts}.test.ts`, `e2e/analytics-settings.spec.ts` (9).
+
+### Files Modified
+Backend: `models/{user,message}.py`, `core/security.py` (session index + metadata + activity write-behind + `get_current_session_id`), `api/auth/{router,schemas,service}.py` (username, client metadata), `api/conversations/service.py` (session_id/usage_estimated on `add_message`), `api/gateway/{router,service}.py` (session_id, ttfb, estimated persistence), `services/generation.py` (`spec.ttfb_ms`/`session_id`/`usage_estimated` persisted; analytics cache invalidation), `services/cache/{keys,constants,manager}.py` (SADD/SREM/SMEMBERS, analytics keys + 60s TTL), `main.py` (router registration + `expose_headers`), `services/cache/constants.py`.
+Frontend: `app/analytics/page.tsx`, `app/settings/page.tsx`, `components/Sidebar/{Sidebar,SidebarAnalytics,SidebarSettings,SidebarConversations}.tsx`, `components/ui/{AppShell,PageHeader,CommandPalette,index}`, `components/Shell.tsx`, `app/page.tsx`, `app/components/chat/{ChatComposer,capabilities}`, `app/layout.tsx` (accent boot script), `app/globals.css` (animation-off rules), `services/api.ts`, `store/auth.ts`, `types/index.ts`, `tests/chat-ux.spec.ts` (hydration wait in `goto`).
+
+### Decisions
+- Aggregation is 100% backend (`messages` fact table); the frontend only formats. Costs as Decimal strings; rollups cached 60s in Valkey and invalidated when a generation finishes.
+- DB additions: `messages.ttfb_ms`, `messages.usage_estimated`, `messages.session_id` (+partial index), composite `ix_messages_user_role_created`; `users.username` (unique live) + `users.preferences` JSONB. Per-session usage comes from durable rows, not counters.
+- Accent theming redefines the `tollma-*` CSS variables on `<html>` (brand-identical shade generator + boot script) so every existing class, chart and slider re-themes with no component changes.
+- Legacy browser timezone ids (Asia/Calcutta) are canonicalized (`Asia/Kolkata`) and SQL timezones validated against PostgreSQL with a UTC fallback — fixes 500s from PG tzdata gaps.
+- No chart library added: dependency-free SVG components; tool calls surfaced as "not tracked" rather than fabricated.
+- Below md the sidebar becomes an off-canvas overlay (hamburger in PageHeader, backdrop) so Analytics/Settings are usable on mobile.
+- Ctrl+K moved from `useCommandPalette` into the single global shortcut handler; `tests/chat-ux` goto helper now waits for hydration.
+
+### Verification
+- Backend `docker compose exec backend pytest -q`: **145/145** (was 127); `alembic check` green.
+- Frontend `vitest`: **90/90**; `tsc --noEmit` clean; `next build` green; `eslint src` new files clean (6 pre-existing errors in untouched citation/sources/wizard files).
+- Playwright: `e2e/analytics-settings.spec.ts` **9/9** (real seeded usage: KPIs/sections, range presets + custom + CSV download filename, accent apply/persist/backend, Enter=newline honoring + Ctrl+Enter send, profile persistence + sidebar, sessions current-device, Ctrl+/ overlay search + G→A + Ctrl+K); regression `tests/chat-ux` + `e2e/navigation` 22 passed/2 skipped; `e2e/reasoning-selector` 7/7; `e2e/generation|settings|auth` 21/21.
+- Screenshots: `/tmp/analytics-top|spend|tokens|models|full|mobile|light-purple.png`, `/tmp/settings-top|appearance|sessions.png`, `/tmp/shortcuts.png`, `/tmp/mobile-analytics*.png` (dark/light, 1440px + 390px, purple/green accents).

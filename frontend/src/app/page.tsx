@@ -21,6 +21,7 @@ import {
 } from "@/services/api";
 import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
+import { useSettingsStore } from "@/store/settings";
 import { ScrollToBottom } from "@/app/components/chat/conversation/ScrollToBottom";
 import { Sparkles } from "lucide-react";
 import type { ActiveGeneration, ChatMessage, MessageStatus } from "@/types";
@@ -101,12 +102,13 @@ export default function Home() {
     ...optimisticMessages,
   ] as ChatMessage[];
 
-  // Auto-scroll to bottom on message updates
+  // Auto-scroll to bottom on message updates (user preference).
+  const autoScroll = useSettingsStore((s) => s.autoScroll);
   useEffect(() => {
-    if (stickRef.current) {
+    if (autoScroll && stickRef.current) {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
-  }, [allMessages.length, optimisticMessages]);
+  }, [autoScroll, allMessages.length, optimisticMessages]);
 
   /** Terminal state for any watched stream: drop local overlays, reload truth. */
   const finishGeneration = useCallback((convId: string | null, status?: MessageStatus | null, error?: string | null) => {
@@ -352,6 +354,26 @@ export default function Home() {
     clearOptimistic,
     refreshAll,
   ]);
+
+  // Global shortcut actions dispatched by useGlobalShortcuts (Alt+R / Alt+X).
+  useEffect(() => {
+    function regenerateShortcut() {
+      if (useChatStore.getState().streaming || !lastUser || !lastAssistantId) return;
+      send(
+        { text: lastUser.content, reasoningLevel: null, attachments: [] },
+        useChatStore.getState().activeConversationId,
+      );
+    }
+    function stopShortcut() {
+      if (useChatStore.getState().streaming) stop();
+    }
+    window.addEventListener("tollma:regenerate", regenerateShortcut);
+    window.addEventListener("tollma:stop", stopShortcut);
+    return () => {
+      window.removeEventListener("tollma:regenerate", regenerateShortcut);
+      window.removeEventListener("tollma:stop", stopShortcut);
+    };
+  }, [lastUser, lastAssistantId, send, stop]);
 
   // Refresh recovery (single-subscriber, single path):
   // - known conversation -> probe active-generation, reattach if running.

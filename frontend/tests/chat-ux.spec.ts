@@ -6,6 +6,10 @@ const BASE = "http://localhost:3000";
 async function goto(page: Page, path = "/") {
   await page.goto(`${BASE}${path}`);
   await page.waitForLoadState("networkidle");
+  // The shell (and with it global shortcuts / cmdk) attaches during hydration;
+  // wait for it so key presses aren't lost on a cold dev server.
+  await expect(page.getByTestId("left-sidebar")).toBeVisible();
+  await page.waitForTimeout(400);
 }
 
 // ============================================================

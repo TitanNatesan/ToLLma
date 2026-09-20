@@ -54,9 +54,11 @@ def _debug_token(token: str) -> str | None:
 
 
 @router.post("/signup", response_model=AuthResponse)
-async def signup(data: SignupRequest, response: Response, db: Session = Depends(get_db)) -> AuthResponse:
+async def signup(
+    data: SignupRequest, response: Response, request: Request, db: Session = Depends(get_db)
+) -> AuthResponse:
     user, verify_token = await service.signup(db, str(data.email), data.password, data.full_name)
-    session_id = await security.create_session(user.id, user.email, "password")
+    session_id = await security.create_session(user.id, user.email, "password", **security.client_meta(request))
     access = security.create_access_token(user.id, user.email, session_id)
     refresh_tok = security.create_refresh_token(user.id, session_id)
     _set_session_cookies(response, access, refresh_tok)
@@ -74,8 +76,10 @@ async def verify(token: str = Query(...), db: Session = Depends(get_db)) -> Veri
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(data: LoginRequest, response: Response, db: Session = Depends(get_db)) -> AuthResponse:
-    user, access, refresh, _ = await service.login(db, str(data.email), data.password)
+async def login(
+    data: LoginRequest, response: Response, request: Request, db: Session = Depends(get_db)
+) -> AuthResponse:
+    user, access, refresh, _ = await service.login(db, str(data.email), data.password, **security.client_meta(request))
     _set_session_cookies(response, access, refresh)
     return AuthResponse(user=service.read_user(user), access_token=access)
 
@@ -87,9 +91,11 @@ async def google_login() -> RedirectResponse:
 
 
 @router.get("/google/callback")
-async def google_callback(code: str = Query(...), state: str = Query(...),
+async def google_callback(request: Request, code: str = Query(...), state: str = Query(...),
                           db: Session = Depends(get_db)) -> RedirectResponse:
-    user, access, refresh, _ = await service.handle_google_callback(db, code, state)
+    user, access, refresh, _ = await service.handle_google_callback(
+        db, code, state, **security.client_meta(request)
+    )
     redirect = RedirectResponse(f"{get_settings().frontend_url.rstrip('/')}/auth/callback")
     _set_session_cookies(redirect, access, refresh)
     logger.info("google oauth complete: %s", user.id)

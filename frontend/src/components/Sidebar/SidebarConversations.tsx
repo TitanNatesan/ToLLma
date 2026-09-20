@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Pencil, Pin, Plus, Trash2 } from "lucide-react";
 import { SearchInput } from "@/components/ui/SearchInput";
@@ -115,6 +115,17 @@ export function SidebarConversations() {
   const { activeConversationId, sidebarSearch, setConversation, setSearch } = useChatStore();
   const { data: convs = [] } = useConversations(sidebarSearch);
   const mutations = useConversationMutations();
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Ctrl+Shift+F / "Search Conversations" command.
+  useEffect(() => {
+    function focusSearch() {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    }
+    window.addEventListener("tollma:focus-conversation-search", focusSearch);
+    return () => window.removeEventListener("tollma:focus-conversation-search", focusSearch);
+  }, []);
 
   const pinnedConvs = convs.filter((c) => c.is_pinned);
   const recentConvs = convs.filter((c) => !c.is_pinned);
@@ -136,6 +147,7 @@ export function SidebarConversations() {
       {/* Conversation Search Input */}
       <div className="px-2 pb-2">
         <SearchInput
+          ref={searchRef}
           placeholder="Search conversations…"
           value={sidebarSearch}
           onChange={(e) => setSearch(e.target.value)}

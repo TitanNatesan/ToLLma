@@ -168,6 +168,41 @@ class CacheManager:
             metrics.record_error()
             return False
 
+    async def sadd(self, key: str, *members: str) -> int:
+        """Add members to a set (used by the auth-session index)."""
+        client = await self.resolved_client()
+        if client is None or not members:
+            return 0
+        try:
+            return int(await self._timed("sadd", lambda: client.sadd(key, *members)))
+        except Exception:
+            logger.warning("cache SADD failed: %s", key, exc_info=True)
+            metrics.record_error()
+            return 0
+
+    async def srem(self, key: str, *members: str) -> int:
+        client = await self.resolved_client()
+        if client is None or not members:
+            return 0
+        try:
+            return int(await self._timed("srem", lambda: client.srem(key, *members)))
+        except Exception:
+            logger.warning("cache SREM failed: %s", key, exc_info=True)
+            metrics.record_error()
+            return 0
+
+    async def smembers(self, key: str) -> "set[str]":
+        client = await self.resolved_client()
+        if client is None:
+            return set()
+        try:
+            values = await self._timed("smembers", lambda: client.smembers(key))
+        except Exception:
+            logger.warning("cache SMEMBERS failed: %s", key, exc_info=True)
+            metrics.record_error()
+            return set()
+        return {v.decode() if isinstance(v, bytes) else str(v) for v in values}
+
     async def invalidate_pattern(self, pattern: str) -> int:
         """Delete all keys matching pattern via SCAN (safe on large keyspaces)."""
         client = await self.resolved_client()

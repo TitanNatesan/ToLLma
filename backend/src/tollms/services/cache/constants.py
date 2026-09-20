@@ -10,6 +10,10 @@ DISCOVERY = 900
 # Conversation usage totals.
 CONVERSATION = 300
 
+# Analytics aggregations: short TTL — dashboard freshness matters more than
+# cache hit rate, and every payload is rebuildable from PostgreSQL.
+ANALYTICS = 60
+
 # Repository search results (user-typed lookups).
 REPOSITORY_SEARCH = 3600
 

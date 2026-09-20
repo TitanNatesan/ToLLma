@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Numeric, Text, text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,6 +48,12 @@ class Message(SoftDeleteMixin, TimestampedModel):
         Index("ix_messages_role", "role"),
         Index("ix_messages_user", "user_id"),
         Index("ix_messages_status", "status"),
+        # Analytics: user-scoped time-range scans (always filtered to role=ASSISTANT).
+        Index("ix_messages_user_role_created", "user_id", "role", "created_at"),
+        Index(
+            "ix_messages_session_id", "session_id",
+            postgresql_where=text("session_id IS NOT NULL"),
+        ),
         # Identity safeguards (generation lifecycle):
         # - one live assistant message per conversation — a second insert
         #   fails instead of duplicating (IntegrityError -> 409 adopt).
@@ -84,6 +90,16 @@ class Message(SoftDeleteMixin, TimestampedModel):
     # Client idempotency key for the send that created this row. Same-key
     # retries adopt the existing generation instead of duplicating rows.
     client_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Auth session (JWT sid) that produced this row. Durable per-session
+    # usage/activity for the session-management UI; null for legacy rows.
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Time to first streamed token (ms). None for non-streaming calls.
+    ttfb_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # True when usage/cost was estimated from text length instead of
+    # provider-reported numbers — analytics reports data quality with this.
+    usage_estimated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # Wall-clock duration of the normalized <think> phase, measured by the
     # generation engine (provider-agnostic). None when no reasoning streamed.
     thinking_ms: Mapped[int | None] = mapped_column(nullable=True)

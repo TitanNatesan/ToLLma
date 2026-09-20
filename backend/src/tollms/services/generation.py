@@ -65,6 +65,11 @@ class GenerationSpec:
     output_price: str
     cache_read_price: str
     cache_write_price: str
+    # Auth session that started this generation (JWT sid) — durable per-session
+    # usage/activity for the session-management UI.
+    session_id: str | None = None
+    # Time to first streamed token (ms), measured by the driver.
+    ttfb_ms: float | None = None
     # Normalized <think> span timing (set by the driver; persisted as
     # messages.thinking_ms — provider-agnostic because every adapter
     # normalizes reasoning into these spans).
@@ -281,6 +286,7 @@ class GenerationManager:
                 async for chunk in _cancellable_stream(provider_iter, active, self, spec.generation_id):
                     if ttfb_ms is None and chunk.delta:
                         ttfb_ms = (time.monotonic() - run_wall) * 1000
+                        spec.ttfb_ms = ttfb_ms
                     parts.append(chunk.delta)
                     _accumulate(result, chunk)
                     if chunk.delta:
@@ -351,7 +357,7 @@ class GenerationManager:
     async def _finish_completed(self, db, spec: GenerationSpec, result: ChatResult) -> dict:
         tokens, breakdown, estimated = self._price(db, spec, result, partial=False)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None)
+        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None, estimated)
         await self._cache_write_state(spec, MessageStatus.COMPLETED.value, result.text)
         self._invalidate_usage(spec)
         return _terminal_payload(spec, result, tokens, breakdown, estimated, MessageStatus.COMPLETED, latency_ms)
@@ -365,7 +371,7 @@ class GenerationManager:
         error = reason if failed else None
         tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, status, error)
+        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, status, error, estimated)
         await self._cache_write_state(spec, status.value, result.text)
         self._invalidate_usage(spec)
         return _terminal_payload(spec, result, tokens, breakdown, estimated, status, latency_ms, error)
@@ -373,7 +379,7 @@ class GenerationManager:
     async def _finish_failed(self, db, spec: GenerationSpec, result: ChatResult, error: str) -> dict:
         tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error)
+        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error, estimated)
         await self._cache_write_state(spec, MessageStatus.FAILED.value, result.text)
         self._invalidate_usage(spec)
         return _terminal_payload(spec, result, tokens, breakdown, estimated, MessageStatus.FAILED, latency_ms, error)
@@ -410,7 +416,9 @@ class GenerationManager:
         breakdown = calculate(tokens, prices_for_model(_price_holder(spec), repo))
         return tokens, breakdown, estimated
 
-    def _store_final(self, db, spec, text, tokens, breakdown, latency_ms, status, error) -> None:
+    def _store_final(
+        self, db, spec, text, tokens, breakdown, latency_ms, status, error, estimated: bool = False
+    ) -> None:
         try:
             row = db.get(Message, spec.generation_id)
             if row is None:
@@ -419,6 +427,10 @@ class GenerationManager:
             row.status = status
             row.completed_at = _utcnow()
             row.error = error
+            row.usage_estimated = estimated
+            row.session_id = spec.session_id
+            if spec.ttfb_ms is not None:
+                row.ttfb_ms = spec.ttfb_ms
             thinking_ms = _thinking_duration_ms(spec)
             if thinking_ms is not None:
                 row.thinking_ms = thinking_ms
@@ -440,9 +452,13 @@ class GenerationManager:
 
     def _invalidate_usage(self, spec: GenerationSpec) -> None:
         try:
-            from tollms.services.cache.manager import cache_delete_sync
+            from tollms.services.cache.manager import cache_delete_sync, cache_invalidate_sync
 
             cache_delete_sync(cache_keys.usage_totals(spec.conversation_id, spec.user_id))
+            # Dashboard caches are short-lived; clear the user's analytics
+            # aggregates so the next visit reflects the finished generation.
+            if spec.user_id is not None:
+                cache_invalidate_sync(cache_keys.analytics_pattern(spec.user_id))
         except Exception:
             logger.warning("generation %s: usage invalidation failed", spec.generation_id, exc_info=True)
 

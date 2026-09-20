@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import { toast } from "sonner";
 import { useChatStore } from "@/store/chat";
+import { useSettingsStore } from "@/store/settings";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import {
   Button,
@@ -36,13 +37,14 @@ import { UploadPreview } from "./UploadPreview";
 import { DropzoneOverlay } from "./attachments/DropzoneOverlay";
 import { ReasoningSelector } from "./ReasoningSelector";
 import { useModelCapabilities } from "./hooks/useModelCapabilities";
+import { cycleReasoningLevel } from "./reasoningLevels";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
   combinedAccept,
-  defaultReasoningLevel,
   describeAttachment,
   kindForFile,
+  preferredReasoningLevel,
   readyAttachments,
   suggestModels,
   unsupportedMessage,
@@ -73,9 +75,13 @@ const CAP_ICONS: Record<string, { icon: ComponentType<{ className?: string }>; l
 function UnifiedModelSelector({
   providers,
   models,
+  open,
+  onOpenChange,
 }: {
   providers: Provider[];
   models: AIModel[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const { providerId, modelId, setProvider, setModel } = useChatStore();
   const [search, setSearch] = useState("");
@@ -111,7 +117,7 @@ function UnifiedModelSelector({
   const totalMatchingModels = groups.reduce((acc, g) => acc + g.models.length, 0);
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
@@ -249,22 +255,25 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
   const { data: models = [] } = useModels();
   const { caps } = useModelCapabilities(models, modelId);
   const kinds = uploadKinds(caps);
+  const enterBehavior = useSettingsStore((s) => s.enterBehavior);
+  const defaultThinkingLevel = useSettingsStore((s) => s.defaultThinkingLevel);
 
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [reasoningLevel, setReasoningLevel] = useState<string | null>(null);
+  const [modelOpen, setModelOpen] = useState(false);
   const [rejection, setRejection] = useState<Rejection | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
   const uploading = attachments.some((a) => a.status === "uploading");
 
-  // Model change: reset reasoning to the new model's default and drop
-  // attachments its capabilities no longer support. Draft text is kept.
+  // Model change: reset reasoning to the user's preferred level when the new
+  // model offers it, and drop attachments its capabilities no longer support.
   const prevModelId = useRef(modelId);
   useEffect(() => {
     if (prevModelId.current === modelId) return;
     prevModelId.current = modelId;
-    setReasoningLevel(defaultReasoningLevel(caps));
+    setReasoningLevel(preferredReasoningLevel(caps, defaultThinkingLevel));
     setRejection(null);
     setAttachments((prev) => {
       const kept = prev.filter((a) => kinds.includes(a.kind));
@@ -275,6 +284,42 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelId]);
+
+  // Global shortcut hooks (dispatched by useGlobalShortcuts): focus, model
+  // selector, model cycling, thinking cycling.
+  useEffect(() => {
+    function focusInput() {
+      textareaRef.current?.focus();
+    }
+    function openSelector() {
+      setModelOpen(true);
+    }
+    function switchModel() {
+      const active = models.filter((m) => m.is_active);
+      if (active.length === 0) return;
+      const index = active.findIndex((m) => m.id === useChatStore.getState().modelId);
+      const next = active[(index + 1 + active.length) % active.length];
+      const store = useChatStore.getState();
+      store.setProvider(next.provider_id);
+      store.setModel(next.id);
+    }
+    function cycleThinking() {
+      if (!caps.supportsReasoning) return;
+      const current = reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel);
+      const next = cycleReasoningLevel(caps.reasoningLevels, current);
+      if (next) setReasoningLevel(next);
+    }
+    window.addEventListener("tollma:focus-input", focusInput);
+    window.addEventListener("tollma:open-model-selector", openSelector);
+    window.addEventListener("tollma:switch-model", switchModel);
+    window.addEventListener("tollma:cycle-thinking", cycleThinking);
+    return () => {
+      window.removeEventListener("tollma:focus-input", focusInput);
+      window.removeEventListener("tollma:open-model-selector", openSelector);
+      window.removeEventListener("tollma:switch-model", switchModel);
+      window.removeEventListener("tollma:cycle-thinking", cycleThinking);
+    };
+  }, [caps, reasoningLevel, defaultThinkingLevel, models]);
 
   // Revoke image object URLs on unmount.
   useEffect(() => {
@@ -406,7 +451,9 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     if ((!text && readyFiles.length === 0) || uploading || streaming || !ready) return;
     onSend({
       text,
-      reasoningLevel: caps.supportsReasoning ? (reasoningLevel ?? defaultReasoningLevel(caps)) : null,
+      reasoningLevel: caps.supportsReasoning
+        ? (reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel))
+        : null,
       attachments: readyFiles.map(describeAttachment),
     });
     setDraft("");
@@ -519,7 +566,12 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         }}
         onPaste={handlePaste}
         onKeyDown={(e) => {
-          if ((e.key === "Enter" && !e.shiftKey) || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {
+          if (e.key !== "Enter") return;
+          const withMod = e.metaKey || e.ctrlKey;
+          // "send" (default): Enter sends, Shift+Enter newline, Ctrl/Cmd+Enter also sends.
+          // "newline": Enter inserts a newline; Ctrl/Cmd+Enter sends.
+          const shouldSend = enterBehavior === "send" ? !e.shiftKey || withMod : withMod;
+          if (shouldSend) {
             e.preventDefault();
             handleSend();
           }
@@ -529,7 +581,9 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
             ? "Select a model to start chatting…"
             : streaming
               ? "Generating response…"
-              : "Message… (Enter to send, Shift+Enter for newline)"
+              : enterBehavior === "send"
+                ? "Message… (Enter to send, Shift+Enter for newline)"
+                : "Message… (Ctrl+Enter to send, Enter for newline)"
         }
         rows={1}
         disabled={disabled && !streaming}
@@ -546,13 +600,18 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
 
       {/* Toolbar: message-creation controls only */}
       <div className="mt-2 flex items-center gap-2">
-        <UnifiedModelSelector providers={providers} models={models} />
+        <UnifiedModelSelector
+          providers={providers}
+          models={models}
+          open={modelOpen}
+          onOpenChange={setModelOpen}
+        />
 
         {/* Thinking slider — hidden entirely unless the model reasons */}
         {caps.supportsReasoning && (
           <ReasoningSelector
             levels={caps.reasoningLevels}
-            value={reasoningLevel ?? defaultReasoningLevel(caps)}
+            value={reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel)}
             onChange={setReasoningLevel}
           />
         )}

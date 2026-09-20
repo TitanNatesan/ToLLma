@@ -1,13 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { BarChart3, Boxes, Cpu, Server, Wallet } from "lucide-react";
+import {
+  BarChart3,
+  Boxes,
+  Gauge,
+  Hash,
+  Layers,
+  LayoutDashboard,
+  MessageSquare,
+  Server,
+  Wallet,
+} from "lucide-react";
 
 const REPORTS = [
-  { hash: "usage", label: "Usage", icon: BarChart3 },
+  { hash: "summary", label: "Overview", icon: LayoutDashboard },
   { hash: "cost", label: "Cost", icon: Wallet },
+  { hash: "usage", label: "Usage", icon: BarChart3 },
+  { hash: "tokens", label: "Tokens", icon: Hash },
+  { hash: "performance", label: "Performance", icon: Gauge },
   { hash: "models", label: "Models", icon: Boxes },
   { hash: "providers", label: "Providers", icon: Server },
+  { hash: "conversations", label: "Conversations", icon: MessageSquare },
 ];
 
 /** Analytics context: report shortcuts anchor into the Analytics page sections. */
@@ -40,9 +54,9 @@ export function SidebarAnalytics() {
             );
           })}
         </div>
-        <div className="mt-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-zinc-400">
-          <Cpu className="size-3.5 shrink-0 opacity-60" />
-          <span>More reports coming soon</span>
+        <div className="mt-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[10px] text-zinc-400">
+          <Layers className="size-3.5 shrink-0 opacity-60" />
+          <span>Aggregated server-side</span>
         </div>
       </div>
     </section>

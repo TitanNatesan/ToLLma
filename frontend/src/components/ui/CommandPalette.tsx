@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
 import { toast } from "sonner";
@@ -206,18 +206,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 }
 
 export function useCommandPalette() {
+  // Ctrl+K is owned by useGlobalShortcuts (single listener, one source of
+  // truth); this hook only holds the open state for AppShell.
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.key === "k" || e.key === "K" || e.code === "KeyK") && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   return { open, setOpen };
 }

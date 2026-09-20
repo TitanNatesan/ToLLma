@@ -143,6 +143,17 @@ export function defaultReasoningLevel(caps: ModelCapabilities): string | null {
   );
 }
 
+/** User preference wins when the selected model actually offers that level;
+ *  otherwise the model default applies. Preference never overrides capability. */
+export function preferredReasoningLevel(
+  caps: ModelCapabilities,
+  preferred: string | null,
+): string | null {
+  if (!caps.supportsReasoning) return null;
+  if (preferred && caps.reasoningLevels.includes(preferred)) return preferred;
+  return defaultReasoningLevel(caps);
+}
+
 export function kindForFile(file: File): AttachmentKind | null {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (file.type.startsWith("image/") || IMAGE_EXTS.includes(ext)) return "image";

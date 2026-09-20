@@ -6,10 +6,18 @@ import { QueryProvider } from "@/lib/query";
 import { AppShell, Toaster, TooltipProvider } from "@/components/ui";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { getCurrentUser } from "@/services/api";
+import { usePreferencesSync } from "@/hooks/useSettings";
 import { clearAuthAndCredentialCache, hasSessionCookie, useAuthStore } from "@/store/auth";
 import { Loader2 } from "lucide-react";
 
 const BARE_PATHS = ["/login", "/signup", "/verify", "/auth/callback", "/health"];
+
+/** Loads server preferences into the settings store once a session exists.
+ *  Lives inside QueryProvider (Shell itself renders outside it). */
+function PreferencesSync({ enabled }: { enabled: boolean }) {
+  usePreferencesSync(enabled);
+  return null;
+}
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -67,6 +75,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <QueryProvider>
       <TooltipProvider>
         {content}
+        <PreferencesSync enabled={!!user} />
         <Toaster />
       </TooltipProvider>
     </QueryProvider>

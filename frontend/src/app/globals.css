@@ -65,6 +65,14 @@ body {
   margin-left: 1px;
 }
 
+/* Stream-animation preference (Settings → Chat): no blink, no pulse. */
+html[data-animations="off"] .streaming-cursor::after {
+  animation: none;
+}
+html[data-animations="off"] .animate-pulse {
+  animation: none;
+}
+
 /* Secure credential masking without triggering browser login autofill */
 .credential-masked {
   -webkit-text-security: disc !important;

@@ -1,7 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useChatStore } from "@/store/chat";
 
 export function PageHeader({
   title,
@@ -16,6 +18,8 @@ export function PageHeader({
   actions?: ReactNode;
   className?: string;
 }) {
+  const setLeftSidebar = useChatStore((s) => s.setLeftSidebar);
+
   return (
     <div
       className={cn(
@@ -25,6 +29,15 @@ export function PageHeader({
     >
       <div className="flex flex-col gap-0.5">
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setLeftSidebar(true)}
+            aria-label="Open sidebar"
+            data-testid="page-header-menu"
+            className="-ml-1 flex size-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 md:hidden dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          >
+            <Menu className="size-4" />
+          </button>
           <h1 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
             {title}
           </h1>

@@ -151,6 +151,8 @@ def add_message(
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
     user_id: uuid.UUID | None = None,
+    session_id: str | None = None,
+    usage_estimated: bool = False,
 ) -> Message:
     msg = Message(
         user_id=user_id,
@@ -163,6 +165,8 @@ def add_message(
         status=status,
         started_at=started_at,
         completed_at=completed_at,
+        session_id=session_id,
+        usage_estimated=usage_estimated,
     )
     if usage is not None:
         msg.prompt_tokens, msg.completion_tokens, msg.total_tokens = usage

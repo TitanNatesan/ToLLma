@@ -43,6 +43,7 @@ def _read(user: User):
         id=user.id,
         email=user.email,
         full_name=user.full_name,
+        username=user.username,
         email_verified=user.email_verified,
         auth_provider=user.auth_provider,
         avatar_url=user.avatar_url,
@@ -122,7 +123,14 @@ async def verify_email(db: Session, token: str) -> User:
     return user
 
 
-async def login(db: Session, email: str, password: str) -> tuple[User, str, str, str]:
+async def login(
+    db: Session,
+    email: str,
+    password: str,
+    *,
+    user_agent: str | None = None,
+    ip: str | None = None,
+) -> tuple[User, str, str, str]:
     """Password login. Returns (user, access_token, refresh_token, session_id)."""
     user = get_by_email(db, email)
     if user is None or not user.is_active:
@@ -131,7 +139,9 @@ async def login(db: Session, email: str, password: str) -> tuple[User, str, str,
         raise AuthenticationError("invalid email or password")
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
-    session_id = await security.create_session(user.id, user.email, "password")
+    session_id = await security.create_session(
+        user.id, user.email, "password", user_agent=user_agent, ip=ip
+    )
     logger.info("user logged in: %s (password)", user.id)
     return (
         user,
@@ -222,7 +232,9 @@ async def fetch_google_userinfo(access_token: str) -> dict:
     return response.json()
 
 
-async def handle_google_callback(db: Session, code: str, state: str) -> tuple[User, str, str, str]:
+async def handle_google_callback(
+    db: Session, code: str, state: str, *, user_agent: str | None = None, ip: str | None = None
+) -> tuple[User, str, str, str]:
     """Validate state, resolve the Google identity, find-or-create the user,
     and open a session. Returns (user, access, refresh, session_id)."""
     manager = get_manager()
@@ -261,7 +273,9 @@ async def handle_google_callback(db: Session, code: str, state: str) -> tuple[Us
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
-    session_id = await security.create_session(user.id, user.email, "google")
+    session_id = await security.create_session(
+        user.id, user.email, "google", user_agent=user_agent, ip=ip
+    )
     logger.info("user logged in: %s (google)", user.id)
     return (
         user,

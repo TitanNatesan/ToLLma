@@ -274,6 +274,7 @@ async def run_chat(
     data: ChatRequest,
     transport: httpx.AsyncBaseTransport | None = None,
     user_id: uuid.UUID | None = None,
+    session_id: str | None = None,
 ) -> ChatResponse:
     """Non-streaming chat. Persists user + assistant messages, usage, cost."""
     provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
@@ -320,7 +321,7 @@ async def run_chat(
         extra_usage = (tokens.cache_read, tokens.cache_write, tokens.reasoning)
         extra_cost = (breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost)
         user_msg = add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id,
-                    user_id=user_id)
+                    user_id=user_id, session_id=session_id)
         for row in rows:
             attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
         db.commit()
@@ -330,7 +331,7 @@ async def run_chat(
             extra_usage=extra_usage, extra_cost=extra_cost, latency_ms=latency_ms,
             status=MessageStatus.COMPLETED, started_at=started_at,
             completed_at=datetime.now(timezone.utc),
-            user_id=user_id,
+            user_id=user_id, session_id=session_id, usage_estimated=estimated,
         )
         touch(db, conv)
         logger.info(
@@ -418,6 +419,7 @@ async def start_generation(
     transport: httpx.AsyncBaseTransport | None = None,
     user_id: uuid.UUID | None = None,
     session_factory=None,
+    session_id: str | None = None,
 ) -> GenerationStarted:
     """Synchronous setup + background spawn. The assistant row exists as
     RUNNING before this returns — the frontend never invents messages.
@@ -453,6 +455,7 @@ async def start_generation(
             user_msg = add_message(
                 db, conv_id, Role.USER, data.message,
                 provider_id=provider.id, model_id=model.id, user_id=user_id,
+                session_id=session_id,
             )
             for row in setup.rows:
                 attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
@@ -460,7 +463,7 @@ async def start_generation(
                 db, conv_id, Role.ASSISTANT, "",
                 provider_id=provider.id, model_id=model.id,
                 status=MessageStatus.RUNNING, started_at=started_at,
-                user_id=user_id,
+                user_id=user_id, session_id=session_id,
             )
             if data.client_key:
                 assistant.client_key = data.client_key
@@ -496,6 +499,7 @@ async def start_generation(
         output_price=str(model.output_price),
         cache_read_price=str(model.cache_read_price),
         cache_write_price=str(model.cache_write_price),
+        session_id=session_id,
     )
     generation_engine.manager.spawn(spec, session_factory=session_factory)
     logger.info(

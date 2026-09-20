@@ -1,13 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { Cpu, Palette, Settings, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import {
+  KeyRound,
+  MonitorSmartphone,
+  Palette,
+  Server,
+  SlidersHorizontal,
+  UserRound,
+} from "lucide-react";
 
 const SECTIONS = [
-  { hash: "general", label: "General", icon: SlidersHorizontal },
+  { hash: "profile", label: "Profile", icon: UserRound },
   { hash: "appearance", label: "Appearance", icon: Palette },
-  { hash: "providers", label: "Providers", icon: Cpu },
-  { hash: "authentication", label: "Authentication", icon: ShieldCheck },
+  { hash: "chat", label: "Chat", icon: SlidersHorizontal },
+  { hash: "account", label: "Account", icon: KeyRound },
+  { hash: "sessions", label: "Sessions", icon: MonitorSmartphone },
+  { hash: "providers", label: "Providers", icon: Server },
 ];
 
 /** Settings context: section shortcuts anchor into the Settings page sections. */
@@ -15,7 +24,7 @@ export function SidebarSettings() {
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="Settings">
       <div className="flex items-center gap-1.5 px-3 py-2">
-        <Settings className="size-3.5 text-zinc-500" />
+        <SlidersHorizontal className="size-3.5 text-zinc-500" />
         <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
           Settings
         </span>

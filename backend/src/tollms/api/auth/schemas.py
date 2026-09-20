@@ -28,6 +28,7 @@ class UserRead(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str | None
+    username: str | None = None
     email_verified: bool
     auth_provider: AuthProvider
     avatar_url: str | None

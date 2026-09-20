@@ -35,13 +35,15 @@ export function clearAuthAndCredentialCache(): void {
     localStorage.removeItem("tollma-wizard-draft");
     localStorage.removeItem("tollma_provider_draft");
 
-    // Clear any other auth tokens and provider credentials from localStorage (preserving theme)
+    // Clear any other auth tokens and provider credentials from localStorage
+    // (preserving UI preferences: theme, accent palette, chat settings).
+    const KEEP = ["theme", "tollma-accent", "tollma-accent-vars", "tollma-animations", "tollma-settings"];
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (
         key &&
-        key !== "theme" &&
+        !KEEP.includes(key) &&
         (key.startsWith("tollma") ||
           key.includes("token") ||
           key.includes("cred") ||

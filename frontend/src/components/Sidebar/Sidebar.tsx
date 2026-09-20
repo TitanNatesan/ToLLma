@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { useChatStore } from "@/store/chat";
+import { cn } from "@/lib/utils";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarNavigation } from "./SidebarNavigation";
 import { SidebarConversations } from "./SidebarConversations";
@@ -70,49 +71,78 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
         ? "Settings"
         : "Conversations";
 
-  return (
-    <>
-      <motion.aside
-        animate={{ width: currentWidth }}
-        transition={{
-          duration: isResizing ? 0 : 0.25,
-          ease: "easeInOut",
-        }}
-        className="relative flex shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
+  // Below md the sidebar becomes an off-canvas overlay so page content keeps
+  // the full viewport width (analytics/settings need it).
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  const inner = (
+    <div
+      className="flex h-full flex-col overflow-hidden"
+      style={{ width: isMobile ? "100%" : sidebarWidth }}
+    >
+      <SidebarHeader onOpenCommandPalette={onOpenCommandPalette} />
+
+      {/* Route-aware context (the only scrollable region; footer stays put) */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {isProvidersPage ? (
+          <SidebarProviders />
+        ) : isAnalyticsPage ? (
+          <SidebarAnalytics />
+        ) : isSettingsPage ? (
+          <SidebarSettings />
+        ) : (
+          <SidebarConversations />
+        )}
+      </div>
+
+      <SidebarNavigation open={navOpen} />
+      <SidebarFooter navOpen={navOpen} onToggleNav={toggleNav} />
+    </div>
+  );
+
+  if (isMobile) {
+    return (
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-[min(85vw,320px)] flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50 shadow-xl transition-transform duration-200 dark:border-zinc-800 dark:bg-zinc-900",
+          leftSidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
         aria-label={ariaLabel}
+        aria-hidden={!leftSidebarOpen}
         data-testid="left-sidebar"
-        style={{ width: currentWidth }}
       >
-        <div
-          className="flex h-full flex-col overflow-hidden"
-          style={{ width: sidebarWidth }}
-        >
-          <SidebarHeader onOpenCommandPalette={onOpenCommandPalette} />
+        {inner}
+      </aside>
+    );
+  }
 
-          {/* Route-aware context (the only scrollable region; footer stays put) */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {isProvidersPage ? (
-              <SidebarProviders />
-            ) : isAnalyticsPage ? (
-              <SidebarAnalytics />
-            ) : isSettingsPage ? (
-              <SidebarSettings />
-            ) : (
-              <SidebarConversations />
-            )}
-          </div>
+  return (
+    <motion.aside
+      animate={{ width: currentWidth }}
+      transition={{
+        duration: isResizing ? 0 : 0.25,
+        ease: "easeInOut",
+      }}
+      className="relative flex shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
+      aria-label={ariaLabel}
+      data-testid="left-sidebar"
+      style={{ width: currentWidth }}
+    >
+      {inner}
 
-          <SidebarNavigation open={navOpen} />
-          <SidebarFooter navOpen={navOpen} onToggleNav={toggleNav} />
-        </div>
-
-        {/* Resizer Handle */}
-        <div
-          id="sidebar-resizer"
-          onMouseDown={() => setIsResizing(true)}
-          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-zinc-400/50 active:bg-zinc-500 transition-colors z-10"
-        />
-      </motion.aside>
-    </>
+      {/* Resizer Handle */}
+      <div
+        id="sidebar-resizer"
+        onMouseDown={() => setIsResizing(true)}
+        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-zinc-400/50 active:bg-zinc-500 transition-colors z-10"
+      />
+    </motion.aside>
   );
 }

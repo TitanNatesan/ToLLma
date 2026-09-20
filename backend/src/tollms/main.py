@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from tollms.api.analytics.router import router as analytics_router
 from tollms.api.attachments.router import router as attachments_router
 from tollms.api.auth.router import router as auth_router
 from tollms.api.conversations.router import router as conversations_router
@@ -17,6 +18,7 @@ from tollms.api.health.router import router as health_router
 from tollms.api.models.router import router as models_router
 from tollms.api.providers.router import router as providers_router
 from tollms.api.repository.router import router as repository_router
+from tollms.api.settings.router import router as settings_router
 from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
 from tollms.services import cache as cache_service
@@ -91,6 +93,8 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Export downloads read Content-Disposition to name the file.
+        expose_headers=["Content-Disposition"],
         max_age=86400,
     )
     register_handlers(app)
@@ -119,6 +123,8 @@ def create_app() -> FastAPI:
     app.include_router(conversations_router)
     app.include_router(attachments_router)
     app.include_router(gateway_router)
+    app.include_router(analytics_router)
+    app.include_router(settings_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app
 

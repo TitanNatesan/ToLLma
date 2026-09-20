@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user
+from tollms.core.security import get_current_session_id, get_current_user
 from tollms.models.user import User
 from tollms.api.gateway import service
 from tollms.api.gateway.schemas import (
@@ -22,8 +22,13 @@ router = APIRouter(prefix="/api/v1/gateway", tags=["gateway"])
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(data: ChatRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ChatResponse:
-    return await service.run_chat(db, data, user_id=user.id)
+async def chat(
+    data: ChatRequest, request: Request,
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+) -> ChatResponse:
+    return await service.run_chat(
+        db, data, user_id=user.id, session_id=get_current_session_id(request)
+    )
 
 
 @router.post("/stream")
@@ -33,7 +38,9 @@ async def start_stream(
     """Create the generation (assistant row starts RUNNING) and stream its
     progress events. The connection is a subscriber: dropping it never stops
     the backend generation — reattach via GET stream/{generation_id}."""
-    started = await service.start_generation(db, data, user_id=user.id)
+    started = await service.start_generation(
+        db, data, user_id=user.id, session_id=get_current_session_id(request)
+    )
     return StreamingResponse(
         service.stream_events(db, started.generation_id, user.id, request.is_disconnected),
         media_type="text/event-stream",

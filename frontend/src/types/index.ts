@@ -7,6 +7,7 @@ export interface User {
   id: string;
   email: string;
   full_name: string | null;
+  username?: string | null;
   email_verified: boolean;
   auth_provider: "EMAIL" | "GOOGLE";
   avatar_url: string | null;
@@ -265,3 +266,219 @@ export interface RegisterResult {
   match_stats: Record<MatchType, number>;
 }
 
+
+// --- settings / analytics ---------------------------------------------------
+
+export type AccentName = "green" | "blue" | "purple" | "orange" | "red" | "cyan" | "pink" | "custom";
+export type EnterBehavior = "send" | "newline";
+
+export interface UserPreferences {
+  accent: AccentName;
+  accent_color: string | null;
+  enter_behavior: EnterBehavior;
+  default_thinking_level: string | null;
+  auto_scroll: boolean;
+  stream_animations: boolean;
+}
+
+export interface LoginSession {
+  id: string;
+  current: boolean;
+  device: string;
+  browser: string;
+  os: string;
+  ip: string | null;
+  login_method: string;
+  created_at: string | null;
+  last_seen: string | null;
+  requests: number;
+  tokens: number;
+}
+
+export type AnalyticsPreset =
+  | "today"
+  | "yesterday"
+  | "last_7d"
+  | "last_30d"
+  | "this_month"
+  | "last_month"
+  | "last_90d"
+  | "custom";
+
+export type AnalyticsGranularity = "hour" | "day" | "week" | "month";
+export type ModelSort = "most_used" | "most_expensive" | "fastest" | "slowest";
+export type AnalyticsDataset = "summary" | "timeseries" | "models" | "providers" | "conversations";
+
+export interface AnalyticsRange {
+  preset: string;
+  timezone: string;
+  start: string;
+  end: string;
+  prev_start: string;
+  prev_end: string;
+}
+
+export interface KpiValue {
+  value: string | number;
+  previous: string | number;
+  change_pct: number | null;
+}
+
+export interface AnalyticsInsight {
+  id: string;
+  title: string;
+  detail: string;
+  severity: "info" | "positive" | "warning";
+}
+
+export interface AnalyticsSummary {
+  range: AnalyticsRange;
+  currency: string;
+  total_spend: KpiValue;
+  total_requests: KpiValue;
+  total_tokens: KpiValue;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  active_models: number;
+  active_providers: number;
+  active_conversations: number;
+  avg_cost_per_request: string;
+  avg_tokens_per_request: number;
+  avg_response_ms: number | null;
+  avg_ttfb_ms: number | null;
+  streaming_sessions: number;
+  failed_requests: number;
+  estimated_requests: number;
+  projected_month_spend: string;
+  insights: AnalyticsInsight[];
+}
+
+export interface TimeseriesPoint {
+  bucket: string;
+  spend: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  requests: number;
+  avg_latency_ms: number | null;
+}
+
+export interface AnalyticsTimeseries {
+  range: AnalyticsRange;
+  granularity: AnalyticsGranularity;
+  points: TimeseriesPoint[];
+}
+
+export interface AnalyticsBreakdownRow {
+  key: string;
+  name: string;
+  kind: string;
+  requests: number;
+  spend: string;
+  total_tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  avg_cost: string;
+  avg_latency_ms: number | null;
+  avg_ttfb_ms: number | null;
+  error_rate: number;
+  share_pct: number;
+}
+
+export interface AnalyticsBreakdown {
+  range: AnalyticsRange;
+  by_provider: AnalyticsBreakdownRow[];
+  by_model: AnalyticsBreakdownRow[];
+}
+
+export interface AnalyticsModels {
+  range: AnalyticsRange;
+  sort: ModelSort;
+  models: AnalyticsBreakdownRow[];
+}
+
+export interface HeatmapCell {
+  day: number;
+  hour: number;
+  requests: number;
+  spend: string;
+  tokens: number;
+}
+
+export interface HeatmapPeak {
+  day: number;
+  hour: number;
+  requests: number;
+}
+
+export interface AnalyticsHeatmap {
+  range: AnalyticsRange;
+  cells: HeatmapCell[];
+  max_requests: number;
+  peak: HeatmapPeak | null;
+  quiet: HeatmapPeak | null;
+  busiest_day: number | null;
+}
+
+export interface LatencyRow {
+  key: string;
+  name: string;
+  requests: number;
+  avg_latency_ms: number | null;
+  avg_ttfb_ms: number | null;
+  avg_response_chars: number | null;
+  error_rate: number;
+}
+
+export interface AnalyticsPerformance {
+  range: AnalyticsRange;
+  avg_ttfb_ms: number | null;
+  avg_completion_ms: number | null;
+  avg_stream_duration_ms: number | null;
+  avg_response_chars: number | null;
+  avg_thinking_ms: number | null;
+  avg_tool_calls_per_request: number | null;
+  fastest_model: LatencyRow | null;
+  slowest_model: LatencyRow | null;
+  by_model: LatencyRow[];
+  by_provider: LatencyRow[];
+}
+
+export interface ConversationAnalyticsRow {
+  id: string;
+  title: string;
+  provider_name: string | null;
+  model_name: string | null;
+  messages: number;
+  user_messages: number;
+  spend: string;
+  tokens: number;
+  max_context_tokens: number;
+  avg_latency_ms: number | null;
+  updated_at: string | null;
+}
+
+export interface AnalyticsConversations {
+  range: AnalyticsRange;
+  most_active: ConversationAnalyticsRow[];
+  longest: ConversationAnalyticsRow[];
+  most_expensive: ConversationAnalyticsRow[];
+  largest_context: ConversationAnalyticsRow[];
+  highest_tokens: ConversationAnalyticsRow[];
+}
+
+export interface AnalyticsRangeParams {
+  preset: AnalyticsPreset;
+  tz: string;
+  start?: string;
+  end?: string;
+}
