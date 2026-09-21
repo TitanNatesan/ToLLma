@@ -103,29 +103,29 @@ def test_password_change_verifies_and_revokes_other_sessions(client: TestClient,
     user_factory("settings-password@tollma.ai")
     token1 = client.cookies.get("access_token")
     # Log in again: a second, independent session for the same user.
-    second = client.post("/auth/login", json={"email": "settings-password@tollma.ai", "password": "password123"})
+    second = client.post("/auth/login", json={"email": "settings-password@tollma.ai", "password": "Password123"})
     assert second.status_code == 200
     assert client.get("/api/v1/settings/sessions").json()["total"] == 2
 
     wrong = client.post(
         "/api/v1/settings/password",
-        json={"current_password": "wrong-password", "new_password": "brandnew123"},
+        json={"current_password": "wrong-password", "new_password": "Brandnew123"},
     )
     assert wrong.status_code == 401
     same = client.post(
         "/api/v1/settings/password",
-        json={"current_password": "password123", "new_password": "password123"},
+        json={"current_password": "Password123", "new_password": "Password123"},
     )
     assert same.status_code == 422
     short = client.post(
         "/api/v1/settings/password",
-        json={"current_password": "password123", "new_password": "short"},
+        json={"current_password": "Password123", "new_password": "short"},
     )
     assert short.status_code == 422
 
     ok = client.post(
         "/api/v1/settings/password",
-        json={"current_password": "password123", "new_password": "brandnew123"},
+        json={"current_password": "Password123", "new_password": "Brandnew123"},
     )
     assert ok.status_code == 200, ok.text
     assert ok.json()["revoked_sessions"] == 1
@@ -134,7 +134,7 @@ def test_password_change_verifies_and_revokes_other_sessions(client: TestClient,
     # The revoked session's access token is dead (401)...
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {token1}"}).status_code == 401
     # ...while the new password works.
-    assert client.post("/auth/login", json={"email": "settings-password@tollma.ai", "password": "brandnew123"}).status_code == 200
+    assert client.post("/auth/login", json={"email": "settings-password@tollma.ai", "password": "Brandnew123"}).status_code == 200
 
 
 def test_sessions_usage_aggregates_and_revocation(client: TestClient, db: Session, user_factory) -> None:
@@ -162,7 +162,7 @@ def test_sessions_usage_aggregates_and_revocation(client: TestClient, db: Sessio
     )
     db.commit()
 
-    client.post("/auth/login", json={"email": user["email"], "password": "password123"})
+    client.post("/auth/login", json={"email": user["email"], "password": "Password123"})
     listed = client.get("/api/v1/settings/sessions").json()
     assert listed["total"] == 2
     current = [s for s in listed["sessions"] if s["current"]]
@@ -185,8 +185,8 @@ def test_sessions_usage_aggregates_and_revocation(client: TestClient, db: Sessio
 def test_revoke_other_sessions(client: TestClient, user_factory) -> None:
     user = user_factory("settings-revoke@tollma.ai")
     token1 = client.cookies.get("access_token")
-    client.post("/auth/login", json={"email": user["email"], "password": "password123"})
-    client.post("/auth/login", json={"email": user["email"], "password": "password123"})
+    client.post("/auth/login", json={"email": user["email"], "password": "Password123"})
+    client.post("/auth/login", json={"email": user["email"], "password": "Password123"})
     assert client.get("/api/v1/settings/sessions").json()["total"] == 3
 
     revoked = client.post("/api/v1/settings/sessions/revoke-others")

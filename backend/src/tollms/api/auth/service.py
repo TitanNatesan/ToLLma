@@ -6,7 +6,7 @@ import hashlib
 import logging
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import select
@@ -15,10 +15,11 @@ from sqlalchemy.orm import Session
 from tollms.core import security
 from tollms.core.config import get_settings
 from tollms.core.exceptions import AuthenticationError, NotFoundError, ValidationError
+from tollms.models.password_reset import PasswordResetToken
 from tollms.models.user import AuthProvider, User
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import get_manager
-from tollms.services.email import send_verification_email
+from tollms.services.email import send_password_reset_email, send_verification_email
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,45 @@ def _read(user: User):
         username=user.username,
         email_verified=user.email_verified,
         auth_provider=user.auth_provider,
+        provider=user.provider,
+        has_password=user.has_password,
         avatar_url=user.avatar_url,
         created_at=user.created_at,
     )
+
+
+# --- identity + password helpers --------------------------------------------
+# `provider`/`provider_user_id` are authoritative for provider-aware behaviour;
+# the legacy auth_provider/google_id columns stay in sync for existing readers.
+
+
+def set_local_identity(user: User) -> None:
+    user.provider = "local"
+    user.auth_provider = AuthProvider.EMAIL
+
+
+def set_google_identity(user: User, google_id: str) -> None:
+    user.provider = "google"
+    user.provider_user_id = google_id
+    user.auth_provider = AuthProvider.GOOGLE
+    user.google_id = google_id
+
+
+def link_google_identity(user: User, google_id: str) -> None:
+    """Attach Google to an existing local account (keeps local password login)."""
+    user.provider_user_id = google_id
+    user.google_id = google_id
+
+
+def set_password(user: User, password: str) -> None:
+    """Single write path for local passwords (policy + has_password mirror)."""
+    security.validate_password_strength(password)
+    user.password_hash = security.hash_password(password)
+    user.has_password = True
+
+
+def is_local_user(user: User) -> bool:
+    return user.provider == "local" and user.has_password
 
 
 def read_user(user: User):
@@ -63,10 +100,10 @@ async def signup(db: Session, email: str, password: str, full_name: str | None) 
         raise ValidationError("email already registered")
     user = User(
         email=address,
-        password_hash=security.hash_password(password),
         full_name=(full_name or "").strip() or None,
-        auth_provider=AuthProvider.EMAIL,
     )
+    set_local_identity(user)
+    set_password(user, password)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -254,19 +291,20 @@ async def handle_google_callback(
     if user is None:
         user = get_by_email(db, email)
         if user is not None and profile.get("email_verified"):
-            user.google_id = google_id  # link: Google proved the address
-            if user.auth_provider == AuthProvider.EMAIL:
+            link_google_identity(user, google_id)  # Google proved the address
+            if user.provider == "local":
                 user.email_verified = True
+            else:
+                set_google_identity(user, google_id)
         elif user is None:
             user = User(
                 email=email,
                 password_hash=None,
                 full_name=str(profile.get("name") or "") or None,
                 email_verified=bool(profile.get("email_verified", True)),
-                auth_provider=AuthProvider.GOOGLE,
-                google_id=google_id,
                 avatar_url=str(profile.get("picture") or "") or None,
             )
+            set_google_identity(user, google_id)
             db.add(user)
         else:
             raise AuthenticationError("email already registered with password login")
@@ -283,3 +321,114 @@ async def handle_google_callback(
         security.create_refresh_token(user.id, session_id),
         session_id,
     )
+
+
+# --- password reset ----------------------------------------------------------
+
+
+def _reset_ttl_seconds() -> int:
+    return max(1, get_settings().password_reset_ttl_minutes) * 60
+
+
+def _reset_token_row(db: Session, token: str) -> PasswordResetToken | None:
+    """Look up a usable token: exists, unused and unexpired."""
+    if not token:
+        return None
+    row = db.scalar(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == security.hash_reset_token(token)
+        )
+    )
+    if row is None or row.used_at is not None:
+        return None
+    if row.expires_at <= datetime.now(timezone.utc):
+        return None
+    return row
+
+
+def mask_email(email: str) -> str:
+    """`jane.doe@example.com` -> `j***e@example.com` (never a full address)."""
+    local, _, domain = email.partition("@")
+    if not domain:
+        return "***"
+    if len(local) <= 2:
+        masked = local[:1] + "***"
+    else:
+        masked = f"{local[0]}***{local[-1]}"
+    return f"{masked}@{domain}"
+
+
+async def forgot_password(db: Session, email: str, *, ip: str | None = None) -> None:
+    """Request a reset link. Always a no-op success (no account enumeration).
+
+    Reset emails are only sent to local accounts that actually have a password;
+    Google-only accounts silently receive nothing.
+    """
+    user = get_by_email(db, normalize_email(email))
+    if user is None or not is_local_user(user):
+        logger.info("password reset requested for unknown or OAuth account")
+        return
+
+    token = security.generate_reset_token()
+    ttl = _reset_ttl_seconds()
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=security.hash_reset_token(token),
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl),
+            request_ip=ip,
+        )
+    )
+    db.commit()
+    minutes = ttl // 60
+    expires_in = "1 hour" if minutes == 60 else (f"{minutes} minutes" if minutes < 60 else f"{minutes // 60} hours")
+    url = f"{get_settings().frontend_url.rstrip('/')}/auth/reset-password?token={token}"
+    send_password_reset_email(user.email, url, expires_in)
+    logger.info("password reset email queued for user %s", user.id)
+
+
+def validate_reset_token(db: Session, token: str) -> dict:
+    """Public token check for the reset page (no side effects)."""
+    row = _reset_token_row(db, token)
+    if row is None:
+        return {"valid": False, "email": None}
+    user = db.get(User, row.user_id)
+    if user is None or user.is_deleted:
+        return {"valid": False, "email": None}
+    return {"valid": True, "email": mask_email(user.email)}
+
+
+async def reset_password(db: Session, token: str, password: str) -> User:
+    """Consume a reset token, set the password and invalidate every session."""
+    row = _reset_token_row(db, token)
+    if row is None:
+        raise ValidationError("invalid or expired reset token")
+    user = db.get(User, row.user_id)
+    if user is None or user.is_deleted:
+        raise ValidationError("invalid or expired reset token")
+    if not is_local_user(user):
+        raise ValidationError("this account does not use a local password")
+
+    security.validate_password_strength(password)
+    now = datetime.now(timezone.utc)
+    set_password(user, password)
+    row.used_at = now
+    # Any other outstanding links are dead the moment one is used.
+    for other in db.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.id != row.id,
+        )
+    ):
+        other.used_at = now
+    db.commit()
+    db.refresh(user)
+
+    if get_settings().password_reset_invalidate_sessions:
+        # keep_session_id="" revokes every session: force re-login everywhere.
+        revoked = await security.revoke_other_sessions(user.id, "")
+        logger.info("password reset for user %s (%d sessions revoked)", user.id, revoked)
+    else:
+        logger.info("password reset for user %s (sessions kept)", user.id)
+    return user

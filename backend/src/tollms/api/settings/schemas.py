@@ -103,6 +103,9 @@ class SessionRead(BaseModel):
     device: str
     browser: str
     os: str
+    # Auth provider that created this session ("local" | "google").
+    provider: str = "local"
+    location: str | None = None
     ip: str | None
     login_method: str
     created_at: datetime | None

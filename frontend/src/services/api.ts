@@ -463,6 +463,26 @@ export function verifyEmail(token: string, signal?: AbortSignal): Promise<{ user
   );
 }
 
+export function forgotPassword(email: string): Promise<{ success: boolean }> {
+  return post<{ success: boolean }>("/auth/forgot-password", { email });
+}
+
+export function validateResetToken(token: string): Promise<{ valid: boolean; email: string | null }> {
+  return get<{ valid: boolean; email: string | null }>(
+    `/auth/reset-password/validate?token=${encodeURIComponent(token)}`,
+  );
+}
+
+export function resetPassword(
+  token: string,
+  password: string,
+): Promise<{ success: boolean; email: string; message: string }> {
+  return post<{ success: boolean; email: string; message: string }>("/auth/reset-password", {
+    token,
+    password,
+  });
+}
+
 export function googleLoginUrl(): string {
   return `${apiBase()}/auth/google/login`;
 }

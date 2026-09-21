@@ -54,3 +54,14 @@ def send_email(to: str, subject: str, html_body: str, text_body: str = "") -> bo
 def send_verification_email(to: str, verification_url: str) -> bool:
     html_body = _render("verify.html", verification_url=verification_url, to=to)
     return send_email(to, "Verify your ToLLma email", html_body)
+
+
+def send_password_reset_email(to: str, reset_url: str, expires_in: str = "1 hour") -> bool:
+    """Reset email. Only ever called for local-auth accounts with a password."""
+    html_body = _render("reset.html", reset_url=reset_url, to=to, expires_in=expires_in)
+    text_body = (
+        "You requested a password reset. Open this link to continue:\n"
+        f"{reset_url}\n"
+        f"This link expires in {expires_in}. If you did not request this reset, ignore this email."
+    )
+    return send_email(to, "Reset your ToLLma password", html_body, text_body)

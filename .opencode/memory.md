@@ -1467,3 +1467,39 @@ Completed the "delete irrelevant components from the frontend and backend" instr
 - Frontend `vitest` **98/98**; `tsc --noEmit` clean; `eslint` clean; `next build` green.
 - Playwright `conversation-intelligence` + `elements`: **11/11**.
 - Docker stack healthy; frontend restarted after the host build.
+
+---
+
+## 2026-09-21 — Provider-aware Auth & Forgot/Reset Password
+
+### Requirement Completed
+Refactored the existing auth system (no parallel flow) so accounts are provider-aware and settings adapt to the login method: local (email + password) accounts manage a password, Google OAuth accounts see provider information instead and are refused password operations. Added a complete forgot/reset password flow for local accounts with hashed, single-use, expiring tokens, no account enumeration and session invalidation.
+
+### Files Created
+Backend: `alembic/versions/e2f3a4b5c6d7_auth_provider_password_reset.py` (provider columns + backfill + `password_reset_tokens`), `models/password_reset.py`, `services/email/templates/reset.html`, `tests/test_password_reset.py` (13 tests).
+Frontend: `components/auth/AuthShell.tsx`, `app/auth/forgot-password/page.tsx`, `app/auth/reset-password/page.tsx`, `app/settings/components/{AccountSecuritySection,ProviderAuthSection}.tsx`, `lib/authProvider.ts`, `lib/__tests__/authProvider.test.ts`, `e2e/auth-provider.spec.ts` (7 tests).
+
+### Files Modified
+Backend: `models/user.py` (`provider`, `provider_user_id`, `has_password` + partial unique identity index), `models/__init__.py`, `core/exceptions.py` (`ForbiddenError` 403), `core/config.py` (`password_reset_ttl_minutes`, `password_reset_invalidate_sessions`), `core/security.py` (password policy, `hash_reset_token`, `generate_reset_token`), `services/email/{__init__,service}.py` (`send_password_reset_email`), `api/auth/{service,schemas,router}.py` (identity/password helpers, forgot/validate/reset endpoints, `provider`/`has_password` on UserRead), `api/settings/{service,schemas}.py` (403 for OAuth, password policy, session `provider` + `location`).
+Frontend: `types/index.ts` (User + LoginSession), `services/api.ts` (forgot/validate/reset clients), `lib/password.ts` (`validatePassword`), `components/auth/AuthCard.tsx` (Forgot Password link), `app/settings/page.tsx` (provider-aware account card), `app/settings/components/{PasswordSection,SessionsSection}.tsx`.
+
+### Decisions
+- **One identity model, no parallel flow**: `users.provider`/`provider_user_id` are authoritative; the legacy `auth_provider`/`google_id` columns stay in sync through two helpers (`set_local_identity`, `set_google_identity`, `link_google_identity`) so existing readers/tests keep working. `has_password` mirrors `password_hash` and is written only via `set_password`.
+- **Linking, not conversion**: a verified Google login for an existing local account links the Google subject but keeps `provider="local"` (they still have a password); a Google-created account stays `provider="google"` and never gains a password.
+- **No enumeration**: `POST /auth/forgot-password` always returns `{success: true}`; only local accounts with a password create a token and an email. Validation returns a masked email (`j***e@example.com`) so the reset page can be helpful without leaking the address.
+- **Token security**: raw token is `secrets.token_urlsafe(32)`, only `sha256` is stored; single-use (`used_at`), TTL from `password_reset_ttl_minutes` (default 60), and using one link invalidates sibling tokens. Reset revokes **all** sessions by default (`password_reset_invalidate_sessions`), forcing re-login.
+- **Password policy in one place**: 8+ chars with uppercase, lowercase and digit, enforced by `security.validate_password_strength` on signup, change-password and reset-password, and mirrored in the frontend by `validatePassword`. Fixtures updated from `password123` to `Password123` (and `brandnew123` → `Brandnew123`).
+- **403 for OAuth**: `POST /api/v1/settings/password` raises `ForbiddenError` (403, `FORBIDDEN`) before touching the password, and the UI hides the section entirely — the API stays honest even if called directly.
+- Session records gained `provider` (from the session's `login_method`) and a coarse `location` label ("Local network" for private ranges; public IPs stay unknown rather than guessing).
+- Endpoints keep the repository's existing prefixes (`/auth/...`, `/api/v1/settings/password`) instead of introducing `/api/auth/...` aliases, per "integrate into the existing system".
+
+### Verification
+- Backend `docker compose exec -T backend pytest -q`: **194 passed** (was 181; +13 password-reset/provider tests, 1 updated settings test); `alembic check` green (head `e2f3a4b5c6d7`).
+- Frontend `vitest`: **102/102** (was 98); `tsc --noEmit` clean; `eslint` clean on all touched files; `next build` green (new static `/auth/forgot-password` + `/auth/reset-password` routes).
+- Playwright: `e2e/auth-provider.spec.ts` **7/7** (local password UI, Google provider card via stubbed `/auth/me`, policy enforcement, forgot link + generic response, invalid-token reset page, provider in sessions) + regression `e2e/auth.spec.ts` + `e2e/settings.spec.ts` **12/12**.
+- Docker stack healthy; frontend restarted after the host build.
+
+### Recommended Next Steps
+- Optional "set a password" flow for Google accounts that want local login (would set `provider` linkage without losing OAuth).
+- Rate-limit `forgot-password` per IP/email and add a small audit trail of reset requests.
+- Expose the reset-token TTL/invalidation knobs in `.env.example` documentation.

@@ -5,7 +5,7 @@ import { SettingsCard } from "./components/SettingsCard";
 import { AppearanceSection } from "./components/AppearanceSection";
 import { ChatPreferencesSection } from "./components/ChatPreferencesSection";
 import { ProfileSection } from "./components/ProfileSection";
-import { PasswordSection } from "./components/PasswordSection";
+import { AccountSecuritySection } from "./components/AccountSecuritySection";
 import { SessionsSection } from "./components/SessionsSection";
 import { ProvidersSection } from "./components/ProvidersSection";
 
@@ -49,10 +49,10 @@ export default function SettingsPage() {
           <SettingsCard
             id="account"
             title="Account & security"
-            description="Password management."
+            description="Sign-in method and password management."
             testId="settings-section-account"
           >
-            <PasswordSection />
+            <AccountSecuritySection />
           </SettingsCard>
 
           <SettingsCard

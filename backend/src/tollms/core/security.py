@@ -6,7 +6,10 @@ session, which invalidates both tokens. `get_current_user` accepts Bearer
 or the `access_token` httpOnly cookie (browser flows).
 """
 
+import hashlib
 import logging
+import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from tollms.core.config import get_settings
 from tollms.core.deps import get_db
+from tollms.core.exceptions import ValidationError
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import get_manager
 
@@ -32,6 +36,39 @@ SESSION_COOKIE = "tollma_session"  # non-sensitive presence marker for middlewar
 
 def hash_password(password: str) -> str:
     return _ph.hash(password)
+
+
+# --- password policy ---------------------------------------------------------
+
+PASSWORD_MIN_LENGTH = 8
+
+
+def validate_password_strength(password: str) -> None:
+    """Enforce the account policy: 8+ chars with upper, lower and a digit.
+
+    Applied on signup, change-password and reset-password so every way of
+    setting a local password shares one contract.
+    """
+    problems: list[str] = []
+    if len(password) < PASSWORD_MIN_LENGTH:
+        problems.append(f"at least {PASSWORD_MIN_LENGTH} characters")
+    if not re.search(r"[A-Z]", password):
+        problems.append("an uppercase letter")
+    if not re.search(r"[a-z]", password):
+        problems.append("a lowercase letter")
+    if not re.search(r"\d", password):
+        problems.append("a number")
+    if problems:
+        raise ValidationError("Password must contain " + ", ".join(problems) + ".")
+
+
+def hash_reset_token(token: str) -> str:
+    """Reset tokens are stored as sha256 only — never in plaintext."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def generate_reset_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
 def verify_password(password: str, password_hash: str | None) -> bool:

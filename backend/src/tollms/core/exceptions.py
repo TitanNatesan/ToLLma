@@ -100,6 +100,11 @@ class AuthenticationError(ApplicationException):
     status_code = 401
 
 
+class ForbiddenError(ApplicationException):
+    code = ErrorCode.FORBIDDEN
+    status_code = 403
+
+
 class ValidationError(ApplicationException):
     code = ErrorCode.VALIDATION_ERROR
     status_code = 422

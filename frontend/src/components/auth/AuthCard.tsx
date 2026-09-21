@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, Loader2, Lock, Mail, User as UserIcon } from "lucide-react";
@@ -183,6 +184,15 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                       <Eye className="size-4" />
                     )}
                   </button>
+                </div>
+                <div className="flex justify-end pt-1">
+                  <Link
+                    href="/auth/forgot-password"
+                    data-testid="forgot-password-link"
+                    className="text-[11px] text-zinc-400 transition-colors hover:text-zinc-200"
+                  >
+                    Forgot Password?
+                  </Link>
                 </div>
               </div>
 

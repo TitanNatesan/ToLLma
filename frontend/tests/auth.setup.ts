@@ -8,7 +8,7 @@ const STATE = "tests/.auth/state.json";
 setup("authenticate ui suite", async ({ request }) => {
   const email = `pw-ux-${Date.now()}@tollma.ai`;
   const signup = await request.post(`${API}/auth/signup`, {
-    data: { email, password: "password123" },
+    data: { email, password: "Password123" },
   });
   if (!signup.ok()) throw new Error(`ux setup signup failed: ${await signup.text()}`);
   const token = (await signup.json()).debug_verification_token as string | null;

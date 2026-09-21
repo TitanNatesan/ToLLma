@@ -31,6 +31,9 @@ class UserRead(BaseModel):
     username: str | None = None
     email_verified: bool
     auth_provider: AuthProvider
+    # Provider-aware surface: "local" shows password management, "google" does not.
+    provider: str = "local"
+    has_password: bool = False
     avatar_url: str | None
     created_at: datetime
 
@@ -50,3 +53,29 @@ class VerifyResponse(BaseModel):
 class RefreshResponse(BaseModel):
     user: UserRead
     access_token: str | None = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=256)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class GenericSuccess(BaseModel):
+    """Always returned by forgot-password: never reveals whether the account exists."""
+
+    success: bool = True
+
+
+class ResetValidationResponse(BaseModel):
+    valid: bool
+    email: str | None = None
+
+
+class ResetPasswordResponse(BaseModel):
+    success: bool = True
+    email: str
+    message: str = "Password updated successfully."

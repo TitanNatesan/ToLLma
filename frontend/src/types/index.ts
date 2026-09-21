@@ -10,6 +10,9 @@ export interface User {
   username?: string | null;
   email_verified: boolean;
   auth_provider: "EMAIL" | "GOOGLE";
+  /** Auth identity: "local" shows password management, "google" does not. */
+  provider: "local" | "google";
+  has_password: boolean;
   avatar_url: string | null;
   created_at: string;
 }
@@ -291,6 +294,8 @@ export interface LoginSession {
   device: string;
   browser: string;
   os: string;
+  provider?: "local" | "google";
+  location?: string | null;
   ip: string | null;
   login_method: string;
   created_at: string | null;

@@ -54,7 +54,7 @@ def _upload(client: TestClient, name: str, data: bytes, mime: str):
 
 def _other_client() -> TestClient:
     c2 = TestClient(app)
-    r = c2.post("/auth/signup", json={"email": "other@tollma.ai", "password": "password123"})
+    r = c2.post("/auth/signup", json={"email": "other@tollma.ai", "password": "Password123"})
     assert r.status_code == 200, r.text
     return c2
 

@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 from tollms.api.auth import service
 from tollms.api.auth.schemas import (
     AuthResponse,
+    ForgotPasswordRequest,
+    GenericSuccess,
     LoginRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
+    ResetValidationResponse,
     RefreshRequest,
     RefreshResponse,
     SignupRequest,
@@ -134,3 +139,31 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
 @router.get("/me", response_model=UserRead)
 async def me(user: User = Depends(get_current_user)) -> UserRead:
     return service.read_user(user)
+
+
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
+@router.post("/forgot-password", response_model=GenericSuccess)
+async def forgot_password(
+    data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)
+) -> GenericSuccess:
+    """Request a reset link. Always succeeds; OAuth accounts are never emailed."""
+    await service.forgot_password(db, data.email, ip=_client_ip(request))
+    return GenericSuccess()
+
+
+@router.get("/reset-password/validate", response_model=ResetValidationResponse)
+def validate_reset_password(
+    token: str = Query(min_length=16, max_length=256), db: Session = Depends(get_db)
+) -> ResetValidationResponse:
+    return ResetValidationResponse.model_validate(service.validate_reset_token(db, token))
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+async def reset_password(
+    data: ResetPasswordRequest, db: Session = Depends(get_db)
+) -> ResetPasswordResponse:
+    user = await service.reset_password(db, data.token, data.password)
+    return ResetPasswordResponse(email=user.email)

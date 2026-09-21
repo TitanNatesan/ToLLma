@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "ToLLma <no-reply@tollma.ai>"
     smtp_use_tls: bool = True
+    # Password reset: token lifetime + whether a successful reset kills every
+    # live session (preferred: force re-login everywhere).
+    password_reset_ttl_minutes: int = 60
+    password_reset_invalidate_sessions: bool = True
 
     # CORS
     backend_cors_origins: str = "http://localhost:3000"

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Badge, Button, LoadingState } from "@/components/ui";
 import { useSessionMutations, useSessions } from "@/hooks/useSettings";
 import { fmtRelative } from "@/app/analytics/format";
+import { authProviderLabel } from "@/lib/authProvider";
 import { fmtTokens } from "@/lib/utils";
 
 function DeviceIcon({ os }: { os: string }) {
@@ -68,7 +69,10 @@ export function SessionsSection() {
               )}
             </p>
             <p className="mt-0.5 text-[11px] text-zinc-400">
-              {session.ip ? `${session.ip} · ` : ""}
+              {authProviderLabel(session.provider)}
+              {session.location ? ` · ${session.location}` : ""}
+              {session.ip ? ` · ${session.ip}` : ""}
+              {" · "}
               Active {fmtRelative(session.last_seen)} · Started{" "}
               {session.created_at ? new Date(session.created_at).toLocaleDateString() : "—"}
             </p>

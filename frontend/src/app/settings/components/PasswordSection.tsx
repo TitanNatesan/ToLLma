@@ -5,7 +5,7 @@ import { CheckCircle2, KeyRound, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button, Input, SettingItem } from "@/components/ui";
 import { useChangePassword } from "@/hooks/useSettings";
-import { passwordStrength } from "@/lib/password";
+import { passwordStrength, validatePassword } from "@/lib/password";
 import { cn } from "@/lib/utils";
 
 const SEGMENTS = 4;
@@ -20,12 +20,15 @@ export function PasswordSection() {
 
   const strength = passwordStrength(next);
   const mismatch = confirm.length > 0 && confirm !== next;
-  const canSubmit = current.length > 0 && next.length >= 8 && next === confirm && !change.isPending;
+  const policyError = next.length > 0 ? validatePassword(next) : null;
+  const canSubmit =
+    current.length > 0 && next.length >= 8 && !policyError && next === confirm && !change.isPending;
 
   function submit() {
     setError(null);
-    if (next.length < 8) {
-      setError("New password must be at least 8 characters.");
+    const policy = validatePassword(next);
+    if (policy) {
+      setError(policy);
       return;
     }
     if (next !== confirm) {
@@ -68,7 +71,10 @@ export function PasswordSection() {
           className="h-8 w-64 text-xs"
         />
       </SettingItem>
-      <SettingItem label="New password" description="Minimum 8 characters.">
+      <SettingItem
+        label="New password"
+        description="8+ characters with an uppercase letter, a lowercase letter and a number."
+      >
         <div className="flex flex-col items-end gap-1.5">
           <Input
             type="password"
@@ -92,9 +98,11 @@ export function PasswordSection() {
                   />
                 ))}
               </div>
-              <p className="mt-1 text-right text-[10px] text-zinc-400">
-                {strength.label}
-                {strength.hints[0] ? ` · ${strength.hints[0]}` : ""}
+              <p
+                className={cn("mt-1 text-right text-[10px]", policyError ? "text-amber-500" : "text-zinc-400")}
+                data-testid="password-policy-hint"
+              >
+                {policyError ?? `${strength.label}${strength.hints[0] ? ` · ${strength.hints[0]}` : ""}`}
               </p>
             </div>
           )}

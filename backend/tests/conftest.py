@@ -92,7 +92,7 @@ def _generation_test_sessions(db: Session):
 
 @pytest.fixture()
 def user_factory(client: TestClient):
-    def _make(email: str = "u@tollma.ai", password: str = "password123", **kw) -> dict:
+    def _make(email: str = "u@tollma.ai", password: str = "Password123", **kw) -> dict:
         r = client.post("/auth/signup", json={"email": email, "password": password, **kw})
         assert r.status_code == 200, r.text
         client._authed = True  # type: ignore[attr-defined]

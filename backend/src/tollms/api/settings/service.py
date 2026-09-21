@@ -24,7 +24,13 @@ from tollms.api.settings.schemas import (
     SessionsRead,
 )
 from tollms.core import security
-from tollms.core.exceptions import AuthenticationError, ConflictError, NotFoundError, ValidationError
+from tollms.core.exceptions import (
+    AuthenticationError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from tollms.models.message import Message, Role
 from tollms.models.user import User
 
@@ -115,14 +121,22 @@ async def update_profile(db: Session, user: User, data: ProfileUpdate) -> User:
 async def change_password(
     db: Session, user: User, data: PasswordChange, *, keep_session_id: str | None
 ) -> int:
-    """Verify the current password, store the new hash, revoke every other session."""
+    """Verify the current password, store the new hash, revoke every other session.
+
+    Local-auth only: OAuth accounts have no local password (403, never 422, so
+    the UI can hide the section and the API stays honest).
+    """
+    if user.provider != "local" or not user.has_password:
+        raise ForbiddenError("password management is not available for OAuth accounts")
     if not user.password_hash:
-        raise ValidationError("this account signs in with Google; there is no password to change")
+        raise ForbiddenError("this account has no local password")
     if not security.verify_password(data.current_password, user.password_hash):
         raise AuthenticationError("current password is incorrect")
     if security.verify_password(data.new_password, user.password_hash):
         raise ValidationError("new password must be different from the current one")
+    security.validate_password_strength(data.new_password)
     user.password_hash = security.hash_password(data.new_password)
+    user.has_password = True
     db.commit()
     revoked = await security.revoke_other_sessions(user.id, keep_session_id or "")
     logger.info("password changed for user %s (%d other sessions revoked)", user.id, revoked)
@@ -130,6 +144,25 @@ async def change_password(
 
 
 # --- sessions ---------------------------------------------------------------
+
+
+def _location(ip: str) -> str | None:
+    """Coarse location label. No geo database: private ranges are labelled
+    honestly, public addresses stay unknown rather than guessing."""
+    if not ip:
+        return None
+    if ip in ("::1", "localhost"):
+        return "Local network"
+    if ip.startswith(("127.", "10.", "192.168.", "169.254.")):
+        return "Local network"
+    if ip.startswith("172."):
+        try:
+            second = int(ip.split(".")[1])
+        except (IndexError, ValueError):
+            return None
+        if 16 <= second <= 31:
+            return "Local network"
+    return None
 
 
 def _parse_iso(value: object) -> datetime | None:
@@ -205,6 +238,7 @@ async def list_sessions(db: Session, user_id: uuid.UUID, current_session_id: str
             else (browser if browser != "Unknown" else (os_name if os_name != "Unknown" else "Unknown device"))
         )
         requests, tokens = usage.get(str(record["session_id"]), (0, 0))
+        login_method = str(record.get("login_method", "password"))
         sessions.append(
             SessionRead(
                 id=str(record["session_id"]),
@@ -212,8 +246,10 @@ async def list_sessions(db: Session, user_id: uuid.UUID, current_session_id: str
                 device=device,
                 browser=browser,
                 os=os_name,
+                provider="google" if login_method == "google" else "local",
+                location=_location(str(record.get("ip") or "")),
                 ip=str(record.get("ip") or "") or None,
-                login_method=str(record.get("login_method", "password")),
+                login_method=login_method,
                 created_at=_parse_iso(record.get("created_at")),
                 last_seen=_parse_iso(record.get("last_seen")),
                 requests=requests,

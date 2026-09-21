@@ -34,10 +34,26 @@ class User(SoftDeleteMixin, TimestampedModel):
             postgresql_where=text("is_deleted = false AND username IS NOT NULL"),
         ),
         Index("ix_users_created", "created_at"),
+        # One identity per (provider, provider_user_id): a Google subject maps
+        # to exactly one live account.
+        Index(
+            "uq_users_provider_identity", "provider", "provider_user_id", unique=True,
+            postgresql_where=text("provider_user_id IS NOT NULL AND is_deleted = false"),
+        ),
     )
 
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)  # null for OAuth-only users
+    # Auth identity (authoritative for provider-aware UI/API decisions).
+    # "local" = email + password, "google" = Google OAuth.
+    provider: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="local", server_default="local", index=True
+    )
+    provider_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Mirrors password_hash for provider-aware UI; maintained by auth helpers.
+    has_password: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str | None] = mapped_column(String(30), nullable=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
