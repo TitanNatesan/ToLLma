@@ -1,8 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import * as Popover from "@radix-ui/react-popover";
-import { ExternalLink, FileText, Globe, BookOpen } from "lucide-react";
+import { BookOpen, ExternalLink, FileText, Globe } from "lucide-react";
+import {
+  InlineCitation as InlineCitationRoot,
+  InlineCitationCard,
+  InlineCitationCardBody,
+  InlineCitationCardTrigger,
+  InlineCitationQuote,
+  InlineCitationSource,
+} from "@/components/ai-elements/inline-citation";
 import { cn } from "@/lib/utils";
 
 export interface CitationSource {
@@ -21,91 +27,59 @@ export interface InlineCitationProps {
   className?: string;
 }
 
+const sourceIcon = (source: CitationSource) => {
+  if (source.kind === "web" || source.url?.startsWith("http")) {
+    return <Globe className="size-3.5 shrink-0 text-sky-500" />;
+  }
+  if (source.kind === "file" || source.kind === "document") {
+    return <FileText className="size-3.5 shrink-0 text-tollma-600 dark:text-tollma-400" />;
+  }
+  return <BookOpen className="size-3.5 shrink-0 text-amber-500" />;
+};
+
 /**
- * AI SDK Elements Inline Citation Component.
- *
- * Renders an inline numerical or badge marker that opens a popover card with
- * source title, snippet, metadata, and link.
+ * Inline citation marker built on the AI Elements InlineCitation primitives.
+ * Renders only when backend-provided citation data exists.
  */
 export function InlineCitation({ source, className }: InlineCitationProps) {
-  const [open, setOpen] = useState(false);
-
-  const isWeb = source.kind === "web" || !!source.url?.startsWith("http");
-  const isFile = source.kind === "file" || source.kind === "document";
-
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          aria-label={`Citation ${source.index}: ${source.title}`}
+    <InlineCitationRoot className={className}>
+      <InlineCitationCard>
+        <InlineCitationCardTrigger
           data-testid={`citation-marker-${source.index}`}
-          onMouseEnter={() => setOpen(true)}
-          className={cn(
-            "inline-flex items-center justify-center align-super mx-0.5 min-w-4 h-4 px-1 rounded-full text-[10px] font-mono font-medium",
-            "bg-zinc-100 text-zinc-600 hover:bg-tollma-100 hover:text-tollma-800 transition-colors",
-            "dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-tollma-900/60 dark:hover:text-tollma-300",
-            className,
-          )}
-        >
-          {source.index}
-        </button>
-      </Popover.Trigger>
-
-      <Popover.Portal>
-        <Popover.Content
-          side="top"
-          align="center"
-          sideOffset={5}
-          onMouseLeave={() => setOpen(false)}
-          className={cn(
-            "z-50 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg outline-none",
-            "dark:border-zinc-800 dark:bg-zinc-900 text-xs animate-in fade-in-0 zoom-in-95",
-          )}
-        >
-          <div className="flex items-start justify-between gap-2 mb-1.5">
-            <div className="flex items-center gap-1.5 min-w-0">
-              {isWeb ? (
-                <Globe className="size-3.5 shrink-0 text-sky-500" />
-              ) : isFile ? (
-                <FileText className="size-3.5 shrink-0 text-tollma-600 dark:text-tollma-400" />
-              ) : (
-                <BookOpen className="size-3.5 shrink-0 text-amber-500" />
-              )}
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                {source.title}
+          sources={source.url ? [source.url] : []}
+        />
+        <InlineCitationCardBody>
+          <InlineCitationSource
+            className="p-3"
+            description={source.snippet}
+            title={source.title}
+            url={source.url}
+          >
+            <div className="flex items-center gap-1.5">
+              {sourceIcon(source)}
+              <span className="text-[10px] text-zinc-400">
+                {source.author ? `By ${source.author}` : `Source [${source.index}]`}
               </span>
             </div>
-            <span className="shrink-0 rounded bg-zinc-100 px-1 py-0.2 text-[9px] font-mono text-zinc-500 dark:bg-zinc-800">
-              [{source.index}]
-            </span>
-          </div>
-
-          {source.snippet && (
-            <p className="text-zinc-600 dark:text-zinc-300 text-[11px] leading-relaxed line-clamp-3 mb-2 italic bg-zinc-50 dark:bg-zinc-800/50 p-1.5 rounded">
-              "{source.snippet}"
-            </p>
-          )}
-
-          <div className="flex items-center justify-between text-[10px] text-zinc-400 pt-1 border-t border-zinc-100 dark:border-zinc-800">
-            {source.author && <span className="truncate">By {source.author}</span>}
-            {source.url ? (
+            {source.snippet && <InlineCitationQuote className="mt-1">{source.snippet}</InlineCitationQuote>}
+            {source.url && (
               <a
+                className={cn(
+                  "inline-flex items-center gap-1 text-xs font-medium text-tollma-600",
+                  "hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300",
+                )}
                 href={source.url}
-                target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-tollma-600 hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300 ml-auto font-medium"
+                target="_blank"
               >
-                <span>View Source</span>
+                <span>View source</span>
                 <ExternalLink className="size-2.5" />
               </a>
-            ) : isFile ? (
-              <span className="text-zinc-400">Attached File</span>
-            ) : null}
-          </div>
-          <Popover.Arrow className="fill-white dark:fill-zinc-900" />
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+            )}
+          </InlineCitationSource>
+        </InlineCitationCardBody>
+      </InlineCitationCard>
+    </InlineCitationRoot>
   );
 }

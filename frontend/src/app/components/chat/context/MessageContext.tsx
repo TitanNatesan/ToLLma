@@ -1,7 +1,9 @@
 "use client";
 
-import { memo, useState } from "react";
-import { ChevronDown, ChevronUp, Database, FileCode } from "lucide-react";
+import { memo } from "react";
+import { Layers } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ai-elements/collapsible";
+import { ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface ContextItem {
@@ -14,72 +16,53 @@ export interface ContextItem {
 
 export interface MessageContextProps {
   contextItems?: ContextItem[];
-  className?: string;
 }
 
-/**
- * AI SDK Elements Context Component.
- *
- * Renders contextual knowledge, attached files, or system memories utilized
- * during response generation. Stays completely hidden when no context exists.
- */
-function MessageContextInner({ contextItems, className }: MessageContextProps) {
-  const [open, setOpen] = useState(false);
+const TYPE_LABEL: Record<ContextItem["type"], string> = {
+  file: "File",
+  rag_doc: "RAG document",
+  memory: "Memory",
+  system_instruction: "System instruction",
+};
 
+/**
+ * Context display built on the AI Elements Collapsible primitives.
+ * Renders attached RAG/memory/file context when the backend provides it.
+ */
+function MessageContextInner({ contextItems }: MessageContextProps) {
   if (!contextItems || contextItems.length === 0) return null;
 
   return (
-    <div
-      className={cn(
-        "mb-2 rounded-xl border border-zinc-200/80 bg-zinc-50/60 p-2 text-xs dark:border-zinc-800 dark:bg-zinc-900/40",
-        className,
-      )}
-      data-testid="message-context"
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+    <Collapsible className="mb-2" data-testid="message-context">
+      <CollapsibleTrigger
+        className={cn(
+          "flex items-center gap-1.5 text-xs text-zinc-500 transition-colors",
+          "hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100",
+        )}
       >
-        <div className="flex items-center gap-1.5 font-medium">
-          <Database className="size-3.5 text-zinc-500" />
-          <span>Context Used</span>
-          <span className="rounded-full bg-zinc-200/80 px-1.5 py-0.2 text-[10px] font-mono text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-            {contextItems.length}
-          </span>
-        </div>
-        <span className="flex items-center gap-1 text-[11px] text-zinc-400">
-          <span>{open ? "Hide" : "View"}</span>
-          {open ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+        <Layers className="size-3.5" />
+        <span className="font-medium">
+          {contextItems.length} context {contextItems.length === 1 ? "item" : "items"}
         </span>
-      </button>
-
-      {open && (
-        <div className="mt-2 space-y-1.5 border-t border-zinc-200/60 pt-2 dark:border-zinc-800">
+        <ChevronDownIcon className="size-3.5 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ul className="mt-2 space-y-1 border-l-2 border-zinc-200 pl-3 dark:border-zinc-800">
           {contextItems.map((item) => (
-            <div
-              key={item.id}
-              className="rounded-lg border border-zinc-200/60 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900"
-            >
-              <div className="flex items-center gap-1.5 font-medium text-zinc-800 dark:text-zinc-200">
-                <FileCode className="size-3 text-zinc-400" />
-                <span className="truncate">{item.title}</span>
-                <span className="ml-auto text-[10px] font-mono uppercase text-zinc-400">
-                  {item.type}
-                </span>
-              </div>
-              {item.content && (
-                <p className="mt-1 line-clamp-3 text-[11px] text-zinc-500 font-mono">
-                  {item.content}
-                </p>
-              )}
-            </div>
+            <li className="text-xs text-zinc-500 dark:text-zinc-400" key={item.id}>
+              <span className="font-medium text-zinc-700 dark:text-zinc-200">{item.title}</span>
+              <span className="ml-1.5 text-[10px] tracking-wide text-zinc-400 uppercase">
+                {TYPE_LABEL[item.type]}
+              </span>
+            </li>
           ))}
-        </div>
-      )}
-    </div>
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
-export const MessageContext = memo(MessageContextInner);
+export const MessageContext = memo(
+  MessageContextInner,
+  (prev, next) => prev.contextItems === next.contextItems,
+);

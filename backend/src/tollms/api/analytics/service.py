@@ -30,6 +30,7 @@ from tollms.api.analytics.schemas import (
     AnalyticsRange,
     AnalyticsSummary,
     AnalyticsTimeseries,
+    AnalyticsWidgets,
     BreakdownRow,
     ConversationAnalyticsRow,
     HeatmapCell,
@@ -44,6 +45,8 @@ from tollms.models.conversation import Conversation
 from tollms.models.message import Message, MessageStatus, Role
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
+from tollms.services import exporters
+from tollms.services import request_logs as request_log_engine
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_get_sync, cache_set_sync
@@ -674,8 +677,8 @@ def get_conversations(db: Session, user_id: uuid.UUID, q: RangeQuery) -> Analyti
 
 def export(
     db: Session, user_id: uuid.UUID, q: RangeQuery, dataset: str, export_format: str
-) -> tuple[str, str, str]:
-    """(content, filename, media_type) for one dataset. PDF can slot in here later."""
+) -> tuple[bytes | str, str, str]:
+    """(content, filename, media_type) for one dataset (csv | xlsx | json)."""
     rng = resolve_range(q)
     stamp = rng.start.strftime("%Y%m%d")
 
@@ -729,6 +732,16 @@ def export(
         }]
         columns = list(rows[0].keys())
 
+    if export_format == "xlsx":
+        content = exporters.analytics_xlsx(
+            [(dataset, columns, [[row.get(column) for column in columns] for row in rows])]
+        )
+        return (
+            content,
+            f"tollma-{dataset}-{stamp}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     if export_format == "json":
         content = json.dumps(
             {"dataset": dataset, "range": rng.model_dump(mode="json"), "rows": rows}, indent=2
@@ -741,3 +754,118 @@ def export(
     for row in rows:
         writer.writerow(row)
     return buffer.getvalue(), f"tollma-{dataset}-{stamp}.csv", "text/csv"
+
+
+def render_export(
+    db: Session,
+    user,
+    *,
+    dataset: str,
+    export_format: str,
+    range_key: str,
+    start: str | None = None,
+    end: str | None = None,
+    tz: str | None = None,
+) -> tuple[bytes | str, str, str]:
+    """Exports-API entry point: loose query params -> typed RangeQuery -> export."""
+    from datetime import date as _date
+
+    def _parse(value: str | None) -> _date | None:
+        if not value:
+            return None
+        try:
+            return _date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValidationError(f"invalid date: {value}") from exc
+
+    query = RangeQuery(preset=range_key, timezone=tz or "UTC", start=_parse(start), end=_parse(end))
+    content, filename, media_type = export(db, user.id, query, dataset, export_format)
+    request_log_engine.record_export(db, user.id, f"analytics:{dataset}", export_format, 0)
+    db.commit()
+    return content, media_type, filename
+
+
+def get_widgets(db: Session, user_id: uuid.UUID, q: RangeQuery) -> "AnalyticsWidgets":
+    """Conversation-intelligence widgets from the new history/share/export tables."""
+    from sqlalchemy import desc
+
+    from tollms.models.conversation import Conversation
+    from tollms.models.message_history import GenerationRun, MessageVersion
+    from tollms.models.request_log import ExportEvent
+    from tollms.models.share import ConversationShare
+
+    rng = resolve_range(q)
+    owner = Conversation.user_id == user_id
+
+    regeneration_count = db.execute(
+        select(func.count(GenerationRun.id))
+        .join(Message, Message.id == GenerationRun.message_id)
+        .where(Message.user_id == user_id, Message.created_at >= rng.start, Message.created_at < rng.end)
+    ).scalar_one()
+    edit_count = db.execute(
+        select(func.count(MessageVersion.id))
+        .join(Message, Message.id == MessageVersion.message_id)
+        .where(Message.user_id == user_id, MessageVersion.created_at >= rng.start, MessageVersion.created_at < rng.end)
+    ).scalar_one()
+    branch_count = db.execute(
+        select(func.count(Conversation.id)).where(
+            owner, Conversation.parent_conversation_id.is_not(None), Conversation.is_deleted.is_(False)
+        )
+    ).scalar_one()
+    shared_conversations = db.execute(
+        select(func.count(func.distinct(ConversationShare.conversation_id))).where(
+            ConversationShare.user_id == user_id, ConversationShare.is_public.is_(True)
+        )
+    ).scalar_one()
+    export_count = db.execute(
+        select(func.count(ExportEvent.id)).where(
+            ExportEvent.user_id == user_id, ExportEvent.created_at >= rng.start, ExportEvent.created_at < rng.end
+        )
+    ).scalar_one()
+
+    most_regenerated = db.execute(
+        select(Conversation.id, Conversation.title, func.count(GenerationRun.id).label("count"))
+        .join(Message, Message.conversation_id == Conversation.id)
+        .join(GenerationRun, GenerationRun.message_id == Message.id)
+        .where(owner, Conversation.is_deleted.is_(False), Message.created_at >= rng.start, Message.created_at < rng.end)
+        .group_by(Conversation.id, Conversation.title)
+        .having(func.count(GenerationRun.id) > 1)
+        .order_by(desc("count"))
+        .limit(5)
+    ).all()
+
+    most_edited = db.execute(
+        select(
+            MessageVersion.message_id,
+            Conversation.id,
+            Conversation.title,
+            func.count(MessageVersion.id).label("count"),
+        )
+        .join(Message, Message.id == MessageVersion.message_id)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(owner, Conversation.is_deleted.is_(False), MessageVersion.created_at >= rng.start, MessageVersion.created_at < rng.end)
+        .group_by(MessageVersion.message_id, Conversation.id, Conversation.title)
+        .order_by(desc("count"))
+        .limit(5)
+    ).all()
+
+    return AnalyticsWidgets(
+        regeneration_count=int(regeneration_count or 0),
+        branch_count=int(branch_count or 0),
+        shared_conversations=int(shared_conversations or 0),
+        export_count=int(export_count or 0),
+        edit_count=int(edit_count or 0),
+        most_regenerated=[
+            {"conversation_id": row[0], "title": row[1], "regeneration_count": int(row[2])}
+            for row in most_regenerated
+        ],
+        most_edited=[
+            {
+                "message_id": row[0],
+                "conversation_id": row[1],
+                "conversation_title": row[2],
+                "version_count": int(row[3]),
+            }
+            for row in most_edited
+        ],
+    )

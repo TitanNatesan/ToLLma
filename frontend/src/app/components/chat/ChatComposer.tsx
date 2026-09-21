@@ -36,6 +36,15 @@ import { AttachmentPicker } from "./AttachmentPicker";
 import { UploadPreview } from "./UploadPreview";
 import { DropzoneOverlay } from "./attachments/DropzoneOverlay";
 import { ReasoningSelector } from "./ReasoningSelector";
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputFooter,
+  PromptInputHeader,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+} from "@/components/ai-elements/prompt-input";
 import { useModelCapabilities } from "./hooks/useModelCapabilities";
 import { cycleReasoningLevel } from "./reasoningLevels";
 import {
@@ -509,12 +518,6 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Drop overlay — only while a valid drag is over the composer */}
-      <DropzoneOverlay
-        isDragging={dragActive}
-        acceptLabel={kinds.join(", ")}
-      />
-
       {/* Unsupported-upload warning with model suggestions */}
       {rejection && (
         <div
@@ -554,102 +557,107 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         </div>
       )}
 
-      <UploadPreview attachments={attachments} onRemove={removeAttachment} />
-
-      {/* Textarea */}
-      <textarea
-        ref={textareaRef}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          resize();
+      <PromptInput
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSend();
         }}
-        onPaste={handlePaste}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter") return;
-          const withMod = e.metaKey || e.ctrlKey;
-          // "send" (default): Enter sends, Shift+Enter newline, Ctrl/Cmd+Enter also sends.
-          // "newline": Enter inserts a newline; Ctrl/Cmd+Enter sends.
-          const shouldSend = enterBehavior === "send" ? !e.shiftKey || withMod : withMod;
-          if (shouldSend) {
-            e.preventDefault();
-            handleSend();
-          }
-        }}
-        placeholder={
-          !modelId
-            ? "Select a model to start chatting…"
-            : streaming
-              ? "Generating response…"
-              : enterBehavior === "send"
-                ? "Message… (Enter to send, Shift+Enter for newline)"
-                : "Message… (Ctrl+Enter to send, Enter for newline)"
-        }
-        rows={1}
-        disabled={disabled && !streaming}
-        aria-label="Chat input"
-        data-testid="chat-input"
-        className={cn(
-          "w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm leading-relaxed",
-          "focus:outline-none focus:ring-2 focus:ring-tollma-500/50 focus:border-tollma-500 dark:border-zinc-700 dark:bg-zinc-900",
-          "placeholder:text-zinc-400 disabled:opacity-50",
-          "transition-all duration-150",
-        )}
-        style={{ minHeight: 44, maxHeight: 200, overflow: "auto" }}
-      />
-
-      {/* Toolbar: message-creation controls only */}
-      <div className="mt-2 flex items-center gap-2">
-        <UnifiedModelSelector
-          providers={providers}
-          models={models}
-          open={modelOpen}
-          onOpenChange={setModelOpen}
+        status={streaming ? "streaming" : "ready"}
+      >
+        <DropzoneOverlay
+          isDragging={dragActive}
+          acceptLabel={kinds.join(", ")}
         />
 
-        {/* Thinking slider — hidden entirely unless the model reasons */}
-        {caps.supportsReasoning && (
-          <ReasoningSelector
-            levels={caps.reasoningLevels}
-            value={reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel)}
-            onChange={setReasoningLevel}
+        <UploadPreview attachments={attachments} onRemove={removeAttachment} />
+
+        <PromptInputBody>
+          <PromptInputTextarea
+            textareaRef={textareaRef}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              resize();
+            }}
+            onPaste={handlePaste}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              const withMod = e.metaKey || e.ctrlKey;
+              // "send" (default): Enter sends, Shift+Enter newline, Ctrl/Cmd+Enter also sends.
+              // "newline": Enter inserts a newline; Ctrl/Cmd+Enter sends.
+              const shouldSend = enterBehavior === "send" ? !e.shiftKey || withMod : withMod;
+              if (shouldSend) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder={
+              !modelId
+                ? "Select a model to start chatting…"
+                : streaming
+                  ? "Generating response…"
+                  : enterBehavior === "send"
+                    ? "Message… (Enter to send, Shift+Enter for newline)"
+                    : "Message… (Ctrl+Enter to send, Enter for newline)"
+            }
+            rows={1}
+            disabled={disabled && !streaming}
+            aria-label="Chat input"
+            data-testid="chat-input"
           />
-        )}
+        </PromptInputBody>
 
-        {/* Single upload button — hidden for text-only models */}
-        <AttachmentPicker
-          accept={kinds.length > 0 ? combinedAccept(kinds) : null}
-          disabled={!ready || streaming}
-          onPick={(files) => void handleIncomingFiles(files)}
-        />
+        {/* Toolbar: message-creation controls only */}
+        <PromptInputFooter className="pb-2">
+          <PromptInputTools>
+            <UnifiedModelSelector
+              providers={providers}
+              models={models}
+              open={modelOpen}
+              onOpenChange={setModelOpen}
+            />
 
-        {/* Right side: Send / Stop button */}
-        <div className="ml-auto flex items-center gap-2">
-          {streaming ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onStop}
-              data-testid="stop-button"
-              className="gap-1.5 text-xs text-red-600 hover:text-red-700 border-red-200 dark:border-red-900"
-            >
-              <Square className="size-3 fill-current" />
-              Stop Generating
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              onClick={handleSend}
-              disabled={!ready || uploading || (!draft.trim() && readyAttachments(attachments).length === 0)}
-              data-testid="send-button"
-              className="gap-1.5 text-xs"
-            >
-              <span>Send</span>
-              <CornerDownLeft className="size-3" />
-            </Button>
-          )}
-        </div>
-      </div>
+            {/* Thinking slider — hidden entirely unless the model reasons */}
+            {caps.supportsReasoning && (
+              <ReasoningSelector
+                levels={caps.reasoningLevels}
+                value={reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel)}
+                onChange={setReasoningLevel}
+              />
+            )}
+
+            {/* Single upload button — hidden for text-only models */}
+            <AttachmentPicker
+              accept={kinds.length > 0 ? combinedAccept(kinds) : null}
+              disabled={!ready || streaming}
+              onPick={(files) => void handleIncomingFiles(files)}
+            />
+          </PromptInputTools>
+
+          <PromptInputSubmit
+            className={
+              streaming
+                ? "border-red-200 text-red-600 hover:text-red-700 dark:border-red-900"
+                : undefined
+            }
+            disabled={!ready || uploading || (!draft.trim() && readyAttachments(attachments).length === 0)}
+            onStop={onStop}
+            status={streaming ? "streaming" : "ready"}
+          >
+            {streaming ? (
+              <>
+                <Square className="size-3 fill-current" />
+                <span>Stop Generating</span>
+              </>
+            ) : (
+              <>
+                <span>Send</span>
+                <CornerDownLeft className="size-3" />
+              </>
+            )}
+          </PromptInputSubmit>
+        </PromptInputFooter>
+      </PromptInput>
     </div>
   );
 }

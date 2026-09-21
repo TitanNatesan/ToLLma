@@ -87,6 +87,8 @@ class Message(SoftDeleteMixin, TimestampedModel):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured error taxonomy (core.exceptions.ErrorCode) for actionable UI.
+    error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
     # Client idempotency key for the send that created this row. Same-key
     # retries adopt the existing generation instead of duplicating rows.
     client_key: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -118,7 +120,9 @@ class Message(SoftDeleteMixin, TimestampedModel):
     reasoning_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    conversation: Mapped["Conversation"] = relationship(
+        back_populates="messages", foreign_keys="Message.conversation_id"
+    )
     attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="message", cascade="all, delete-orphan", order_by="Attachment.created_at"
     )

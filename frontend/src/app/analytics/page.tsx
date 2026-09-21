@@ -50,6 +50,8 @@ import {
   browserTimezone,
 } from "@/hooks/useAnalytics";
 import { downloadAnalyticsExport } from "@/services/api";
+import { useAnalyticsWidgets } from "@/hooks/useIntelligence";
+import { AnalyticsWidgetsPanel } from "./components/AnalyticsWidgetsPanel";
 import { useChatStore } from "@/store/chat";
 import { fmtCompactTokens, fmtTokens } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -118,6 +120,7 @@ export default function AnalyticsPage() {
   const heatmap = useAnalyticsHeatmap(params);
   const performance = useAnalyticsPerformance(params);
   const conversations = useAnalyticsConversations(params);
+  const widgets = useAnalyticsWidgets(params);
   const refresh = useAnalyticsRefresh();
 
   const activeGranularity = granularity ?? timeseries.data?.granularity ?? "day";
@@ -140,7 +143,7 @@ export default function AnalyticsPage() {
     setGranularity(next);
   }
 
-  async function onExport(format: "csv" | "json") {
+  async function onExport(format: "csv" | "json" | "xlsx") {
     setExporting(true);
     try {
       await downloadAnalyticsExport(params, dataset, format);
@@ -385,6 +388,8 @@ export default function AnalyticsPage() {
                 testId="kpi-cache"
               />
             </section>
+
+            <AnalyticsWidgetsPanel widgets={widgets.data} />
 
             {/* Spending */}
             <SectionCard

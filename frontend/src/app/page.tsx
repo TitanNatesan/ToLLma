@@ -22,9 +22,24 @@ import {
 import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
 import { useSettingsStore } from "@/store/settings";
-import { ScrollToBottom } from "@/app/components/chat/conversation/ScrollToBottom";
+import { SearchModal } from "@/components/ui/SearchModal";
+import { ShareDialog } from "@/components/ui/ShareDialog";
+import { useIntelligenceMutations } from "@/hooks/useIntelligence";
+import {
+  activateGeneration,
+  createBranch,
+  deleteMessage,
+  editMessage,
+  regenerateMessage,
+} from "@/services/api";
+import { toastApiError } from "@/lib/errors";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
 import { Sparkles } from "lucide-react";
-import type { ActiveGeneration, ChatMessage, MessageStatus } from "@/types";
+import type { ActiveGeneration, ChatMessage, MessageStatus, SearchResult } from "@/types";
 
 const PENDING_SEND_KEY = "tollma-pending-send";
 
@@ -76,14 +91,6 @@ export default function Home() {
     void qc.invalidateQueries({ queryKey: ["conversations"] });
   }, [qc]);
   const abortRef = useRef<AbortController | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const stickRef = useRef(true);
-  const [showScrollDown, setShowScrollDown] = useState(false);
-  const scrollToBottom = useCallback(() => {
-    // Instant jump: predictable for a "latest" affordance (streaming updates
-    // keep their own smooth auto-scroll).
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, []);
 
   useEffect(() => {
     if (!convError) return;
@@ -102,13 +109,9 @@ export default function Home() {
     ...optimisticMessages,
   ] as ChatMessage[];
 
-  // Auto-scroll to bottom on message updates (user preference).
+  // Follow-new-messages preference: AI Elements Conversation (stick-to-bottom)
+  // when on, a plain scroll container when the user opted out.
   const autoScroll = useSettingsStore((s) => s.autoScroll);
-  useEffect(() => {
-    if (autoScroll && stickRef.current) {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-    }
-  }, [autoScroll, allMessages.length, optimisticMessages]);
 
   /** Terminal state for any watched stream: drop local overlays, reload truth. */
   const finishGeneration = useCallback((convId: string | null, status?: MessageStatus | null, error?: string | null) => {
@@ -439,6 +442,196 @@ export default function Home() {
     })().catch(() => {});
   }, [activeConversationId, attachToGeneration, refreshAll, setConversation]);
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const intelligence = useIntelligenceMutations(activeConversationId);
+  const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation } = intelligence;
+
+  const attachRegeneration = useCallback(
+    (conversationId: string, messageId: string, generationId: string) => {
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      attachToGeneration(
+        conversationId,
+        {
+          generation_id: generationId,
+          message_id: messageId,
+          conversation_id: conversationId,
+          status: "running",
+          current_content: "",
+          started_at: null,
+        },
+        ctrl,
+      );
+    },
+    [attachToGeneration],
+  );
+
+  const handleEdit = useCallback(
+    (messageId: string, content: string) => {
+      const onSuccess = (result: Awaited<ReturnType<typeof editMessage>>) => {
+        const conversationId = result.message.conversation_id ?? activeConversationId;
+        if (result.regeneration_started && result.regenerating_message_id && conversationId) {
+          attachRegeneration(conversationId, result.regenerating_message_id, result.regenerating_message_id);
+        } else {
+          refreshAll(conversationId);
+        }
+      };
+      editMutation.mutate(
+        { messageId, content },
+        {
+          onSuccess,
+          onError: (error) =>
+            toastApiError(error, {
+              title: "Edit failed",
+              onRetry: () => editMutation.mutate({ messageId, content }, { onSuccess }),
+            }),
+        },
+      );
+    },
+    [activeConversationId, attachRegeneration, editMutation, refreshAll],
+  );
+
+  const handleRegenerate = useCallback(
+    (messageId: string) => {
+      const onSuccess = (started: Awaited<ReturnType<typeof regenerateMessage>>) => {
+        attachRegeneration(started.conversation_id, started.message_id, started.generation_id);
+      };
+      regenerateMutation.mutate(messageId, {
+        onSuccess,
+        onError: (error) =>
+          toastApiError(error, {
+            title: "Regenerate failed",
+            onRetry: () => regenerateMutation.mutate(messageId, { onSuccess }),
+          }),
+      });
+    },
+    [attachRegeneration, regenerateMutation],
+  );
+
+  const handleBranch = useCallback(
+    (messageId: string) => {
+      if (!activeConversationId) return;
+      branchMutation.mutate(
+        { conversationId: activeConversationId, messageId },
+        {
+          onSuccess: (branch) => {
+            setConversation(branch.conversation_id);
+            toast.success("Branch created", { description: branch.branch_name ?? undefined });
+          },
+          onError: (error) => toastApiError(error, { title: "Could not create branch" }),
+        },
+      );
+    },
+    [activeConversationId, branchMutation, setConversation],
+  );
+
+  const handleActivateGeneration = useCallback(
+    (messageId: string, runId: string) => {
+      activateMutation.mutate(
+        { messageId, runId },
+        {
+          onSuccess: () => refreshAll(activeConversationId),
+          onError: (error) => toastApiError(error, { title: "Could not switch response" }),
+        },
+      );
+    },
+    [activeConversationId, activateMutation, refreshAll],
+  );
+
+  const handleDeleteMessage = useCallback(
+    (messageId: string) => {
+      void deleteMessage(messageId)
+        .then(() => refreshAll(activeConversationId))
+        .catch((error) => toastApiError(error, { title: "Could not delete message" }));
+    },
+    [activeConversationId, refreshAll],
+  );
+
+  const handleSearchSelect = useCallback(
+    (result: SearchResult) => {
+      setConversation(result.conversation_id);
+      setHighlightId(result.message_id);
+    },
+    [setConversation],
+  );
+
+  // Global search shortcut (Ctrl+Shift+F) reuses the registered command.
+  useEffect(() => {
+    const openSearch = () => setSearchOpen(true);
+    window.addEventListener("tollma:focus-conversation-search", openSearch);
+    return () => window.removeEventListener("tollma:focus-conversation-search", openSearch);
+  }, []);
+
+  // Scroll to + briefly highlight the message a search result points at.
+  useEffect(() => {
+    if (!highlightId) return;
+    const element = document.getElementById(highlightId);
+    if (!element) return;
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    element.classList.add("ring-2", "ring-tollma-400", "rounded-2xl");
+    const timer = setTimeout(() => {
+      element.classList.remove("ring-2", "ring-tollma-400", "rounded-2xl");
+      setHighlightId(null);
+    }, 2400);
+    return () => clearTimeout(timer);
+  }, [highlightId, allMessages.length]);
+
+  const messageList = (
+    <>
+      {allMessages.length === 0 && !streaming && (
+        <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
+            <Sparkles className="size-7" />
+          </div>
+          <h1 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200">
+            Start a conversation
+          </h1>
+          <p className="text-sm text-zinc-500">
+            Select a provider and model in the composer below, then type your message.
+            {!ready && (
+              <span>
+                {" "}
+                <Link href="/providers" className="text-tollma-600 underline hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300">
+                  Set up a provider
+                </Link>{" "}
+                to get started.
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-zinc-400">
+            Press <kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">Ctrl+K</kbd> to open the command palette
+          </p>
+        </div>
+      )}
+
+      <AnimatePresence initial={false}>
+        {allMessages.map((m) => {
+          const isOpt = m.id.startsWith("opt-");
+          // Live state: the optimistic overlay (keyed by backend id) or a
+          // persisted RUNNING row, while the store says we're streaming.
+          const optStreaming = Boolean((m as { isStreaming?: boolean }).isStreaming);
+          const backendRunning = !isOpt && (m as ChatMessage).status === "running";
+          const isStreaming = streaming && (optStreaming || backendRunning);
+          return (
+            <MessageView
+              key={m.id}
+              message={m}
+              isStreaming={isStreaming}
+              onActivateGeneration={handleActivateGeneration}
+              onBranch={!isOpt ? handleBranch : undefined}
+              onDelete={!isOpt ? handleDeleteMessage : undefined}
+              onEdit={!isOpt && m.role === "user" ? handleEdit : undefined}
+              onRegenerate={!isOpt && m.role === "assistant" ? handleRegenerate : undefined}
+              onShare={!isOpt && m.role === "assistant" ? () => setShareOpen(true) : undefined}
+            />
+          );
+        })}
+      </AnimatePresence>
+    </>
+  );
+
   return (
     <div className="flex h-full flex-1 overflow-hidden">
       {/* Center Chat Panel */}
@@ -446,77 +639,22 @@ export default function Home() {
         {/* Chat Header */}
         <ChatHeader />
 
-        {/* Messages area */}
+        {/* Messages area — AI Elements Conversation (stick-to-bottom) */}
         <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          ref={scrollRef}
-          className="flex flex-1 flex-col overflow-y-auto"
-          data-testid="message-list"
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-            // Two thresholds on purpose: generous for stream stickiness (don't
-            // yank the user mid-read), strict for the jump button (show it as
-            // soon as the user is meaningfully away from the latest message).
-            stickRef.current = distance < 120;
-            const next = distance > 24;
-            setShowScrollDown((prev) => (prev === next ? prev : next));
-          }}
-        >
-          <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-6">
-          {allMessages.length === 0 && !streaming && (
-            <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
-              <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-                <Sparkles className="size-7" />
+          {autoScroll ? (
+            <Conversation scrollTestId="message-list">
+              <ConversationContent className="mx-auto min-h-full w-full max-w-[1200px] px-4 py-6">
+                {messageList}
+              </ConversationContent>
+              <ConversationScrollButton />
+            </Conversation>
+          ) : (
+            <div className="flex flex-1 flex-col overflow-y-auto" data-testid="message-list">
+              <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-6">
+                {messageList}
               </div>
-              <h1 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200">
-                Start a conversation
-              </h1>
-              <p className="text-sm text-zinc-500">
-                Select a provider and model in the composer below, then type your message.
-                {!ready && (
-                  <span>
-                    {" "}
-                    <Link href="/providers" className="text-tollma-600 underline hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300">
-                      Set up a provider
-                    </Link>{" "}
-                    to get started.
-                  </span>
-                )}
-              </p>
-              <p className="text-xs text-zinc-400">
-                Press <kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">Ctrl+K</kbd> to open the command palette
-              </p>
             </div>
           )}
-
-          <AnimatePresence initial={false}>
-            {allMessages.map((m) => {
-              const isOpt = m.id.startsWith("opt-");
-              // Live state: the optimistic overlay (keyed by backend id) or a
-              // persisted RUNNING row, while the store says we're streaming.
-              const optStreaming = Boolean((m as { isStreaming?: boolean }).isStreaming);
-              const backendRunning = !isOpt && (m as ChatMessage).status === "running";
-              const isStreaming = streaming && (optStreaming || backendRunning);
-              return (
-                <MessageView
-                  key={m.id}
-                  message={m}
-                  isStreaming={isStreaming}
-                  onRegenerate={
-                    !isOpt && m.role === "assistant" && m.id === lastAssistantId && lastUser
-                      ? () => send({ text: lastUser.content, reasoningLevel: null, attachments: [] }, activeConversationId)
-                      : undefined
-                  }
-                />
-              );
-            })}
-          </AnimatePresence>
-          </div>
-        </div>
-
-        {/* Jump to latest — AI SDK Conversation pattern */}
-        <ScrollToBottom visible={showScrollDown} onClick={scrollToBottom} />
         </div>
 
         {/* Composer */}
@@ -531,6 +669,9 @@ export default function Home() {
 
       {/* Right Intelligence Panel */}
       <IntelligencePanel />
+
+      <SearchModal onOpenChange={setSearchOpen} onSelect={handleSearchSelect} open={searchOpen} />
+      <ShareDialog conversationId={activeConversationId} onOpenChange={setShareOpen} open={shareOpen} />
     </div>
   );
 }

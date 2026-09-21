@@ -14,6 +14,15 @@ CONVERSATION = 300
 # cache hit rate, and every payload is rebuildable from PostgreSQL.
 ANALYTICS = 60
 
+# Full-text search results (short: new messages must appear quickly).
+SEARCH = 30
+
+# Public share lookups (revocation/expiry must take effect fast).
+SHARE = 60
+
+# Export job status/metadata.
+EXPORT = 300
+
 # Repository search results (user-typed lookups).
 REPOSITORY_SEARCH = 3600
 

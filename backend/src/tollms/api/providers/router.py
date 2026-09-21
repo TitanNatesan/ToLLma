@@ -10,6 +10,7 @@ from tollms.core.security import get_current_user
 from tollms.models.user import User
 from tollms.api.providers import service
 from tollms.api.providers.schemas import (
+    ProviderSecurityRead,
     DiscoveryResult,
     DraftDiscoveredModel,
     DraftValidate,
@@ -105,3 +106,14 @@ async def validate(provider_id: uuid.UUID, db: Session = Depends(get_db), user: 
 @router.post("/{provider_id}/discover", response_model=DiscoveryResult)
 async def discover(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> DiscoveryResult:
     return await service.discover_provider_models(db, provider_id, user_id=user.id)
+
+
+@router.get("/{provider_id}/security", response_model=ProviderSecurityRead)
+def security(
+    provider_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProviderSecurityRead:
+    """Encryption validation for a provider's stored credentials."""
+    provider = service.get_provider(db, provider_id, user.id)
+    return ProviderSecurityRead.model_validate(service.credential_security(provider))

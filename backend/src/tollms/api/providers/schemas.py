@@ -137,3 +137,14 @@ class RegisterResult(BaseModel):
     provider: ProviderRead
     models_created: int
     match_stats: dict[str, int]
+
+
+class ProviderSecurityRead(BaseModel):
+    """Credential-encryption health for one provider. Never returns secrets."""
+
+    encrypted: bool
+    masked: bool
+    algorithm: str
+    credential_keys: list[str]
+    validation_status: str
+    last_validated_at: datetime | None = None

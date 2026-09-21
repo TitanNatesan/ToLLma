@@ -1,83 +1,88 @@
 "use client";
 
-import { AlertCircle, FileText, Film, Loader2, Music, X } from "lucide-react";
-import { cn } from "@/lib/utils";
-import type { AttachmentKind, ComposerAttachment } from "./capabilities";
+import { AlertCircle, Loader2 } from "lucide-react";
+import {
+  Attachment,
+  AttachmentInfo,
+  AttachmentPreview,
+  AttachmentRemove,
+  type AttachmentData,
+} from "@/components/ai-elements/attachments";
+import type { ComposerAttachment } from "./capabilities";
 
-const KIND_ICON = { image: null, file: FileText, audio: Music, video: Film } as const;
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** Attachment chips with upload lifecycle states (AI SDK Attachments
- *  pattern): uploading (progress), ready, error — removable before send. */
-export function UploadPreview({
-  attachments,
-  onRemove,
-}: {
+export interface UploadPreviewProps {
   attachments: ComposerAttachment[];
   onRemove: (id: string) => void;
-}) {
+}
+
+function toData(attachment: ComposerAttachment): AttachmentData {
+  return {
+    type: "file",
+    id: attachment.id,
+    filename: attachment.name,
+    mediaType: attachment.mime,
+    size: attachment.size,
+    url: attachment.previewUrl,
+  };
+}
+
+/**
+ * Composer attachment staging built on AI Elements Attachments.
+ * Uploading entries expose progress; ready entries expose remove; failed
+ * entries surface the server error.
+ */
+export function UploadPreview({ attachments, onRemove }: UploadPreviewProps) {
   if (attachments.length === 0) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5 px-0.5 pb-1.5" data-testid="upload-preview">
-      {attachments.map((a) => {
-        const Icon = KIND_ICON[a.kind as Exclude<AttachmentKind, "image">];
-        const pct = Math.round((a.progress ?? 0) * 100);
-        return (
+
+  const images = attachments.filter((a) => a.kind === "image");
+  const documents = attachments.filter((a) => a.kind !== "image");
+
+  const renderItem = (attachment: ComposerAttachment, variant: "grid" | "list") => (
+    <Attachment
+      className={variant === "grid" ? "size-16" : "w-full max-w-72 py-2"}
+      data={toData(attachment)}
+      data-status={attachment.status}
+      data-testid={`attachment-chip-${attachment.id}`}
+      key={attachment.id}
+      onRemove={() => onRemove(attachment.id)}
+      variant={variant}
+    >
+      <AttachmentPreview />
+      {variant === "list" && <AttachmentInfo showMediaType />}
+      {attachment.status === "error" && (
+        <span className="shrink-0 text-[10px] text-red-500" title={attachment.error}>
+          <AlertCircle className="size-3.5" />
+        </span>
+      )}
+      <AttachmentRemove />
+      {attachment.status === "uploading" && (
+        <span className="absolute inset-x-0 bottom-0 h-1 bg-zinc-200/70 dark:bg-zinc-700/70">
           <span
-            key={a.id}
-            data-testid={`attachment-chip-${a.id}`}
-            data-status={a.status}
-            title={a.status === "error" ? a.error : a.name}
-            className={cn(
-              "relative inline-flex max-w-48 items-center gap-1.5 overflow-hidden rounded-md border py-1 pl-1 pr-1.5 text-xs",
-              a.status === "error"
-                ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
-                : "border-tollma-200 bg-tollma-50 text-zinc-700 dark:border-tollma-800 dark:bg-tollma-950 dark:text-zinc-300",
-            )}
-          >
-            {a.kind === "image" && a.previewUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={a.previewUrl}
-                alt={a.name}
-                className={cn("size-6 rounded object-cover", a.status === "uploading" && "opacity-60")}
-              />
-            ) : a.status === "uploading" ? (
-              <Loader2 className="size-3.5 shrink-0 animate-spin text-tollma-600 dark:text-tollma-400" />
-            ) : a.status === "error" ? (
-              <AlertCircle className="size-3.5 shrink-0 text-red-500" />
-            ) : (
-              Icon && <Icon className="size-3.5 shrink-0 text-tollma-600 dark:text-tollma-400" />
-            )}
-            <span className="truncate font-medium">{a.name}</span>
-            <span className="shrink-0 font-mono text-[10px] text-zinc-400">
-              {a.status === "uploading" ? `${pct}%` : a.status === "error" ? "failed" : formatSize(a.size)}
-            </span>
-            <button
-              type="button"
-              aria-label={`Remove ${a.name}`}
-              onClick={() => onRemove(a.id)}
-              className="flex size-4 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
-            >
-              <X className="size-3" />
-            </button>
-            {/* Progress rail pinned to the chip's bottom edge */}
-            {a.status === "uploading" && (
-              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-tollma-200/60 dark:bg-tollma-900">
-                <span
-                  className="block h-full bg-tollma-500 transition-[width] duration-150"
-                  style={{ width: `${pct}%` }}
-                />
-              </span>
-            )}
-          </span>
-        );
-      })}
+            className="block h-full bg-tollma-500 transition-[width]"
+            style={{ width: `${Math.round((attachment.progress ?? 0) * 100)}%` }}
+          />
+        </span>
+      )}
+      {attachment.status === "uploading" && variant === "grid" && (
+        <span className="absolute inset-0 flex items-center justify-center bg-black/30">
+          <Loader2 className="size-4 animate-spin text-white" />
+        </span>
+      )}
+    </Attachment>
+  );
+
+  return (
+    <div className="space-y-1.5 px-0.5 pb-1.5" data-testid="upload-preview">
+      {images.length > 0 && (
+        <div className="flex flex-wrap items-start gap-2">
+          {images.map((attachment) => renderItem(attachment, "grid"))}
+        </div>
+      )}
+      {documents.length > 0 && (
+        <div className="flex flex-col items-start gap-2">
+          {documents.map((attachment) => renderItem(attachment, "list"))}
+        </div>
+      )}
     </div>
   );
 }

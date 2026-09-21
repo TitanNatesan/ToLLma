@@ -72,3 +72,11 @@ class GenerationCancelRead(BaseModel):
     generation_id: uuid.UUID
     message_id: uuid.UUID
     status: str
+
+
+class RegenerateRequest(BaseModel):
+    """Regenerate an assistant message. Provider/model default to the original."""
+
+    provider_id: uuid.UUID | None = None
+    model_id: uuid.UUID | None = None
+    reasoning_level: str | None = Field(default=None, max_length=32)

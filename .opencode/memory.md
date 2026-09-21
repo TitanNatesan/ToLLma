@@ -1351,3 +1351,89 @@ Frontend: `app/analytics/page.tsx`, `app/settings/page.tsx`, `components/Sidebar
 - Frontend `vitest`: **90/90**; `tsc --noEmit` clean; `next build` green; `eslint src` new files clean (6 pre-existing errors in untouched citation/sources/wizard files).
 - Playwright: `e2e/analytics-settings.spec.ts` **9/9** (real seeded usage: KPIs/sections, range presets + custom + CSV download filename, accent apply/persist/backend, Enter=newline honoring + Ctrl+Enter send, profile persistence + sidebar, sessions current-device, Ctrl+/ overlay search + G→A + Ctrl+K); regression `tests/chat-ux` + `e2e/navigation` 22 passed/2 skipped; `e2e/reasoning-selector` 7/7; `e2e/generation|settings|auth` 21/21.
 - Screenshots: `/tmp/analytics-top|spend|tokens|models|full|mobile|light-purple.png`, `/tmp/settings-top|appearance|sessions.png`, `/tmp/shortcuts.png`, `/tmp/mobile-analytics*.png` (dark/light, 1440px + 390px, purple/green accents).
+
+---
+
+## 2026-09-21 — AI SDK Elements Chat Integration (Phase A)
+
+### Requirement Completed
+Selective integration of AI SDK Elements into the existing ToLLma chat, preserving the custom SSE streaming architecture, zustand state, conversation persistence, provider abstraction, model intelligence panel, capability-aware composer, reasoning support and attachment validation. The official `ai-elements` registry package was installed (devDependency) and its components were vendored/adapted into `frontend/src/components/ai-elements/`; the chat page now composes Conversation, Message (+MessageBranch), Reasoning, ChainOfThought, Sources, InlineCitation, Task, Tool, Context, Attachments and PromptInput. Dead ports and alias shims were deleted. No backend changes.
+
+### Files Created
+- `frontend/src/components/ai-elements/`: `conversation.tsx` (StickToBottom, scroll button, markdown download), `message.tsx` (Message/Content/Actions/Action/Toolbar/Branch*), `reasoning.tsx` (streaming/duration/auto open-close), `chain-of-thought.tsx` (steps/search results/images), `sources.tsx`, `inline-citation.tsx` (HoverCard + carousel), `task.tsx`, `tool.tsx` (input-streaming/available/output-available/output-error), `context.tsx` (token usage, no tokenlens), `attachments.tsx` (grid/inline/list, hover preview, remove), `prompt-input.tsx` (PromptInput/Body/Textarea/Header/Footer/Tools/Button/ActionMenu/Submit + Enter-behavior helper), `collapsible.tsx`, `hover-card.tsx`, `carousel.tsx` (dependency-free, CarouselApi-compatible), `code-block.tsx`, `markdown.tsx`, `shimmer.tsx`, `index.ts` (barrel).
+- `frontend/src/app/components/chat/reasoning/ReasoningPanel.tsx` — ToLLma reasoning surface built on the ai-elements Reasoning primitives: 5 states, live/persisted duration, words, tokens, CoT step chips, copy.
+- `frontend/src/app/components/chat/attachments/MessageAttachments.tsx` — persisted attachments (image grid / document list) built on ai-elements Attachments.
+
+### Files Modified
+- `frontend/src/app/components/MessageView.tsx` — composed ai-elements Message/MessageContent/MessageActions + ReasoningPanel + MessageResponse (keeps `ResponseMarkdown`, no streamdown) + Sources + ToolCall + MessageContext + MessageAttachments; all `data-testid`s preserved.
+- `frontend/src/app/page.tsx` — Conversation/ConversationContent/ConversationScrollButton replace the manual scroll container; `autoScroll` preference renders the stick-to-bottom variant or a plain scroller.
+- `frontend/src/app/components/chat/ChatComposer.tsx` — PromptInput shell with Body/Textarea/Footer/Tools/Submit; model + thinking selectors, attachment picker, drag/drop/paste and capability validation unchanged.
+- `frontend/src/app/components/chat/{UploadPreview,citations/InlineCitation,sources/Sources,tools/ToolCall,context/MessageContext}.tsx` — rebuilt on ai-elements primitives, same props/testids.
+- `frontend/e2e/analytics-settings.spec.ts` — custom-range dates now use local calendar dates (the previous UTC `toISOString()` excluded today's usage east of UTC; time-of-day dependent failure).
+- `frontend/package.json`, `frontend/package-lock.json`.
+
+### Files Deleted
+- `frontend/src/app/components/Reasoning.tsx` (alias shim), `frontend/src/app/components/CommandPalette.tsx` (alias shim), `frontend/src/app/components/chat/reasoning/ChainOfThought.tsx`, `frontend/src/app/components/chat/message/Message.tsx`, `frontend/src/app/components/chat/conversation/ScrollToBottom.tsx` (all replaced by ai-elements).
+
+### Dependencies Added
+- `ai-elements@1.9.0` (devDependency; the official registry CLI — components are vendored shadcn-style, as the registry intends).
+- `use-stick-to-bottom` (Conversation scroll anchoring), `@radix-ui/react-collapsible` (Reasoning/CoT/Sources/Task/Tool/Context panels), `@radix-ui/react-hover-card` (InlineCitation/Attachments/Context previews), `@radix-ui/react-use-controllable-state` (official Reasoning/CoT open state).
+- Installed in both host and the `tollms-frontend` container node_modules volume.
+
+### Decisions
+- **Vendored, not `shadcn init`**: the registry CLI resolves to `shadcn add`; initializing shadcn would rewrite `globals.css` and add a parallel design-token system. Components were vendored and their imports pointed at ToLLma's `@/lib/utils` + `@/components/ui/primitives`.
+- **Rejected streamdown/tokenlens/shiki/`ai`/`useChat`**: `MessageResponse` delegates to the existing richer `ResponseMarkdown` (mermaid, GitHub alerts, code toolbar, TSV tables); Context computes usage locally from real backend tokens; `useChat` would replace the SSE + zustand architecture.
+- Reasoning stays provider-agnostic: the normalized `<think>` contract is unchanged; ReasoningPanel maps it to the five states and renders official CoT step chips.
+- `Conversation` forwards `scrollTestId` to `StickToBottom.scrollRef` (the element that actually scrolls) and the scroll button listens there, keeping the Playwright scroll contract valid.
+- `Attachments` gained an explicit `variant` prop so staging previews can render outside an `Attachments` container.
+
+### Verification
+- `npx tsc --noEmit` clean; `npx eslint` on all touched files + `src/components/ai-elements` clean; `npx vitest run` **90/90**; `npx next build` green.
+- Playwright: `e2e/elements.spec.ts` **4/4** (reasoning states/labels/duration/persistence, drag&drop + dropzone + chip ready + message attachment, scroll-to-bottom affordance); `tests/chat-ux.spec.ts` + `e2e/generation|chat|reasoning-selector` **37 passed / 2 skipped**; `e2e/analytics-settings.spec.ts` **9/9** (after the local-date fix); `e2e/intelligence|history` green.
+- Screenshots: `/tmp/chat-composer-attachment.png`, `/tmp/chat-reasoning-expanded.png`, `/tmp/chat-full-dark.png`, `/tmp/chat-full-light.png`, `/tmp/chat-mobile.png`.
+- Note: running `next build` on the host clobbers the dev server `.next`; restart `tollms-frontend` after a host build.
+
+### Recommended Next Steps
+- Phase B (Conversation Intelligence): structured error envelope, `request_logs`, credential security endpoint, export (MD/JSON/PDF), XLSX analytics export, PG-FTS conversation search, branching, message edit/version history, regeneration history, sharing.
+- Wire real `metadata.sources`/`tool_calls`/`context_items` from the backend so InlineCitation/Sources/Tool/Context render live data; feed `MessageBranch` from regeneration history.
+
+---
+
+## 2026-09-21 — ToLLma V1 Phase B: Conversation Intelligence, History, Sharing, Export & Reliability
+
+### Requirement Completed
+End-to-end delivery of the ten Phase B features: structured error architecture, per-request logging, credential-encryption validation, chat export (MD/JSON/PDF), analytics export (CSV/XLSX/JSON), PostgreSQL full-text conversation search, conversation branching, message editing with version history, response regeneration with generation history, and public conversation sharing — plus chat message actions, generation navigation, analytics widgets and a public read-only share page.
+
+### Files Created
+Backend: `alembic/versions/d1e2f3a4b5c6_conversation_intelligence.py` (5 tables, branch columns, `messages.error_code`, FTS index, backfill); `models/{request_log,message_history,share,search_index}.py`; `services/{request_logs,search,exporters}.py`; `api/search/{router,service,schemas}.py`; `api/exports/{router,service,schemas}.py`; `api/shares/{router,service,schemas}.py`; `api/messages/{router,service,schemas}.py`; `api/request_logs/{router,service,schemas}.py`; tests `{test_errors,test_request_logs,test_search,test_exports,test_shares,test_message_history}.py` (36 tests).
+Frontend: `lib/{errors,diff}.ts`; `hooks/useIntelligence.ts`; `components/ui/{SearchModal,ShareDialog}.tsx`; `app/share/[token]/page.tsx`; `app/components/chat/message/MessageHistoryDialog.tsx`; `app/analytics/components/AnalyticsWidgetsPanel.tsx`; `e2e/conversation-intelligence.spec.ts` (8 tests); unit tests `lib/__tests__/{diff,errors}.test.ts`.
+
+### Files Modified
+Backend: `core/{exceptions,crypto}.py` (ErrorCode/ApplicationException/envelope handlers, ALGORITHM), `main.py` (5 routers), `services/generation.py` (run_id/is_regeneration/provider/model ids, error_code classification, `generation_runs` + `request_logs` writes), `api/gateway/{service,schemas}.py` (request logs, run #1, `start_regeneration`, `RegenerateRequest`), `api/conversations/{service,router,schemas}.py` (search-index maintenance, branch routes, `generations` on MessageRead), `api/messages/{service,router}.py`, `api/analytics/{service,router,schemas}.py` (xlsx, `/widgets`, `render_export`), `api/providers/{router,service,schemas}.py` (`/security`), `services/cache/{keys,constants}.py` (search/share/export keys + TTLs), `models/{conversation,message}.py`, `pyproject.toml`/`uv.lock` (fpdf2, openpyxl).
+Frontend: `types/index.ts`, `services/api.ts`, `app/page.tsx`, `app/components/MessageView.tsx`, `app/components/ChatHeader.tsx`, `app/analytics/{page.tsx,components/RangePicker.tsx}`, `components/ui/primitives.tsx` (DialogTitle/Description), `e2e/analytics-settings.spec.ts` (local-date fix).
+
+### Dependencies Added
+Backend: `fpdf2` (pure-Python PDF generation) and `openpyxl` (real XLSX workbooks). No other new dependencies; search uses PostgreSQL FTS (`websearch_to_tsquery`/`ts_rank_cd`/`ts_headline`) and sharing uses `secrets.token_urlsafe`.
+
+### Decisions
+- **Error envelope**: every failure returns `{success:false,error:{code,message,retryable,timestamp}}`; FastAPI validation and HTTP errors are mapped into it, and `classify_provider_failure` maps adapter/transport failures onto the provider taxonomy. Frontend `parseApiError` turns any of it into an actionable toast with a retry action.
+- **Request logs are the per-request ledger**: streaming, non-streaming, cancelled, failed and regenerated requests all write one row; analytics gains `/api/v1/analytics/widgets` plus log-based `/api/v1/request-logs/summary` (existing message-based charts stay backward compatible).
+- **Regeneration in place**: `generation_runs` holds every generation for an assistant message; the message row always mirrors the active run, and `MessageRead.generations`/`active_generation_id` (two grouped queries in `message_reads`) drive ◀ 1 of N ▶ without extra round trips.
+- **Search index**: `conversation_search_index` with a generated tsvector + GIN index; index maintenance runs on message create/edit/delete and conversation create/rename/delete, and any index write invalidates the owner's cached search results.
+- **Branching copies history**: a branch is a real conversation with `parent_conversation_id`/`branch_from_message_id`/`branch_name`; messages up to (excluding) the fork point are copied so the branch can continue independently.
+- **Sharing is token-scoped and revocable**: create is idempotent, disable/rotate/expire are enforced server-side, public payloads contain only title/messages/model and never user or credential data; lookups are cached 60s and invalidated on mutation.
+- **Exports are server-rendered**: MD/JSON/PDF for conversations (single, selected or whole account) and CSV/XLSX/JSON for analytics; every export writes an `export_events` audit row for the widget.
+- Frontend UX: Ctrl+Shift+F opens the new search modal (search results scroll to and briefly highlight the matched message), message actions gained Edit/Branch/History/Share with inline edit, the history dialog shows a line diff and generation list, and the header gained PDF export plus share management.
+
+### Verification
+- Backend `docker compose exec -T backend pytest -q`: **181/181** (was 145); `alembic check` green.
+- Frontend `vitest`: **98/98** (was 90); `tsc --noEmit` clean; `eslint` clean on all touched files; `next build` green (new dynamic `/share/[token]` route).
+- Playwright `e2e/conversation-intelligence.spec.ts`: **8/8** — FTS search + open conversation, edit with versions/diff + regeneration, regeneration navigation (2 of 2 → 1 of 2), branch creation with lineage chip, public share page in a clean unauthenticated context + revocation, MD/JSON/PDF downloads, analytics widgets.
+- Regression Playwright: `e2e/elements.spec.ts` + `tests/chat-ux.spec.ts` + `e2e/analytics-settings.spec.ts` **32 passed / 2 skipped**.
+- Docker stack healthy (backend/frontend/postgres/valkey); no stray test files.
+
+### Recommended Next Steps
+- Wire real `metadata.sources`/`tool_calls`/`context_items` so the Elements Sources/Tool/Context surfaces render live data.
+- Consider a background job queue for very large account exports (currently synchronous, capped at 200 conversations).
+- Add per-message share links (currently conversation-scoped) and branch diffing between sibling branches.
+- Add a request-logs viewer page in the UI (API + log-based summary already exist).

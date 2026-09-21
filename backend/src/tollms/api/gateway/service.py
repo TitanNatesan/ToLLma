@@ -18,12 +18,22 @@ from decimal import Decimal
 import asyncio
 
 import httpx
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tollms.api.attachments import service as attachment_service
-from tollms.core.exceptions import ConflictError, NotFoundError, ProviderError, ValidationError
-from tollms.models.message import MessageStatus, Role, TERMINAL_STATUSES
+from tollms.core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    ProviderError,
+    ValidationError,
+    classify_provider_failure,
+)
+from tollms.models.message import Message, MessageStatus, Role, TERMINAL_STATUSES
+from tollms.models.message_history import GenerationRun
+from tollms.models.request_log import RequestStatus
+from tollms.services import request_logs as request_log_engine
 from tollms.models.provider import Provider, ProviderType
 from tollms.models.registered_model import AIModel
 from tollms.api.conversations.service import (
@@ -333,7 +343,46 @@ async def run_chat(
             completed_at=datetime.now(timezone.utc),
             user_id=user_id, session_id=session_id, usage_estimated=estimated,
         )
+        db.add(
+            GenerationRun(
+                message_id=assistant.id,
+                user_id=user_id,
+                generation_number=1,
+                provider_id=provider.id,
+                model_id=model.id,
+                content=result.text,
+                status=MessageStatus.COMPLETED.value,
+                is_active=True,
+                prompt_tokens=tokens.prompt,
+                completion_tokens=tokens.completion,
+                total_tokens=tokens.prompt + tokens.completion,
+                total_cost=cost[2],
+                latency_ms=latency_ms,
+            )
+        )
         touch(db, conv)
+        request_log_engine.record(
+            db,
+            request_log_engine.RequestLogEntry(
+                user_id=user_id,
+                conversation_id=conv_id,
+                message_id=assistant.id,
+                provider_id=provider.id,
+                model_id=model.id,
+                request_started_at=started_at,
+                request_completed_at=datetime.now(timezone.utc),
+                latency_ms=latency_ms,
+                prompt_tokens=tokens.prompt,
+                completion_tokens=tokens.completion,
+                total_tokens=tokens.prompt + tokens.completion,
+                input_cost=cost[0],
+                output_cost=cost[1],
+                total_cost=cost[2],
+                status=RequestStatus.SUCCESS,
+                is_streaming=False,
+            ),
+        )
+        db.commit()
         logger.info(
             "gateway chat done: conv=%s tokens=%s/%s cost=%s latency=%.0fms",
             conv_id, usage[0], usage[1], cost[2], latency_ms,
@@ -352,7 +401,7 @@ async def run_chat(
         raise
     except Exception as e:
         logger.exception("gateway chat failed")
-        raise ProviderError(str(e)) from e
+        raise classify_provider_failure(e) from e
 
 
 @dataclass
@@ -465,6 +514,19 @@ async def start_generation(
                 status=MessageStatus.RUNNING, started_at=started_at,
                 user_id=user_id, session_id=session_id,
             )
+            run = GenerationRun(
+                message_id=assistant.id,
+                user_id=user_id,
+                generation_number=1,
+                provider_id=provider.id,
+                model_id=model.id,
+                content="",
+                status=MessageStatus.RUNNING.value,
+                is_active=False,
+            )
+            db.add(run)
+            db.commit()
+            db.refresh(run)
             if data.client_key:
                 assistant.client_key = data.client_key
                 db.commit()
@@ -500,6 +562,9 @@ async def start_generation(
         cache_read_price=str(model.cache_read_price),
         cache_write_price=str(model.cache_write_price),
         session_id=session_id,
+        provider_id=provider.id,
+        model_id=model.id,
+        run_id=run.id,
     )
     generation_engine.manager.spawn(spec, session_factory=session_factory)
     logger.info(
@@ -705,3 +770,163 @@ async def run_stream(
     started = await start_generation(db, data, transport, user_id, session_factory)
     async for raw in stream_events(db, started.generation_id, user_id):
         yield raw
+
+
+def _history_until(
+    db: Session,
+    conv_id: uuid.UUID,
+    cutoff,
+    user_id: uuid.UUID | None,
+    adapter: BaseProviderAdapter,
+    model,
+) -> list[ChatMessage]:
+    """History up to (and including) a specific user message.
+
+    Regeneration must not feed the previous answer back to the model, so this
+    slices at the prompt that produced the assistant message being replaced.
+    """
+    stored = [m for m in list_messages(db, conv_id, user_id) if m.created_at <= cutoff.created_at]
+    grouped = attachment_service.attachments_for_messages(db, [m.id for m in stored], user_id)
+    messages: list[ChatMessage] = []
+    for m in stored:
+        texts, media = _assemble_history(grouped.get(m.id, []), model, adapter)
+        content = "\n\n".join([m.content, *texts]) if texts else m.content
+        messages.append(ChatMessage(role=m.role.value, content=content, media=media))
+    return messages
+
+
+def _reset_assistant_for_regeneration(assistant: Message, started_at: datetime) -> None:
+    """Clear a terminal assistant row so the driver can stream a new run into it."""
+    assistant.content = ""
+    assistant.status = MessageStatus.RUNNING
+    assistant.started_at = started_at
+    assistant.completed_at = None
+    assistant.error = None
+    assistant.error_code = None
+    assistant.usage_estimated = False
+    assistant.ttfb_ms = None
+    assistant.thinking_ms = None
+    assistant.latency_ms = None
+    assistant.prompt_tokens = None
+    assistant.completion_tokens = None
+    assistant.total_tokens = None
+    assistant.cache_read_tokens = None
+    assistant.cache_write_tokens = None
+    assistant.reasoning_tokens = None
+    assistant.input_cost = None
+    assistant.output_cost = None
+    assistant.total_cost = None
+    assistant.cache_read_cost = None
+    assistant.cache_write_cost = None
+    assistant.reasoning_cost = None
+
+
+async def start_regeneration(
+    db: Session,
+    message_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None = None,
+    provider_id: uuid.UUID | None = None,
+    model_id: uuid.UUID | None = None,
+    reasoning_level: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    session_factory=None,
+    session_id: str | None = None,
+) -> GenerationStarted:
+    """Regenerate an assistant message in place, preserving every prior run.
+
+    The message row always mirrors the active generation; `generation_runs`
+    keeps the full history for ◀ 1 of N ▶ navigation.
+    """
+    assistant = get_message(db, message_id, user_id)
+    if assistant.role != Role.ASSISTANT:
+        raise ValidationError("only assistant messages can be regenerated")
+    if assistant.status not in TERMINAL_STATUSES:
+        raise ConflictError("message is still generating")
+
+    conv_id = assistant.conversation_id
+    preceding = db.execute(
+        select(Message)
+        .where(
+            Message.conversation_id == conv_id,
+            Message.role == Role.USER,
+            Message.created_at <= assistant.created_at,
+            Message.id != assistant.id,
+            Message.is_deleted.is_(False),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if preceding is None:
+        raise ValidationError("no user message to regenerate from")
+
+    target_provider_id = provider_id or assistant.provider_id
+    target_model_id = model_id or assistant.model_id
+    if target_provider_id is None or target_model_id is None:
+        raise ValidationError("message has no model to regenerate with")
+    provider, model = _resolve(db, target_provider_id, target_model_id, user_id)
+    credentials = decrypted_credentials(provider)
+    adapter = build_adapter(provider, model, credentials, transport)
+    adapter.reasoning_level = reasoning_level
+    adapter.max_output_tokens = model.max_output_tokens
+    history = _history_until(db, conv_id, preceding, user_id, adapter, model)
+    if not history:
+        raise ValidationError("no conversation history to regenerate from")
+
+    started_at = datetime.now(timezone.utc)
+    async with generation_engine.manager.conv_lock(conv_id):
+        if generation_engine.manager.is_active(conv_id) is not None:
+            raise ConflictError(f"conversation {conv_id} already has an active generation")
+        if active_assistant_message(db, conv_id, user_id) is not None:
+            raise ConflictError(f"conversation {conv_id} already has an active generation")
+        last_number = db.execute(
+            select(func.max(GenerationRun.generation_number)).where(
+                GenerationRun.message_id == assistant.id
+            )
+        ).scalar_one()
+        db.execute(
+            update(GenerationRun)
+            .where(GenerationRun.message_id == assistant.id)
+            .values(is_active=False)
+        )
+        run = GenerationRun(
+            message_id=assistant.id,
+            user_id=user_id,
+            generation_number=int(last_number or 0) + 1,
+            provider_id=provider.id,
+            model_id=model.id,
+            content="",
+            status=MessageStatus.RUNNING.value,
+            is_active=False,
+        )
+        db.add(run)
+        _reset_assistant_for_regeneration(assistant, started_at)
+        db.commit()
+        db.refresh(assistant)
+        db.refresh(run)
+
+    spec = GenerationSpec(
+        generation_id=assistant.id,
+        conversation_id=conv_id,
+        user_id=user_id,
+        adapter=adapter,
+        history=history,
+        history_text="".join(m.content for m in history),
+        provider_type=provider.provider_type.value,
+        model_label=model.model_id,
+        input_price=str(model.input_price),
+        output_price=str(model.output_price),
+        cache_read_price=str(model.cache_read_price),
+        cache_write_price=str(model.cache_write_price),
+        session_id=session_id,
+        run_id=run.id,
+        is_regeneration=True,
+        provider_id=provider.id,
+        model_id=model.id,
+    )
+    generation_engine.manager.spawn(spec, session_factory=session_factory)
+    logger.info(
+        "regeneration started: message=%s run=%s number=%s model=%s",
+        assistant.id, run.id, run.generation_number, model.model_id,
+    )
+    return GenerationStarted(conversation_id=conv_id, generation_id=assistant.id, message_id=assistant.id)

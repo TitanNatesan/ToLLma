@@ -103,6 +103,23 @@ def analytics_pattern(user_id: object) -> str:
     return _key("analytics", f"{user_id}:*")
 
 
+# --- conversation intelligence ----------------------------------------------
+def search_results(user_id: object, digest: str) -> str:
+    return _key("search", f"{user_id}:{digest}")
+
+
+def search_pattern(user_id: object) -> str:
+    return _key("search", f"{user_id}:*")
+
+
+def share_lookup(token: str) -> str:
+    return _key("share", token)
+
+
+def export_status(user_id: object, export_id: str) -> str:
+    return _key("export", f"{user_id}:{export_id}")
+
+
 # --- future SaaS surface (reserved; no writers yet) ------------------------
 def gateway_response(request_hash: str) -> str:
     return _key("gateway", f"response:{request_hash}")

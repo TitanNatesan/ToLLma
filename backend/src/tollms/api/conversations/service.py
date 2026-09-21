@@ -14,6 +14,7 @@ from tollms.core.exceptions import NotFoundError
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_delete_sync, cache_get_sync, cache_set_sync
+from tollms.services import search as search_engine
 from tollms.models.conversation import Conversation
 from tollms.models.message import Message, MessageStatus, Role
 from tollms.api.conversations.schemas import (
@@ -98,6 +99,8 @@ def create_conversation(
     db.add(conv)
     db.commit()
     db.refresh(conv)
+    search_engine.index_conversation(db, conv)
+    db.commit()
     logger.info("conversation created: %s", conv.id)
     return conv
 
@@ -109,6 +112,8 @@ def rename_conversation(
     conv.title = title
     db.commit()
     db.refresh(conv)
+    search_engine.index_conversation(db, conv)
+    db.commit()
     return conv
 
 
@@ -118,6 +123,8 @@ def delete_conversation(
     conv = get_conversation(db, conversation_id, user_id)
     conv.is_deleted = True
     conv.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    search_engine.remove_conversation(db, conversation_id)
     db.commit()
     cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
     logger.info("conversation soft-deleted: %s", conversation_id)
@@ -180,7 +187,38 @@ def add_message(
     db.commit()
     db.refresh(msg)
     cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
+    if content.strip():
+        _index_message(db, msg)
     return msg
+
+
+def _index_message(db: Session, message: Message) -> None:
+    """Keep the FTS document in sync (title + provider/model labels included)."""
+    try:
+        title = db.execute(
+            select(Conversation.title).where(Conversation.id == message.conversation_id)
+        ).scalar_one_or_none()
+        provider_name = (
+            db.execute(select(Provider.name).where(Provider.id == message.provider_id)).scalar_one_or_none()
+            if message.provider_id
+            else None
+        )
+        model_name = (
+            db.execute(select(AIModel.name).where(AIModel.id == message.model_id)).scalar_one_or_none()
+            if message.model_id
+            else None
+        )
+        search_engine.index_message(
+            db,
+            message,
+            conversation_title=title,
+            provider_name=provider_name,
+            model_name=model_name,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("search index update failed for message %s", message.id, exc_info=True)
 
 
 def get_message(db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None = None) -> Message:
@@ -254,12 +292,34 @@ def conversation_read(
 def message_reads(
     db: Session, messages: list[Message], user_id: uuid.UUID | None = None
 ) -> list[MessageRead]:
-    """Message rows -> read models with their attachments. One extra query."""
+    """Message rows -> read models with attachments + generation history.
+
+    Two grouped queries total, independent of message count.
+    """
+    from tollms.api.messages.service import run_reads
+    from tollms.models.message_history import GenerationRun
+
     grouped = attachment_service.attachments_for_messages(db, [m.id for m in messages], user_id)
+    run_rows = list(
+        db.execute(
+            select(GenerationRun)
+            .where(GenerationRun.message_id.in_([m.id for m in messages] or [None]))
+            .order_by(GenerationRun.generation_number.asc())
+        ).scalars()
+    )
+    runs_by_message: dict[uuid.UUID, list] = {}
+    for run in run_rows:
+        runs_by_message.setdefault(run.message_id, []).append(run)
+    runs_read = {run.id: read for run, read in zip(run_rows, run_reads(db, run_rows))}
+
     out = []
     for m in messages:
         read = MessageRead.model_validate(m)
         read.attachments = [AttachmentRead.model_validate(a) for a in grouped.get(m.id, [])]
+        message_runs = runs_by_message.get(m.id, [])
+        read.generations = [runs_read[run.id] for run in message_runs]
+        active = next((run for run in message_runs if run.is_active), None)
+        read.active_generation_id = active.id if active else None
         out.append(read)
     return out
 

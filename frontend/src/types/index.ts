@@ -128,10 +128,14 @@ export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  conversation_id?: string;
   status?: MessageStatus | null;
   started_at?: string | null;
   completed_at?: string | null;
   error?: string | null;
+  error_code?: string | null;
+  generations?: GenerationRun[];
+  active_generation_id?: string | null;
   thinking_ms?: number | null;
   attachments?: ChatAttachment[];
   provider_id: string | null;
@@ -481,4 +485,165 @@ export interface AnalyticsRangeParams {
   tz: string;
   start?: string;
   end?: string;
+}
+
+// --- Phase B: conversation intelligence ------------------------------------
+
+export interface SearchResult {
+  conversation_id: string;
+  conversation_title: string;
+  message_id: string | null;
+  role: string | null;
+  kind: "conversation" | "message";
+  snippet: string;
+  provider_id: string | null;
+  provider_name: string | null;
+  model_id: string | null;
+  model_name: string | null;
+  created_at: string;
+  rank: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  total: number;
+  results: SearchResult[];
+}
+
+export interface MessageVersion {
+  id: string;
+  version_number: number;
+  content: string;
+  edited_by: string;
+  created_at: string;
+}
+
+export interface GenerationRun {
+  id: string;
+  generation_number: number;
+  provider_id: string | null;
+  model_id: string | null;
+  provider_name: string | null;
+  model_name: string | null;
+  content: string;
+  status: string;
+  is_active: boolean;
+  total_tokens: number | null;
+  total_cost: string | null;
+  latency_ms: number | null;
+  error: string | null;
+  created_at: string;
+}
+
+export interface MessageHistory {
+  message_id: string;
+  role: string;
+  current_content: string;
+  current_version: number;
+  versions: MessageVersion[];
+  generations: GenerationRun[];
+  active_generation_id: string | null;
+}
+
+export interface MessageEditResult {
+  message: ChatMessage;
+  versions: MessageVersion[];
+  current_version: number;
+  regeneration_started: boolean;
+  regenerating_message_id: string | null;
+}
+
+export interface ConversationShare {
+  id: string;
+  conversation_id: string;
+  share_token: string;
+  share_url: string;
+  is_public: boolean;
+  expires_at: string | null;
+  view_count: number;
+  created_at: string;
+}
+
+export interface PublicShareMessage {
+  role: string;
+  content: string;
+  created_at: string;
+  model_name: string | null;
+}
+
+export interface PublicShare {
+  title: string;
+  created_at: string;
+  updated_at: string;
+  model_name: string | null;
+  provider_name: string | null;
+  messages: PublicShareMessage[];
+  view_count: number;
+}
+
+export interface BranchInfo {
+  conversation_id: string;
+  title: string;
+  parent_conversation_id: string | null;
+  branch_from_message_id: string | null;
+  branch_name: string | null;
+  message_count: number;
+  created_at: string;
+}
+
+export interface BranchTree {
+  current: BranchInfo;
+  parent: BranchInfo | null;
+  siblings: BranchInfo[];
+  children: BranchInfo[];
+}
+
+export interface RequestLogEntry {
+  id: string;
+  conversation_id: string | null;
+  message_id: string | null;
+  provider_name: string | null;
+  model_name: string | null;
+  latency_ms: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  total_cost: string | null;
+  status: string;
+  error_code: string | null;
+  is_regeneration: boolean;
+  is_streaming: boolean;
+  created_at: string;
+}
+
+export interface RequestLogPage {
+  total: number;
+  limit: number;
+  offset: number;
+  items: RequestLogEntry[];
+}
+
+export interface AnalyticsWidgets {
+  regeneration_count: number;
+  branch_count: number;
+  shared_conversations: number;
+  export_count: number;
+  edit_count: number;
+  most_regenerated: Array<{ conversation_id: string; title: string; regeneration_count: number }>;
+  most_edited: Array<{
+    message_id: string;
+    conversation_id: string;
+    conversation_title: string;
+    version_count: number;
+  }>;
+}
+
+export interface ApiErrorBody {
+  success: false;
+  error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    timestamp: string;
+  };
 }

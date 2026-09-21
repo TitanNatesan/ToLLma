@@ -1,6 +1,6 @@
 import type {
-  ActiveGeneration,
   AIModel,
+  ActiveGeneration,
   AnalyticsBreakdown,
   AnalyticsConversations,
   AnalyticsDataset,
@@ -11,18 +11,28 @@ import type {
   AnalyticsRangeParams,
   AnalyticsSummary,
   AnalyticsTimeseries,
+  AnalyticsWidgets,
   AuthResponse,
+  BranchInfo,
+  BranchTree,
   ChatMessage,
   Conversation,
+  ConversationShare,
   DiscoveryResult,
   DraftValidation,
+  GenerationRun,
   HealthResponse,
   LoginSession,
   MappedModel,
+  MessageEditResult,
+  MessageHistory,
   ModelSort,
   Provider,
+  PublicShare,
   RegisterResult,
   RepositoryLookup,
+  RequestLogPage,
+  SearchResponse,
   StreamDone,
   StreamMeta,
   UsageTotals,
@@ -508,12 +518,14 @@ export const getAnalyticsPerformance = (params: AnalyticsRangeParams) =>
   get<AnalyticsPerformance>(`/api/v1/analytics/performance?${analyticsQuery(params)}`);
 export const getAnalyticsConversations = (params: AnalyticsRangeParams) =>
   get<AnalyticsConversations>(`/api/v1/analytics/conversations?${analyticsQuery(params)}`);
+export const getAnalyticsWidgets = (params: AnalyticsRangeParams) =>
+  get<AnalyticsWidgets>(`/api/v1/analytics/widgets?${analyticsQuery(params)}`);
 
 /** Server-rendered export (CSV today, PDF-ready): fetch as a blob and download. */
 export async function downloadAnalyticsExport(
   params: AnalyticsRangeParams,
   dataset: AnalyticsDataset,
-  format: "csv" | "json",
+  format: "csv" | "json" | "xlsx",
 ): Promise<void> {
   const url = `${apiBase()}/api/v1/analytics/export?${analyticsQuery(params, { dataset, format })}`;
   const headers: Record<string, string> = {};
@@ -533,3 +545,128 @@ export async function downloadAnalyticsExport(
   anchor.remove();
   URL.revokeObjectURL(href);
 }
+
+
+// --- Phase B: conversation intelligence ------------------------------------
+
+export const searchConversations = (
+  query: string,
+  filters: { providerId?: string; modelId?: string; start?: string; end?: string } = {},
+) => {
+  const q = new URLSearchParams({ q: query });
+  if (filters.providerId) q.set("provider_id", filters.providerId);
+  if (filters.modelId) q.set("model_id", filters.modelId);
+  if (filters.start) q.set("start", filters.start);
+  if (filters.end) q.set("end", filters.end);
+  return get<SearchResponse>(`/api/v1/search?${q.toString()}`);
+};
+
+async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${apiBase()}${path}`, { headers, credentials: "include", cache: "no-store" });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    let data: unknown = body;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      // not JSON
+    }
+    throw new ApiError(res.status, res.statusText, data, `download failed (${res.status})`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = match?.[1] ?? fallbackName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
+}
+
+export const exportConversation = (conversationId: string, format: "md" | "json" | "pdf") =>
+  downloadFile(`/api/v1/exports/conversations/${conversationId}?format=${format}`, `conversation.${format}`);
+
+export async function exportConversations(payload: {
+  conversation_ids?: string[];
+  all?: boolean;
+  format: "md" | "json" | "pdf";
+}): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${apiBase()}/api/v1/exports/conversations`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    let data: unknown = body;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      // not JSON
+    }
+    throw new ApiError(res.status, res.statusText, data, `export failed (${res.status})`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = match?.[1] ?? `tollma-conversations.${payload.format}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
+}
+
+export const getMessageHistory = (messageId: string) =>
+  get<MessageHistory>(`/api/v1/messages/${messageId}/history`);
+export const editMessage = (messageId: string, content: string) =>
+  patch<MessageEditResult>(`/api/v1/messages/${messageId}`, { content });
+export const regenerateMessage = (messageId: string) =>
+  post<{ conversation_id: string; generation_id: string; message_id: string; status: string }>(
+    `/api/v1/messages/${messageId}/regenerate`,
+    {},
+  );
+export const activateGeneration = (messageId: string, runId: string) =>
+  post<{ message: ChatMessage; run: GenerationRun }>(
+    `/api/v1/messages/${messageId}/generations/${runId}/activate`,
+    {},
+  );
+export const deleteMessage = (messageId: string) => del<void>(`/api/v1/messages/${messageId}`);
+export const createBranch = (conversationId: string, messageId: string, branchName?: string) =>
+  post<BranchInfo>(`/api/v1/conversations/${conversationId}/branches`, {
+    message_id: messageId,
+    branch_name: branchName ?? null,
+  });
+export const getBranchTree = (conversationId: string) =>
+  get<BranchTree>(`/api/v1/conversations/${conversationId}/branches`);
+
+export const listShares = (conversationId: string) =>
+  get<ConversationShare[]>(`/api/v1/shares?conversation_id=${conversationId}`);
+export const createShare = (conversationId: string, expiresInHours?: number) =>
+  post<ConversationShare>("/api/v1/shares", {
+    conversation_id: conversationId,
+    expires_in_hours: expiresInHours ?? null,
+  });
+export const disableShare = (shareId: string) => del<ConversationShare>(`/api/v1/shares/${shareId}`);
+export const regenerateShare = (shareId: string) =>
+  post<ConversationShare>(`/api/v1/shares/${shareId}/regenerate`, {});
+export const getPublicShare = (token: string) => get<PublicShare>(`/api/v1/shares/public/${token}`);
+
+export const getRequestLogs = (params: { conversationId?: string; limit?: number } = {}) => {
+  const q = new URLSearchParams();
+  if (params.conversationId) q.set("conversation_id", params.conversationId);
+  if (params.limit) q.set("limit", String(params.limit));
+  return get<RequestLogPage>(`/api/v1/request-logs?${q.toString()}`);
+};

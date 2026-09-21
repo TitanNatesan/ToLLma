@@ -37,6 +37,10 @@ from tollms.services.gateway.adapters.base import (
     ChatMessage,
     ChatResult,
 )
+from tollms.core.exceptions import classify_provider_failure
+from tollms.models.message_history import GenerationRun
+from tollms.models.request_log import RequestStatus
+from tollms.services import request_logs as request_log_engine
 from tollms.services.gateway.costing import UsageTokens, calculate, prices_for_model
 from tollms.services.model_repository.lookup import find_for_model
 
@@ -68,6 +72,12 @@ class GenerationSpec:
     # Auth session that started this generation (JWT sid) — durable per-session
     # usage/activity for the session-management UI.
     session_id: str | None = None
+    # Regeneration + request-log identity (all optional; absent for legacy paths).
+    run_id: uuid.UUID | None = None
+    is_regeneration: bool = False
+    provider_id: uuid.UUID | None = None
+    model_id: uuid.UUID | None = None
+    error_code: str | None = None
     # Time to first streamed token (ms), measured by the driver.
     ttfb_ms: float | None = None
     # Normalized <think> span timing (set by the driver; persisted as
@@ -377,6 +387,8 @@ class GenerationManager:
         return _terminal_payload(spec, result, tokens, breakdown, estimated, status, latency_ms, error)
 
     async def _finish_failed(self, db, spec: GenerationSpec, result: ChatResult, error: str) -> dict:
+        classified = classify_provider_failure(RuntimeError(error))
+        spec.error_code = classified.code.value
         tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
         self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error, estimated)
@@ -427,6 +439,7 @@ class GenerationManager:
             row.status = status
             row.completed_at = _utcnow()
             row.error = error
+            row.error_code = spec.error_code
             row.usage_estimated = estimated
             row.session_id = spec.session_id
             if spec.ttfb_ms is not None:
@@ -445,10 +458,63 @@ class GenerationManager:
                 breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost,
             )
             row.latency_ms = latency_ms
+            self._store_run(db, spec, text, tokens, breakdown, latency_ms, status, error)
+            self._log_request(db, spec, tokens, breakdown, latency_ms, status)
             db.commit()
         except Exception:
             db.rollback()
             logger.warning("generation %s: final store failed", spec.generation_id, exc_info=True)
+
+    def _store_run(
+        self, db, spec, text, tokens, breakdown, latency_ms, status, error
+    ) -> None:
+        """Keep the regeneration history row in lockstep with the message."""
+        if spec.run_id is None:
+            return
+        run = db.get(GenerationRun, spec.run_id)
+        if run is None:
+            return
+        run.content = text
+        run.status = status.value
+        run.is_active = status == MessageStatus.COMPLETED
+        run.prompt_tokens = tokens.prompt
+        run.completion_tokens = tokens.completion
+        run.total_tokens = tokens.prompt + tokens.completion
+        run.total_cost = breakdown.legacy_triplet()[2]
+        run.latency_ms = latency_ms
+        run.error = error
+
+    def _log_request(self, db, spec, tokens, breakdown, latency_ms, status) -> None:
+        """One request_logs row per finished generation (success/cancel/fail)."""
+        status_map = {
+            MessageStatus.COMPLETED: RequestStatus.SUCCESS,
+            MessageStatus.CANCELLED: RequestStatus.CANCELLED,
+            MessageStatus.FAILED: RequestStatus.FAILED,
+        }
+        cost = breakdown.legacy_triplet()
+        request_log_engine.record(
+            db,
+            request_log_engine.RequestLogEntry(
+                user_id=spec.user_id,
+                conversation_id=spec.conversation_id,
+                message_id=spec.generation_id,
+                provider_id=spec.provider_id,
+                model_id=spec.model_id,
+                request_started_at=getattr(spec, "request_started_at", None),
+                request_completed_at=_utcnow(),
+                latency_ms=latency_ms,
+                prompt_tokens=tokens.prompt,
+                completion_tokens=tokens.completion,
+                total_tokens=tokens.prompt + tokens.completion,
+                input_cost=cost[0],
+                output_cost=cost[1],
+                total_cost=cost[2],
+                status=status_map.get(status, RequestStatus.SUCCESS),
+                error_code=spec.error_code,
+                is_regeneration=spec.is_regeneration,
+                is_streaming=True,
+            ),
+        )
 
     def _invalidate_usage(self, spec: GenerationSpec) -> None:
         try:
@@ -565,6 +631,8 @@ def _terminal_payload(spec, result, tokens, breakdown, estimated, status, latenc
     }
     if error:
         payload["error"] = error
+    if getattr(spec, "error_code", None):
+        payload["error_code"] = spec.error_code
     return payload
 
 

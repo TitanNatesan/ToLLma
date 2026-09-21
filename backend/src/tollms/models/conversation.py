@@ -30,11 +30,30 @@ class Conversation(SoftDeleteMixin, TimestampedModel):
     is_pinned: Mapped[bool] = mapped_column(default=False, nullable=False, server_default="false")
     provider_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("providers.id"), nullable=True)
     model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=True)
+    # Branching: a branch is a full conversation forked from a message of its parent.
+    parent_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    branch_from_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(
+            "messages.id", ondelete="SET NULL", use_alter=True, name="fk_conversations_branch_message"
+        ), nullable=True
+    )
+    branch_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     messages: Mapped[list["Message"]] = relationship(
-        back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
+        back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at",
+        foreign_keys="Message.conversation_id",
     )
     owner: Mapped["User | None"] = relationship(back_populates="conversations")
     attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="Attachment.created_at"
+    )
+    branches: Mapped[list["Conversation"]] = relationship(
+        "Conversation", back_populates="parent", remote_side="Conversation.parent_conversation_id",
+        foreign_keys=[parent_conversation_id],
+    )
+    parent: Mapped["Conversation | None"] = relationship(
+        "Conversation", back_populates="branches", remote_side="Conversation.id",
+        foreign_keys=[parent_conversation_id],
     )

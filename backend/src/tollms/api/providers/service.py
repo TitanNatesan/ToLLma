@@ -380,3 +380,29 @@ def _model_create(**kwargs):
     from tollms.api.models.schemas import ModelCreate
 
     return ModelCreate(**kwargs)
+
+
+def credential_security(provider: Provider) -> dict:
+    """Validate at-rest encryption: ciphertext present, decryptable, masked."""
+    from tollms.core.crypto import ALGORITHM, decrypt
+
+    keys: list[str] = []
+    masked = False
+    encrypted = False
+    raw = provider.credentials_encrypted or ""
+    if raw:
+        try:
+            payload = decrypt(raw)
+            keys = sorted(payload.keys())
+            encrypted = True
+            masked = bool(masked_credentials(provider))
+        except Exception:
+            logger.warning("provider %s: credentials are not decryptable", provider.id, exc_info=True)
+    return {
+        "encrypted": encrypted,
+        "masked": masked,
+        "algorithm": ALGORITHM,
+        "credential_keys": keys,
+        "validation_status": provider.validation_status or "unknown",
+        "last_validated_at": provider.last_validated_at,
+    }

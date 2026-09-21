@@ -19,6 +19,11 @@ from tollms.api.models.router import router as models_router
 from tollms.api.providers.router import router as providers_router
 from tollms.api.repository.router import router as repository_router
 from tollms.api.settings.router import router as settings_router
+from tollms.api.exports.router import router as exports_router
+from tollms.api.messages.router import router as messages_router
+from tollms.api.request_logs.router import router as request_logs_router
+from tollms.api.search.router import router as search_router
+from tollms.api.shares.router import router as shares_router
 from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
 from tollms.services import cache as cache_service
@@ -125,6 +130,11 @@ def create_app() -> FastAPI:
     app.include_router(gateway_router)
     app.include_router(analytics_router)
     app.include_router(settings_router)
+    app.include_router(search_router)
+    app.include_router(exports_router)
+    app.include_router(shares_router)
+    app.include_router(messages_router)
+    app.include_router(request_logs_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app
 

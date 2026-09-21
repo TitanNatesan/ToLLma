@@ -6,6 +6,7 @@ import {
   Download,
   FileJson,
   FileText,
+  GitBranch,
   Layers,
   MoreVertical,
   PanelLeftClose,
@@ -14,6 +15,7 @@ import {
   PanelRightOpen,
   Pencil,
   Plus,
+  Share2,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -27,6 +29,10 @@ import {
   Tooltip,
 } from "@/components/ui";
 import { useConversation, useConversationMutations, useUsage } from "@/hooks/useChat";
+import { useBranchTree } from "@/hooks/useIntelligence";
+import { ShareDialog } from "@/components/ui/ShareDialog";
+import { exportConversation } from "@/services/api";
+import { toastApiError } from "@/lib/errors";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useChatStore } from "@/store/chat";
 import { cn } from "@/lib/utils";
@@ -52,6 +58,8 @@ export function ChatHeader() {
 
   const [renaming, setRenaming] = useState(false);
   const [titleInput, setTitleInput] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+  const { data: branchTree } = useBranchTree(activeConversationId);
 
   const activeProvider = providers.find((p) => p.id === providerId);
   const activeModel = models.find((m) => m.id === modelId);
@@ -70,40 +78,17 @@ export function ChatHeader() {
     setRenaming(false);
   }
 
-  function handleExport(format: "json" | "markdown") {
-    if (!conv) {
+  async function handleExport(format: "md" | "json" | "pdf") {
+    if (!activeConversationId) {
       toast.error("No conversation to export");
       return;
     }
-
-    let blob: Blob;
-    let filename: string;
-
-    if (format === "json") {
-      const data = JSON.stringify(conv, null, 2);
-      blob = new Blob([data], { type: "application/json" });
-      filename = `${conv.title.replace(/\s+/g, "_")}.json`;
-    } else {
-      const lines = [
-        `# ${conv.title}`,
-        `*Created: ${new Date(conv.created_at).toLocaleString()}*`,
-        "",
-        ...(conv.messages ?? []).map((m) => {
-          const role = m.role === "user" ? "**User**" : "**Assistant**";
-          return `${role}\n\n${m.content}\n\n---`;
-        }),
-      ];
-      blob = new Blob([lines.join("\n\n")], { type: "text/markdown" });
-      filename = `${conv.title.replace(/\s+/g, "_")}.md`;
+    try {
+      await exportConversation(activeConversationId, format);
+      toast.success(`Exported conversation as ${format.toUpperCase()}`);
+    } catch (error) {
+      toastApiError(error, { title: "Export failed" });
     }
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Exported conversation as ${format.toUpperCase()}`);
   }
 
   function handleDelete() {
@@ -159,6 +144,16 @@ export function ChatHeader() {
             title="Click to rename conversation"
           >
             <span className="truncate max-w-[200px] sm:max-w-xs md:max-w-md">{title}</span>
+            {(branchTree?.parent || (branchTree?.siblings?.length ?? 0) > 0) && (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-tollma-50 px-2 py-0.5 text-[10px] text-tollma-700 dark:bg-tollma-950/40 dark:text-tollma-300"
+                data-testid="branch-chip"
+                title={branchTree?.current.branch_name ?? "Branch"}
+              >
+                <GitBranch className="size-3" />
+                {branchTree?.parent ? "branch" : `${branchTree?.children.length ?? 0} branches`}
+              </span>
+            )}
             <Pencil className="size-3 opacity-0 text-zinc-400 group-hover:opacity-100 transition-opacity" />
           </button>
         )}
@@ -210,20 +205,29 @@ export function ChatHeader() {
           {/* Export & Manage Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="ghost" className="h-8 w-8 p-0" aria-label="More actions">
+              <Button
+                data-testid="conversation-menu" size="sm" variant="ghost" className="h-8 w-8 p-0" aria-label="More actions">
                 <MoreVertical className="size-3.5 text-zinc-500" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44 p-1 text-xs shadow-lg">
+              <DropdownMenuItem onClick={() => void handleExport("pdf")} className="gap-2" data-testid="export-pdf">
+                <FileText className="size-3.5" />
+                <span>Export as PDF</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShareOpen(true)} className="gap-2" data-testid="header-share">
+                <Share2 className="size-3.5" />
+                <span>Share conversation…</span>
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={handleStartRename} className="gap-2">
                 <Pencil className="size-3.5 text-zinc-400" />
                 <span>Rename Chat</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport("markdown")} className="gap-2">
+              <DropdownMenuItem onClick={() => void handleExport("md")} className="gap-2" data-testid="export-md">
                 <FileText className="size-3.5 text-zinc-400" />
                 <span>Export as Markdown</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport("json")} className="gap-2">
+              <DropdownMenuItem onClick={() => void handleExport("json")} className="gap-2" data-testid="export-json">
                 <FileJson className="size-3.5 text-zinc-400" />
                 <span>Export as JSON</span>
               </DropdownMenuItem>
@@ -256,6 +260,8 @@ export function ChatHeader() {
           )}
         </div>
       </div>
+
+      <ShareDialog conversationId={activeConversationId} onOpenChange={setShareOpen} open={shareOpen} />
     </header>
   );
 }

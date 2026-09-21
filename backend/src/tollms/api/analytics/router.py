@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from tollms.api.analytics import service
 from tollms.api.analytics.schemas import (
+    AnalyticsWidgets,
     AnalyticsBreakdown,
     AnalyticsConversations,
     AnalyticsHeatmap,
@@ -99,6 +100,16 @@ def conversations(
     user: User = Depends(get_current_user),
 ) -> AnalyticsConversations:
     return service.get_conversations(db, user.id, q)
+
+
+@router.get("/widgets", response_model=AnalyticsWidgets)
+def widgets(
+    q: service.RangeQuery = Depends(range_query),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AnalyticsWidgets:
+    """History/branching/sharing/export counters."""
+    return service.get_widgets(db, user.id, q)
 
 
 @router.get("/export")

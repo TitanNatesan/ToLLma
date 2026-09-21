@@ -1,38 +1,51 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
+import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
   AlertCircle,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
+  GitBranch,
+  History,
   OctagonX,
-  Paperclip,
+  Pencil,
   RotateCcw,
+  Share2,
+  Sparkles,
+  Trash2,
+  X,
 } from "lucide-react";
+import {
+  Message,
+  MessageAction,
+  MessageActions,
+  MessageContent,
+  MessageResponse,
+} from "@/components/ai-elements/message";
 import { MermaidBlock } from "./MermaidBlock";
-import { ResponseMarkdown } from "./ResponseMarkdown";
-import { ChainOfThought } from "./chat/reasoning/ChainOfThought";
+import { ReasoningPanel } from "./chat/reasoning/ReasoningPanel";
 import { Sources } from "./chat/sources/Sources";
 import { ToolCall } from "./chat/tools/ToolCall";
 import { MessageContext } from "./chat/context/MessageContext";
-import {
-  MessageRoot,
-  MessageAvatar,
-  MessageBubble,
-  MessageHeader,
-  MessageBodyContainer,
-  MessageActions,
-} from "./chat/message/Message";
+import { MessageAttachments } from "./chat/attachments/MessageAttachments";
+import { MessageHistoryDialog } from "./chat/message/MessageHistoryDialog";
+import type { CitationSource } from "./chat/citations/InlineCitation";
+import type { ToolCallProps } from "./chat/tools/ToolCall";
+import type { ContextItem } from "./chat/context/MessageContext";
 import { splitThinkBlocks } from "./thinkBlocks";
 import type { ReasoningStatus } from "./reasoning";
-import { attachmentContentUrl } from "@/services/api";
-import type { ChatAttachment, ChatMessage } from "@/types";
+import type { ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { useModels, useProviders } from "@/hooks/useRegistry";
-import { fmtCost, fmtTokens, stripTrailingZeros } from "@/lib/utils";
+import { Button, Textarea } from "@/components/ui/primitives";
+import { fmtCost, stripTrailingZeros } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 
 // Allow rendering both persisted ChatMessage and in-flight OptimisticMessage
@@ -54,7 +67,10 @@ function extractText(node: React.ReactNode): string {
 }
 
 function copyText(text: string) {
-  void navigator.clipboard.writeText(text).then(() => toast.success("Copied!")).catch(() => {});
+  void navigator.clipboard
+    .writeText(text)
+    .then(() => toast.success("Copied!"))
+    .catch(() => {});
 }
 
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -62,7 +78,9 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
   return (
     <div className="relative my-2 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
       <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-3 py-1.5">
-        <span className="text-[10px] text-zinc-500 font-mono">{className?.replace("language-", "") ?? "code"}</span>
+        <span className="font-mono text-[10px] text-zinc-500">
+          {className?.replace("language-", "") ?? "code"}
+        </span>
         <button
           className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-white"
           onClick={() => copyText(code)}
@@ -76,50 +94,8 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** Persisted attachment cards: images render inline, documents link to download. */
-function MessageAttachments({ attachments }: { attachments?: ChatAttachment[] }) {
-  if (!attachments || attachments.length === 0) return null;
-  return (
-    <div className="mb-1.5 flex flex-wrap gap-1.5" data-testid="message-attachments">
-      {attachments.map((a) => {
-        const url = attachmentContentUrl(a.id);
-        return a.kind === "image" ? (
-          <a key={a.id} href={url} target="_blank" rel="noreferrer" title={a.filename}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={url}
-              alt={a.filename}
-              crossOrigin="use-credentials"
-              loading="lazy"
-              className="max-h-40 rounded-lg border border-zinc-200 object-cover dark:border-zinc-700"
-            />
-          </a>
-        ) : (
-          <a
-            key={a.id}
-            href={url}
-            download={a.filename}
-            title={`${a.filename} (${a.kind})`}
-            className="inline-flex max-w-48 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
-          >
-            <Paperclip className="size-3 shrink-0 text-zinc-400" />
-            <span className="truncate">{a.filename}</span>
-            <span className="shrink-0 text-[10px] text-zinc-400">{formatBytes(a.file_size)}</span>
-          </a>
-        );
-      })}
-    </div>
-  );
-}
-
 /** User content is plain text or user markdown. */
-function MessageContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+function UserMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
   return (
     <div className={isStreaming ? "streaming-cursor" : undefined}>
       <ReactMarkdown
@@ -133,7 +109,9 @@ function MessageContent({ content, isStreaming }: { content: string; isStreaming
               className === "language-mermaid" ||
               className?.includes("mermaid") ||
               (className?.startsWith("language-") &&
-                /^\s*(graph\s+(TD|TB|BT|RL|LR)|flowchart\s+(TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap)\b/m.test(codeStr));
+                /^\s*(graph\s+(TD|TB|BT|RL|LR)|flowchart\s+(TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap)\b/m.test(
+                  codeStr,
+                ));
             if (isMermaid) {
               return <MermaidBlock chart={codeStr} />;
             }
@@ -141,7 +119,10 @@ function MessageContent({ content, isStreaming }: { content: string; isStreaming
             return isBlock ? (
               <CodeBlock className={className}>{children}</CodeBlock>
             ) : (
-              <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-xs dark:bg-zinc-800" {...props}>
+              <code
+                className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-xs dark:bg-zinc-800"
+                {...props}
+              >
                 {children}
               </code>
             );
@@ -170,18 +151,20 @@ function AssistantContent({
 }) {
   return (
     <>
-      {splitThinkBlocks(content).map((part, i) =>
+      {splitThinkBlocks(content).map((part, index) =>
         part.type === "think" ? (
-          <ChainOfThought
-            key={i}
+          <ReasoningPanel
             content={part.content}
-            status={status}
             durationMs={thinkingMs}
+            key={index}
+            status={status}
             tokens={reasoningTokens}
           />
         ) : (
           part.content.trim() && (
-            <ResponseMarkdown key={i} content={part.content} isStreaming={isStreaming} />
+            <MessageResponse isStreaming={isStreaming} key={index}>
+              {part.content}
+            </MessageResponse>
           )
         ),
       )}
@@ -193,8 +176,12 @@ export interface ChatMessageProps {
   message: MessageLike;
   isStreaming?: boolean;
   onCopy?: () => void;
-  onRegenerate?: () => void;
-  onDelete?: () => void;
+  onRegenerate?: (messageId: string) => void;
+  onDelete?: (messageId: string) => void;
+  onEdit?: (messageId: string, content: string) => void;
+  onBranch?: (messageId: string) => void;
+  onShare?: () => void;
+  onActivateGeneration?: (messageId: string, runId: string) => void;
 }
 
 function formatCost(val: string | null): string | null {
@@ -209,8 +196,77 @@ function formatLatency(ms: number | null): string | null {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${stripTrailingZeros((ms / 1000).toFixed(1))}s`;
 }
 
-function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: ChatMessageProps) {
-  const isUser = message.role === "user";
+function MessageHeaderMeta({
+  role,
+  timestamp,
+  modelName,
+  providerName,
+  tokens,
+  tokensTooltip,
+  cost,
+  costTooltip,
+  latency,
+}: {
+  role: string;
+  timestamp?: string;
+  modelName?: string | null;
+  providerName?: string | null;
+  tokens?: number | null;
+  tokensTooltip?: string;
+  cost?: string | null;
+  costTooltip?: string;
+  latency?: string | null;
+}) {
+  const isUser = role === "user";
+  const formattedTime = timestamp
+    ? new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+
+  return (
+    <div
+      className={`flex items-center gap-2 text-[10px] text-zinc-400 ${isUser ? "flex-row-reverse" : ""}`}
+    >
+      <span className="font-semibold tracking-wide uppercase">{isUser ? "You" : "Assistant"}</span>
+      {formattedTime && (
+        <time dateTime={timestamp} title={timestamp}>
+          {formattedTime}
+        </time>
+      )}
+      {!isUser && (modelName || providerName) && (
+        <span data-testid="message-model" title={`${providerName ?? ""} / ${modelName ?? ""}`}>
+          {[modelName, providerName].filter(Boolean).join(" · ")}
+        </span>
+      )}
+      {!isUser && tokens != null && (
+        <span data-testid="message-usage" title={tokensTooltip}>
+          {tokens.toLocaleString()} tok
+        </span>
+      )}
+      {!isUser && cost && (
+        <span data-testid="message-cost" title={costTooltip}>
+          {cost}
+        </span>
+      )}
+      {!isUser && latency && <span>{latency}</span>}
+    </div>
+  );
+}
+
+function MessageViewInner({
+  message,
+  isStreaming,
+  onRegenerate,
+  onDelete,
+  onEdit,
+  onBranch,
+  onShare,
+  onActivateGeneration,
+}: ChatMessageProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const role = message.role as "user" | "assistant" | "system";
+  const isUser = role === "user";
   const msg = message as ChatMessage;
   const costStr = formatCost(msg.total_cost ?? null);
   const inCostStr = formatCost(msg.input_cost ?? null);
@@ -232,74 +288,164 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
     .join(" / ");
   const costTitle = [`in: ${inCostStr ?? "$0"}`, `out: ${outCostStr ?? "$0"}`].join(" / ");
 
-  // Mapped generation lifecycle status for reasoning
   const reasoningStatus: ReasoningStatus = isStreaming
-    ? (message.content.includes("<think>") && !message.content.includes("</think>") ? "streaming" : "thinking")
+    ? message.content.includes("<think>") && !message.content.includes("</think>")
+      ? "streaming"
+      : "thinking"
     : msg.status === "cancelled"
       ? "interrupted"
       : msg.status === "failed"
         ? "failed"
         : "complete";
 
-  // Optional attached metadata for sources, tools, and context
+  const generations = msg.generations ?? [];
+  const activeGenerationIndex = Math.max(
+    0,
+    generations.findIndex((run) => run.id === msg.active_generation_id),
+  );
+
   const metadata = (msg as unknown as { metadata?: Record<string, unknown> })?.metadata;
-  const sources = (metadata?.sources as Array<import("./chat/citations/InlineCitation").CitationSource>) ?? undefined;
-  const toolCalls = (metadata?.tool_calls as Array<import("./chat/tools/ToolCall").ToolCallProps>) ?? undefined;
-  const contextItems = (metadata?.context_items as Array<import("./chat/context/MessageContext").ContextItem>) ?? undefined;
+  const sources = (metadata?.sources as CitationSource[] | undefined) ?? undefined;
+  const toolCalls = (metadata?.tool_calls as ToolCallProps[] | undefined) ?? undefined;
+  const contextItems = (metadata?.context_items as ContextItem[] | undefined) ?? undefined;
 
   return (
-    <MessageRoot role={message.role as "user" | "assistant" | "system"} id={message.id}>
-      <MessageAvatar role={message.role as "user" | "assistant" | "system"} />
+    <motion.div
+      animate={{ opacity: 1, y: 0 }}
+      className={`group flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}
+      data-testid={`message-${role}`}
+      exit={{ opacity: 0, y: -4 }}
+      id={message.id}
+      initial={{ opacity: 0, y: 8 }}
+      layout
+      transition={{ duration: 0.2, ease: "easeOut" }}
+    >
+      {!isUser && (
+        <div
+          aria-hidden="true"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 text-xs font-bold text-white shadow-xs"
+        >
+          <Sparkles className="size-3.5" />
+        </div>
+      )}
 
-      <MessageBubble role={message.role as "user" | "assistant" | "system"}>
-        {/* Header Metadata */}
-        <MessageHeader
-          role={message.role as "user" | "assistant" | "system"}
-          timestamp={message.created_at}
-          modelName={modelName}
-          providerName={providerName}
-          tokens={msg.total_tokens}
-          tokensTooltip={usageTitle}
+      <Message className="min-w-0 flex-1" from={role}>
+        <MessageHeaderMeta
           cost={costStr}
           costTooltip={costTitle}
           latency={latencyStr}
+          modelName={modelName}
+          providerName={providerName}
+          role={role}
+          timestamp={message.created_at}
+          tokens={msg.total_tokens}
+          tokensTooltip={usageTitle}
         />
 
-        {/* Bubble Body */}
-        <MessageBodyContainer role={message.role as "user" | "assistant" | "system"}>
-          {/* Attachments */}
+        <MessageContent
+          className={
+            isUser
+              ? "rounded-2xl rounded-tr-sm bg-zinc-100 px-3 py-2.5 dark:bg-zinc-800"
+              : "rounded-2xl rounded-tl-sm border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900"
+          }
+        >
           <MessageAttachments attachments={msg.attachments} />
-
-          {/* Context Used (if any) */}
           <MessageContext contextItems={contextItems} />
 
-          {/* User Content vs Assistant Composed Body */}
           {isUser ? (
-            <MessageContent content={message.content} isStreaming={isStreaming} />
+            editing ? (
+              <div className="w-full space-y-2">
+                <Textarea
+                  className="min-h-20 w-full text-sm"
+                  data-testid={`edit-input-${message.id}`}
+                  onChange={(event) => setDraft(event.target.value)}
+                  value={draft}
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    data-testid={`edit-cancel-${message.id}`}
+                    onClick={() => {
+                      setEditing(false);
+                      setDraft(message.content);
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <X className="size-3.5" /> Cancel
+                  </Button>
+                  <Button
+                    data-testid={`edit-save-${message.id}`}
+                    disabled={!draft.trim() || draft.trim() === message.content.trim()}
+                    onClick={() => {
+                      onEdit?.(message.id, draft.trim());
+                      setEditing(false);
+                    }}
+                    size="sm"
+                    type="button"
+                  >
+                    <Check className="size-3.5" /> Save &amp; regenerate
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <UserMarkdown content={message.content} isStreaming={isStreaming} />
+            )
           ) : (
             <>
-              {/* Tool calls (if any) */}
-              {toolCalls?.map((tool, idx) => (
-                <ToolCall key={idx} {...tool} />
-              ))}
+              {generations.length > 1 && (
+                <div
+                  className="mb-1 inline-flex w-fit items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-800"
+                  data-testid={`generation-nav-${message.id}`}
+                >
+                  <button
+                    aria-label="Previous generation"
+                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                    data-testid="generation-prev"
+                    disabled={activeGenerationIndex <= 0}
+                    onClick={() => {
+                      const target = generations[activeGenerationIndex - 1];
+                      if (target) onActivateGeneration?.(message.id, target.id);
+                    }}
+                    type="button"
+                  >
+                    <ChevronLeft className="size-3.5" />
+                  </button>
+                  <span className="px-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-400" data-testid="generation-page">
+                    {activeGenerationIndex + 1} of {generations.length}
+                  </span>
+                  <button
+                    aria-label="Next generation"
+                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                    data-testid="generation-next"
+                    disabled={activeGenerationIndex >= generations.length - 1}
+                    onClick={() => {
+                      const target = generations[activeGenerationIndex + 1];
+                      if (target) onActivateGeneration?.(message.id, target.id);
+                    }}
+                    type="button"
+                  >
+                    <ChevronRight className="size-3.5" />
+                  </button>
+                </div>
+              )}
 
-              {/* Reasoning + Markdown Response */}
+              {toolCalls?.map((tool, index) => <ToolCall key={index} {...tool} />)}
+
               <AssistantContent
                 content={message.content}
                 isStreaming={isStreaming}
+                reasoningTokens={msg.reasoning_tokens}
                 status={reasoningStatus}
                 thinkingMs={msg.thinking_ms}
-                reasoningTokens={msg.reasoning_tokens}
               />
 
-              {/* Sources / Citations (if any) */}
               <Sources sources={sources} />
             </>
           )}
-        </MessageBodyContainer>
+        </MessageContent>
 
-        {/* Terminal generation states (backend-owned) */}
-        {!isUser && (msg as ChatMessage).status === "cancelled" && (
+        {!isUser && msg.status === "cancelled" && (
           <div
             className="flex items-center gap-1 text-[10px] text-zinc-400"
             data-testid={`stopped-${message.id}`}
@@ -308,7 +454,7 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
             <span>Stopped — partial response kept</span>
           </div>
         )}
-        {!isUser && (msg as ChatMessage).status === "failed" && (
+        {!isUser && msg.status === "failed" && (
           <div
             className="flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-300"
             data-testid={`failed-${message.id}`}
@@ -317,15 +463,15 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
             <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
               <AlertCircle className="size-3.5 shrink-0" />
               <span className="truncate">
-                Generation failed{(msg as ChatMessage).error ? `: ${(msg as ChatMessage).error}` : ""}
+                Generation failed{msg.error ? `: ${msg.error}` : ""}
               </span>
             </span>
             {onRegenerate && (
               <button
-                type="button"
-                onClick={onRegenerate}
-                data-testid={`retry-${message.id}`}
                 className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-700"
+                data-testid={`retry-${message.id}`}
+                onClick={() => onRegenerate(message.id)}
+                type="button"
               >
                 <RotateCcw className="size-3" />
                 Retry
@@ -334,16 +480,98 @@ function MessageViewInner({ message, isStreaming, onRegenerate, onDelete }: Chat
           </div>
         )}
 
-        {/* Action bar */}
+        <MessageHistoryDialog messageId={message.id} onOpenChange={setHistoryOpen} open={historyOpen} />
+
         <MessageActions
-          role={message.role as "user" | "assistant" | "system"}
-          contentToCopy={message.content}
-          onRegenerate={onRegenerate}
-          onDelete={onDelete}
-          id={message.id}
-        />
-      </MessageBubble>
-    </MessageRoot>
+          className={`opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
+            isUser ? "flex-row-reverse" : ""
+          }`}
+        >
+          <MessageAction
+            data-testid={message.id ? `copy-button-${message.id}` : "copy-button"}
+            label="Copy"
+            onClick={() => copyText(message.content)}
+            tooltip="Copy"
+          >
+            <Copy className="size-3" />
+            <span className="text-[10px]">Copy</span>
+          </MessageAction>
+
+          {isUser && onEdit && !editing && (
+            <MessageAction
+              data-testid={`edit-button-${message.id}`}
+              label="Edit"
+              onClick={() => {
+                setDraft(message.content);
+                setEditing(true);
+              }}
+              tooltip="Edit & regenerate"
+            >
+              <Pencil className="size-3" />
+              <span className="text-[10px]">Edit</span>
+            </MessageAction>
+          )}
+
+          {!isUser && onRegenerate && (
+            <MessageAction
+              data-testid={message.id ? `regenerate-button-${message.id}` : "regenerate-button"}
+              label="Regenerate"
+              onClick={() => onRegenerate(message.id)}
+              tooltip="Regenerate"
+            >
+              <RotateCcw className="size-3" />
+              <span className="text-[10px]">Regenerate</span>
+            </MessageAction>
+          )}
+
+          {onBranch && (
+            <MessageAction
+              data-testid={`branch-button-${message.id}`}
+              label="Branch"
+              onClick={() => onBranch(message.id)}
+              tooltip="Branch from here"
+            >
+              <GitBranch className="size-3" />
+              <span className="text-[10px]">Branch</span>
+            </MessageAction>
+          )}
+
+          <MessageAction
+            data-testid={`history-button-${message.id}`}
+            label="History"
+            onClick={() => setHistoryOpen(true)}
+            tooltip="View history"
+          >
+            <History className="size-3" />
+            <span className="text-[10px]">History</span>
+          </MessageAction>
+
+          {!isUser && onShare && (
+            <MessageAction
+              data-testid={`share-button-${message.id}`}
+              label="Share"
+              onClick={onShare}
+              tooltip="Share conversation"
+            >
+              <Share2 className="size-3" />
+              <span className="text-[10px]">Share</span>
+            </MessageAction>
+          )}
+
+          {onDelete && (
+            <MessageAction
+              className="text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+              data-testid={message.id ? `delete-message-${message.id}` : "delete-message"}
+              label="Delete"
+              onClick={() => onDelete(message.id)}
+              tooltip="Delete"
+            >
+              <Trash2 className="size-3" />
+            </MessageAction>
+          )}
+        </MessageActions>
+      </Message>
+    </motion.div>
   );
 }
 
@@ -354,5 +582,9 @@ export const MessageView = memo(MessageViewInner, (prev, next) => (
   prev.message === next.message &&
   prev.isStreaming === next.isStreaming &&
   !!prev.onRegenerate === !!next.onRegenerate &&
-  !!prev.onDelete === !!next.onDelete
+  !!prev.onDelete === !!next.onDelete &&
+  !!prev.onEdit === !!next.onEdit &&
+  !!prev.onBranch === !!next.onBranch &&
+  !!prev.onShare === !!next.onShare &&
+  !!prev.onActivateGeneration === !!next.onActivateGeneration
 ));

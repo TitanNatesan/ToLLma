@@ -1,17 +1,18 @@
 """Analytics response models. Every value is computed server-side."""
 
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 AnalyticsPreset = Literal[
     "today", "yesterday", "last_7d", "last_30d", "this_month", "last_month", "last_90d", "custom"
 ]
 Granularity = Literal["hour", "day", "week", "month"]
 ModelSort = Literal["most_used", "most_expensive", "fastest", "slowest"]
-ExportFormat = Literal["csv", "json"]
+ExportFormat = Literal["csv", "json", "xlsx"]
 ExportDataset = Literal["summary", "timeseries", "models", "providers", "conversations"]
 InsightSeverity = Literal["info", "positive", "warning"]
 
@@ -186,3 +187,28 @@ class AnalyticsConversations(BaseModel):
     most_expensive: list[ConversationAnalyticsRow]
     largest_context: list[ConversationAnalyticsRow]
     highest_tokens: list[ConversationAnalyticsRow]
+
+
+class RegeneratedConversationRow(BaseModel):
+    conversation_id: uuid.UUID
+    title: str
+    regeneration_count: int
+
+
+class EditedMessageRow(BaseModel):
+    message_id: uuid.UUID
+    conversation_id: uuid.UUID
+    conversation_title: str
+    version_count: int
+
+
+class AnalyticsWidgets(BaseModel):
+    """Conversation-intelligence counters (history, branching, sharing, export)."""
+
+    regeneration_count: int
+    branch_count: int
+    shared_conversations: int
+    export_count: int
+    edit_count: int
+    most_regenerated: list[RegeneratedConversationRow] = Field(default_factory=list)
+    most_edited: list[EditedMessageRow] = Field(default_factory=list)

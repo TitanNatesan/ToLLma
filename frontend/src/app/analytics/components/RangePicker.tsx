@@ -42,7 +42,7 @@ interface RangePickerProps {
   resolved?: AnalyticsRange;
   dataset: AnalyticsDataset;
   onDataset: (dataset: AnalyticsDataset) => void;
-  onExport: (format: "csv" | "json") => void;
+  onExport: (format: "csv" | "json" | "xlsx") => void;
   exporting?: boolean;
   onRefresh: () => void;
   refreshing?: boolean;
@@ -152,6 +152,9 @@ export function RangePicker({
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onExport("json")} data-testid="export-json" className="text-xs">
               JSON
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onExport("xlsx")} data-testid="export-xlsx" className="text-xs">
+              XLSX
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

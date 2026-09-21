@@ -10,6 +10,9 @@ from tollms.core.security import get_current_user
 from tollms.models.user import User
 from tollms.api.conversations import service
 from tollms.api.conversations.schemas import (
+    BranchCreateRequest,
+    BranchListRead,
+    BranchRead,
     ConversationCreate,
     ConversationPin,
     ConversationRead,
@@ -78,3 +81,29 @@ def active_generation(conversation_id: uuid.UUID, db: Session = Depends(get_db),
     from tollms.api.gateway import service as gateway_service
 
     return gateway_service.active_generation(db, conversation_id, user.id)
+
+
+@router.get("/{conversation_id}/branches", response_model=BranchListRead)
+def branches(
+    conversation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> BranchListRead:
+    from tollms.api.messages import service as message_service
+
+    return BranchListRead.model_validate(message_service.branch_tree(db, conversation_id, user.id))
+
+
+@router.post("/{conversation_id}/branches", response_model=BranchRead, status_code=201)
+def create_branch(
+    conversation_id: uuid.UUID,
+    data: BranchCreateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> BranchRead:
+    from tollms.api.messages import service as message_service
+
+    branch = message_service.create_branch(
+        db, conversation_id, data.message_id, user.id, data.branch_name
+    )
+    return message_service._branch_read(db, branch)

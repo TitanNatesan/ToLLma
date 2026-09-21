@@ -1,3 +1,4 @@
+ALGORITHM = "fernet"
 """Fernet credential encryption. Key derived from SECRET_KEY (env only)."""
 
 import base64

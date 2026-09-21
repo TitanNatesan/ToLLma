@@ -77,7 +77,10 @@ test("analytics range switching + custom range + CSV export", async ({ page }) =
   await expect(page.getByTestId("analytics-custom-prompt")).toBeVisible();
   const today = new Date();
   const from = new Date(today.getTime() - 7 * 86400000);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  // Local calendar dates: the backend resolves ranges in the caller's timezone,
+  // so toISOString() (UTC) would exclude today's usage east/west of UTC.
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   await page.getByTestId("range-start").fill(iso(from));
   await page.getByTestId("range-end").fill(iso(today));
   await expect(page.getByTestId("kpi-requests")).toContainText("2");

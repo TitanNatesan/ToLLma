@@ -382,6 +382,8 @@ export function ScrollArea({ className, children, ...props }: React.ComponentPro
 export const Dialog = DialogPrimitives.Root;
 export const DialogTrigger = DialogPrimitives.Trigger;
 export const DialogPortal = DialogPrimitives.Portal;
+export const DialogTitle = DialogPrimitives.Title;
+export const DialogDescription = DialogPrimitives.Description;
 
 export function DialogOverlay({ className, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitives.Overlay>) {
   return (
