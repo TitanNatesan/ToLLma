@@ -3,7 +3,6 @@
 import { ArrowUpIcon, Loader2Icon, SquareIcon } from "lucide-react";
 import {
   createContext,
-  useContext,
   useEffect,
   useRef,
   type ComponentProps,
@@ -28,8 +27,6 @@ interface PromptInputContextValue {
 }
 
 const PromptInputContext = createContext<PromptInputContextValue>({ status: "ready" });
-
-export const usePromptInput = () => useContext(PromptInputContext);
 
 // ============================================================================
 // PromptInput - form shell (drag & drop target lives here)

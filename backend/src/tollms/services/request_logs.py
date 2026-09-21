@@ -7,7 +7,7 @@ comparisons share one ledger with `messages`.
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -41,7 +41,6 @@ class RequestLogEntry:
     error_code: str | None = None
     is_regeneration: bool = False
     is_streaming: bool = False
-    meta: dict = field(default_factory=dict)
 
 
 def record(db: Session, entry: RequestLogEntry) -> RequestLog:

@@ -29,12 +29,3 @@ class ExportEventRead(BaseModel):
     item_count: int
     detail: str | None = None
     created_at: datetime
-
-
-class ExportResultRead(BaseModel):
-    """Metadata response for exports (file bytes stream separately)."""
-
-    dataset: str
-    format: str
-    item_count: int
-    filename: str

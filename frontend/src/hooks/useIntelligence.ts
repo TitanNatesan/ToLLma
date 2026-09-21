@@ -10,7 +10,6 @@ import {
   getAnalyticsWidgets,
   getBranchTree,
   getMessageHistory,
-  getRequestLogs,
   listShares,
   regenerateMessage,
   regenerateShare,
@@ -49,14 +48,6 @@ export function useMessageHistory(messageId: string | null) {
     queryKey: ["message-history", messageId],
     queryFn: () => getMessageHistory(messageId as string),
     enabled: Boolean(messageId),
-  });
-}
-
-export function useRequestLogs(conversationId: string | null) {
-  return useQuery({
-    queryKey: ["request-logs", conversationId],
-    queryFn: () => getRequestLogs({ conversationId: conversationId as string, limit: 50 }),
-    enabled: Boolean(conversationId),
   });
 }
 

@@ -1437,3 +1437,33 @@ Backend: `fpdf2` (pure-Python PDF generation) and `openpyxl` (real XLSX workbook
 - Consider a background job queue for very large account exports (currently synchronous, capped at 200 conversations).
 - Add per-message share links (currently conversation-scoped) and branch diffing between sibling branches.
 - Add a request-logs viewer page in the UI (API + log-based summary already exist).
+
+---
+
+## 2026-09-21 — Dead-code audit & cleanup (both phases)
+
+### Requirement Completed
+Completed the "delete irrelevant components from the frontend and backend" instruction with a verified audit rather than assumptions: built an inbound-import graph for every Python module and every frontend file, then removed only symbols with zero references.
+
+### Findings
+- Backend: **no dead modules** — every module under `api/` and `services/` has at least one importer (the earlier `scheduler.py` suspicion was wrong; it is started from the app lifespan).
+- Frontend: **no dead files** — the only zero-import results were barrel `index.ts` files consumed via directory imports.
+
+### Files Modified (dead symbols removed)
+- `backend/src/tollms/api/request_logs/service.py` — unused `statuses()` + now-unused `RequestStatus` import.
+- `backend/src/tollms/services/cache/keys.py` — unused `export_status()` (exports are synchronous; no job-status cache).
+- `backend/src/tollms/api/exports/schemas.py` — unused `ExportResultRead`.
+- `backend/src/tollms/services/request_logs.py` — unused `RequestLogEntry.meta` field + `dataclasses.field` import.
+- `frontend/src/app/components/reasoning.ts` — unused `REASONING_STATUS_LABEL`.
+- `frontend/src/hooks/useIntelligence.ts` — unused `useRequestLogs` hook (+ `getRequestLogs` import; the API client remains available).
+- `frontend/src/components/ai-elements/prompt-input.tsx` — unused local `usePromptInput` hook (not part of the official API surface).
+
+### Decisions
+- The vendored `components/ai-elements/` library keeps its complete official surface (including `Task`, `Context`, `Tool`, `AttachmentEmpty`, `PromptInputActionMenu*`) because those are explicitly requested as "prepare for future" surfaces and pruning official sub-components would break upgrade fidelity. Dead code was removed from the **app layer** and **backend**, not from the vendored library.
+- The earlier deletions of replaced ToLLma components (Reasoning.tsx, CommandPalette.tsx, chat/reasoning/ChainOfThought.tsx, chat/message/Message.tsx, chat/conversation/ScrollToBottom.tsx) stand as the frontend "irrelevant components" cleanup.
+
+### Verification
+- Backend Phase B suites: **36/36**; app imports clean.
+- Frontend `vitest` **98/98**; `tsc --noEmit` clean; `eslint` clean; `next build` green.
+- Playwright `conversation-intelligence` + `elements`: **11/11**.
+- Docker stack healthy; frontend restarted after the host build.

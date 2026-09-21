@@ -5,14 +5,6 @@
 
 export type ReasoningStatus = "thinking" | "streaming" | "complete" | "interrupted" | "failed";
 
-export const REASONING_STATUS_LABEL: Record<ReasoningStatus, string> = {
-  thinking: "Thinking…",
-  streaming: "Thinking…",
-  complete: "Thinking",
-  interrupted: "Stopped",
-  failed: "Reasoning failed",
-};
-
 /** Human duration: "800ms", "8s", "1m 12s". Sub-second rounds to "<1s". */
 export function formatReasoningDuration(ms: number): string {
   if (ms < 1000) return "<1s";

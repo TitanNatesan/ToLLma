@@ -13,7 +13,7 @@ from tollms.api.request_logs.schemas import (
 )
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
-from tollms.models.request_log import RequestLog, RequestStatus
+from tollms.models.request_log import RequestLog
 from tollms.services import request_logs as engine
 
 
@@ -121,6 +121,3 @@ def summary(db: Session, user_id: uuid.UUID | None, start, end) -> RequestLogSum
         by_provider=[ProviderLogRow(**row) for row in by_provider],
     )
 
-
-def statuses() -> list[str]:
-    return [status.value for status in RequestStatus]
