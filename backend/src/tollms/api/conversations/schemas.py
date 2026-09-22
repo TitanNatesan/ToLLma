@@ -53,6 +53,7 @@ class MessageRead(BaseModel):
     attachments: list[AttachmentRead] = Field(default_factory=list)
     generations: list["GenerationRunRead"] = Field(default_factory=list)
     active_generation_id: uuid.UUID | None = None
+    versions_count: int = 0
 
     model_config = {"from_attributes": True}
 

@@ -39,7 +39,7 @@ export function MessageHistoryDialog({ open, onOpenChange, messageId }: MessageH
               {versions.map((version) => (
                 <button
                   className={cn(
-                    "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
                     version.version_number === data.current_version
                       ? "border-tollma-500 bg-tollma-50 text-tollma-700 dark:bg-tollma-950/40 dark:text-tollma-300"
                       : "border-zinc-200 text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
@@ -49,7 +49,13 @@ export function MessageHistoryDialog({ open, onOpenChange, messageId }: MessageH
                   onClick={() => setCompareTo(version.version_number)}
                   type="button"
                 >
-                  v{version.version_number}
+                  <span>v{version.version_number}</span>
+                  <span className="text-[10px] font-normal opacity-70">
+                    {new Date(version.created_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
                 </button>
               ))}
             </div>

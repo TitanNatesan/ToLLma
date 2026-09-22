@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countThinkWords, splitThinkBlocks } from "../thinkBlocks";
+import { splitThinkBlocks } from "../thinkBlocks";
 
 describe("think-block contract (mirrors backend THINK_OPEN/THINK_CLOSE)", () => {
   it("splits provider-normalized reasoning from answer text", () => {
@@ -47,11 +47,5 @@ describe("think-block contract (mirrors backend THINK_OPEN/THINK_CLOSE)", () => 
       expect(parts[0]).toMatchObject({ type: "think" });
       expect(parts[parts.length - 1]).toMatchObject({ type: "text", content: expect.stringContaining("A") });
     }
-  });
-
-  it("counts words for the pill label", () => {
-    expect(countThinkWords("  Let me consider the options. ")).toBe(5);
-    expect(countThinkWords("")).toBe(0);
-    expect(countThinkWords("   ")).toBe(0);
   });
 });

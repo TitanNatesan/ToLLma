@@ -19,8 +19,79 @@ import {
   WrapText,
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
+import { InlineCitation, type CitationSource } from "./chat/citations/InlineCitation";
 import { cn } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
+
+/** Minimal hast shapes for the citation transform (no unist dependency). */
+interface HastTextNode {
+  type: "text";
+  value: string;
+}
+interface HastElementNode {
+  type: "element";
+  tagName: string;
+  properties: Record<string, unknown>;
+  children: HastNode[];
+}
+interface HastParentNode {
+  type: string;
+  children?: HastNode[];
+}
+type HastNode = HastTextNode | HastElementNode | HastParentNode;
+
+const CITATION_MARKER = /\[(\d{1,3})\]/g;
+const CITATION_SKIP_TAGS = new Set(["code", "pre"]);
+
+/**
+ * Rehype plugin: turn `[n]` text markers into `<sup data-citation-index="n">`
+ * elements so the markdown renderer can mount AI Elements InlineCitation
+ * markers. Code and pre subtrees are left untouched. Exported for unit tests.
+ */
+export function rehypeCitations({ maxIndex }: { maxIndex: number }) {
+  function transform(node: HastNode) {
+    if (!("children" in node) || !node.children) return;
+    if (node.type === "element" && CITATION_SKIP_TAGS.has((node as HastElementNode).tagName)) {
+      return;
+    }
+    const next: HastNode[] = [];
+    for (const child of node.children) {
+      if (child.type !== "text") {
+        transform(child);
+        next.push(child);
+        continue;
+      }
+      const value = (child as HastTextNode).value;
+      let last = 0;
+      let found = false;
+      CITATION_MARKER.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = CITATION_MARKER.exec(value)) !== null) {
+        const index = Number(match[1]);
+        if (index < 1 || index > maxIndex) continue;
+        found = true;
+        if (match.index > last) {
+          next.push({ type: "text", value: value.slice(last, match.index) });
+        }
+        next.push({
+          type: "element",
+          tagName: "sup",
+          properties: { "data-citation-index": index },
+          children: [{ type: "text", value: match[0] }],
+        });
+        last = match.index + match[0].length;
+      }
+      if (!found) {
+        next.push(child);
+      } else if (last < value.length) {
+        next.push({ type: "text", value: value.slice(last) });
+      }
+    }
+    node.children = next;
+  }
+
+  return (tree: unknown) => transform(tree as HastNode);
+}
 
 export function extractText(node: React.ReactNode): string {
   if (typeof node === "string") return node;
@@ -384,15 +455,18 @@ function RichTable({ children }: { children: React.ReactNode }) {
 export function ResponseMarkdown({
   content,
   isStreaming,
+  sources,
 }: {
   content: string;
   isStreaming?: boolean;
+  sources?: CitationSource[];
 }) {
+  const sourceMap = new Map((sources ?? []).map((source) => [source.index, source]));
   return (
     <div className={cn("prose text-sm leading-relaxed", isStreaming && "streaming-cursor")}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={[rehypeHighlight, [rehypeCitations, { maxIndex: sources?.length ?? 0 }]]}
         components={{
           pre: ({ children }) => <>{children}</>,
           code: ({ className, children, ...props }) => {
@@ -476,6 +550,13 @@ export function ResponseMarkdown({
                 {isExternal && <ExternalLink className="size-2.5 opacity-70" />}
               </a>
             );
+          },
+          sup: ({ children, ...props }) => {
+            const raw = (props as Record<string, unknown>)["data-citation-index"];
+            const index = typeof raw === "number" ? raw : Number(raw);
+            const source = Number.isFinite(index) ? sourceMap.get(index) : undefined;
+            if (!source) return <sup {...props}>{children}</sup>;
+            return <InlineCitation source={source} />;
           },
           h1: ({ children }) => (
             <h1 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100 mt-5 mb-2.5 pb-1.5 border-b border-zinc-200 dark:border-zinc-800">

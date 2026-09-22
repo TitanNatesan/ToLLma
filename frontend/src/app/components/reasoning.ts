@@ -31,27 +31,47 @@ export function reasoningLabel(status: ReasoningStatus, durationMs?: number | nu
   }
 }
 
-/**
- * Extracts distinct reasoning steps if present in structured chain-of-thought text
- * (e.g. "Step 1: ...", "1. ...", "### Step 1: ...").
- * Returns an array of detected steps, or empty array if unstructured.
- */
-export function extractReasoningSteps(content: string): string[] {
-  const trimmed = content.trim();
-  if (!trimmed) return [];
+export interface ReasoningStep {
+  title: string;
+  body: string;
+}
 
-  // Match numbered steps like:
-  // 1. Step description...
-  // Step 1: Description...
-  // ### Step 1: Description...
-  const stepRegex = /(?:^|\n)(?:(?:#{1,4}\s*)?(?:Step\s*\d+[:.]?|\d+\.)\s*)([^\n]+)/gi;
-  const matches: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = stepRegex.exec(trimmed)) !== null) {
-    const title = match[1]?.trim();
-    if (title && title.length > 2 && !matches.includes(title)) {
-      matches.push(title);
+export interface ReasoningOutline {
+  preamble: string;
+  steps: ReasoningStep[];
+}
+
+/** Line-leading step marker: "1.", "2)", "Step 3:", "### Step 4". */
+const STEP_MARKER = /^(?:#{1,4}\s*)?(?:Step\s*\d+[:.]?|\d+[.)])\s*/i;
+
+/**
+ * Splits structured reasoning into a preamble plus steps, preserving each
+ * step's body (title = marker line, body = the prose that follows it).
+ * Returns null for unstructured content or fewer than two steps so callers
+ * can fall back to the plain reasoning text.
+ */
+export function splitReasoningSteps(content: string): ReasoningOutline | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+
+  const steps: ReasoningStep[] = [];
+  const preamble: string[] = [];
+  let current: ReasoningStep | null = null;
+
+  for (const line of trimmed.split("\n")) {
+    const marker = line.match(STEP_MARKER);
+    if (marker) {
+      current = { title: line.slice(marker[0].length).trim(), body: "" };
+      steps.push(current);
+      continue;
+    }
+    if (current) {
+      current.body = current.body ? `${current.body}\n${line}` : line;
+    } else {
+      preamble.push(line);
     }
   }
-  return matches;
+
+  if (steps.length < 2) return null;
+  return { preamble: preamble.join("\n").trim(), steps };
 }

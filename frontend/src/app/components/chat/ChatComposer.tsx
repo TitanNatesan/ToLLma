@@ -478,45 +478,65 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
   }
 
   // --- Drag & drop (AI SDK Attachments pattern, capability-gated) ---
+  // Window-level so a drop anywhere in the viewport attaches to the composer.
   const canDrop = ready && !streaming && kinds.length > 0;
+  const canDropRef = useRef(canDrop);
+  const incomingFilesRef = useRef(handleIncomingFiles);
   const dragDepth = useRef(0);
   const [dragActive, setDragActive] = useState(false);
 
-  function handleDragEnter(e: React.DragEvent) {
-    if (!canDrop) return;
-    e.preventDefault();
-    dragDepth.current += 1;
-    setDragActive(true);
-  }
+  // Keep the listener closures current without re-registering on every render.
+  useEffect(() => {
+    canDropRef.current = canDrop;
+    incomingFilesRef.current = handleIncomingFiles;
+  });
 
-  function handleDragOver(e: React.DragEvent) {
-    if (!canDrop) return;
-    e.preventDefault();
-  }
-
-  function handleDragLeave() {
-    if (!canDrop) return;
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setDragActive(false);
-  }
-
-  function handleDrop(e: React.DragEvent) {
-    if (!canDrop) return;
-    e.preventDefault();
-    dragDepth.current = 0;
-    setDragActive(false);
-    const files = e.dataTransfer?.files;
-    if (files && files.length > 0) void handleIncomingFiles(files);
-  }
+  useEffect(() => {
+    // Synthetic test drags may omit dataTransfer.types; only skip drags that
+    // explicitly carry a non-file payload (e.g. dragging selected text).
+    function isFileDrag(event: DragEvent): boolean {
+      const types = event.dataTransfer?.types;
+      if (!types || types.length === 0) return true;
+      return Array.from(types).includes("Files");
+    }
+    function handleDragEnter(event: DragEvent) {
+      if (!canDropRef.current || !isFileDrag(event)) return;
+      event.preventDefault();
+      dragDepth.current += 1;
+      setDragActive(true);
+    }
+    function handleDragOver(event: DragEvent) {
+      if (!canDropRef.current || !isFileDrag(event)) return;
+      event.preventDefault();
+    }
+    function handleDragLeave() {
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragActive(false);
+    }
+    function handleDrop(event: DragEvent) {
+      if (!canDropRef.current) return;
+      event.preventDefault();
+      dragDepth.current = 0;
+      setDragActive(false);
+      const files = event.dataTransfer?.files;
+      if (files && files.length > 0) void incomingFilesRef.current(files);
+    }
+    window.addEventListener("dragenter", handleDragEnter);
+    window.addEventListener("dragover", handleDragOver);
+    window.addEventListener("dragleave", handleDragLeave);
+    window.addEventListener("drop", handleDrop);
+    return () => {
+      window.removeEventListener("dragenter", handleDragEnter);
+      window.removeEventListener("dragover", handleDragOver);
+      window.removeEventListener("dragleave", handleDragLeave);
+      window.removeEventListener("drop", handleDrop);
+    };
+  }, []);
 
   return (
     <div
       className="relative border-t border-zinc-200 bg-white px-3 pb-3 pt-2 dark:border-zinc-800 dark:bg-zinc-950"
       data-testid="chat-composer"
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
     >
       {/* Unsupported-upload warning with model suggestions */}
       {rejection && (
@@ -565,7 +585,7 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         status={streaming ? "streaming" : "ready"}
       >
         <DropzoneOverlay
-          isDragging={dragActive}
+          isDragging={dragActive && canDrop}
           acceptLabel={kinds.join(", ")}
         />
 

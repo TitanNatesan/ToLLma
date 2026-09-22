@@ -5,10 +5,11 @@ import {
   InlineCitation as InlineCitationRoot,
   InlineCitationCard,
   InlineCitationCardBody,
-  InlineCitationCardTrigger,
   InlineCitationQuote,
   InlineCitationSource,
 } from "@/components/ai-elements/inline-citation";
+import { HoverCardTrigger } from "@/components/ai-elements/hover-card";
+import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 
 export interface CitationSource {
@@ -39,16 +40,22 @@ const sourceIcon = (source: CitationSource) => {
 
 /**
  * Inline citation marker built on the AI Elements InlineCitation primitives.
- * Renders only when backend-provided citation data exists.
+ * Shows the citation index for every source kind (file sources carry no URL,
+ * so a hostname badge would be meaningless) and opens the source card on hover.
  */
 export function InlineCitation({ source, className }: InlineCitationProps) {
   return (
     <InlineCitationRoot className={className}>
       <InlineCitationCard>
-        <InlineCitationCardTrigger
-          data-testid={`citation-marker-${source.index}`}
-          sources={source.url ? [source.url] : []}
-        />
+        <HoverCardTrigger asChild>
+          <Badge
+            className="cursor-pointer rounded-full align-super text-[10px]"
+            data-testid={`citation-marker-${source.index}`}
+            variant="secondary"
+          >
+            [{source.index}]
+          </Badge>
+        </HoverCardTrigger>
         <InlineCitationCardBody>
           <InlineCitationSource
             className="p-3"

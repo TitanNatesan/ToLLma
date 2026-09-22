@@ -39,6 +39,9 @@ test("editing a message keeps versions and regenerates the response", async ({ p
   await sendMessage(page, "original prompt");
   await expect(page.getByTestId("message-assistant").last()).toContainText("Thoughtful answer.", { timeout: 20000 });
 
+  // Fresh messages carry no version history, so no history action exists.
+  await expect(page.locator('[data-testid^="history-button-"]')).toHaveCount(0);
+
   const userMessage = page.getByTestId("message-user").last();
   await userMessage.hover();
   await userMessage.locator('[data-testid^="edit-button-"]').click();
@@ -50,14 +53,19 @@ test("editing a message keeps versions and regenerates the response", async ({ p
   });
   await expect(page.getByTestId("message-assistant").last()).toContainText("Thoughtful answer.", { timeout: 25000 });
 
-  // History on the edited message exposes both versions and a diff.
+  // History appears on the edited message and on the regenerated response.
   const editedMessage = page.getByTestId("message-user").last();
+  await expect(editedMessage.locator('[data-testid^="history-button-"]')).toBeVisible();
+  await expect(
+    page.getByTestId("message-assistant").last().locator('[data-testid^="history-button-"]'),
+  ).toBeVisible();
   await editedMessage.hover();
   await editedMessage.locator('[data-testid^="history-button-"]').click();
   const dialog = page.getByTestId("message-history-dialog");
   await expect(dialog).toBeVisible();
   await expect(page.getByTestId("history-version-1")).toBeVisible();
   await expect(page.getByTestId("history-version-2")).toBeVisible();
+  await expect(page.getByTestId("history-version-2")).toContainText(/\d{1,2}:\d{2}/);
   await expect(page.getByTestId("history-diff")).toContainText("edited prompt with new intent");
 });
 
@@ -66,15 +74,22 @@ test("regeneration preserves every response and navigates between them", async (
   await sendMessage(page, "first attempt");
   await expect(page.getByTestId("message-assistant").last()).toContainText("Thoughtful answer.", { timeout: 20000 });
 
+  // One generation, no versions → no history affordance yet. Per-message
+  // delete/share no longer exist at all (conversation level owns both).
+  await expect(page.locator('[data-testid^="generation-nav-"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="history-button-"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="delete-message"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid^="share-button-"]')).toHaveCount(0);
+
   const assistant = page.getByTestId("message-assistant").last();
   await assistant.hover();
   await assistant.locator('[data-testid^="regenerate-button-"]').click();
 
   const nav = page.locator('[data-testid^="generation-nav-"]').last();
   await expect(nav).toBeVisible({ timeout: 25000 });
-  await expect(page.getByTestId("generation-page")).toContainText("2 of 2");
+  await expect(page.getByTestId("generation-page")).toContainText("Response 2 of 2");
   await page.getByTestId("generation-prev").click();
-  await expect(page.getByTestId("generation-page")).toContainText("1 of 2");
+  await expect(page.getByTestId("generation-page")).toContainText("Response 1 of 2");
 });
 
 test("branching from a message creates a linked conversation", async ({ page }) => {

@@ -13,6 +13,7 @@ import {
 } from "react";
 import { Button, Tooltip } from "@/components/ui/primitives";
 import { ResponseMarkdown } from "@/app/components/ResponseMarkdown";
+import type { CitationSource } from "@/app/components/chat/citations/InlineCitation";
 import { cn } from "@/lib/utils";
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -266,17 +267,20 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 export interface MessageResponseProps extends HTMLAttributes<HTMLDivElement> {
   children: string;
   isStreaming?: boolean;
+  /** Sources for inline [n] citation markers. */
+  sources?: CitationSource[];
 }
 
 export const MessageResponse = memo(
-  ({ children, className, isStreaming, ...props }: MessageResponseProps) => (
+  ({ children, className, isStreaming, sources, ...props }: MessageResponseProps) => (
     <div className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)} {...props}>
-      <ResponseMarkdown content={children} isStreaming={isStreaming} />
+      <ResponseMarkdown content={children} isStreaming={isStreaming} sources={sources} />
     </div>
   ),
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children &&
-    nextProps.isStreaming === prevProps.isStreaming,
+    nextProps.isStreaming === prevProps.isStreaming &&
+    nextProps.sources === prevProps.sources,
 );
 
 MessageResponse.displayName = "MessageResponse";

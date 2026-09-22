@@ -40,10 +40,3 @@ export function splitThinkBlocks(content: string): ThinkPart[] {
   }
   return parts;
 }
-
-/** Word count for the Thinking pill label. */
-export function countThinkWords(content: string): number {
-  const trimmed = content.trim();
-  if (!trimmed) return 0;
-  return trimmed.split(/\s+/).length;
-}

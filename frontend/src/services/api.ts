@@ -663,7 +663,6 @@ export const activateGeneration = (messageId: string, runId: string) =>
     `/api/v1/messages/${messageId}/generations/${runId}/activate`,
     {},
   );
-export const deleteMessage = (messageId: string) => del<void>(`/api/v1/messages/${messageId}`);
 export const createBranch = (conversationId: string, messageId: string, branchName?: string) =>
   post<BranchInfo>(`/api/v1/conversations/${conversationId}/branches`, {
     message_id: messageId,

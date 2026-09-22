@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { ChatComposer, type ChatSendPayload } from "@/app/components/chat/ChatCo
 import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";
 import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
+import { deriveSources } from "@/app/components/chat/sources/Sources";
 import { useConversation } from "@/hooks/useChat";
 import {
   cancelGeneration,
@@ -23,12 +24,10 @@ import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
 import { useSettingsStore } from "@/store/settings";
 import { SearchModal } from "@/components/ui/SearchModal";
-import { ShareDialog } from "@/components/ui/ShareDialog";
 import { useIntelligenceMutations } from "@/hooks/useIntelligence";
 import {
   activateGeneration,
   createBranch,
-  deleteMessage,
   editMessage,
   regenerateMessage,
 } from "@/services/api";
@@ -100,14 +99,22 @@ export default function Home() {
     }
   }, [convError, setConversation]);
 
-  const persistedMessages: ChatMessage[] = conversation?.messages ?? [];
+  const persistedMessages: ChatMessage[] = useMemo(
+    () => conversation?.messages ?? [],
+    [conversation?.messages],
+  );
   // Optimistic entries carry backend-issued ids: they replace (never duplicate)
   // the persisted rows. History itself always comes from the backend.
-  const optimisticIds = new Set(optimisticMessages.map((m) => m.id));
-  const allMessages = [
-    ...persistedMessages.filter((m) => !optimisticIds.has(m.id)),
-    ...optimisticMessages,
-  ] as ChatMessage[];
+  const allMessages = useMemo(() => {
+    const optimisticIds = new Set(optimisticMessages.map((m) => m.id));
+    return [
+      ...persistedMessages.filter((m) => !optimisticIds.has(m.id)),
+      ...optimisticMessages,
+    ] as ChatMessage[];
+  }, [persistedMessages, optimisticMessages]);
+  // Reply sources derived from the turn's attachments (stable identities so
+  // MessageView memoization survives streaming re-renders).
+  const sourcesByMessage = useMemo(() => deriveSources(allMessages), [allMessages]);
 
   // Follow-new-messages preference: AI Elements Conversation (stick-to-bottom)
   // when on, a plain scroll container when the user opted out.
@@ -443,7 +450,6 @@ export default function Home() {
   }, [activeConversationId, attachToGeneration, refreshAll, setConversation]);
 
   const [searchOpen, setSearchOpen] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const intelligence = useIntelligenceMutations(activeConversationId);
   const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation } = intelligence;
@@ -540,15 +546,6 @@ export default function Home() {
     [activeConversationId, activateMutation, refreshAll],
   );
 
-  const handleDeleteMessage = useCallback(
-    (messageId: string) => {
-      void deleteMessage(messageId)
-        .then(() => refreshAll(activeConversationId))
-        .catch((error) => toastApiError(error, { title: "Could not delete message" }));
-    },
-    [activeConversationId, refreshAll],
-  );
-
   const handleSearchSelect = useCallback(
     (result: SearchResult) => {
       setConversation(result.conversation_id);
@@ -619,12 +616,11 @@ export default function Home() {
               key={m.id}
               message={m}
               isStreaming={isStreaming}
+              sources={sourcesByMessage.get(m.id)}
               onActivateGeneration={handleActivateGeneration}
               onBranch={!isOpt ? handleBranch : undefined}
-              onDelete={!isOpt ? handleDeleteMessage : undefined}
               onEdit={!isOpt && m.role === "user" ? handleEdit : undefined}
               onRegenerate={!isOpt && m.role === "assistant" ? handleRegenerate : undefined}
-              onShare={!isOpt && m.role === "assistant" ? () => setShareOpen(true) : undefined}
             />
           );
         })}
@@ -643,14 +639,14 @@ export default function Home() {
         <div className="relative flex min-h-0 flex-1 flex-col">
           {autoScroll ? (
             <Conversation scrollTestId="message-list">
-              <ConversationContent className="mx-auto min-h-full w-full max-w-[1200px] px-4 py-6">
+              <ConversationContent className="mx-auto min-h-full w-full max-w-[960px] px-4 py-6">
                 {messageList}
               </ConversationContent>
               <ConversationScrollButton />
             </Conversation>
           ) : (
             <div className="flex flex-1 flex-col overflow-y-auto" data-testid="message-list">
-              <div className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-3 px-4 py-6">
+              <div className="mx-auto flex min-h-full w-full max-w-[960px] flex-col gap-4 px-4 py-6">
                 {messageList}
               </div>
             </div>
@@ -658,7 +654,7 @@ export default function Home() {
         </div>
 
         {/* Composer */}
-        <div className="mx-auto w-full max-w-[1200px] px-4">
+        <div className="mx-auto w-full max-w-[960px] px-4">
         <ChatComposer
           streaming={streaming}
           onSend={(t) => send(t, activeConversationId)}
@@ -671,7 +667,6 @@ export default function Home() {
       <IntelligencePanel />
 
       <SearchModal onOpenChange={setSearchOpen} onSelect={handleSearchSelect} open={searchOpen} />
-      <ShareDialog conversationId={activeConversationId} onOpenChange={setShareOpen} open={shareOpen} />
     </div>
   );
 }

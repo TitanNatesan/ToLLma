@@ -294,16 +294,17 @@ def message_reads(
 ) -> list[MessageRead]:
     """Message rows -> read models with attachments + generation history.
 
-    Two grouped queries total, independent of message count.
+    Three grouped queries total, independent of message count.
     """
     from tollms.api.messages.service import run_reads
-    from tollms.models.message_history import GenerationRun
+    from tollms.models.message_history import GenerationRun, MessageVersion
 
-    grouped = attachment_service.attachments_for_messages(db, [m.id for m in messages], user_id)
+    ids = [m.id for m in messages]
+    grouped = attachment_service.attachments_for_messages(db, ids, user_id)
     run_rows = list(
         db.execute(
             select(GenerationRun)
-            .where(GenerationRun.message_id.in_([m.id for m in messages] or [None]))
+            .where(GenerationRun.message_id.in_(ids or [None]))
             .order_by(GenerationRun.generation_number.asc())
         ).scalars()
     )
@@ -311,6 +312,13 @@ def message_reads(
     for run in run_rows:
         runs_by_message.setdefault(run.message_id, []).append(run)
     runs_read = {run.id: read for run, read in zip(run_rows, run_reads(db, run_rows))}
+    version_counts = dict(
+        db.execute(
+            select(MessageVersion.message_id, func.count())
+            .where(MessageVersion.message_id.in_(ids or [None]))
+            .group_by(MessageVersion.message_id)
+        ).all()
+    )
 
     out = []
     for m in messages:
@@ -320,6 +328,7 @@ def message_reads(
         read.generations = [runs_read[run.id] for run in message_runs]
         active = next((run for run in message_runs if run.is_active), None)
         read.active_generation_id = active.id if active else None
+        read.versions_count = int(version_counts.get(m.id, 0))
         out.append(read)
     return out
 

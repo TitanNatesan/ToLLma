@@ -79,6 +79,13 @@ def test_edit_message_snapshots_versions(db: Session, client, user_factory, prov
     model = model_factory(provider["id"])
     _conversation, user_message, _ = _seed(db, client, provider, model, with_assistant=False)
 
+    def versions_count() -> int:
+        conv = client.get(f"/api/v1/conversations/{_conversation.id}").json()
+        return next(m["versions_count"] for m in conv["messages"] if m["id"] == str(user_message.id))
+
+    # Never-edited messages report zero versions (the UI hides history).
+    assert versions_count() == 0
+
     r = client.patch(f"/api/v1/messages/{user_message.id}", json={"content": "second version"})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -88,6 +95,8 @@ def test_edit_message_snapshots_versions(db: Session, client, user_factory, prov
     assert body["versions"][0]["content"] == "first version"
     assert body["versions"][1]["content"] == "second version"
     assert body["current_version"] == 2
+    # After one edit the original + edit are both snapshotted.
+    assert versions_count() == 2
 
     history = client.get(f"/api/v1/messages/{user_message.id}/history").json()
     assert history["current_version"] == 2

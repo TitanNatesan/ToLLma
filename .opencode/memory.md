@@ -1503,3 +1503,90 @@ Frontend: `types/index.ts` (User + LoginSession), `services/api.ts` (forgot/vali
 - Optional "set a password" flow for Google accounts that want local login (would set `provider` linkage without losing OAuth).
 - Rate-limit `forgot-password` per IP/email and add a small audit trail of reset requests.
 - Expose the reset-token TTL/invalidation knobs in `.env.example` documentation.
+
+---
+
+## 2026-09-21 — Chat Page Modernization completion: full-viewport drop, borderless replies, live sources & inline citations
+
+### Requirement Completed
+Closed the remaining gaps of the "ToLLma Chat Page Modernization Using AI Elements" spec on top of the existing Phase A integration, frontend-only (backend APIs, streaming, persistence and provider abstraction untouched). Analysis first: Reasoning/CoT, attachments, prompt input and conversation shell were already compliant; the real gaps were the composer-scoped dropzone, the assistant card chrome, the 1200px reading width, and Sources/InlineCitation components that existed but were never rendered because the backend emits no `metadata.sources`.
+
+### Files Modified
+Frontend: `app/components/chat/attachments/DropzoneOverlay.tsx` (viewport-fixed overlay with dark translucent backdrop and centered card), `app/components/chat/ChatComposer.tsx` (window-level `dragenter/dragover/dragleave/drop` with depth counting, `Files`-type filter that tolerates synthetic test events, capability-gated, refs refreshed in an effect to satisfy `react-hooks/refs`), `app/components/MessageView.tsx` (assistant `MessageContent` is now borderless/backgroundless/full-width; new optional `sources` prop merged over `metadata.sources` and threaded to `MessageResponse`), `components/ai-elements/message.tsx` (`MessageResponse` passes `sources` through), `app/components/ResponseMarkdown.tsx` (exported `rehypeCitations` plugin splitting `[n]` text into `<sup data-citation-index="n">`, skipping `code`/`pre`, plus a `sup` override that mounts `InlineCitation` for known indexes), `app/components/chat/citations/InlineCitation.tsx` (marker now renders `[n]` via `HoverCardTrigger` + Badge instead of the vendored hostname/"unknown" badge, which was useless for file sources), `app/components/chat/sources/Sources.tsx` (new pure `deriveSources(messages)` mapping the user turn's attachment rows onto the reply it produced, 1-indexed, with real `attachmentContentUrl` links), `app/page.tsx` (memoized `persistedMessages`/`allMessages`/`sourcesByMessage`, passes per-message sources, conversation + composer width 1200px → 960px).
+Tests: `app/components/__tests__/ResponseMarkdown.test.ts` (+2 rehype-citations cases), `app/components/chat/__tests__/citationsAndSources.test.ts` (+2 `deriveSources` cases), `e2e/mock-server.ts` ("cite" model branch streaming `[1]`), `e2e/elements.spec.ts` (setup accepts a model prefix; new sources + inline-citation e2e with refresh persistence), `e2e/generation.spec.ts` (stale double-regenerate assertion corrected to in-place regeneration).
+
+### Decisions
+- **Sources are derived, not invented**: the gateway injects the user turn's attachment text into the prompt and links those rows to the user message, so the reply's sources ARE exactly that attachment set. Derivation is client-side from persisted `ChatAttachment` rows — no schema, API or fake-data changes. Sources with no URL get the existing attachment content endpoint, so both the Sources list and the citation card are real links.
+- **Inline citations render only when the model emits `[n]`** and a matching source exists; the rehype transform runs on the markdown AST (not regex on raw text) so code blocks are never rewritten. This keeps the feature honest: nothing is fabricated when no markers exist.
+- **Assistant chrome removed, user bubble kept**: assistant replies are typography-first (no border/background/padding, full width), matching the 70% Claude / 20% ChatGPT / 10% Perplexity target; the right-aligned user bubble remains for turn separation.
+- **Dropzone is window-level but capability-gated**: listeners register once and consult refs, so the overlay is full-screen only when the selected model can accept uploads; `dragActive && canDrop` prevents stale overlays.
+- **Stable identities for memoization**: `sourcesByMessage` is memoized on `[allMessages]`, and `allMessages` on `[persistedMessages, optimisticMessages]`, so the `MessageView` memo comparator (now including `sources`) still short-circuits unchanged messages during streaming.
+- **Context above the prompt was already satisfied** by the AI Elements Attachments staging (`UploadPreview`) with per-chip removal; the AI Elements `Context` component is a token/context-window surface, not a file-context list, so no duplicate widget was added.
+
+### Verification
+- Frontend: `npx vitest run` **106/106** (was 102; +4 new unit tests); `npx tsc --noEmit` clean; `npx eslint` clean on all touched files; `npx next build` green; `tollms-frontend` restarted after the host build.
+- Playwright `e2e/elements.spec.ts` **5/5** (reasoning unchanged, dropzone visibility, drag-drop ready + send, new sources/inline-citation + refresh persistence, scroll-to-bottom); `e2e/generation.spec.ts` + `e2e/reasoning-selector.spec.ts` + `e2e/history.spec.ts` **17/17**; `tests/chat-ux.spec.ts` + `e2e/chat.spec.ts` + `e2e/conversation-intelligence.spec.ts` **35 passed / 2 skipped** (the one real failure there, a public-share test, passed in isolation — contention flake).
+- The pre-existing `generation.spec.ts` "double-clicked regenerate" failure was reproduced on a stashed clean tree before fixing; it asserted 2 user + 2 assistant rows from the pre-Phase-B send-based regeneration and now asserts in-place regeneration (1 + 1 rows, ≥2 generation runs).
+
+### Recommended Next Steps
+- Prompt-level citation guidance (provider-agnostic system hint to cite uploaded files as `[n]`) if citations should appear without user prompting.
+- Wire `metadata.tool_calls`/`metadata.context_items` once the gateway emits them; `ToolCall`/`MessageContext` already render when present.
+- Consider promoting the "cite" stream branch into a reusable mock fixture if more citation surfaces (share page) get coverage.
+
+---
+
+## 2026-09-22 — Chat Page Alignment & Full AI Elements Migration (reasoning + message layout)
+
+### Requirement Completed
+Completed the frontend-only alignment/AI-Elements migration: the custom amber reasoning card was replaced with the official AI Elements `Reasoning`/`ChainOfThought` surfaces, user/assistant message alignment and rhythm were fixed, duplicate reasoning labels and custom action text were removed, and widths/spacing were unified on one content column. No backend, streaming, provider or schema changes.
+
+### Files Modified
+Frontend: `app/components/chat/reasoning/ReasoningPanel.tsx` (rebuilt on official `Reasoning` + `ReasoningTrigger` + `ReasoningContent` for prose and `ChainOfThought` + `ChainOfThoughtContent` + `ChainOfThoughtStep` for structured steps; neutral zinc styling, no cards/borders/duplicate labels; live duration, tokens slot, copy action, auto-scroll, controlled collapsed-by-default open state), `app/components/reasoning.ts` (`extractReasoningSteps` → `splitReasoningSteps` returning preamble + `{title, body}` steps, preserving step bodies), `app/components/thinkBlocks.ts` (removed now-unused `countThinkWords`), `app/components/MessageView.tsx` (user bubble `ml-auto max-w-[85%]`; role labels removed from the meta row; icon-only actions), `components/ai-elements/conversation.tsx` + `app/page.tsx` (message rhythm `gap-4`), `app/components/chat/attachments/DropzoneOverlay.tsx` ("Drop files to attach").
+Tests: `app/components/chat/__tests__/reasoning.test.ts` (splitReasoningSteps cases), `app/components/__tests__/thinkBlocks.test.ts`, `e2e/generation.spec.ts` (dropped the removed word-count assertion).
+
+### Decisions
+- Dual-mode reasoning: structured prose (2+ detected steps) renders official `ChainOfThoughtStep`s with each step's body as its description; unstructured prose renders the official `ReasoningContent` markdown. Content is never dropped and nothing is duplicated.
+- Controlled open state instead of the official auto-open/auto-close: the mixed controlled/uncontrolled state previously let the panel stay expanded; deterministic collapse-by-default matches the product spec and keeps e2e timing stable.
+- The repo's `cn` is a plain class join (no tailwind-merge), so conflicting utilities (`w-auto` vs `w-full`, `gap-3` vs `gap-4`, `mb-0` vs `mb-4`) were avoided by editing component defaults rather than overriding per call site.
+- `data-testid`s (`thinking-block`, `reasoning-toggle`, `data-status`, `reasoning-panel`, `reasoning-duration`, `reasoning-tokens`) and labels ("Thinking…", "Thought for Xs") were preserved so the existing Playwright reasoning contracts keep working.
+
+### Verification
+- Frontend `vitest` **104/104**; `tsc --noEmit` clean; `eslint` clean; `next build` green; frontend restarted.
+- Playwright `e2e/elements.spec.ts` + `e2e/generation.spec.ts` **13/13** (live reasoning pill/duration/tokens, attachment drop, sources + inline citation, refresh persistence); `tests/chat-ux.spec.ts` + `e2e/chat.spec.ts` + `e2e/intelligence.spec.ts` + `e2e/history.spec.ts` **26 passed / 2 skipped**.
+- Live browser check via the MCP browser against the Docker dev stack: user bubble flush right on the 960px column, borderless assistant response, official "Thought for 2s" trigger, no amber card.
+
+### Recommended Next Steps
+- Feed `ChainOfThought` steps from provider-native structured events when adapters emit them (currently derived from normalized text).
+- Consider official auto-open-while-streaming if collapsing during generation is not desired.
+
+---
+
+## 2026-09-22 — Simplify Message Actions UI (conditional history, no per-message delete/share)
+
+### Requirement Completed
+Frontend-only cleanup of the message action bar: per-message delete and share were removed entirely, the history action now renders only when versions exist (user edit versions or assistant generations), the assistant version indicator reads "Response N of M", and the history dialog version chips show timestamps. One additive, non-breaking backend field was required because no edit-version metadata was exposed on message reads.
+
+### Files Created
+None.
+
+### Files Modified
+Backend: `api/conversations/schemas.py` (`MessageRead.versions_count: int = 0`), `api/conversations/service.py` (`message_reads` adds one batched `MessageVersion` count query alongside attachments/generations), `tests/test_message_history.py` (asserts 0 before edit, 2 after).
+Frontend: `app/components/MessageView.tsx` (removed delete/share actions, imports and props; `hasHistory = user ? versions_count > 1 : generations.length > 1`; generation page label "Response N of M"), `app/page.tsx` (removed `handleDeleteMessage`, `onDelete`/`onShare` props, message-level `ShareDialog` + `shareOpen` state and import), `services/api.ts` (removed unused `deleteMessage` client; backend endpoint untouched), `types/index.ts` (`versions_count?`), `app/components/chat/message/MessageHistoryDialog.tsx` (version chips show `vN · HH:MM`, active version already highlighted).
+Tests: `e2e/conversation-intelligence.spec.ts` (fresh messages assert zero history/delete/share buttons; edited + regenerated messages assert history visible; "Response 2 of 2" → "Response 1 of 2").
+
+### Decisions
+- Edit history needed one backend field: `versions_count` is computed with the same grouped-query pattern as attachments/generations (constant query count per conversation), is additive and backwards compatible, and makes the conditional history correct after refresh (a local-only flag would forget edits).
+- "Edited" = `versions_count > 1` because the first edit snapshots the original as v1 and the edit as v2; assistant history = `generations.length > 1`.
+- Conversation-level share/delete were left untouched (header menu owns them); the removed message-level ShareDialog is now redundant.
+- The history dialog still owns user-message version inspection (chips + diff); switching assistant responses stays in the inline prev/next navigation, matching the existing in-place regeneration model.
+
+### Verification
+- Backend `docker compose exec -T backend python -m pytest -q`: **194 passed** (clean re-run; an earlier run's 7 analytics failures were traced to a timed-out prior pytest process still running in the container — analytics passed 12/12 in isolation).
+- Frontend `vitest` **104/104**; `tsc --noEmit` clean; `eslint` clean; `next build` green; frontend restarted.
+- Playwright `e2e/conversation-intelligence.spec.ts` **8/8** (conditional history, version timestamps, "Response 2 of 2"/"Response 1 of 2", no delete/share testids); regression `elements` + `generation` **13/13**; `chat-ux` + `chat` + `intelligence` + `history` **26 passed / 2 skipped**.
+- Environmental note: a scratch mock server on port 4899 silently intercepted the e2e mock (`EADDRINUSE` resolves into "already running"), causing a false 7-test failure; killed it and re-ran green.
+
+### Recommended Next Steps
+- If user edit-version switching (not just inspection) is wanted, it needs a backend "activate version" semantic; currently the dialog shows the diff between versions without reverting.
+- Consider surfacing `versions_count` on search results/message payloads if other surfaces need edited badges.
+

@@ -116,7 +116,9 @@ test("double-clicked regenerate adopts instead of duplicating", async ({ page })
   await expect(page.getByTestId("message-assistant").last()).toContainText("slow-word-20", {
     timeout: 25000,
   });
-  // Two rapid regenerates: the second 409-adopts the first, no wedge, no dup.
+  // Two rapid regenerates: the second is rejected while the first runs.
+  // Regeneration happens in place, so the conversation must still hold
+  // exactly one user + one assistant row (no wedge, no duplicate bubbles).
   const regen = page.locator("[data-testid^='regenerate-button-']").last();
   await regen.click({ timeout: 10000 });
   await regen.click({ timeout: 10000 }).catch(() => {});
@@ -124,13 +126,16 @@ test("double-clicked regenerate adopts instead of duplicating", async ({ page })
     timeout: 30000,
   });
   await page.waitForTimeout(1000);
-  await expect(page.getByTestId("message-user")).toHaveCount(2);
-  await expect(page.getByTestId("message-assistant")).toHaveCount(2);
+  await expect(page.getByTestId("message-user")).toHaveCount(1);
+  await expect(page.getByTestId("message-assistant")).toHaveCount(1);
   await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Chat failed" })).toHaveCount(0);
   const convId = await activeConversationId(page);
   const conv = await (await page.request.get(`${API}/api/v1/conversations/${convId}`)).json();
-  expect(conv.messages.filter((m: { role: string }) => m.role === "assistant")).toHaveLength(2);
-  expect(conv.messages.filter((m: { role: string }) => m.role === "user")).toHaveLength(2);
+  expect(conv.messages.filter((m: { role: string }) => m.role === "assistant")).toHaveLength(1);
+  expect(conv.messages.filter((m: { role: string }) => m.role === "user")).toHaveLength(1);
+  // Every regeneration is kept as a generation of that same message.
+  const assistantRow = conv.messages.find((m: { role: string }) => m.role === "assistant");
+  expect(assistantRow.generations.length).toBeGreaterThanOrEqual(2);
 });
 
 test("first-token timing with instant provider", async ({ page }) => {
@@ -180,7 +185,6 @@ test("reasoning model shows collapsible Thinking pill, preserved on refresh", as
   await expect(assistant).not.toContainText("Thoughtful answer.");
   // Completion: same pill persists, same Reasoning UI every provider uses.
   await expect(assistant).toContainText("Thoughtful answer.", { timeout: 20000 });
-  await expect(pill).toContainText("4 words");
   await assistant.getByTestId("reasoning-toggle").click();
   await expect(pill).toContainText("Considering the options carefully.");
   // Refresh: persisted <think> span restores the pill.

@@ -8,11 +8,16 @@ test.beforeAll(async () => {
   await startMockLLM();
 });
 
-async function setup(page: Page, tag: string, modelExtra: Record<string, unknown> = {}) {
+async function setup(
+  page: Page,
+  tag: string,
+  modelExtra: Record<string, unknown> = {},
+  modelPrefix = "thinker",
+) {
   await apiLoginAs(page, tag);
   const stamp = Date.now();
   const p = await apiCreateProvider(page.request, `pw-el-${stamp}`);
-  const m = await apiCreateModel(page.request, p.id, `thinker-${stamp}`, "2", "8", modelExtra);
+  const m = await apiCreateModel(page.request, p.id, `${modelPrefix}-${stamp}`, "2", "8", modelExtra);
   await page.goto("/");
   await page.waitForLoadState("networkidle");
   await selectProviderModel(page, p.id, m.id);
@@ -76,6 +81,44 @@ test("attachment drag & drop uploads and reaches ready state", async ({ page }) 
     "notes.txt",
     { timeout: 15000 },
   );
+});
+
+test("attachment reply renders sources and inline citation markers", async ({ page }) => {
+  await setup(
+    page,
+    "elcite",
+    { supports_vision: true, metadata: { supports_files: true } },
+    "cite",
+  );
+
+  const dataTransfer = await page.evaluateHandle(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["region,total\nEU,42"], "report.csv", { type: "text/csv" }));
+    return dt;
+  });
+  await page.dispatchEvent('[data-testid="chat-composer"]', "drop", { dataTransfer });
+  const chip = page.locator("[data-testid^='attachment-chip-']").first();
+  await expect(chip).toHaveAttribute("data-status", "ready", { timeout: 10000 });
+
+  await sendMessage(page, "summarize the report");
+  const assistant = page.getByTestId("message-assistant").last();
+  await expect(assistant).toContainText("the answer is 42.", { timeout: 20000 });
+
+  // The attachment turn becomes the reply's Sources section (expandable)…
+  const sources = assistant.getByTestId("message-sources");
+  await expect(sources).toContainText("Used 1 sources");
+  await sources.getByRole("button").click();
+  await expect(sources).toContainText("report.csv");
+  // …and the [1] marker renders through the InlineCitation component.
+  await expect(assistant.getByTestId("citation-marker-1")).toBeVisible();
+
+  // Both survive a refresh, rebuilt from persisted attachment rows.
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const restored = page.getByTestId("message-assistant").last();
+  await restored.getByTestId("message-sources").getByRole("button").click();
+  await expect(restored.getByTestId("message-sources")).toContainText("report.csv");
+  await expect(restored.getByTestId("citation-marker-1")).toBeVisible();
 });
 
 test("scroll-to-bottom affordance appears when user scrolls away", async ({ page }) => {

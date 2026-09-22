@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  extractReasoningSteps,
   formatReasoningDuration,
   reasoningLabel,
-  type ReasoningStatus,
+  splitReasoningSteps,
 } from "../../reasoning";
-import { countThinkWords, splitThinkBlocks } from "../../thinkBlocks";
+import { splitThinkBlocks } from "../../thinkBlocks";
 
 describe("reasoning formatters & labels", () => {
   it("formats duration human-readably", () => {
@@ -27,42 +26,49 @@ describe("reasoning formatters & labels", () => {
   });
 });
 
-describe("extractReasoningSteps", () => {
-  it("extracts numbered steps from structured thinking content", () => {
+describe("splitReasoningSteps", () => {
+  it("splits numbered steps and keeps each body", () => {
     const content = `
 1. Analyze the user prompt and identify constraints.
+The prompt asks for a plan.
 2. Formulate the solution plan.
+Keep it small.
 3. Validate against edge cases.
-    `.trim();
+`.trim();
 
-    const steps = extractReasoningSteps(content);
-    expect(steps).toEqual([
-      "Analyze the user prompt and identify constraints.",
-      "Formulate the solution plan.",
-      "Validate against edge cases.",
+    const outline = splitReasoningSteps(content);
+    expect(outline?.preamble).toBe("");
+    expect(outline?.steps).toEqual([
+      { title: "Analyze the user prompt and identify constraints.", body: "The prompt asks for a plan." },
+      { title: "Formulate the solution plan.", body: "Keep it small." },
+      { title: "Validate against edge cases.", body: "" },
     ]);
   });
 
-  it("extracts markdown step headers", () => {
+  it("splits markdown step headers and preserves the preamble", () => {
     const content = `
+Let me think this through.
+
 ### Step 1: Initial exploration
 Some text...
 ### Step 2: Implementation
 More text...
-    `.trim();
+`.trim();
 
-    const steps = extractReasoningSteps(content);
-    expect(steps).toEqual(["Initial exploration", "Implementation"]);
+    const outline = splitReasoningSteps(content);
+    expect(outline?.preamble).toBe("Let me think this through.");
+    expect(outline?.steps.map((step) => step.title)).toEqual(["Initial exploration", "Implementation"]);
+    expect(outline?.steps[0].body).toBe("Some text...");
   });
 
-  it("returns empty array for unstructured thinking text", () => {
-    const content = "I will think about this problem carefully and compute the sum.";
-    expect(extractReasoningSteps(content)).toEqual([]);
-    expect(extractReasoningSteps("")).toEqual([]);
+  it("returns null for unstructured content or a single step", () => {
+    expect(splitReasoningSteps("I will think about this problem carefully.")).toBeNull();
+    expect(splitReasoningSteps("1. Only one step here.")).toBeNull();
+    expect(splitReasoningSteps("")).toBeNull();
   });
 });
 
-describe("splitThinkBlocks & countThinkWords", () => {
+describe("splitThinkBlocks", () => {
   it("splits closed think tags", () => {
     const parts = splitThinkBlocks("<think>Let me see.</think>The answer is 42.");
     expect(parts).toHaveLength(2);
@@ -74,11 +80,5 @@ describe("splitThinkBlocks & countThinkWords", () => {
     const parts = splitThinkBlocks("<think>Streaming thoughts in progress");
     expect(parts).toHaveLength(1);
     expect(parts[0]).toEqual({ type: "think", content: "Streaming thoughts in progress" });
-  });
-
-  it("counts words in thinking content", () => {
-    expect(countThinkWords("one two three")).toBe(3);
-    expect(countThinkWords("   ")).toBe(0);
-    expect(countThinkWords("one\ntwo\tthree  four")).toBe(4);
   });
 });

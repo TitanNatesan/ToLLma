@@ -59,6 +59,21 @@ export async function startMockLLM(port = 4899): Promise<string> {
             }, 2400);
             return;
           }
+          // Citation mode (model id contains "cite"): the answer carries an
+          // inline [1] marker that must render as an InlineCitation marker and
+          // resolve against the attachment turn's derived source.
+          if (typeof parsed.model === "string" && parsed.model.includes("cite")) {
+            res.write('data: {"choices": [{"delta": {"content": "According to the uploaded PDF [1], "}}]}\n\n');
+            setTimeout(() => {
+              res.write('data: {"choices": [{"delta": {"content": "the answer is 42."}}]}\n\n');
+              res.write(
+                'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 8, "completion_tokens": 6, "total_tokens": 14}}\n\n',
+              );
+              res.write("data: [DONE]\n\n");
+              res.end();
+            }, 300);
+            return;
+          }
           res.write('data: {"choices": [{"delta": {"content": "Hello from **mock** "}}]}\n\n');
           res.write('data: {"choices": [{"delta": {"content": "`code`"}}]}\n\n');
           res.write(

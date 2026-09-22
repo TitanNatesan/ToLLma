@@ -17,9 +17,7 @@ import {
   OctagonX,
   Pencil,
   RotateCcw,
-  Share2,
   Sparkles,
-  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -142,12 +140,14 @@ function AssistantContent({
   status,
   thinkingMs,
   reasoningTokens,
+  sources,
 }: {
   content: string;
   isStreaming?: boolean;
   status: ReasoningStatus;
   thinkingMs?: number | null;
   reasoningTokens?: number | null;
+  sources?: CitationSource[];
 }) {
   return (
     <>
@@ -162,7 +162,7 @@ function AssistantContent({
           />
         ) : (
           part.content.trim() && (
-            <MessageResponse isStreaming={isStreaming} key={index}>
+            <MessageResponse isStreaming={isStreaming} key={index} sources={sources}>
               {part.content}
             </MessageResponse>
           )
@@ -175,12 +175,11 @@ function AssistantContent({
 export interface ChatMessageProps {
   message: MessageLike;
   isStreaming?: boolean;
-  onCopy?: () => void;
+  /** Real sources for this reply (derived from the turn's attachments). */
+  sources?: CitationSource[];
   onRegenerate?: (messageId: string) => void;
-  onDelete?: (messageId: string) => void;
   onEdit?: (messageId: string, content: string) => void;
   onBranch?: (messageId: string) => void;
-  onShare?: () => void;
   onActivateGeneration?: (messageId: string, runId: string) => void;
 }
 
@@ -224,9 +223,8 @@ function MessageHeaderMeta({
 
   return (
     <div
-      className={`flex items-center gap-2 text-[10px] text-zinc-400 ${isUser ? "flex-row-reverse" : ""}`}
+      className={`flex items-center gap-2 text-[11px] text-zinc-400 ${isUser ? "flex-row-reverse" : ""}`}
     >
-      <span className="font-semibold tracking-wide uppercase">{isUser ? "You" : "Assistant"}</span>
       {formattedTime && (
         <time dateTime={timestamp} title={timestamp}>
           {formattedTime}
@@ -255,11 +253,10 @@ function MessageHeaderMeta({
 function MessageViewInner({
   message,
   isStreaming,
+  sources: messageSources,
   onRegenerate,
-  onDelete,
   onEdit,
   onBranch,
-  onShare,
   onActivateGeneration,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
@@ -303,9 +300,12 @@ function MessageViewInner({
     0,
     generations.findIndex((run) => run.id === msg.active_generation_id),
   );
+  // History exists only when the message has edit versions (user) or more
+  // than one generation (assistant).
+  const hasHistory = isUser ? (msg.versions_count ?? 0) > 1 : generations.length > 1;
 
   const metadata = (msg as unknown as { metadata?: Record<string, unknown> })?.metadata;
-  const sources = (metadata?.sources as CitationSource[] | undefined) ?? undefined;
+  const sources = (metadata?.sources as CitationSource[] | undefined) ?? messageSources;
   const toolCalls = (metadata?.tool_calls as ToolCallProps[] | undefined) ?? undefined;
   const contextItems = (metadata?.context_items as ContextItem[] | undefined) ?? undefined;
 
@@ -345,8 +345,8 @@ function MessageViewInner({
         <MessageContent
           className={
             isUser
-              ? "rounded-2xl rounded-tr-sm bg-zinc-100 px-3 py-2.5 dark:bg-zinc-800"
-              : "rounded-2xl rounded-tl-sm border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900"
+              ? "ml-auto max-w-[85%] rounded-2xl rounded-tr-sm bg-zinc-100 px-3 py-2.5 dark:bg-zinc-800"
+              : "w-full"
           }
         >
           <MessageAttachments attachments={msg.attachments} />
@@ -412,7 +412,7 @@ function MessageViewInner({
                     <ChevronLeft className="size-3.5" />
                   </button>
                   <span className="px-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-400" data-testid="generation-page">
-                    {activeGenerationIndex + 1} of {generations.length}
+                    Response {activeGenerationIndex + 1} of {generations.length}
                   </span>
                   <button
                     aria-label="Next generation"
@@ -436,6 +436,7 @@ function MessageViewInner({
                 content={message.content}
                 isStreaming={isStreaming}
                 reasoningTokens={msg.reasoning_tokens}
+                sources={sources}
                 status={reasoningStatus}
                 thinkingMs={msg.thinking_ms}
               />
@@ -494,7 +495,6 @@ function MessageViewInner({
             tooltip="Copy"
           >
             <Copy className="size-3" />
-            <span className="text-[10px]">Copy</span>
           </MessageAction>
 
           {isUser && onEdit && !editing && (
@@ -508,7 +508,6 @@ function MessageViewInner({
               tooltip="Edit & regenerate"
             >
               <Pencil className="size-3" />
-              <span className="text-[10px]">Edit</span>
             </MessageAction>
           )}
 
@@ -520,7 +519,6 @@ function MessageViewInner({
               tooltip="Regenerate"
             >
               <RotateCcw className="size-3" />
-              <span className="text-[10px]">Regenerate</span>
             </MessageAction>
           )}
 
@@ -532,41 +530,17 @@ function MessageViewInner({
               tooltip="Branch from here"
             >
               <GitBranch className="size-3" />
-              <span className="text-[10px]">Branch</span>
             </MessageAction>
           )}
 
-          <MessageAction
-            data-testid={`history-button-${message.id}`}
-            label="History"
-            onClick={() => setHistoryOpen(true)}
-            tooltip="View history"
-          >
-            <History className="size-3" />
-            <span className="text-[10px]">History</span>
-          </MessageAction>
-
-          {!isUser && onShare && (
+          {hasHistory && (
             <MessageAction
-              data-testid={`share-button-${message.id}`}
-              label="Share"
-              onClick={onShare}
-              tooltip="Share conversation"
+              data-testid={`history-button-${message.id}`}
+              label="History"
+              onClick={() => setHistoryOpen(true)}
+              tooltip="View version history"
             >
-              <Share2 className="size-3" />
-              <span className="text-[10px]">Share</span>
-            </MessageAction>
-          )}
-
-          {onDelete && (
-            <MessageAction
-              className="text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-              data-testid={message.id ? `delete-message-${message.id}` : "delete-message"}
-              label="Delete"
-              onClick={() => onDelete(message.id)}
-              tooltip="Delete"
-            >
-              <Trash2 className="size-3" />
+              <History className="size-3" />
             </MessageAction>
           )}
         </MessageActions>
@@ -581,10 +555,9 @@ function MessageViewInner({
 export const MessageView = memo(MessageViewInner, (prev, next) => (
   prev.message === next.message &&
   prev.isStreaming === next.isStreaming &&
+  prev.sources === next.sources &&
   !!prev.onRegenerate === !!next.onRegenerate &&
-  !!prev.onDelete === !!next.onDelete &&
   !!prev.onEdit === !!next.onEdit &&
   !!prev.onBranch === !!next.onBranch &&
-  !!prev.onShare === !!next.onShare &&
   !!prev.onActivateGeneration === !!next.onActivateGeneration
 ));

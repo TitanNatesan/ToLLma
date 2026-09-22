@@ -139,6 +139,7 @@ export interface ChatMessage {
   error_code?: string | null;
   generations?: GenerationRun[];
   active_generation_id?: string | null;
+  versions_count?: number;
   thinking_ms?: number | null;
   attachments?: ChatAttachment[];
   provider_id: string | null;
