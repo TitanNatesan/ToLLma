@@ -271,7 +271,7 @@ def test_gateway_rejects_unsupported_and_transcribes(
         pass
 
     # OpenAI-family audio without native support falls back to transcription.
-    po = provider_factory("OA", ptype="OPENAI_CHAT", creds={"api_key": "k"})
+    po = provider_factory("OA", ptype="OPENAI", creds={"api_key": "k"})
     mo = model_factory(po["id"])
     wav = b"RIFF" + b"\x00" * 100
     aa = _upload(client, "note.wav", wav, "audio/wav").json()["attachment_id"]

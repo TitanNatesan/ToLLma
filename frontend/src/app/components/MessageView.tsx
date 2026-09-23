@@ -304,7 +304,7 @@ function MessageViewInner({
   // than one generation (assistant).
   const hasHistory = isUser ? (msg.versions_count ?? 0) > 1 : generations.length > 1;
 
-  const metadata = (msg as unknown as { metadata?: Record<string, unknown> })?.metadata;
+  const metadata = msg.metadata;
   const sources = (metadata?.sources as CitationSource[] | undefined) ?? messageSources;
   const toolCalls = (metadata?.tool_calls as ToolCallProps[] | undefined) ?? undefined;
   const contextItems = (metadata?.context_items as ContextItem[] | undefined) ?? undefined;

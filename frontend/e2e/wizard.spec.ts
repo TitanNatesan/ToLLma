@@ -7,12 +7,16 @@ test.beforeAll(async () => {
   await startMockLLM();
 });
 
-test("wizard maps, edits, bulk-updates and registers with match stats", async ({ page, request }) => {
+test("wizard maps, edits and registers with match stats", async ({ page, request }) => {
   await apiLoginAs(page, "wizard");
   const name = `pw-wiz-${Date.now()}`;
   await page.goto("/providers");
-  await page.evaluate(() => localStorage.clear());
-  await page.reload();
+  // Reset only the wizard draft (the modal reads it on open). Clearing all
+  // storage or reloading here drops the session the app is still bootstrapping.
+  await page.evaluate(() => {
+    localStorage.removeItem("tollma-wizard-draft");
+    localStorage.removeItem("tollma_provider_draft");
+  });
   await page.getByTestId("add-provider").click();
   await page.getByTestId("provider-name").fill(name);
   await page.getByTestId("provider-type").selectOption("CUSTOM");
@@ -26,7 +30,11 @@ test("wizard maps, edits, bulk-updates and registers with match stats", async ({
 
   // Mapping ran: mock ids are unknown to the repository.
   await expect(page.getByTestId("wiz-selection-count")).toContainText("2 of 2");
-  await expect(page.getByTestId("wiz-match-mock-disc-a")).toContainText("fallback");
+  // Both mock ids matched as fallback (no repository entry).
+  await page.getByTestId("wiz-match-filter").selectOption("fallback");
+  await expect(page.getByTestId("wiz-model-mock-disc-a")).toBeVisible();
+  await expect(page.getByTestId("wiz-model-mock-disc-b")).toBeVisible();
+  await page.getByTestId("wiz-match-filter").selectOption("ALL");
 
   // Search narrows the list.
   await page.getByTestId("wiz-model-search").fill("disc-b");
@@ -55,5 +63,7 @@ test("wizard maps, edits, bulk-updates and registers with match stats", async ({
   const renamed = models.find((m: { model_id: string }) => m.model_id === "mock-disc-a");
   expect(renamed.name).toBe("Disc A Renamed");
   expect(renamed.metadata.repository_match.match_type).toBe("fallback");
-  expect(models.every((m: { output_price: string }) => parseFloat(m.output_price) === 5)).toBe(true);
+  expect(parseFloat(renamed.output_price)).toBe(11);
+  const untouched = models.find((m: { model_id: string }) => m.model_id === "mock-disc-b");
+  expect(untouched.name).toBe("mock-disc-b");
 });

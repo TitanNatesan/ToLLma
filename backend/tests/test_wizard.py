@@ -70,7 +70,7 @@ def test_mapping_priorities(db: Session) -> None:
     assert p4["suggested"]["input_price"] == "0"
     assert p4["suggested"]["supports_text"] is True
 
-    r = map_one(db, "gpt-4o", provider_type="OPENAI_CHAT")
+    r = map_one(db, "gpt-4o", provider_type="OPENAI")
     assert r["match_type"] == "provider_specific"
 
 

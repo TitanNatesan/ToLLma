@@ -8,6 +8,7 @@ import { Dialog, DialogContent } from "./primitives";
 import { useChatStore } from "@/store/chat";
 import { useConversations } from "@/hooks/useChat";
 import { useProviders } from "@/hooks/useRegistry";
+import { providerTypeLabel } from "@/app/providers/fields";
 import {
   Command as CommandIcon,
   Cpu,
@@ -145,7 +146,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 {providers.slice(0, 5).map((p) => (
                   <Command.Item
                     key={p.id}
-                    value={`provider ${p.name} ${p.provider_type}`}
+                    value={`provider ${p.name} ${providerTypeLabel(p.provider_type)}`}
                     onSelect={() =>
                       run(() => {
                         router.push("/providers");
@@ -155,8 +156,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                   >
                     <Cpu className="size-4 text-zinc-500" />
                     <span className="font-medium">{p.name}</span>
-                    <span className="ml-auto text-xs text-zinc-400 font-mono">
-                      {p.provider_type}
+                    <span className="ml-auto text-xs text-zinc-400">
+                      {providerTypeLabel(p.provider_type)}
                     </span>
                   </Command.Item>
                 ))}
@@ -170,12 +171,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                   <Command.Item
                     key={c.id}
                     value={`conversation ${c.title}`}
-                    onSelect={() =>
-                      run(() => {
-                        setConversation(c.id);
-                        router.push("/");
-                      })
-                    }
+                    onSelect={() => run(() => router.push(`/c/${c.id}`))}
                     className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 data-[selected=true]:bg-tollma-50 dark:data-[selected=true]:bg-tollma-950"
                     data-testid={`cmd-conv-${c.id}`}
                   >

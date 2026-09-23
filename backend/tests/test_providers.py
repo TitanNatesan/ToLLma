@@ -31,7 +31,9 @@ def test_provider_crud_masks_credentials(client: TestClient, provider_factory) -
 
 
 def test_validate_missing_fields(client: TestClient, provider_factory) -> None:
-    created = provider_factory("Bad", ptype="OPENAI_CHAT", creds={})
+    # A non-empty credential dict (the fixture supplies a base_url for `{}`)
+    # with no API key must fail before any network call.
+    created = provider_factory("Bad", ptype="OPENAI", creds={"api_key": ""})
     result = client.post(f"/api/v1/providers/{created['id']}/validate").json()
     assert result["valid"] is False
     assert "api_key" in result["message"]

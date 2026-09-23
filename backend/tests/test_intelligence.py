@@ -105,7 +105,7 @@ def _repo_priced_chat(db: Session, provider_factory, model_factory):
         },
         openrouter_data={"data": []},
     )
-    p = provider_factory("MockRepo", ptype="OPENAI_CHAT", creds={"api_key": "k"})
+    p = provider_factory("MockRepo", ptype="OPENAI", creds={"api_key": "k"})
     m = model_factory(p["id"], model_id="mock-model", input_price="0", output_price="0")
 
     body = (

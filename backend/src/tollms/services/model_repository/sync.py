@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 CAPABILITY_FIELDS = (
     "supports_text_input",
     "supports_text_output",
+    "supports_chat",
     "supports_vision_input",
     "supports_image_output",
     "supports_audio_input",
@@ -41,6 +42,8 @@ CAPABILITY_FIELDS = (
     "supports_embeddings",
     "supports_prompt_caching",
 )
+
+CHAT_WIRE_ENDPOINTS = frozenset({"chat_completions", "responses", "messages", "converse"})
 
 PRICE_FIELDS = (
     "input_cost",
@@ -86,10 +89,22 @@ def merge_records(groups: dict[str, list[NormalizedModel]]) -> dict[str, dict[st
             "sources": [r.source for r in ordered],
             "raw_source_payload": {r.source: r.raw for r in ordered},
         }
-        for attr in ("display_name", "family", "vendor", "endpoint_type", "description", "documentation_url", "release_date"):
+        for attr in ("display_name", "family", "vendor", "endpoint_type", "primary_endpoint", "description", "documentation_url", "release_date"):
             row[attr] = next((getattr(r, attr) for r in ordered if getattr(r, attr) is not None), None)
         for cap in CAPABILITY_FIELDS:
             row[cap] = any(r.caps.get(cap, False) for r in ordered)
+        # Endpoints union in source-priority order; primary falls back to the
+        # first supported endpoint and finally to the legacy endpoint_type.
+        supported: list[str] = []
+        for record in ordered:
+            for endpoint in record.supported_endpoints:
+                if endpoint not in supported:
+                    supported.append(endpoint)
+        if not supported and row["primary_endpoint"]:
+            supported = [row["primary_endpoint"]]
+        row["supported_endpoints"] = supported
+        row["primary_endpoint"] = row["primary_endpoint"] or (supported[0] if supported else row["endpoint_type"])
+        row["supports_chat"] = bool(row["supports_chat"] or (CHAT_WIRE_ENDPOINTS & set(supported)))
         for limit in LIMIT_FIELDS:
             row[limit] = next((getattr(r, limit) for r in ordered if getattr(r, limit) is not None), None)
         for price in PRICE_FIELDS:

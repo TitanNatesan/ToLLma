@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Gateway provider_type -> repository provider names (best effort; CUSTOM has no hint).
 PROVIDER_HINTS = {
-    "OPENAI_CHAT": ("openai",),
-    "OPENAI_RESPONSES": ("openai",),
+    "OPENAI": ("openai",),
     "ANTHROPIC_MESSAGES": ("anthropic",),
     "GEMINI": ("gemini", "google"),
     "VERTEX_AI": ("vertex_ai", "google"),
@@ -157,30 +156,43 @@ def suggest_payload(entry: RepositoryModel) -> dict[str, Any]:
     """Map a repository entry to AIModel create fields. Prices converted per-token -> per-1M."""
     from decimal import Decimal as _Decimal
 
+    from tollms.models.registered_model import endpoint_enum, endpoint_wire
+
     def per_1m(value: Any) -> str:
         if value is None:
             return "0"
         return f"{(_Decimal(value) * 1_000_000):.12f}"
 
-    endpoint = entry.endpoint_type if entry.endpoint_type in ("responses", "chat_completions", "messages", "converse") else "chat_completions"
+    # Endpoint-aware: primary/supported endpoints are wire paths; the legacy
+    # endpoint_type mirrors the primary for older readers.
+    primary = endpoint_wire(entry.primary_endpoint) or endpoint_wire(entry.endpoint_type) or "chat_completions"
+    supported = list(entry.supported_endpoints or [primary])
+    if primary not in supported:
+        supported.insert(0, primary)
+    legacy = endpoint_enum(primary)
+    endpoints = set(supported)
+    chat_capable = bool(entry.supports_chat) or bool(endpoints & {"responses", "chat_completions", "messages", "converse"})
     return {
         "model_id": entry.provider_model_id,
         "name": entry.display_name or entry.provider_model_id,
         "description": entry.description,
-        "endpoint_type": endpoint,
+        "endpoint_type": legacy.value if legacy else "chat_completions",
+        "primary_endpoint": primary,
+        "supported_endpoints": supported,
         "repository_model_key": entry.model_key,
         "input_price": per_1m(entry.input_cost),
         "output_price": per_1m(entry.output_cost),
         "cache_read_price": per_1m(entry.cache_read_cost),
         "cache_write_price": per_1m(entry.cache_write_cost),
-        "supports_text": entry.supports_text_input and entry.supports_text_output,
+        "supports_text": chat_capable and entry.supports_text_input and entry.supports_text_output,
         "supports_vision": entry.supports_vision_input,
-        "supports_audio_input": entry.supports_audio_input,
-        "supports_audio_output": entry.supports_audio_output,
-        "supports_image_generation": entry.supports_image_output,
+        "supports_audio_input": entry.supports_audio_input or "audio/transcriptions" in endpoints,
+        "supports_audio_output": entry.supports_audio_output or "audio/speech" in endpoints,
+        "supports_image_generation": entry.supports_image_output or "images/generations" in endpoints,
         "supports_tool_calling": entry.supports_tool_calling,
         "supports_reasoning": entry.supports_reasoning,
-        "supports_streaming": entry.supports_streaming,
+        "supports_embeddings": entry.supports_embeddings or "embeddings" in endpoints,
+        "supports_streaming": entry.supports_streaming and chat_capable,
         # Extended composer capabilities live in model metadata (no extra columns):
         # video has a real upstream signal; files has none, so it defaults off
         # and is user-editable per model.

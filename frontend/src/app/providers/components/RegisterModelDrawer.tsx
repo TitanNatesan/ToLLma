@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Button, CapabilityBadge, DetailPanel } from "@/components/ui";
 import { useModelMutations } from "@/hooks/useRegistry";
-import type { AIModel, DiscoveredModelInfo, EndpointType, MatchType } from "@/types";
+import { endpointLabel, resolveWireEndpoint } from "@/app/providers/fields";
+import type { AIModel, DiscoveredModelInfo, MatchType } from "@/types";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { cn, fmtPrice, stripTrailingZeros } from "@/lib/utils";
 import {
@@ -47,13 +48,8 @@ export function RegisterModelDrawer({
   onRegistered,
 }: RegisterModelDrawerProps) {
   const mm = useModelMutations();
+  // Parent remounts via key (provider:model:step), so initialStep seeds each mount.
   const [step, setStep] = useState(initialStep);
-
-  useEffect(() => {
-    if (open) {
-      setStep(initialStep);
-    }
-  }, [open, initialStep, info?.model_id]);
 
   if (!info) return null;
 
@@ -136,7 +132,7 @@ export function RegisterModelDrawer({
               {[
                 ["Model ID", info.model_id],
                 ["Name", info.name],
-                ["Endpoint type", info.endpoint_type],
+                ["Endpoint type", endpointLabel(info.primary_endpoint ?? info.endpoint_type)],
                 ["Context window", fmtCtx(ctxWindow)],
                 ["Max output", fmtCtx(maxOutput)],
               ].map(([k, v]) => (
@@ -206,12 +202,15 @@ export function RegisterModelDrawer({
                   output_price: stripTrailingZeros(suggested.output_price, "0"),
                   cache_read_price: stripTrailingZeros(suggested.cache_read_price, "0"),
                   cache_write_price: stripTrailingZeros(suggested.cache_write_price, "0"),
-                  endpoint_type: info.endpoint_type || (suggested.endpoint_type as string) || "chat_completions",
+                  primary_endpoint: resolveWireEndpoint(info.primary_endpoint, info.endpoint_type),
+                  ...(info.supported_endpoints?.length
+                    ? { supported_endpoints: info.supported_endpoints }
+                    : {}),
                   context_window: ctxWindow ?? suggested.context_window,
                   max_output_tokens: maxOutput ?? suggested.max_output_tokens,
                 } as Record<string, unknown>,
                 info.repository_model_key ?? "",
-                (info.endpoint_type as EndpointType) || "chat_completions",
+                resolveWireEndpoint(info.primary_endpoint, info.endpoint_type),
               )}
               onSubmit={(f) => void handleSave(f)}
               onCancel={() => {

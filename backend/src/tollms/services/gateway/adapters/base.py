@@ -114,13 +114,22 @@ def reasoning_effort(level: str | None) -> str | None:
 
 @dataclass
 class DiscoveredModel:
-    """Normalized model discovery entry. endpoint_type matches EndpointType values."""
+    """Normalized model discovery entry.
+
+    `endpoint_type` is the legacy mirror of `primary_endpoint`; adapters that
+    know the real endpoint set fill `primary_endpoint`/`supported_endpoints`.
+    """
 
     model_id: str
     name: str
     endpoint_type: str = "chat_completions"
     context_window: int | None = None
     max_output_tokens: int | None = None
+    primary_endpoint: str | None = None
+    supported_endpoints: list[str] = field(default_factory=list)
+    # Repository intelligence filled in by the discovery services (API layer),
+    # never by adapters. Default empty so adapter-level tests stay simple.
+    suggested: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -144,6 +153,10 @@ class BaseProviderAdapter:
     supports_audio: ClassVar[bool] = False
     supports_video: ClassVar[bool] = False
     supports_files: ClassVar[bool] = True
+    # Endpoint this adapter speaks. "supported_endpoints" advertises the full
+    # set when one adapter class covers several (OpenAI audio does not).
+    endpoint: ClassVar[str] = "chat_completions"
+    supported_endpoints: ClassVar[frozenset[str]] = frozenset({"chat_completions"})
 
     def _client(self, **kwargs) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self.transport, timeout=self.timeout, **kwargs)
@@ -180,6 +193,43 @@ class BaseProviderAdapter:
                 usage.reasoning_tokens = chunk.reasoning_tokens
         usage.text = "".join(parts)
         return usage
+
+    # --- Non-chat endpoints (embeddings, images, audio) ---------------------
+    # Adapters implement only what their endpoint supports; the gateway
+    # dispatches by endpoint and lets unsupported calls fail clearly.
+
+    async def embed(self, inputs: list[str]) -> list[list[float]]:
+        """Embedding vectors for each input. Unsupported on this endpoint."""
+        raise NotImplementedError(f"{self.endpoint} does not support embeddings")
+
+    async def generate_image(
+        self, prompt: str, *, size: str = "1024x1024", quality: str = "low"
+    ) -> bytes:
+        """Raw image bytes for one prompt. Unsupported on this endpoint."""
+        raise NotImplementedError(f"{self.endpoint} does not support image generation")
+
+    async def transcribe(self, audio: bytes, filename: str, mime_type: str) -> str:
+        """Audio -> text. Unsupported on this endpoint."""
+        raise NotImplementedError(f"{self.endpoint} does not support transcription")
+
+    async def speak(self, text: str, *, voice: str = "alloy", response_format: str = "mp3") -> bytes:
+        """Text -> audio bytes. Unsupported on this endpoint."""
+        raise NotImplementedError(f"{self.endpoint} does not support speech")
+
+    async def generate_video(
+        self,
+        prompt: str,
+        *,
+        size: str = "1280x720",
+        seconds: str = "4",
+        image: bytes | None = None,
+        image_filename: str = "input_reference.png",
+        image_mime: str = "image/png",
+        poll_interval: float = 5.0,
+        deadline: float = 900.0,
+    ) -> bytes:
+        """Text (optionally + reference image) -> video bytes. Unsupported here."""
+        raise NotImplementedError(f"{self.endpoint} does not support video generation")
 
 
 def sse_data_lines(text: str) -> list[str]:

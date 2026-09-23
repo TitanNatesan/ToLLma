@@ -71,7 +71,10 @@ def test_vertex_discover_with_mock_token(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_custom_requires_base_url_and_factory_covers_all_types(db: Session, provider_factory) -> None:
-    assert asyncio.run(CustomAdapter(credentials={}, model_id="m").validate_credentials()) == (False, "base_url is required", 0)
+    # Without base_url or key the unified OpenAI-compatible adapter reports the
+    # missing key (OpenAI default); a base_url override makes the key optional.
+    result = asyncio.run(CustomAdapter(credentials={}, model_id="m").validate_credentials())
+    assert result[0] is False and "api_key" in result[1]
     assert asyncio.run(CustomAdapter(credentials={}, model_id="m").discover_models()) == []
 
     # Extra headers (dict or JSON string) are merged into every custom request.

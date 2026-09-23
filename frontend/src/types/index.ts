@@ -30,15 +30,23 @@ export interface ApiState<T> {
 }
 
 export type ProviderType =
-  | "OPENAI_RESPONSES"
-  | "OPENAI_CHAT"
+  | "OPENAI"
   | "ANTHROPIC_MESSAGES"
   | "GEMINI"
   | "VERTEX_AI"
   | "BEDROCK_CONVERSE"
   | "CUSTOM";
 
-export type EndpointType = "responses" | "chat_completions" | "messages" | "converse";
+/** Legacy endpoint enum, mirrored server-side from `primary_endpoint`. */
+export type EndpointType =
+  | "responses"
+  | "chat_completions"
+  | "messages"
+  | "converse"
+  | "embeddings"
+  | "images_generations"
+  | "audio_transcriptions"
+  | "audio_speech";
 
 export interface Provider {
   id: string;
@@ -58,6 +66,8 @@ export interface DiscoveredModelInfo {
   model_id: string;
   name: string;
   endpoint_type: string;
+  primary_endpoint: string | null;
+  supported_endpoints: string[];
   context_window: number | null;
   max_output_tokens: number | null;
   repository_model_key: string | null;
@@ -90,6 +100,8 @@ export interface AIModel {
   name: string;
   description: string | null;
   endpoint_type: EndpointType;
+  primary_endpoint: string | null;
+  supported_endpoints: string[];
   input_price: string;
   output_price: string;
   cache_read_price: string;
@@ -101,6 +113,7 @@ export interface AIModel {
   supports_image_generation: boolean;
   supports_tool_calling: boolean;
   supports_reasoning: boolean;
+  supports_embeddings: boolean;
   supports_streaming: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
@@ -140,6 +153,8 @@ export interface ChatMessage {
   generations?: GenerationRun[];
   active_generation_id?: string | null;
   versions_count?: number;
+  /** Generation details for media messages (generation_type/status/model/...). */
+  metadata?: Record<string, unknown>;
   thinking_ms?: number | null;
   attachments?: ChatAttachment[];
   provider_id: string | null;
@@ -249,8 +264,12 @@ export interface DraftDiscoveredModel {
   model_id: string;
   name: string;
   endpoint_type: string;
+  primary_endpoint: string | null;
+  supported_endpoints: string[];
   context_window: number | null;
   max_output_tokens: number | null;
+  /** Draft-validate does not return repository suggestions yet; optional for forward compat. */
+  suggested?: Record<string, string | number | boolean | null>;
 }
 
 export interface DraftValidation {

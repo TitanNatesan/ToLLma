@@ -10,6 +10,7 @@ import {
   Badge,
 } from "./primitives";
 import { ChevronDown, Cpu } from "lucide-react";
+import { providerTypeLabel } from "@/app/providers/fields";
 import type { Provider } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -73,7 +74,7 @@ export function ProviderSelector({
             >
               <span className="truncate">{p.name}</span>
               <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal">
-                {p.provider_type}
+                {providerTypeLabel(p.provider_type)}
               </Badge>
             </DropdownMenuItem>
           ))

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Download,
@@ -39,6 +40,7 @@ import { cn } from "@/lib/utils";
 import { fmtCost, fmtTokens } from "@/lib/utils";
 
 export function ChatHeader() {
+  const router = useRouter();
   const {
     activeConversationId,
     providerId,
@@ -95,6 +97,8 @@ export function ChatHeader() {
     if (activeConversationId) {
       mutations.remove.mutate(activeConversationId);
       setConversation(null);
+      // The deleted id no longer resolves; `/` mints a fresh conversation.
+      router.replace("/");
       toast.success("Conversation deleted");
     }
   }
@@ -195,7 +199,7 @@ export function ChatHeader() {
               size="sm"
               variant="ghost"
               className="h-8 w-8 p-0"
-              onClick={() => setConversation(null)}
+              onClick={() => router.push("/")}
               aria-label="New chat"
             >
               <Plus className="size-3.5 text-zinc-500" />

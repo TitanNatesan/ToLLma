@@ -4,15 +4,14 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button, Card, CardContent, Checkbox, Field, GhostButton, Input, Select } from "@/components/ui";
 import { lookupRepositoryModel } from "@/services/api";
-import type { AIModel, EndpointType } from "@/types";
+import type { AIModel } from "@/types";
 import { stripTrailingZeros } from "@/lib/utils";
-
-export const ENDPOINTS: EndpointType[] = [
-  "responses",
-  "chat_completions",
-  "messages",
-  "converse",
-];
+import {
+  ENDPOINT_OPTIONS,
+  endpointTypeFromWire,
+  endpointWireFromLegacy,
+  resolveWireEndpoint,
+} from "@/app/providers/fields";
 
 export const CAPS: Array<[string, string]> = [
   ["supports_text", "text"],
@@ -22,13 +21,16 @@ export const CAPS: Array<[string, string]> = [
   ["supports_image_generation", "img-gen"],
   ["supports_tool_calling", "tools"],
   ["supports_reasoning", "reasoning"],
+  ["supports_embeddings", "embeddings"],
   ["supports_streaming", "streaming"],
 ];
 
 export interface ModelFormState {
   name: string;
   model_id: string;
-  endpoint_type: EndpointType;
+  /** Primary endpoint as a wire path (e.g. "responses", "images/generations"). */
+  primary_endpoint: string;
+  supported_endpoints: string[];
   input_price: string;
   output_price: string;
   cache_read_price: string;
@@ -50,7 +52,8 @@ export interface ModelFormState {
 export const EMPTY_MODEL_FORM: ModelFormState = {
   name: "",
   model_id: "",
-  endpoint_type: "chat_completions",
+  primary_endpoint: "chat_completions",
+  supported_endpoints: ["chat_completions"],
   input_price: "0",
   output_price: "0",
   cache_read_price: "0",
@@ -97,6 +100,14 @@ export function ModelForm({
   const [importing, setImporting] = useState(false);
   const set = (k: keyof ModelFormState, v: string) =>
     setForm((f) => ({ ...f, [k]: v }));
+  const setPrimaryEndpoint = (value: string) =>
+    setForm((f) => ({
+      ...f,
+      primary_endpoint: value,
+      supported_endpoints: f.supported_endpoints.includes(value)
+        ? f.supported_endpoints
+        : [value, ...f.supported_endpoints],
+    }));
 
   async function importFromRepository() {
     const q = repoQuery.trim() || form.model_id.trim();
@@ -110,18 +121,22 @@ export function ModelForm({
       const str = (v: unknown, fallback = "") =>
         v === null || v === undefined ? fallback : String(v);
       setForm((f) => {
-        const isSpecialized = f.endpoint_type && f.endpoint_type !== "chat_completions";
-        const repoEndpoint = (
-          ["responses", "chat_completions", "messages", "converse"] as string[]
-        ).includes(str(suggested.endpoint_type))
-          ? (suggested.endpoint_type as EndpointType)
-          : f.endpoint_type;
-        const endpoint = isSpecialized && repoEndpoint === "chat_completions" ? f.endpoint_type : repoEndpoint;
+        const isSpecialized = f.primary_endpoint !== "chat_completions";
+        const repoEndpoint =
+          endpointWireFromLegacy(str(suggested.primary_endpoint)) ??
+          endpointWireFromLegacy(str(suggested.endpoint_type)) ??
+          f.primary_endpoint;
+        const endpoint = isSpecialized && repoEndpoint === "chat_completions" ? f.primary_endpoint : repoEndpoint;
+        const repoSupported = Array.isArray(suggested.supported_endpoints)
+          ? suggested.supported_endpoints.filter((v): v is string => typeof v === "string")
+          : [];
+        const supported = repoSupported.length ? repoSupported : f.supported_endpoints;
         return {
           ...f,
           name: str(suggested.name, f.name),
           model_id: str(suggested.model_id, f.model_id),
-          endpoint_type: endpoint,
+          primary_endpoint: endpoint,
+          supported_endpoints: supported.includes(endpoint) ? supported : [endpoint, ...supported],
           input_price: stripTrailingZeros(suggested.input_price, f.input_price),
           output_price: stripTrailingZeros(suggested.output_price, f.output_price),
           cache_read_price: stripTrailingZeros(suggested.cache_read_price, f.cache_read_price),
@@ -185,15 +200,15 @@ export function ModelForm({
               data-testid="madd-model-id"
             />
           </Field>
-          <Field label="Endpoint type">
+          <Field label="Primary endpoint">
             <Select
-              value={form.endpoint_type}
-              onChange={(e) => set("endpoint_type", e.target.value)}
+              value={form.primary_endpoint}
+              onChange={(e) => setPrimaryEndpoint(e.target.value)}
               data-testid="madd-endpoint"
             >
-              {ENDPOINTS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              {ENDPOINT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
                 </option>
               ))}
             </Select>
@@ -256,6 +271,33 @@ export function ModelForm({
             />
           </Field>
         </div>
+        <fieldset data-testid="madd-supported-endpoints">
+          <legend className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+            Supported endpoints
+          </legend>
+          <div className="flex flex-wrap gap-x-4 gap-y-2.5 rounded-lg border border-zinc-200/80 bg-zinc-50/50 p-2.5 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+            {ENDPOINT_OPTIONS.map((o) => {
+              const isPrimary = form.primary_endpoint === o.value;
+              return (
+                <Checkbox
+                  key={o.value}
+                  label={o.label}
+                  checked={form.supported_endpoints.includes(o.value)}
+                  onChange={(e) => {
+                    if (!e.target.checked && isPrimary) return;
+                    setForm((f) => ({
+                      ...f,
+                      supported_endpoints: e.target.checked
+                        ? [...f.supported_endpoints, o.value]
+                        : f.supported_endpoints.filter((v) => v !== o.value),
+                    }));
+                  }}
+                  data-testid={`madd-supported-endpoint-${o.value}`}
+                />
+              );
+            })}
+          </div>
+        </fieldset>
         <fieldset>
           <legend className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
             Capabilities
@@ -328,7 +370,9 @@ export function toPayload(providerId: string, f: ModelFormState): Record<string,
     provider_id: providerId,
     name: f.name.trim(),
     model_id: f.model_id.trim(),
-    endpoint_type: f.endpoint_type,
+    primary_endpoint: f.primary_endpoint,
+    supported_endpoints: f.supported_endpoints,
+    endpoint_type: endpointTypeFromWire(f.primary_endpoint),
     input_price: f.input_price || "0",
     output_price: f.output_price || "0",
     cache_read_price: f.cache_read_price || "0",
@@ -349,11 +393,14 @@ export function toPayload(providerId: string, f: ModelFormState): Record<string,
 }
 
 export function fromModel(m: AIModel): ModelFormState {
+  const primary = resolveWireEndpoint(m.primary_endpoint, m.endpoint_type);
+  const stored = Array.isArray(m.supported_endpoints) ? m.supported_endpoints : [];
   return {
     ...EMPTY_MODEL_FORM,
     name: m.name,
     model_id: m.model_id,
-    endpoint_type: m.endpoint_type,
+    primary_endpoint: primary,
+    supported_endpoints: stored.includes(primary) ? stored : [primary, ...stored],
     input_price: stripTrailingZeros(m.input_price, "0"),
     output_price: stripTrailingZeros(m.output_price, "0"),
     cache_read_price: stripTrailingZeros(m.cache_read_price, "0"),
@@ -373,24 +420,30 @@ export function fromModel(m: AIModel): ModelFormState {
 export function fromSuggested(
   suggested: Record<string, unknown>,
   repositoryModelKey: string,
-  defaultEndpointType?: EndpointType,
+  defaultEndpoint?: string,
 ): ModelFormState {
   const str = (v: unknown, fallback = "") =>
     v === null || v === undefined ? fallback : String(v);
-  const endpointCandidate = str(suggested.endpoint_type);
-  const validEndpoints: EndpointType[] = ["responses", "chat_completions", "messages", "converse"];
-  let endpoint: EndpointType = defaultEndpointType || "chat_completions";
-  if (validEndpoints.includes(endpointCandidate as EndpointType)) {
-    endpoint = endpointCandidate as EndpointType;
+  const endpointCandidate =
+    endpointWireFromLegacy(str(suggested.primary_endpoint)) ??
+    endpointWireFromLegacy(str(suggested.endpoint_type));
+  let endpoint = endpointWireFromLegacy(defaultEndpoint) ?? "chat_completions";
+  if (endpointCandidate) {
+    endpoint = endpointCandidate;
   }
-  if (defaultEndpointType && defaultEndpointType !== "chat_completions" && endpoint === "chat_completions") {
-    endpoint = defaultEndpointType;
+  if (defaultEndpoint && defaultEndpoint !== "chat_completions" && endpoint === "chat_completions") {
+    endpoint = defaultEndpoint;
   }
+  const suggestedSupported = Array.isArray(suggested.supported_endpoints)
+    ? suggested.supported_endpoints.filter((v): v is string => typeof v === "string")
+    : [];
+  const supported = [...new Set(suggestedSupported)];
   return {
     ...EMPTY_MODEL_FORM,
     name: str(suggested.name),
     model_id: str(suggested.model_id),
-    endpoint_type: endpoint,
+    primary_endpoint: endpoint,
+    supported_endpoints: supported.includes(endpoint) ? supported : [endpoint, ...supported],
     input_price: stripTrailingZeros(suggested.input_price, "0"),
     output_price: stripTrailingZeros(suggested.output_price, "0"),
     cache_read_price: stripTrailingZeros(suggested.cache_read_price, "0"),

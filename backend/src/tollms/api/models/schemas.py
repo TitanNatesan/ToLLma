@@ -17,6 +17,7 @@ CAPABILITY_FIELDS = (
     "supports_image_generation",
     "supports_tool_calling",
     "supports_reasoning",
+    "supports_embeddings",
     "supports_streaming",
 )
 
@@ -26,7 +27,10 @@ class ModelCreate(BaseModel):
     model_id: str = Field(min_length=1, max_length=255)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    endpoint_type: EndpointType
+    endpoint_type: EndpointType = EndpointType.CHAT_COMPLETIONS
+    # Endpoint-aware routing (wire paths, e.g. "responses", "images/generations").
+    primary_endpoint: str | None = Field(default=None, max_length=64)
+    supported_endpoints: list[str] = Field(default_factory=list)
     repository_model_key: str | None = Field(default=None, max_length=255)
     input_price: Decimal = Decimal("0")
     output_price: Decimal = Decimal("0")
@@ -39,6 +43,7 @@ class ModelCreate(BaseModel):
     supports_image_generation: bool = False
     supports_tool_calling: bool = False
     supports_reasoning: bool = False
+    supports_embeddings: bool = False
     supports_streaming: bool = True
     context_window: int | None = None
     max_output_tokens: int | None = None
@@ -51,6 +56,8 @@ class ModelUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     endpoint_type: EndpointType | None = None
+    primary_endpoint: str | None = Field(default=None, max_length=64)
+    supported_endpoints: list[str] | None = None
     input_price: Decimal | None = None
     output_price: Decimal | None = None
     cache_read_price: Decimal | None = None
@@ -62,6 +69,7 @@ class ModelUpdate(BaseModel):
     supports_image_generation: bool | None = None
     supports_tool_calling: bool | None = None
     supports_reasoning: bool | None = None
+    supports_embeddings: bool | None = None
     supports_streaming: bool | None = None
     context_window: int | None = None
     max_output_tokens: int | None = None
@@ -77,6 +85,8 @@ class ModelRead(BaseModel):
     name: str
     description: str | None
     endpoint_type: EndpointType
+    primary_endpoint: str | None = None
+    supported_endpoints: list[str] = Field(default_factory=list)
     input_price: Decimal
     output_price: Decimal
     cache_read_price: Decimal
@@ -88,6 +98,7 @@ class ModelRead(BaseModel):
     supports_image_generation: bool
     supports_tool_calling: bool
     supports_reasoning: bool
+    supports_embeddings: bool = False
     supports_streaming: bool
     context_window: int | None
     max_output_tokens: int | None

@@ -17,8 +17,11 @@ if TYPE_CHECKING:
 
 
 class ProviderType(str, enum.Enum):
-    OPENAI_RESPONSES = "OPENAI_RESPONSES"
-    OPENAI_CHAT = "OPENAI_CHAT"
+    """Provider families. OpenAI is a single provider whose models carry the
+    endpoint they support (responses, chat_completions, embeddings, images,
+    audio) — the endpoint lives on the model, never on the provider."""
+
+    OPENAI = "OPENAI"
     ANTHROPIC_MESSAGES = "ANTHROPIC_MESSAGES"
     GEMINI = "GEMINI"
     VERTEX_AI = "VERTEX_AI"

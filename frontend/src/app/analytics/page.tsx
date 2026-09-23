@@ -52,7 +52,6 @@ import {
 import { downloadAnalyticsExport } from "@/services/api";
 import { useAnalyticsWidgets } from "@/hooks/useIntelligence";
 import { AnalyticsWidgetsPanel } from "./components/AnalyticsWidgetsPanel";
-import { useChatStore } from "@/store/chat";
 import { fmtCompactTokens, fmtTokens } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { KpiCard, SectionCard } from "./components/KpiCard";
@@ -89,7 +88,6 @@ const INSIGHT_STYLES: Record<string, string> = {
 
 export default function AnalyticsPage() {
   const router = useRouter();
-  const setConversation = useChatStore((s) => s.setConversation);
   const timezone = useMemo(() => browserTimezone(), []);
 
   const [preset, setPreset] = useState<AnalyticsPreset>("this_month");
@@ -156,8 +154,7 @@ export default function AnalyticsPage() {
   }
 
   function openConversation(conversationId: string) {
-    setConversation(conversationId);
-    router.push("/");
+    router.push(`/c/${conversationId}`);
   }
 
   const points = timeseries.data?.points ?? [];

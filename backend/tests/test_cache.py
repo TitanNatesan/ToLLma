@@ -181,14 +181,14 @@ def test_repository_match_cached(db: Session) -> None:
     db.add(entry)
     db.commit()
 
-    assert find_for_model(db, "OPENAI_CHAT", "mock-x") is not None
+    assert find_for_model(db, "OPENAI", "mock-x") is not None
     assert metrics.snapshot()["misses"] >= 1
-    assert find_for_model(db, "OPENAI_CHAT", "mock-x") is not None
+    assert find_for_model(db, "OPENAI", "mock-x") is not None
     assert metrics.snapshot()["hits"] >= 1
 
     # Misses are cached too (avoids rescanning the table for unknown models).
-    assert find_for_model(db, "OPENAI_CHAT", "no-such-model") is None
-    assert find_for_model(db, "OPENAI_CHAT", "no-such-model") is None
+    assert find_for_model(db, "OPENAI", "no-such-model") is None
+    assert find_for_model(db, "OPENAI", "no-such-model") is None
     assert metrics.snapshot()["hits"] >= 2
 
 
@@ -200,12 +200,12 @@ def test_sync_invalidates_repository_cache(db: Session) -> None:
                             provider="openai", provider_model_id="mock-y")
     db.add(entry)
     db.commit()
-    assert find_for_model(db, "OPENAI_CHAT", "mock-y") is not None
-    assert _run(get_manager().exists(cache_keys.repository_match("OPENAI_CHAT", "mock-y"))) is True
+    assert find_for_model(db, "OPENAI", "mock-y") is not None
+    assert _run(get_manager().exists(cache_keys.repository_match("OPENAI", "mock-y"))) is True
 
     run = repository_service.run_sync(db, litellm_data={}, openrouter_data={})
     assert run.status == "done"
-    assert _run(get_manager().exists(cache_keys.repository_match("OPENAI_CHAT", "mock-y"))) is False
+    assert _run(get_manager().exists(cache_keys.repository_match("OPENAI", "mock-y"))) is False
 
 
 def test_sync_busy_returns_422(db: Session) -> None:

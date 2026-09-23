@@ -58,6 +58,8 @@ class DiscoveredModelInfo(BaseModel):
     model_id: str
     name: str
     endpoint_type: str
+    primary_endpoint: str | None = None
+    supported_endpoints: list[str] = Field(default_factory=list)
     context_window: int | None = None
     max_output_tokens: int | None = None
     repository_model_key: str | None = None
@@ -85,8 +87,11 @@ class DraftDiscoveredModel(BaseModel):
     model_id: str
     name: str
     endpoint_type: str
+    primary_endpoint: str | None = None
+    supported_endpoints: list[str] = Field(default_factory=list)
     context_window: int | None = None
     max_output_tokens: int | None = None
+    suggested: dict[str, Any] = Field(default_factory=dict)
 
 
 class DraftValidationResult(BaseModel):
@@ -101,6 +106,8 @@ class RegisterModelItem(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     endpoint_type: str = "chat_completions"
+    primary_endpoint: str | None = Field(default=None, max_length=64)
+    supported_endpoints: list[str] = Field(default_factory=list)
     repository_model_key: str | None = None
     repository_match: dict[str, Any] | None = None
     input_price: Decimal = Decimal("0")
@@ -114,6 +121,7 @@ class RegisterModelItem(BaseModel):
     supports_image_generation: bool = False
     supports_tool_calling: bool = False
     supports_reasoning: bool = False
+    supports_embeddings: bool = False
     supports_streaming: bool = True
     context_window: int | None = None
     max_output_tokens: int | None = None

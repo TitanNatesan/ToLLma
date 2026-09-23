@@ -37,6 +37,10 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     provider_model_id: Mapped[str] = mapped_column(String(255), nullable=False)
     vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     endpoint_type: Mapped[str] = mapped_column(String(64), default="chat_completions", nullable=False)
+    # Endpoint-aware metadata (wire paths): the primary endpoint plus every
+    # endpoint the model supports. JSONB so new endpoint kinds need no migration.
+    primary_endpoint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    supported_endpoints: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     documentation_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -47,6 +51,7 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
 
     supports_text_input: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     supports_text_output: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    supports_chat: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_vision_input: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_image_output: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_audio_input: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

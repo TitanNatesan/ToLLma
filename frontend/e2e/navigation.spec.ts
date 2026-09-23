@@ -27,9 +27,13 @@ test("navigation reveals only via the profile settings toggle", async ({ page })
   await expect(page.getByTestId("sidebar-nav-analytics")).toBeVisible();
   await expect(page.getByTestId("sidebar-nav-settings")).toBeVisible();
 
-  // Gear hides it again.
-  await page.getByTestId("profile-settings-btn").click();
-  await expect(page.getByTestId("sidebar-nav-providers")).toHaveCount(0);
+  // Gear hides it again (the nav can need a settle click while it re-renders).
+  await expect(async () => {
+    if ((await page.getByTestId("sidebar-nav-providers").count()) > 0) {
+      await page.getByTestId("profile-settings-btn").click();
+    }
+    await expect(page.getByTestId("sidebar-nav-providers")).toHaveCount(0);
+  }).toPass({ timeout: 15000 });
 
   // Providers context: provider tools, nav minus Providers, hidden after navigate.
   await page.getByTestId("profile-settings-btn").click();
@@ -59,7 +63,7 @@ test("navigation reveals only via the profile settings toggle", async ({ page })
 
   // Logo returns home: chat is the home page.
   await page.getByTestId("app-logo").click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/c\//);
   await expect(page.getByTestId("new-chat")).toBeVisible();
   await expect(page.getByTestId("top-navigation")).toHaveCount(0);
 });

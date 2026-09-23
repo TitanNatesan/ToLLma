@@ -10,6 +10,8 @@ function stored(overrides: Partial<AIModel> = {}): AIModel {
     name: "M",
     description: null,
     endpoint_type: "chat_completions",
+    primary_endpoint: "chat_completions",
+    supported_endpoints: ["chat_completions"],
     input_price: "0",
     output_price: "0",
     cache_read_price: "0",
@@ -21,6 +23,7 @@ function stored(overrides: Partial<AIModel> = {}): AIModel {
     supports_image_generation: false,
     supports_tool_calling: false,
     supports_reasoning: true,
+    supports_embeddings: false,
     supports_streaming: true,
     context_window: null,
     max_output_tokens: null,
@@ -65,6 +68,44 @@ describe("model metadata capabilities", () => {
       "repo-key",
     );
     expect(form.meta.supports_video_input).toBe(true);
+  });
+
+  it("round-trips endpoint-aware fields through fromModel/toPayload", () => {
+    const form = fromModel(
+      stored({
+        endpoint_type: "images_generations",
+        primary_endpoint: "images/generations",
+        supported_endpoints: ["images/generations"],
+      }),
+    );
+    expect(form.primary_endpoint).toBe("images/generations");
+    expect(form.supported_endpoints).toContain("images/generations");
+    const payload = toPayload("p1", form) as {
+      endpoint_type: string;
+      primary_endpoint: string;
+      supported_endpoints: string[];
+      supports_embeddings: boolean;
+    };
+    expect(payload.primary_endpoint).toBe("images/generations");
+    expect(payload.endpoint_type).toBe("images_generations");
+    expect(payload.supported_endpoints).toEqual(["images/generations"]);
+    expect(payload.supports_embeddings).toBe(false);
+  });
+
+  it("fromSuggested populates the embeddings capability from the suggestion", () => {
+    const form = fromSuggested(
+      {
+        name: "Embed",
+        model_id: "text-embedding-3-large",
+        primary_endpoint: "embeddings",
+        supported_endpoints: ["embeddings"],
+        supports_embeddings: true,
+      },
+      "openai/text-embedding-3-large",
+    );
+    expect(form.caps.supports_embeddings).toBe(true);
+    const payload = toPayload("p1", form) as { supports_embeddings: boolean };
+    expect(payload.supports_embeddings).toBe(true);
   });
 
   it("metaFromRecord tolerates missing or malformed metadata", () => {

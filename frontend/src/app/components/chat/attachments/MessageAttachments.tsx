@@ -37,7 +37,8 @@ function MessageAttachmentsInner({ attachments }: { attachments?: ChatAttachment
   if (!attachments || attachments.length === 0) return null;
 
   const images = attachments.filter((a) => a.kind === "image");
-  const documents = attachments.filter((a) => a.kind !== "image");
+  const videos = attachments.filter((a) => a.kind === "video");
+  const documents = attachments.filter((a) => a.kind !== "image" && a.kind !== "video");
 
   return (
     <div className="mb-1.5 space-y-1.5" data-testid="message-attachments">
@@ -57,6 +58,33 @@ function MessageAttachmentsInner({ attachments }: { attachments?: ChatAttachment
             </a>
           ))}
         </Attachments>
+      )}
+
+      {videos.length > 0 && (
+        <div className="space-y-1.5" data-testid="message-videos">
+          {videos.map((attachment) => (
+            <div className="w-full max-w-2xl space-y-1" key={attachment.id}>
+              <video
+                className="max-h-96 w-full rounded-xl bg-black"
+                controls
+                data-testid={`message-video-${attachment.id}`}
+                preload="metadata"
+                src={attachmentContentUrl(attachment.id)}
+              />
+              <div className="flex items-center gap-2 text-[10px] text-zinc-400">
+                <span className="truncate">{attachment.filename}</span>
+                <span className="shrink-0">{formatBytes(attachment.file_size)}</span>
+                <a
+                  className="inline-flex shrink-0 items-center gap-1 text-tollma-600 hover:text-tollma-700 dark:text-tollma-400"
+                  download={attachment.filename}
+                  href={attachmentContentUrl(attachment.id)}
+                >
+                  <Download className="size-3" /> Download
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {documents.length > 0 && (

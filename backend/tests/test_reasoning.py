@@ -444,7 +444,8 @@ def test_openai_responses_sends_reasoning_object() -> None:
         transport=_transport(handler),
     )
     _run(adapter)
-    assert bodies[-1]["reasoning"] == {"effort": "low"}
+    # Summary is requested explicitly so reasoning text streams back.
+    assert bodies[-1]["reasoning"] == {"effort": "low", "summary": "auto"}
 
 
 def test_openai_chat_parses_openrouter_reasoning_shapes() -> None:

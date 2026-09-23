@@ -21,6 +21,7 @@ from tollms.api.repository.router import router as repository_router
 from tollms.api.settings.router import router as settings_router
 from tollms.api.exports.router import router as exports_router
 from tollms.api.messages.router import router as messages_router
+from tollms.api.media.router import router as media_router
 from tollms.api.request_logs.router import router as request_logs_router
 from tollms.api.search.router import router as search_router
 from tollms.api.shares.router import router as shares_router
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(exports_router)
     app.include_router(shares_router)
     app.include_router(messages_router)
+    app.include_router(media_router)
     app.include_router(request_logs_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app

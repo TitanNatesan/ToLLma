@@ -17,7 +17,7 @@ import { SidebarFooter } from "./SidebarFooter";
  * Primary application navigation (ChatGPT-style).
  * Content switches on the active route; the header and profile footer persist.
  *
- *   /            -> conversations context + full nav
+ *   /c/*, /      -> conversations context + full nav
  *   /providers*  -> providers context + nav minus Providers
  *   /analytics*  -> report shortcuts + nav minus Analytics
  *   /settings*   -> settings sections (nav lives one hop away via logo)
@@ -30,7 +30,6 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   // navPath records which route the menu was opened on; navigating away
   // (stale path) collapses it again on the next render.
   const [navPath, setNavPath] = useState<string | null>(null);
-  if (navPath !== null && navPath !== pathname) setNavPath(null);
   const navOpen = navPath === pathname;
   const toggleNav = () => setNavPath((p) => (p === pathname ? null : pathname));
 

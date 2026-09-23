@@ -8,7 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from tollms.core.exceptions import NotFoundError, ValidationError
-from tollms.models.registered_model import AIModel
+from tollms.models.registered_model import AIModel, normalize_endpoints
 from tollms.models.provider import Provider
 from tollms.api.models.schemas import CAPABILITY_FIELDS, ModelCreate, ModelUpdate
 from tollms.api.providers.service import get_provider
@@ -72,6 +72,16 @@ def create_model(
     get_provider(db, data.provider_id, user_id)  # validates provider exists and is owned
     payload = data.model_dump()
     metadata = payload.pop("metadata")
+    # Endpoint-aware: primary_endpoint/supported_endpoints are the truth;
+    # endpoint_type is mirrored for older readers.
+    enum, primary, endpoints = normalize_endpoints(
+        payload.pop("primary_endpoint", None),
+        payload.pop("supported_endpoints", None),
+        payload.get("endpoint_type"),
+    )
+    payload["endpoint_type"] = enum
+    payload["primary_endpoint"] = primary
+    payload["supported_endpoints"] = endpoints
     if data.repository_model_key:
         # Snapshot original repository values; current columns are user overrides.
         from tollms.services.model_repository.lookup import lookup as _lookup  # avoid cycle at load
@@ -82,6 +92,8 @@ def create_model(
                 "model_key": entry.model_key,
                 "name": entry.display_name or entry.provider_model_id,
                 "endpoint_type": entry.endpoint_type,
+                "primary_endpoint": entry.primary_endpoint or entry.endpoint_type,
+                "supported_endpoints": list(entry.supported_endpoints or []),
                 "input_price": str(entry.input_cost or 0),
                 "output_price": str(entry.output_cost or 0),
                 "context_window": entry.context_window,
@@ -105,7 +117,17 @@ def update_model(
     db: Session, model_id: uuid.UUID, data: ModelUpdate, user_id: uuid.UUID | None = None
 ) -> AIModel:
     model = get_model(db, model_id, user_id)
-    for field, value in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    if changes.keys() & {"endpoint_type", "primary_endpoint", "supported_endpoints"}:
+        enum, primary, endpoints = normalize_endpoints(
+            changes.get("primary_endpoint", model.primary_endpoint),
+            changes.get("supported_endpoints", model.supported_endpoints),
+            changes.get("endpoint_type", model.endpoint_type),
+        )
+        changes["endpoint_type"] = enum
+        changes["primary_endpoint"] = primary
+        changes["supported_endpoints"] = endpoints
+    for field, value in changes.items():
         if field == "metadata":
             model.metadata_ = value
         elif value is not None or field in ("description", "context_window", "max_output_tokens", "release_date"):

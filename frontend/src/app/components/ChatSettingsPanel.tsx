@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { fmtCompactTokens, fmtCost, fmtPrice, fmtTokens } from "@/lib/utils";
 import { getModelCapabilities } from "@/app/components/chat/capabilities";
+import { endpointLabel } from "@/app/providers/fields";
 
 export const INTELLIGENCE_MIN_WIDTH = 320;
 export const INTELLIGENCE_MAX_WIDTH = 700;
@@ -152,8 +153,8 @@ export function IntelligencePanel() {
             </div>
             <div className="flex items-center gap-1.5">
               {model && (
-                <Badge variant="outline" className="text-[9px] font-mono px-1 py-0">
-                  {model.endpoint_type}
+                <Badge variant="outline" className="text-[9px] px-1 py-0">
+                  {endpointLabel(model.primary_endpoint ?? model.endpoint_type)}
                 </Badge>
               )}
               <Tooltip content="Hide Intelligence">

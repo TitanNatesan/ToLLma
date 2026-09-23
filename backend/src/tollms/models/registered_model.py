@@ -21,6 +21,75 @@ class EndpointType(str, enum.Enum):
     CHAT_COMPLETIONS = "chat_completions"
     MESSAGES = "messages"
     CONVERSE = "converse"
+    EMBEDDINGS = "embeddings"
+    IMAGES_GENERATIONS = "images_generations"
+    AUDIO_TRANSCRIPTIONS = "audio_transcriptions"
+    AUDIO_SPEECH = "audio_speech"
+
+
+# Canonical wire path per endpoint. `supported_endpoints`/`primary_endpoint`
+# store these strings (JSONB / TEXT) so new endpoints never need a migration.
+ENDPOINT_WIRE: dict[EndpointType, str] = {
+    EndpointType.RESPONSES: "responses",
+    EndpointType.CHAT_COMPLETIONS: "chat_completions",
+    EndpointType.MESSAGES: "messages",
+    EndpointType.CONVERSE: "converse",
+    EndpointType.EMBEDDINGS: "embeddings",
+    EndpointType.IMAGES_GENERATIONS: "images/generations",
+    EndpointType.AUDIO_TRANSCRIPTIONS: "audio/transcriptions",
+    EndpointType.AUDIO_SPEECH: "audio/speech",
+}
+WIRE_ENDPOINT: dict[str, EndpointType] = {wire: member for member, wire in ENDPOINT_WIRE.items()}
+
+# Chat-style endpoints stream assistant text through the conversation system;
+# the others are capability/utility endpoints with their own adapter methods.
+CHAT_ENDPOINTS = frozenset(
+    {
+        ENDPOINT_WIRE[EndpointType.RESPONSES],
+        ENDPOINT_WIRE[EndpointType.CHAT_COMPLETIONS],
+        ENDPOINT_WIRE[EndpointType.MESSAGES],
+        ENDPOINT_WIRE[EndpointType.CONVERSE],
+    }
+)
+
+
+def endpoint_wire(endpoint: EndpointType | str | None) -> str | None:
+    """Normalize an enum member or wire string to its wire path."""
+    if endpoint is None:
+        return None
+    if isinstance(endpoint, EndpointType):
+        return ENDPOINT_WIRE[endpoint]
+    return endpoint
+
+
+def endpoint_enum(endpoint: str | None) -> EndpointType | None:
+    """Wire path -> enum member (None for unknown/future endpoints)."""
+    if not endpoint:
+        return None
+    return WIRE_ENDPOINT.get(endpoint)
+
+
+def normalize_endpoints(
+    primary: str | None,
+    supported: list[str] | None,
+    legacy: EndpointType | None,
+) -> tuple[EndpointType, str, list[str]]:
+    """Coerce (primary_endpoint, supported_endpoints, endpoint_type) into agreement.
+
+    Primary wins over the legacy enum; unknown endpoint strings fall back to
+    chat_completions for the legacy enum while the wire string is preserved so
+    future endpoints keep working before an enum member exists.
+    """
+    wire = (
+        endpoint_wire(primary)
+        or endpoint_wire(legacy)
+        or ENDPOINT_WIRE[EndpointType.CHAT_COMPLETIONS]
+    )
+    enum = endpoint_enum(wire) or EndpointType.CHAT_COMPLETIONS
+    endpoints = [item for item in dict.fromkeys(supported or []) if item]
+    if wire not in endpoints:
+        endpoints.insert(0, wire)
+    return enum, wire, endpoints
 
 
 class AIModel(SoftDeleteMixin, TimestampedModel):
@@ -38,6 +107,10 @@ class AIModel(SoftDeleteMixin, TimestampedModel):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     endpoint_type: Mapped[EndpointType] = mapped_column(Enum(EndpointType, name="endpoint_type"), nullable=False)
+    # Endpoint-aware routing: the model decides where it is called. `endpoint_type`
+    # stays as the legacy mirror of `primary_endpoint` for older readers.
+    primary_endpoint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    supported_endpoints: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
     input_price: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0"), nullable=False)
     output_price: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0"), nullable=False)
@@ -51,6 +124,7 @@ class AIModel(SoftDeleteMixin, TimestampedModel):
     supports_image_generation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_tool_calling: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_reasoning: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    supports_embeddings: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_streaming: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     context_window: Mapped[int | None] = mapped_column(nullable=True)

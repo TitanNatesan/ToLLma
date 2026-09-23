@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -54,6 +55,8 @@ class MessageRead(BaseModel):
     generations: list["GenerationRunRead"] = Field(default_factory=list)
     active_generation_id: uuid.UUID | None = None
     versions_count: int = 0
+    # Generation details for media messages (serialized as `metadata`).
+    metadata_: dict[str, Any] = Field(default_factory=dict, serialization_alias="metadata")
 
     model_config = {"from_attributes": True}
 

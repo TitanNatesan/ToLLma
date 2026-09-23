@@ -8,6 +8,7 @@ import {
   Switch,
 } from "@/components/ui";
 import { useModelMutations } from "@/hooks/useRegistry";
+import { endpointLabel, providerTypeLabel } from "@/app/providers/fields";
 import type { AIModel, Provider } from "@/types";
 import {
   Bot,
@@ -32,6 +33,7 @@ const CAPS_LIST = [
   "supports_image_generation",
   "supports_tool_calling",
   "supports_reasoning",
+  "supports_embeddings",
   "supports_streaming",
 ] as const;
 
@@ -129,13 +131,13 @@ export function ModelDetailDrawer({
             <div className="flex items-center justify-between p-2.5">
               <span className="text-zinc-500">Provider</span>
               <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                {provider?.name ?? "Unknown"} ({provider?.provider_type})
+                {provider?.name ?? "Unknown"} ({providerTypeLabel(provider?.provider_type)})
               </span>
             </div>
             <div className="flex items-center justify-between p-2.5">
               <span className="text-zinc-500">Endpoint Type</span>
-              <Badge variant="outline" className="font-mono text-[10px]">
-                {model.endpoint_type}
+              <Badge variant="outline" className="text-[10px]">
+                {endpointLabel(model.primary_endpoint ?? model.endpoint_type)}
               </Badge>
             </div>
             <div className="flex items-center justify-between p-2.5">

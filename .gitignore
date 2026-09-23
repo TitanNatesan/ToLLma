@@ -21,3 +21,4 @@ storage/*
 frontend/tests/.auth/
 backend/storage
 .playwright-mcp/
+graphify-out/

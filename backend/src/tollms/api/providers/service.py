@@ -224,8 +224,25 @@ async def discover_provider_models(
         # Provider identity wins; repository match supplies pricing/capabilities.
         suggested["model_id"] = d.model_id
         suggested["name"] = d.name or d.model_id
-        if d.endpoint_type:
-            suggested["endpoint_type"] = d.endpoint_type
+        # Endpoint truth: a repository match (provider_specific/global) is
+        # authoritative for OpenAI-compatible families (gpt-5 -> responses,
+        # text-embedding-3-large -> embeddings). The adapter's own hint is the
+        # fallback for unmatched models.
+        matched = match.get("match_type") in ("provider_specific", "global")
+        if matched:
+            primary = suggested.get("primary_endpoint") or d.primary_endpoint
+            supported = suggested.get("supported_endpoints") or d.supported_endpoints
+        else:
+            primary = d.primary_endpoint or d.endpoint_type or suggested.get("primary_endpoint")
+            supported = d.supported_endpoints or suggested.get("supported_endpoints")
+        if primary:
+            supported = [endpoint for endpoint in dict.fromkeys(supported or []) if endpoint]
+            if primary not in supported:
+                supported.insert(0, primary)
+            suggested["primary_endpoint"] = primary
+            suggested["supported_endpoints"] = supported
+            suggested["endpoint_type"] = _legacy_endpoint(primary)
+        endpoint_type = suggested.get("endpoint_type") or d.endpoint_type
         ctx = d.context_window if d.context_window is not None else suggested.get("context_window")
         max_out = d.max_output_tokens if d.max_output_tokens is not None else suggested.get("max_output_tokens")
         for price_key in ("input_price", "output_price", "cache_read_price", "cache_write_price"):
@@ -242,7 +259,9 @@ async def discover_provider_models(
             {
                 "model_id": d.model_id,
                 "name": d.name or d.model_id,
-                "endpoint_type": d.endpoint_type,
+                "endpoint_type": endpoint_type,
+                "primary_endpoint": suggested.get("primary_endpoint") or primary,
+                "supported_endpoints": suggested.get("supported_endpoints") or supported or [],
                 "context_window": ctx,
                 "max_output_tokens": max_out,
                 "repository_model_key": match.get("repository_model_key"),
@@ -311,12 +330,57 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _legacy_endpoint(primary: str) -> str:
+    """Wire path -> legacy EndpointType value (unknown endpoints degrade to chat)."""
+    from tollms.models.registered_model import endpoint_enum
+
+    enum = endpoint_enum(primary)
+    return enum.value if enum else "chat_completions"
+
+
+def _apply_discovered_endpoint(item, match: dict) -> None:
+    """Write the resolved endpoint onto a DiscoveredModel (draft discovery).
+
+    Repository matches are authoritative for OpenAI-compatible families; the
+    adapter's hint is only used when the repository has nothing to say. Mirrors
+    the precedence in `discover_provider_models`.
+    """
+    from tollms.models.registered_model import endpoint_enum
+
+    suggested = _json_safe(match.get("suggested") or {})
+    if suggested:
+        item.suggested = suggested
+    matched = match.get("match_type") in ("provider_specific", "global")
+    if matched:
+        primary = suggested.get("primary_endpoint") or item.primary_endpoint
+        supported = suggested.get("supported_endpoints") or item.supported_endpoints
+    else:
+        primary = item.primary_endpoint or item.endpoint_type or suggested.get("primary_endpoint")
+        supported = item.supported_endpoints or suggested.get("supported_endpoints")
+    if not primary:
+        return
+    endpoints = [endpoint for endpoint in dict.fromkeys(supported or []) if endpoint]
+    if primary not in endpoints:
+        endpoints.insert(0, primary)
+    item.primary_endpoint = primary
+    item.supported_endpoints = endpoints
+    enum = endpoint_enum(primary)
+    item.endpoint_type = enum.value if enum else "chat_completions"
+
+
 async def draft_validate(
     provider_type: ProviderType,
     credentials: dict,
     transport: httpx.AsyncBaseTransport | None = None,
+    *,
+    db: Session | None = None,
 ):
-    """Validate credentials without persisting anything. Returns (valid, message, latency, discovered)."""
+    """Validate credentials without persisting anything. Returns (valid, message, latency, discovered).
+
+    When a session is provided, discovered models are enriched with repository
+    intelligence (`suggested`) so the wizard's validation summary can count
+    reasoning/embedding/image/audio models without registering anything.
+    """
     from tollms.services.gateway.adapters.base import DiscoveredModel
 
     probe = Provider(name="draft", provider_type=provider_type, credentials_encrypted="")
@@ -333,6 +397,25 @@ async def draft_validate(
         except Exception as e:
             logger.exception("draft discovery crashed")
             message = f"{message} (model listing failed: {e})"
+    if db is not None and discovered:
+        try:
+            from tollms.services.model_repository.mapping import map_models
+
+            base_url = credentials.get("base_url") if isinstance(credentials, dict) else None
+            mapped = {
+                m["model_id"]: m
+                for m in map_models(
+                    db,
+                    [d.model_id for d in discovered],
+                    provider_type=provider_type.value,
+                    base_url=base_url,
+                )
+            }
+            for item in discovered:
+                match = mapped.get(item.model_id) or {}
+                _apply_discovered_endpoint(item, match)
+        except Exception:
+            logger.exception("draft repository mapping failed")
     return valid, message, latency, discovered
 
 

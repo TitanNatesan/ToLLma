@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight, Cpu } from "lucide-react";
 import { useProviders } from "@/hooks/useRegistry";
 import { Badge } from "@/components/ui";
+import { providerTypeLabel } from "@/app/providers/fields";
 
 /** Provider shortcuts — management lives on /providers. */
 export function ProvidersSection() {
@@ -26,7 +27,7 @@ export function ProvidersSection() {
             <Cpu className="size-3.5 text-zinc-400" />
             {provider.name}
             <Badge variant="outline" className="px-1 py-0 text-[9px] font-normal">
-              {provider.provider_type}
+              {providerTypeLabel(provider.provider_type)}
             </Badge>
           </span>
         ))}

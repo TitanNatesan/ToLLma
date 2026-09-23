@@ -78,9 +78,10 @@ test("navigate away and back restores conversation", async ({ page }) => {
   await expect(page.getByTestId("message-assistant").last()).toContainText("slow-word-20", {
     timeout: 25000,
   });
+  const conversationUrl = page.url();
   await page.goto("/providers");
   await expect(page).toHaveURL(/\/providers/);
-  await page.goto("/");
+  await page.goto(conversationUrl);
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("message-assistant").last()).toContainText("slow-word-20");
 });

@@ -26,6 +26,12 @@ import { ProviderWizardModal } from "./components/ProviderWizardModal";
 import { ModelDetailDrawer } from "./components/ModelDetailDrawer";
 import { RegisterModelDrawer } from "./components/RegisterModelDrawer";
 import { CAPS, ModelForm, fromModel, toPayload } from "./components/ModelForm";
+import {
+  ENDPOINT_OPTIONS,
+  endpointLabel,
+  providerTypeLabel,
+  resolveWireEndpoint,
+} from "./fields";
 import type { AIModel, DiscoveredModelInfo, Provider } from "@/types";
 import {
   CheckCircle2,
@@ -131,7 +137,11 @@ export default function ProvidersPage() {
     )
       return false;
     if (availableCap !== "ALL" && (m.suggested?.[availableCap] as unknown) !== true) return false;
-    if (availableType !== "ALL" && m.endpoint_type !== availableType) return false;
+    if (
+      availableType !== "ALL" &&
+      resolveWireEndpoint(m.primary_endpoint, m.endpoint_type) !== availableType
+    )
+      return false;
     const ctxVal = m.context_window ?? (m.suggested?.context_window ? Number(m.suggested.context_window) : null);
     if (availableCtx > 0 && !(ctxVal && ctxVal >= availableCtx)) return false;
     return true;
@@ -249,8 +259,8 @@ export default function ProvidersPage() {
                     <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
                       {selected.name}
                     </h1>
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {selected.provider_type}
+                    <Badge variant="outline" className="text-xs">
+                      {providerTypeLabel(selected.provider_type)}
                     </Badge>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -454,10 +464,11 @@ export default function ProvidersPage() {
                       aria-label="Filter by model type"
                     >
                       <option value="ALL">All types</option>
-                      <option value="responses">responses</option>
-                      <option value="chat_completions">chat_completions</option>
-                      <option value="messages">messages</option>
-                      <option value="converse">converse</option>
+                      {ENDPOINT_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
                     </Select>
                   </div>
                   <div className="w-32">
@@ -487,8 +498,8 @@ export default function ProvidersPage() {
                           <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100">
                             {m.name}
                           </span>
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 font-mono">
-                            {m.endpoint_type}
+                          <Badge variant="outline" className="text-[10px] px-1 py-0">
+                            {endpointLabel(m.primary_endpoint ?? m.endpoint_type)}
                           </Badge>
                           <Badge
                             variant="secondary"
@@ -614,8 +625,8 @@ export default function ProvidersPage() {
                           <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100">
                             {m.name}
                           </span>
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 font-mono">
-                            {m.endpoint_type}
+                          <Badge variant="outline" className="text-[10px] px-1 py-0">
+                            {endpointLabel(m.primary_endpoint ?? m.endpoint_type)}
                           </Badge>
                           {!m.is_active && (
                             <Badge variant="destructive" className="text-[9px] px-1 py-0">

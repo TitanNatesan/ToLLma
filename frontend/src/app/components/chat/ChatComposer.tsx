@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { uploadChatAttachment } from "@/services/api";
+import { providerTypeLabel } from "@/app/providers/fields";
 import type { AIModel, Provider } from "@/types";
 
 import {
@@ -190,7 +191,7 @@ function UnifiedModelSelector({
                     <span className="truncate">{provider.name}</span>
                   </span>
                   <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 font-normal">
-                    {provider.provider_type}
+                    {providerTypeLabel(provider.provider_type)}
                   </Badge>
                 </div>
 

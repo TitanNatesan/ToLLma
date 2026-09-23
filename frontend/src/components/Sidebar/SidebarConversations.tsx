@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Pencil, Pin, Plus, Trash2 } from "lucide-react";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { useConversationMutations, useConversations } from "@/hooks/useChat";
 import { useChatStore } from "@/store/chat";
+import { toastApiError } from "@/lib/errors";
 import type { Conversation } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -112,10 +114,25 @@ function ConvItem({
 
 /** Chat context: new chat, conversation search, pinned + recent lists. */
 export function SidebarConversations() {
+  const router = useRouter();
   const { activeConversationId, sidebarSearch, setConversation, setSearch } = useChatStore();
   const { data: convs = [] } = useConversations(sidebarSearch);
   const mutations = useConversationMutations();
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // New chat lives at a fresh `/c/{id}`: create it, then navigate (the URL is
+  // the conversation's identity).
+  const newChat = useCallback(() => {
+    mutations.create.mutate(
+      {},
+      {
+        onSuccess: (conv) => router.push(`/c/${conv.id}`),
+        onError: (error) => toastApiError(error, { title: "Could not start chat" }),
+      },
+    );
+  }, [mutations.create, router]);
+
+  const select = useCallback((id: string) => router.push(`/c/${id}`), [router]);
 
   // Ctrl+Shift+F / "Search Conversations" command.
   useEffect(() => {
@@ -135,7 +152,7 @@ export function SidebarConversations() {
       {/* New Chat Button */}
       <div className="p-2.5 pb-2">
         <button
-          onClick={() => setConversation(null)}
+          onClick={newChat}
           data-testid="new-chat"
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm transition-all hover:bg-zinc-50 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         >
@@ -176,13 +193,16 @@ export function SidebarConversations() {
                     key={c.id}
                     conv={c}
                     active={activeConversationId === c.id}
-                    onSelect={() => setConversation(c.id)}
+                    onSelect={() => select(c.id)}
                     onRename={(t) => mutations.rename.mutate({ id: c.id, title: t })}
                     onPin={() =>
                       mutations.pin.mutate({ id: c.id, pinned: !c.is_pinned })
                     }
                     onDelete={() => {
-                      if (activeConversationId === c.id) setConversation(null);
+                      if (activeConversationId === c.id) {
+                        setConversation(null);
+                        router.replace("/");
+                      }
                       mutations.remove.mutate(c.id);
                     }}
                   />
@@ -207,13 +227,16 @@ export function SidebarConversations() {
                     key={c.id}
                     conv={c}
                     active={activeConversationId === c.id}
-                    onSelect={() => setConversation(c.id)}
+                    onSelect={() => select(c.id)}
                     onRename={(t) => mutations.rename.mutate({ id: c.id, title: t })}
                     onPin={() =>
                       mutations.pin.mutate({ id: c.id, pinned: !c.is_pinned })
                     }
                     onDelete={() => {
-                      if (activeConversationId === c.id) setConversation(null);
+                      if (activeConversationId === c.id) {
+                        setConversation(null);
+                        router.replace("/");
+                      }
                       mutations.remove.mutate(c.id);
                     }}
                   />

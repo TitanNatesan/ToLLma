@@ -1590,3 +1590,188 @@ Tests: `e2e/conversation-intelligence.spec.ts` (fresh messages assert zero histo
 - If user edit-version switching (not just inspection) is wanted, it needs a backend "activate version" semantic; currently the dialog shows the diff between versions without reverting.
 - Consider surfacing `versions_count` on search results/message payloads if other surfaces need edited badges.
 
+
+## 2026-09-22 — graphify auto-updating knowledge graph + live interactive page
+
+### Requirement Completed
+Make the project knowledge graph rebuild automatically on every code change and make the interactive HTML page reflect changes without manual regeneration or manual file opening.
+
+### Files Created
+- `graphify-out/live.py` — zero-dependency stdlib live-reload server for `graphify-out/` (serves the dir, polls `graph.json` mtime via `/graph-version`, reloads the graph iframe on change; port 8765 via `GRAPHIFY_LIVE_PORT`).
+- `~/.config/systemd/user/graphify-watch.service` — runs `python -m graphify.watch /home/ond/Projects/ToLLms --debounce 3` with `Restart=on-failure`, logging to `graphify-out/watch.log`.
+- `~/.config/systemd/user/graphify-live.service` — runs `live.py` on port 8765.
+
+### Files Modified
+None in the repo (graphify-out is gitignored).
+
+### Decisions
+- Used graphify's built-in watcher rather than a custom file-watcher: it already re-extracts AST, re-clusters, and rewrites `graph.json` + `GRAPH_REPORT.md` + `graph.html` on code changes with no LLM/API key, and honors `.gitignore`/`.graphifyignore` plus an internal `graphify-out` filter (no self-trigger loop).
+- Docs/papers/images still require a semantic pass (`/graphify --update`) because only code is re-extracted by the watcher; the watcher flags this via `graphify-out/.needs_update`.
+- The generated `graph.html` is already interactive (zoom/pan/click); "dynamic" was delivered as live reload rather than rebuilding the visualization, so graphify's export stays untouched and upgrade-safe.
+- Community labels are auto-derived from hub nodes on each rebuild (community set churns while code changes); `graphify label` can re-name them with an LLM backend when nicer names are wanted.
+
+### Verification
+- `uv tool install graphifyy --with watchdog --upgrade` → watchdog 6.0.0 importable in the graphify interpreter.
+- `systemctl --user enable --now graphify-watch.service graphify-live.service` → both `active (running)`.
+- Live server: `GET /` 200, `GET /graph.html` 200, `GET /graph-version` returns the graph mtime stamp.
+- Watcher: created a probe module (`graphify_watch_probe.py`) → watcher rebuilt (`Rebuilt: 3450 nodes, 10075 edges, 114 communities`) and rewrote all three outputs; deleted the probe → its nodes were evicted from `graph.json` on the next rebuild (verified probe ids absent).
+- Noted during the run: concurrent edits to `backend/src/tollms/services/model_repository/lookup.py` (uncommitted, 21 insertions) triggered additional automatic rebuilds — expected behavior from the parallel workstream, not a loop.
+
+### Recommended Next Steps
+- `loginctl enable-linger $USER` (needs sudo) if the watcher should survive logout.
+- Hook `graphify hook install` as a commit-time fallback when the watcher is not running.
+- Configure a semantic-extraction key (Gemini) and run `/graphify --update` after doc/markdown changes.
+
+
+## 2026-09-23 — Frontend: endpoint-aware provider onboarding (wire endpoints, merged OPENAI, friendly labels)
+
+### Requirement Completed
+Frontend-only adaptation to the already-refactored backend contract: merged OPENAI provider type (6 values), wire-path endpoint vocabulary (`primary_endpoint`/`supported_endpoints`/`supports_embeddings`), wizard validation summary + grouped model list + endpoint filter, model form wire endpoint select + supported-endpoints multi-select + embeddings capability, and friendly labels everywhere enums were rendered raw. No backend files touched.
+
+### Files Created
+None.
+
+### Files Modified
+- `src/types/index.ts` — `ProviderType` merged to `OPENAI`; `EndpointType` extended with `embeddings`, `images_generations`, `audio_transcriptions`, `audio_speech`; `AIModel` + `DiscoveredModelInfo` + `DraftDiscoveredModel` gained `primary_endpoint`/`supported_endpoints` (+ `supports_embeddings` on AIModel; optional `suggested` on draft items for forward compat).
+- `src/app/providers/fields.ts` — 6 `PROVIDER_TYPES`, merged `CREDENTIAL_FIELDS`, wire `PROVIDER_DEFAULT_ENDPOINTS`, `PROVIDER_TYPE_LABELS`/`providerTypeLabel()`, `ENDPOINT_OPTIONS`, `WIRE_TO_LEGACY_ENDPOINT`/`endpointTypeFromWire()`/`endpointWireFromLegacy()`, `resolveWireEndpoint()`, `endpointLabel()`, `endpointCategory()` + category labels.
+- `src/app/providers/components/ModelForm.tsx` — form state now `primary_endpoint` (wire) + `supported_endpoints`; 8-option endpoint select (`madd-endpoint`); supported-endpoints checkboxes (`madd-supported-endpoints`, primary cannot be unchecked); `supports_embeddings` added to `CAPS` (`madd-cap-supports_embeddings`); `toPayload` sends wire + derived legacy enum; `fromModel`/`fromSuggested`/repository import preserve precedence (suggestion endpoint wins, non-chat provider default overrides generic chat).
+- `src/app/providers/components/ProviderWizardModal.tsx` — 6 provider cards with lettered badges + endpoint chips and required descriptions; default type `OPENAI`; validation summary counts (`wiz-validation-summary` + `wiz-summary-*`); step-4 category grouping (`wiz-group-*`), endpoint filter (`wiz-endpoint-filter`); wire endpoints in mapping/registration; friendly type/endpoint labels.
+- `src/app/providers/page.tsx` — friendly provider/endpoint badges; type filter populated from `ENDPOINT_OPTIONS` and matched on resolved wire endpoint.
+- `src/components/Sidebar/SidebarProviders.tsx` — label map replaced by shared `providerTypeLabel()` (filter + card badge).
+- `src/components/ui/ProviderSelector.tsx`, `ModelSelector.tsx`, `CommandPalette.tsx`, `src/app/components/chat/ChatComposer.tsx`, `src/app/settings/components/ProvidersSection.tsx`, `src/app/providers/components/ModelDetailDrawer.tsx`, `RegisterModelDrawer.tsx`, `src/app/components/ChatSettingsPanel.tsx` — friendly provider/endpoint labels; embeddings added to detail capability list.
+- Tests: `__tests__/endpoint.test.ts` (rewritten for wire endpoints, mapping/supported/grouping/payload cases), `__tests__/metadata.test.ts` (fixture fields + endpoint round-trip + embeddings suggestion), `chat/__tests__/capabilities.test.ts` (fixture fields).
+
+### Decisions
+- Wire path is the canonical stored form; `endpoint_type` is derived only at payload time via `endpointTypeFromWire()` (unknown -> `chat_completions`), matching backend `normalize_endpoints`.
+- `endpointCategory()` treats unknown wire/legacy values as "other" (future endpoints), while `resolveWireEndpoint()` degrades unknown to `chat_completions` for form/filter safety.
+- Removed the redundant `RegisterModelDrawer` step-reset effect (parent already remounts by key) and added an eslint-disable for the pre-existing post-mount CSS capability probe to keep touched files lint-clean.
+
+### Verification
+- `npx tsc --noEmit` clean; `npx eslint src` clean (0 errors, fixed 2 pre-existing `react-hooks/set-state-in-effect` errors in touched files); `npx vitest run` 115/115 passed; `npx next build` green; `docker compose restart frontend` done.
+- Backend contract gap reported: `POST /providers/draft-validate` does not return `suggested`, so step-3 "Reasoning models" and capability-based embedding counts are 0 until the backend includes it (embedding count still works via `primary_endpoint`).
+
+### Recommended Next Steps
+- Add `suggested` (or at least `supports_reasoning`/`supports_embeddings`) to `DraftDiscoveredModel` so the wizard validation summary can count reasoning/embedding-by-capability before repository mapping.
+- Run Playwright wizard/providers specs after the parent agent's e2e pass; no e2e referenced removed enum values or `ENDPOINTS`.
+
+---
+
+## 2026-09-22 — Endpoint-Aware Provider Model Architecture (backend refactor + validation suite)
+
+### Requirement Completed
+Merged OpenAI Chat/Responses into one `OPENAI` provider, made model routing endpoint-aware (provider family decides the adapter family, the model's `primary_endpoint` decides the adapter), extended the model repository with endpoint metadata, turned Custom into a true OpenAI-compatible multi-endpoint gateway, made discovery auto-resolve endpoints from the repository, and shipped an automated low-cost validation matrix plus an opt-in live validation script and report.
+
+### Files Created
+Backend: `alembic/versions/a3f8c1d2e4b6_endpoint_aware_providers.py` (enum merge + endpoint metadata + backfill), `services/gateway/dispatch.py` (endpoint dispatcher used by validation), `tests/test_endpoints.py` (10 routing/wire/repository/precedence tests), `tests/test_validation_matrix.py` (8 always-on low-cost endpoint probes), `scripts/validate_endpoints.py` (live env-gated probes + markdown report), repo-level `docs/validation-report.md` (generated report).
+
+### Files Modified
+Backend: `models/provider.py` (`ProviderType` = OPENAI, ANTHROPIC_MESSAGES, GEMINI, VERTEX_AI, BEDROCK_CONVERSE, CUSTOM), `models/registered_model.py` (EndpointType + `ENDPOINT_WIRE`/`endpoint_enum`/`normalize_endpoints`; AIModel `primary_endpoint`, `supported_endpoints`, `supports_embeddings`), `models/model_repository.py` (`primary_endpoint`, `supported_endpoints`, `supports_chat`), `services/gateway/adapters/openai.py` (OpenAI family honoring `base_url`/`extra_headers`; chat/responses/embeddings/images/transcriptions/speech classes; `CustomAdapter` alias), `services/gateway/adapters/base.py` (`DiscoveredModel` endpoint metadata + `suggested`; `embed`/`generate_image`/`transcribe`/`speak` contract), `services/gateway/factory.py` (endpoint-aware selection, `default_endpoint`, `provider_supported_endpoints`, `resolve_endpoint`), `services/model_repository/{sources,sync,lookup,mapping}.py` (endpoint derivation/normalization/union; suggestion payload; fixed-family endpoint locking), `api/providers/{schemas,service,router}.py` (endpoint fields, draft-validate repository enrichment with `suggested`, discovery precedence fix), `api/models/{schemas,service}.py` (endpoint fields + mirroring), `api/repository/schemas.py`, `api/gateway/service.py` (transcriber for merged OPENAI).
+Tests updated: `test_providers.py`, `test_cache.py`, `test_attachments.py`, `test_intelligence.py`, `test_discovery.py`, `test_wizard.py`; frontend `e2e/wizard.spec.ts` (removed a reload that raced the auth bootstrap; replaced two stale assertions from removed UI features).
+
+### Decisions
+- Endpoint strings are canonical wire paths stored in TEXT/JSONB (`primary_endpoint`, `supported_endpoints`); `endpoint_type` remains a mirrored legacy enum so analytics/older readers keep working. New endpoint kinds need no enum migration (success criterion: future model types without schema redesign).
+- The provider enum merge reused the standard PG path: rename → create new enum → cast column (`OPENAI_CHAT`/`OPENAI_RESPONSES` → `OPENAI`) → drop old; downgrade maps `OPENAI` back to `OPENAI_CHAT`.
+- Custom/OpenAI-compatible is not a separate adapter anymore: every OpenAI-family adapter honors `base_url`/`extra_headers` and treats a missing key as valid when a base URL is present (LiteLLM/Ollama/vLLM/TGI/Azure-compatible). `CustomAdapter` stays as an alias for imports.
+- Discovery precedence: for OpenAI-compatible families a repository match (provider_specific/global) is authoritative for endpoints (gpt-5 → responses, text-embedding-3-large → embeddings, gpt-image-1 → images/generations); the adapter hint is only the fallback for unmatched models. Fixed-endpoint families re-point chat models at their wire endpoint and reject non-chat endpoints.
+- Validation is two-tier: the mock matrix runs in CI with zero cost and covers every endpoint the backend claims; the live script uses cheapest models, 16 output tokens, a 1x1 PNG, one lowest-quality image, <1s audio, and writes the Part-10 report.
+
+### Verification
+- Backend `docker compose exec -T backend python -m pytest -q`: **215 passed** (was 194; +8 validation matrix, +10 endpoint architecture/repository, +3 provider tests). `alembic upgrade head` applied `a3f8c1d2e4b6`; `alembic check` green (no drift).
+- Live script dry run inside the container lists 15 probes across 6 provider families and 6 endpoint kinds, correctly reporting SKIPPED without credentials.
+- Frontend: `tsc --noEmit` clean; `eslint` clean; `vitest` **115/115**; `next build` green.
+- Playwright provider surface: `providers` + `wizard` + `discovery` + `validation` + `repository` + `intelligence` **11/11**.
+- E2E findings (verified pre-existing/fixed): the wizard spec's `localStorage.clear()` + reload raced the auth bootstrap and landed on `/login` (fails on a stashed pre-change tree too); `wiz-match-*` had been a scope badge (not match type) since before this task; the spec asserted a bulk-edit price that no longer has UI. All three corrected to exercise current behavior (draft-only reset, match filter, per-model assertions).
+
+### Recommended Next Steps
+- Add Gemini/Vertex embeddings and future video endpoints by extending the adapter map only.
+- Expose embeddings/images/audio through REST routes when product surfaces need them (dispatcher + adapters already support them).
+- Run `scripts/validate_endpoints.py --live` with production keys before enabling new provider families in an environment.
+
+---
+
+## 2026-09-23 — In-UI media generation + live OpenAI/OpenWebUI validation (fixes)
+
+### Requirement Completed
+Delivered an end-to-end media generation surface and validated the whole provider stack with real credentials: logged in as `titannatesan@gmail.com` via the UI, created an OpenAI provider through the wizard (live validation + discovery), registered gpt-4.1-nano / gpt-image-1 / sora-2 / gpt-5-mini, exercised text, vision, reasoning, image and video generation through the app, and tested all three OpenWebUI models. Every flow ran headed in a full-screen (1920×1080) browser.
+
+### Files Created
+Backend: `api/media/{__init__,schemas,service,router}.py` (authenticated `/api/v1/media/images` + `/videos`, results stored as attachments), `tests/test_media.py` (3 tests). Frontend: `app/generate/page.tsx` (model picker filtered by endpoint, prompt, reference-image upload, result preview/download). E2E (live, env-gated): `e2e/live-openai.spec.ts`, `e2e/live-reasoning.spec.ts`, `e2e/live-media.spec.ts`.
+
+### Files Modified
+Backend: `services/gateway/adapters/openai.py` (Videos adapter: multipart create/poll/download, transport retries, reference normalization, provider error surfacing; Responses adapter `reasoning.summary: "auto"`), `api/media/service.py` (RuntimeError/httpx errors → 502), `api/models/router.py` (`_read` now includes `primary_endpoint`/`supported_endpoints`/`supports_embeddings` — the root cause of `/generate` seeing zero media models), `api/providers/service.py` (`_apply_discovered_endpoint` so draft-validate resolves repository endpoints; gpt-image-1 registered as images/generations), `main.py` (media router), `pyproject.toml` (+pillow), `tests/test_reasoning.py` + `tests/test_validation_matrix.py` (new retry test). Frontend: `services/api.ts` (media client), `components/Sidebar/SidebarNavigation.tsx` (+Generate), `app/providers/fields.ts` (+video endpoint option).
+
+### Decisions
+- Media results are persisted as normal attachments so the existing authenticated content endpoint serves previews/downloads — no parallel storage or blob API.
+- The video adapter owns provider-specific reference normalization (cover-crop + resize to the requested WxH), because the "reference must match size" rule is an OpenAI Videos API constraint.
+- Long jobs retry transient transport/DNS errors instead of failing the generation; provider-side failures surface as 502 with the provider message rather than an unhandled 500.
+
+### Verification
+- Backend targeted suites: **69 passed** (`test_media`, `test_validation_matrix` incl. the DNS-retry regression, `test_endpoints`, `test_reasoning`, `test_registry`, `test_providers`, `test_discovery`); frontend `tsc`/`eslint` clean on all touched files.
+- Live API probes: gpt-4.1-nano text + vision (Ben 10 image) PASS; gpt-image-1 2×low/2×medium/1×high PASS; gpt-5-mini reasoning PASS (64 reasoning tokens, UI showed "Thought for <1s"); sora-2 text→video PASS (76s at the time), image→video PASS (86s); gpt-oss-120b FAIL — not available on this key (`model_not_found`); OpenWebUI glm-4.7-flash / glm-4.6V-Flash / qwen3-coder-30b all PASS.
+- Headed full-screen UI: provider registration + chat/vision/reasoning PASS; `e2e/live-media.spec.ts` **2 passed (2.9m)** — image PASS, text→video PASS (1.49 MB, 58s), image→video PASS (1.73 MB, 84s, 512² reference auto-upscaled).
+- Known constraint: OpenAI Videos accepts `seconds` = 4/8/12 only; a 1-second request returns `Invalid value: '1'. Supported values are: '4', '8', and '12'`, so the UI offers 4/8/12 and the minimum 4s is used.
+
+### Recommended Next Steps
+- Add a media history/gallery view and surface generated attachments in conversations.
+- Consider async video jobs with status polling in the UI instead of one blocking request (current LATENCY is shown, fine for 4s clips but not for 12s+).
+- Run `scripts/validate_endpoints.py --live --report docs/validation-report.md` periodically to refresh the live coverage matrix.
+
+---
+
+## 2026-09-23 — Unified Chat: media generation inside conversations + /c/{id} routing
+
+### Requirement Completed
+Removed the split experience: image/video generation now runs through the same conversation pipeline as text (streaming, persistence, retry, history), and every conversation lives at `/c/{conversationId}` with `/` minting a new chat. The standalone `/generate` page remains for debugging only.
+
+### Files Created
+`backend/alembic/versions/b4c5d6e7f8a9_message_metadata.py` (messages.metadata JSONB), `frontend/src/app/c/[conversationId]/page.tsx` (route page), `frontend/src/app/components/ChatWorkspace.tsx` (workspace extracted from `app/page.tsx`), `frontend/e2e/live-chat-media.spec.ts` (headed live validation).
+
+### Files Modified
+Backend: `api/gateway/service.py` — `_MediaGenerationAdapter` (a `BaseProviderAdapter` facade) routes models whose `primary_endpoint` is images/videos through the normal generation runner: streams "Generating image/video…", "Uploading…", "Generated …" deltas, calls the media adapter via the dispatcher, stores the result as a conversation attachment linked to the assistant message, writes generation metadata, and supports retries/regen in place (no duplicate rows); conversation provider/model stamped on first generation for eagerly created conversations. `models/message.py` + `api/conversations/schemas.py` (metadata column/serialization, `serialization_alias`).
+Frontend: `app/page.tsx` (create-once + redirect to `/c/{id}`), `components/Sidebar/SidebarConversations.tsx` (navigate on select/new chat), `components/Sidebar/Sidebar.tsx`, `ChatHeader.tsx`, `CommandPalette.tsx`, `analytics/page.tsx`, `useShortcuts.ts` (conversation-aware navigation), `app/components/chat/attachments/MessageAttachments.tsx` (inline video player + download), `types/index.ts` (`metadata`), `MessageView.tsx`. Tests: `e2e/{settings,navigation,auth,generation}.spec.ts` updated for URL routing; `e2e/live-chat-media.spec.ts` added.
+
+### Decisions
+- **Media rides the existing pipeline**: the generation runner only needs `chat_stream`, so a duck-typed adapter keeps cancellation, regeneration, request logs and history untouched — no new message endpoints or parallel media store.
+- **Progress is streamed text** into the assistant message (immediate activity, no blank space, works while streaming); the finished media renders from the message's attachments, so refresh/history restore it with zero regeneration.
+- **Metadata is the generation record**: `{generation_type, status, model, provider, quality|seconds, size, filename}` on the message, serialized as `metadata`.
+- **URL is authoritative**: the workspace derives its conversation from the route id; the store is a mirror. Send resolves the live route id to avoid stale targets.
+- Video duration follow-up: OpenAI Videos accepts only 4/8/12s, so chat videos use the 4s minimum.
+
+### Verification
+- Headed live validation (`e2e/live-chat-media.spec.ts`, viewports 1920×1080, real key): home → `/c/{id}` redirect; image prompt streamed "Generating image…" then rendered in-chat; refresh restored the image with the same URL and exactly one assistant row; video prompt produced an inline `<video>` player; retry on a previously failed media message regenerated **in place** reusing prompt/model (12.4s). DB metadata verified: `{"generation_type":"image","status":"completed","model":"gpt-image-1","provider":"openai","quality":"low",...}`.
+- Regressions: `e2e/{generation,navigation,auth,settings}.spec.ts` **15/15**; `tsc`/`eslint` clean; backend `test_message_history` + `test_gateway` 10/10; `alembic head b4c5d6e7f8a9` and `alembic check` green; stack healthy after a full Docker daemon restart (volumes intact).
+- Fixed while validating: models router dropped endpoint fields (media models invisible to `/generate`); conversation id raced navigation after "New chat" (composer now targets the live route id, test synchronizes on URL change); settings spec's search relied on stopword-laden prompts (now matches exact user messages); sidebar gear toggle needs a settle click (test retries until closed).
+
+### Recommended Next Steps
+- Render a dedicated generation card/progress bar component instead of streamed text, and show quality/size chips from message metadata.
+- Extend the same path to embeddings/audio models when those have chat UX; add per-conversation media gallery.
+- Consider a 2s video option if Sora ever exposes it; until then 4s is the floor.
+
+---
+
+## 2026-09-23 — ChatGPT-style conversation routing (`/c/{conversationId}`)
+
+### Requirement Completed
+Every conversation now lives at `/c/{conversationId}`. Visiting `/` immediately creates a conversation and replaces the URL with its home (centered spinner while pending, retry UI on failure, no landing screen). Sidebar clicks, New chat, command-palette picks, analytics drill-downs, branches and search results all navigate by URL; browser refresh/back/forward restore the conversation from the route param. The chat store stays the source hooks read, but the URL is authoritative on load.
+
+### Files Created
+`frontend/src/app/components/ChatWorkspace.tsx` (the old `app/page.tsx` chat workspace extracted, now takes `conversationId` and drives the store from it), `frontend/src/app/c/[conversationId]/page.tsx` (async server page awaiting `params` and rendering the workspace).
+
+### Files Modified
+`frontend/src/app/page.tsx` (replaced by a client redirect: one guarded `createConversation` — StrictMode ref + unmount guard — then `router.replace('/c/'+id)`; `new-chat-error` retry panel), `frontend/src/components/Sidebar/SidebarConversations.tsx` (New chat creates then `router.push('/c/'+id)`; item select pushes; deleting the active chat replaces to `/`; testids kept), `frontend/src/hooks/useShortcuts.ts` (chat paths are `/` and `/c/*`; shortcut actions return to the active conversation instead of minting a new one; `G C` opens the active conversation), `frontend/src/components/ui/CommandPalette.tsx` (recent-conversation picks push `/c/{id}`), `frontend/src/app/analytics/page.tsx` (conversation drill-down pushes `/c/{id}`; dropped the now-unused store setter), `frontend/src/app/components/ChatHeader.tsx` (header New chat pushes `/`; delete replaces to `/`), `frontend/src/components/Sidebar/Sidebar.tsx` (route-context comment).
+
+### Architecture Notes
+- The route param is the identity; `ChatWorkspace` derives `activeId = 404/422 ? null : conversationId`, syncs it into `useChatStore.setConversation` for header/panel/composer hooks, and passes it to `useConversation`/intelligence/send. No redirect-on-missing means a bad id can never loop through `/`.
+- Actions that switch conversations navigate (`router.push('/c/'+id)`) instead of only mutating the store; the param-change effect is the only writer of the store id.
+- Sending from an unresolvable route id (activeId null) lets the backend create the conversation and adopts the id from stream meta with `router.replace`, guarded by a route ref so a user who navigated away is not yanked back.
+- Backend-only auto-titling: the backend titles conversations it creates itself, but streaming into an existing conversation never renames it. `send` mirrors the first-message title (`text[:60]` / `Attachment: name`) for eagerly created conversations, cache-first with one `getConversation` fallback.
+- Deletes (sidebar + header) and `/` creation both route through `/`, so a deleted conversation never leaves a dead URL.
+
+### Verification
+- `cd frontend && npx tsc --noEmit` clean; `npx eslint` clean on all 9 touched files; `npx vitest run` **115/115**; `npx next build` green (`/` static, `/c/[conversationId]` dynamic); `docker compose restart frontend` after the build.
+- Smoke (curl, authenticated cookie): `/` and `/c/{id}` return 200; unauthenticated both 307 to `/login`.
+- Playwright intentionally left to the parent agent. Known spec interactions that must be updated: `generation.spec.ts` "navigate away and back" (`page.goto("/")` now starts a fresh chat, not the previous one), `navigation.spec.ts` logo click asserting `toHaveURL(/\/$/)` (now redirects to `/c/{id}`), `auth.spec.ts` post-signup `toHaveURL("/")` (same redirect), and `settings.spec.ts` `convA[0].model_id` assertions — eagerly created conversations keep `model_id = null` because the backend only stamps provider/model when it creates the conversation itself (frontend-only task; no backend change made).
+
+### Recommended Next Steps
+- Update the four e2e specs above (navigation.spec/auth.spec/generation.spec/settings.spec) for URL-based conversation identity.
+- Consider a backend follow-up: stamp `provider_id`/`model_id` on the first generation of a pre-created conversation, and/or pass the first message title through the streaming `touch`.

@@ -16,14 +16,21 @@ function emit(event: string): void {
   window.dispatchEvent(new CustomEvent(event));
 }
 
+/** Chat lives at `/` (transient new-chat) and `/c/{id}` (the conversation). */
+function isChatPath(pathname: string): boolean {
+  return pathname === "/" || pathname.startsWith("/c/");
+}
+
 /** Navigate first when the action lives on the chat page, then emit after paint. */
 function focusChatEvent(routerPush: (href: string) => void, pathname: string, event: string): void {
-  if (pathname !== "/") {
-    routerPush("/");
-    window.setTimeout(() => emit(event), 120);
-  } else {
+  if (isChatPath(pathname)) {
     emit(event);
+    return;
   }
+  // Return to the conversation in progress instead of minting a new one.
+  const id = useChatStore.getState().activeConversationId;
+  routerPush(id ? `/c/${id}` : "/");
+  window.setTimeout(() => emit(event), 120);
 }
 
 /**
@@ -56,7 +63,7 @@ export function useGlobalShortcuts({ openShortcuts, openCommandPalette }: Shortc
           emit("tollma:stop");
           break;
         case "go_chat":
-          router.push("/");
+          router.push(store.activeConversationId ? `/c/${store.activeConversationId}` : "/");
           break;
         case "go_analytics":
           router.push("/analytics");

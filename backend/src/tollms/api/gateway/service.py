@@ -60,6 +60,7 @@ from tollms.api.gateway.schemas import (
 )
 from tollms.services import generation as generation_engine
 from tollms.services.generation import GenerationSpec
+from tollms.services.gateway.adapters.base import ChatMessage, StreamChunk
 from tollms.services.model_repository.lookup import find_for_model
 from tollms.api.models.service import get_model
 from tollms.api.providers.service import decrypted_credentials, get_provider
@@ -69,6 +70,112 @@ logger = logging.getLogger(__name__)
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
+
+
+# Non-chat models still run through the conversation pipeline: the media
+# adapter below streams progress as text deltas and stores the result as a
+# conversation attachment, so images/videos get persistence, cancellation,
+# regeneration and history for free.
+MEDIA_ENDPOINTS = ("images/generations", "video/generations")
+
+
+def _is_media_model(model) -> bool:
+    return (getattr(model, "primary_endpoint", None) or "") in MEDIA_ENDPOINTS
+
+
+class _MediaGenerationAdapter(BaseProviderAdapter):
+    """Chat-adapter facade over a media endpoint (images/videos).
+
+    The generation runner only calls `chat_stream`, so this adapter produces
+    the same StreamChunk contract while emitting human-readable progress and
+    linking the finished media to the assistant message.
+    """
+
+    def __init__(
+        self,
+        *,
+        model,
+        adapter: BaseProviderAdapter,
+        endpoint: str,
+        conversation_id: uuid.UUID,
+        message_id: uuid.UUID,
+        user_id: uuid.UUID | None,
+        prompt: str,
+        provider_type: str,
+        reference_attachment_id: uuid.UUID | None = None,
+    ) -> None:
+        super().__init__(credentials={}, model_id=model.model_id)
+        self.model = model
+        self.adapter = adapter
+        self.media_endpoint = endpoint
+        self.provider_type = provider_type
+        self.conversation_id = conversation_id
+        self.message_id = message_id
+        self.user_id = user_id
+        self.prompt = prompt
+        self.reference_attachment_id = reference_attachment_id
+        self.reasoning_level = None
+
+    async def chat_stream(self, messages) -> AsyncIterator[StreamChunk]:
+        from tollms.db.session import SessionLocal
+        from tollms.services.gateway.dispatch import call_endpoint
+
+        kind = "image" if self.media_endpoint == "images/generations" else "video"
+        if kind == "image":
+            options: dict = {"size": "1024x1024", "quality": "low"}
+        else:
+            options = {"size": "1280x720", "seconds": "4"}
+            if self.reference_attachment_id is not None:
+                db = SessionLocal()
+                try:
+                    reference, content = attachment_service.read_content(
+                        db, self.reference_attachment_id, self.user_id
+                    )
+                finally:
+                    db.close()
+                options.update(
+                    image=content,
+                    image_filename=reference.filename,
+                    image_mime=reference.mime_type,
+                )
+        yield StreamChunk(delta=f"Generating {kind}…\n")
+        try:
+            result = await call_endpoint(self.adapter, self.media_endpoint, prompt=self.prompt, options=options)
+        except Exception as exc:
+            yield StreamChunk(delta=f"\nGeneration failed: {exc}")
+            raise
+        yield StreamChunk(delta="Uploading…\n")
+        filename = f"{self.model.model_id}-{uuid.uuid4().hex[:8]}.{'png' if kind == 'image' else 'mp4'}"
+        db = SessionLocal()
+        try:
+            attachment = attachment_service.upload_attachment(
+                db,
+                user_id=self.user_id,
+                filename=filename,
+                content_type="image/png" if kind == "image" else "video/mp4",
+                data=result,
+            )
+            attachment_service.link_to_message(db, attachment, self.conversation_id, self.message_id)
+            db.execute(
+                update(Message)
+                .where(Message.id == self.message_id)
+                .values(
+                    metadata_={
+                        "generation_type": kind,
+                        "status": "completed",
+                        "model": self.model.model_id,
+                        "provider": self.provider_type.lower(),
+                        "size": options.get("size"),
+                        "filename": filename,
+                        **({"quality": options.get("quality")} if kind == "image" else {}),
+                        **({"seconds": options.get("seconds")} if kind == "video" else {}),
+                    }
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+        yield StreamChunk(delta=f"Generated {kind}: {filename}")
 
 
 def _resolve(db: Session, provider_id: uuid.UUID, model_id: uuid.UUID, user_id: uuid.UUID | None = None):
@@ -87,9 +194,9 @@ def _transcriber(provider, credentials: dict) -> tuple[str, str] | None:
     """(base_url, api_key) for Whisper transcription via the provider's own
     OpenAI-compatible endpoint. None when the provider has no such path."""
     match provider.provider_type:
-        case ProviderType.OPENAI_CHAT | ProviderType.OPENAI_RESPONSES:
-            key = credentials.get("api_key")
-            return ("https://api.openai.com/v1", key) if key else None
+        case ProviderType.OPENAI:
+            base = credentials.get("base_url") or "https://api.openai.com/v1"
+            return (base, credentials.get("api_key") or "")
         case ProviderType.CUSTOM:
             base = credentials.get("base_url")
             return (base, credentials.get("api_key") or "") if base else None
@@ -415,6 +522,7 @@ class _Setup:
     rows: list
     history: list[ChatMessage]
     history_text: str
+    media_endpoint: str | None = None
 
 
 async def _setup_generation(
@@ -446,19 +554,28 @@ async def _setup_generation(
         conv = get_conversation(db, data.conversation_id, user_id)
         conv_id = conv.id
     history = _history(db, conv_id, data.system, user_id, adapter, model)
-    texts, media = await _assemble_attachments(
-        db, rows=rows, model=model, adapter=adapter,
-        transcriber=transcriber, transport=transport, strict=True,
-    )
-    content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
-    history.append(ChatMessage(role="user", content=content, media=media))
-    logger.info(
-        "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d",
-        provider.provider_type, model.model_id, conv_id, len(rows), len(media),
-    )
+    media_endpoint = model.primary_endpoint if _is_media_model(model) else None
+    if media_endpoint:
+        # Media models take the prompt directly; long text history and document
+        # text injection do not apply. Uploaded rows stay available as reference.
+        history = [ChatMessage(role="user", content=data.message)]
+        texts, media = [], []
+        logger.info("gateway stream: media model %s endpoint=%s", model.model_id, media_endpoint)
+    else:
+        texts, media = await _assemble_attachments(
+            db, rows=rows, model=model, adapter=adapter,
+            transcriber=transcriber, transport=transport, strict=True,
+        )
+        content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
+        history.append(ChatMessage(role="user", content=content, media=media))
+        logger.info(
+            "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d",
+            provider.provider_type, model.model_id, conv_id, len(rows), len(media),
+        )
     return _Setup(
         conv_id=conv_id, provider=provider, model=model, adapter=adapter,
         rows=rows, history=history, history_text="".join(m.content for m in history),
+        media_endpoint=media_endpoint,
     )
 
 
@@ -531,7 +648,14 @@ async def start_generation(
                 assistant.client_key = data.client_key
                 db.commit()
                 db.refresh(assistant)
-            touch(db, get_conversation(db, conv_id, user_id))
+            conversation_row = get_conversation(db, conv_id, user_id)
+            # Eagerly created (route-first) conversations arrive without a model;
+            # stamp the first used provider/model so settings/analytics stay accurate.
+            if conversation_row.provider_id is None:
+                conversation_row.provider_id = provider.id
+            if conversation_row.model_id is None:
+                conversation_row.model_id = model.id
+            touch(db, conversation_row)
     except IntegrityError:
         # Lost a same-key/in-flight race: adopt the winner, never duplicate.
         db.rollback()
@@ -566,6 +690,19 @@ async def start_generation(
         model_id=model.id,
         run_id=run.id,
     )
+    if setup.media_endpoint:
+        # Same pipeline, media driver: progress deltas + attachment persistence.
+        spec.adapter = _MediaGenerationAdapter(
+            model=model,
+            adapter=setup.adapter,
+            endpoint=setup.media_endpoint,
+            conversation_id=conv_id,
+            message_id=assistant.id,
+            user_id=user_id,
+            prompt=data.message,
+            provider_type=provider.provider_type.value,
+            reference_attachment_id=setup.rows[0].id if setup.rows else None,
+        )
     generation_engine.manager.spawn(spec, session_factory=session_factory)
     logger.info(
         "generation started: %s conv=%s setup=%.0fms",
@@ -924,6 +1061,18 @@ async def start_regeneration(
         provider_id=provider.id,
         model_id=model.id,
     )
+    if _is_media_model(model):
+        # Retry/regenerate reuses the preceding user prompt, no duplicate rows.
+        spec.adapter = _MediaGenerationAdapter(
+            model=model,
+            adapter=adapter,
+            endpoint=model.primary_endpoint,
+            conversation_id=conv_id,
+            message_id=assistant.id,
+            user_id=user_id,
+            prompt=preceding.content,
+            provider_type=provider.provider_type.value,
+        )
     generation_engine.manager.spawn(spec, session_factory=session_factory)
     logger.info(
         "regeneration started: message=%s run=%s number=%s model=%s",

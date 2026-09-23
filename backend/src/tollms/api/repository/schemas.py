@@ -18,6 +18,8 @@ class RepositoryModelRead(BaseModel):
     provider_model_id: str
     vendor: str | None
     endpoint_type: str
+    primary_endpoint: str | None = None
+    supported_endpoints: list[str] = []
     description: str | None
     documentation_url: str | None
     release_date: date | None
@@ -27,6 +29,7 @@ class RepositoryModelRead(BaseModel):
     sources: list[str]
     supports_text_input: bool
     supports_text_output: bool
+    supports_chat: bool = False
     supports_vision_input: bool
     supports_image_output: bool
     supports_audio_input: bool

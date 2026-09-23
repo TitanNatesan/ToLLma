@@ -68,9 +68,11 @@ def delete(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = D
 
 
 @router.post("/draft-validate", response_model=DraftValidationResult)
-async def draft_validate(data: DraftValidate) -> DraftValidationResult:
+async def draft_validate(data: DraftValidate, db: Session = Depends(get_db)) -> DraftValidationResult:
     """Validate credentials without persisting anything (wizard step 3)."""
-    valid, message, latency, discovered = await service.draft_validate(data.provider_type, data.credentials)
+    valid, message, latency, discovered = await service.draft_validate(
+        data.provider_type, data.credentials, db=db
+    )
     return DraftValidationResult(
         valid=valid,
         message=message,
@@ -80,8 +82,11 @@ async def draft_validate(data: DraftValidate) -> DraftValidationResult:
                 model_id=d.model_id,
                 name=d.name,
                 endpoint_type=d.endpoint_type,
+                primary_endpoint=d.primary_endpoint,
+                supported_endpoints=d.supported_endpoints,
                 context_window=d.context_window,
                 max_output_tokens=d.max_output_tokens,
+                suggested=d.suggested,
             )
             for d in discovered
         ],

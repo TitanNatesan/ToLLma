@@ -6,19 +6,9 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useChatStore } from "@/store/chat";
-import { PROVIDER_TYPES } from "@/app/providers/fields";
+import { PROVIDER_TYPES, providerTypeLabel } from "@/app/providers/fields";
 import type { ProviderType } from "@/types";
 import { cn } from "@/lib/utils";
-
-const PROVIDER_TYPE_NAMES: Record<ProviderType, string> = {
-  OPENAI_RESPONSES: "OpenAI Responses",
-  OPENAI_CHAT: "OpenAI Chat",
-  ANTHROPIC_MESSAGES: "Anthropic Messages",
-  GEMINI: "Google Gemini",
-  VERTEX_AI: "Google Vertex AI",
-  BEDROCK_CONVERSE: "AWS Bedrock",
-  CUSTOM: "Custom Gateway",
-};
 
 /** Providers context: search, type filter, provider list, add action. */
 export function SidebarProviders() {
@@ -88,7 +78,7 @@ export function SidebarProviders() {
           <option value="ALL" data-testid="type-filter-ALL">All provider types</option>
           {PROVIDER_TYPES.map((t) => (
             <option key={t} value={t} data-testid={`type-filter-${t}`}>
-              {PROVIDER_TYPE_NAMES[t] ?? t}
+              {providerTypeLabel(t)}
             </option>
           ))}
         </Select>
@@ -121,7 +111,7 @@ export function SidebarProviders() {
                   {p.name}
                 </span>
                 <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
-                  {p.provider_type}
+                  {providerTypeLabel(p.provider_type)}
                 </Badge>
               </div>
 

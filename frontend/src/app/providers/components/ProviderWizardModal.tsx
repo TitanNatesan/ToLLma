@@ -16,7 +16,18 @@ import {
   Textarea,
 } from "@/components/ui";
 import { fmtPrice } from "@/lib/utils";
-import { CREDENTIAL_FIELDS, PROVIDER_DEFAULT_ENDPOINTS, PROVIDER_TYPES } from "@/app/providers/fields";
+import {
+  CREDENTIAL_FIELDS,
+  ENDPOINT_CATEGORY_LABELS,
+  ENDPOINT_OPTIONS,
+  PROVIDER_DEFAULT_ENDPOINTS,
+  PROVIDER_TYPES,
+  endpointCategory,
+  endpointLabel,
+  endpointWireFromLegacy,
+  providerTypeLabel,
+  type EndpointCategory,
+} from "@/app/providers/fields";
 import { useProviders, useProviderMutations } from "@/hooks/useRegistry";
 import { useChatStore } from "@/store/chat";
 import {
@@ -26,7 +37,6 @@ import {
 } from "@/services/api";
 import type {
   DraftValidation,
-  EndpointType,
   MappedModel,
   MatchType,
   Provider,
@@ -60,47 +70,49 @@ interface ProviderWizardModalProps {
 
 const PROVIDER_METAS: Record<
   ProviderType,
-  { name: string; subtitle: string; iconLabel: string; popular?: boolean }
+  { name: string; subtitle: string; iconLabel: string; endpoints: string[]; popular?: boolean }
 > = {
-  OPENAI_RESPONSES: {
-    name: "OpenAI Responses",
-    subtitle: "New OpenAI /responses API endpoint",
-    iconLabel: "OpenAI",
-    popular: true,
-  },
-  OPENAI_CHAT: {
-    name: "OpenAI Chat",
-    subtitle: "Standard /v1/chat/completions",
-    iconLabel: "OpenAI",
+  OPENAI: {
+    name: "OpenAI",
+    subtitle:
+      "Chat, reasoning, embedding, image generation and audio models, plus future OpenAI endpoints",
+    iconLabel: "OA",
+    endpoints: ["Chat", "Responses", "Embeddings", "Images", "Audio"],
     popular: true,
   },
   ANTHROPIC_MESSAGES: {
     name: "Anthropic",
-    subtitle: "Claude models via Anthropic /messages",
-    iconLabel: "Anthropic",
+    subtitle: "Claude models via the Anthropic Messages API",
+    iconLabel: "AN",
+    endpoints: ["Messages"],
     popular: true,
   },
   GEMINI: {
     name: "Google Gemini",
     subtitle: "Gemini Developer API (Google AI Studio)",
-    iconLabel: "Gemini",
+    iconLabel: "GE",
+    endpoints: ["Chat", "Embeddings"],
     popular: true,
   },
   VERTEX_AI: {
-    name: "Google Cloud Vertex AI",
+    name: "Vertex AI",
     subtitle: "Enterprise GCP Vertex AI endpoints",
-    iconLabel: "Vertex",
+    iconLabel: "VX",
+    endpoints: ["Chat", "Embeddings"],
   },
   BEDROCK_CONVERSE: {
     name: "AWS Bedrock",
     subtitle: "Converse API with IAM credentials",
-    iconLabel: "Bedrock",
+    iconLabel: "BR",
+    endpoints: ["Converse"],
     popular: true,
   },
   CUSTOM: {
-    name: "Custom / Local Gateway",
-    subtitle: "vLLM, Ollama, LiteLLM, or OpenAI-compatible gateway",
-    iconLabel: "Custom",
+    name: "Custom / OpenAI-Compatible",
+    subtitle:
+      "LiteLLM, OpenRouter, Ollama, LM Studio, vLLM, TGI, Azure-compatible gateways, local inference servers",
+    iconLabel: "CU",
+    endpoints: ["Chat", "Responses", "Embeddings", "Images", "Audio"],
   },
 };
 
@@ -271,6 +283,8 @@ function CredentialField({
 
   useEffect(() => {
     if (typeof CSS !== "undefined" && typeof CSS.supports === "function") {
+      // Post-mount capability probe: server has no CSS global, so it cannot run during render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSupportsTextSecurity(CSS.supports("-webkit-text-security", "disc"));
     }
   }, []);
@@ -362,7 +376,7 @@ export function ProviderWizardModal({
   });
   const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (loadDraft()?.name ?? "")));
   const [type, setType] = useState<ProviderType>(() =>
-    isEditing ? (editingProvider?.provider_type ?? "OPENAI_CHAT") : (loadDraft()?.type ?? "OPENAI_CHAT"),
+    isEditing ? (editingProvider?.provider_type ?? "OPENAI") : (loadDraft()?.type ?? "OPENAI"),
   );
   const [description, setDescription] = useState(() => (isEditing ? "" : (loadDraft()?.description ?? "")));
   const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing ? {} : (loadDraft()?.creds ?? {})));
@@ -377,6 +391,7 @@ export function ProviderWizardModal({
   const [matchFilter, setMatchFilter] = useState<"ALL" | MatchType | "US" | "EU" | "APAC">("ALL");
   const [capFilter, setCapFilter] = useState("ALL");
   const [priceFilter, setPriceFilter] = useState<"ALL" | "PRICED" | "FREE">("ALL");
+  const [endpointFilter, setEndpointFilter] = useState("ALL");
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
 
   // Auto-save draft progress (steps 1-2 carry the draft; nothing persisted server-side).
@@ -405,13 +420,20 @@ export function ProviderWizardModal({
         Object.fromEntries(
           res.mapped.map((m) => {
             const disc = discMap.get(m.model_id);
-            const endpoint = (disc?.endpoint_type as EndpointType) || defaultEndpoint;
+            const discEndpoint = disc
+              ? endpointWireFromLegacy(disc.primary_endpoint) ??
+                endpointWireFromLegacy(disc.endpoint_type)
+              : null;
+            const endpoint = discEndpoint ?? defaultEndpoint;
             return [
               m.model_id,
               fromSuggested(
                 {
                   ...m.suggested,
-                  endpoint_type: endpoint,
+                  primary_endpoint: endpoint,
+                  ...(disc?.supported_endpoints?.length
+                    ? { supported_endpoints: disc.supported_endpoints }
+                    : {}),
                   context_window: disc?.context_window ?? m.suggested.context_window,
                   max_output_tokens: disc?.max_output_tokens ?? m.suggested.max_output_tokens,
                 },
@@ -448,6 +470,8 @@ export function ProviderWizardModal({
         if (matchFilter === "fallback" && m.match_type !== "fallback") return false;
       }
       if (capFilter !== "ALL" && !(m.suggested[capFilter] as boolean)) return false;
+      if (endpointFilter !== "ALL" && (forms[m.model_id]?.primary_endpoint ?? "") !== endpointFilter)
+        return false;
       if (priceFilter !== "ALL") {
         const priced =
           parseFloat(String(m.suggested.input_price ?? "0")) > 0 ||
@@ -466,12 +490,55 @@ export function ProviderWizardModal({
         return false;
       return true;
     });
-  }, [mapped, search, matchFilter, capFilter, priceFilter]);
+  }, [mapped, search, matchFilter, capFilter, priceFilter, endpointFilter, forms]);
 
   const selectedModels = useMemo(() => {
     if (!mapped) return [];
     return mapped.filter((m) => selected.has(m.model_id));
   }, [mapped, selected]);
+
+  const endpointChoices = useMemo(() => {
+    const present = new Set(Object.values(forms).map((f) => f.primary_endpoint));
+    return ENDPOINT_OPTIONS.filter((o) => present.has(o.value));
+  }, [forms]);
+
+  const grouped = useMemo(() => {
+    const order: EndpointCategory[] = ["chat", "embeddings", "image", "audio", "other"];
+    const buckets: Record<EndpointCategory, MappedModel[]> = {
+      chat: [],
+      embeddings: [],
+      image: [],
+      audio: [],
+      other: [],
+    };
+    for (const m of filtered) {
+      const f = forms[m.model_id];
+      const category = endpointCategory(
+        f?.primary_endpoint,
+        String(m.suggested?.endpoint_type ?? ""),
+      );
+      buckets[category].push(m);
+    }
+    return order.map((category) => ({ category, items: buckets[category] })).filter((g) => g.items.length > 0);
+  }, [filtered, forms]);
+
+  const validationSummary = useMemo(() => {
+    if (!validation?.valid) return null;
+    let chat = 0;
+    let reasoning = 0;
+    let embeddings = 0;
+    let image = 0;
+    let audio = 0;
+    for (const d of validation.discovered) {
+      const category = endpointCategory(d.primary_endpoint, d.endpoint_type);
+      if (category === "chat") chat += 1;
+      if (category === "image") image += 1;
+      if (category === "audio") audio += 1;
+      if (category === "embeddings" || d.suggested?.supports_embeddings === true) embeddings += 1;
+      if (d.suggested?.supports_reasoning === true) reasoning += 1;
+    }
+    return { chat, reasoning, embeddings, image, audio, total: validation.discovered.length };
+  }, [validation]);
 
   function toggle(id: string) {
     setSelected((s) => {
@@ -506,14 +573,21 @@ export function ProviderWizardModal({
       const defaultEndpoint = PROVIDER_DEFAULT_ENDPOINTS[type] || "chat_completions";
       const models = [...selected].map((id) => {
         const disc = validation?.discovered?.find((d) => d.model_id === id);
-        const endpoint = (disc?.endpoint_type as EndpointType) || defaultEndpoint;
+        const discEndpoint = disc
+          ? endpointWireFromLegacy(disc.primary_endpoint) ??
+            endpointWireFromLegacy(disc.endpoint_type)
+          : null;
+        const endpoint = discEndpoint ?? defaultEndpoint;
         const { provider_id: _omit, ...rest } = toPayload(
           "wizard",
           forms[id] ??
             fromSuggested(
               {
                 ...matchById[id].suggested,
-                endpoint_type: endpoint,
+                primary_endpoint: endpoint,
+                ...(disc?.supported_endpoints?.length
+                  ? { supported_endpoints: disc.supported_endpoints }
+                  : {}),
                 context_window: disc?.context_window ?? matchById[id].suggested.context_window,
                 max_output_tokens: disc?.max_output_tokens ?? matchById[id].suggested.max_output_tokens,
               },
@@ -689,12 +763,37 @@ export function ProviderWizardModal({
                                   : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700",
                               )}
                             >
-                              <div className="flex items-center justify-between w-full">
-                                <span className="font-semibold text-xs">{meta.name}</span>
-                                {isSelected && <Check className="size-3.5" />}
+                              <div className="flex items-center gap-1.5 w-full">
+                                <span
+                                  className={cn(
+                                    "flex size-5 shrink-0 items-center justify-center rounded text-[9px] font-bold",
+                                    isSelected
+                                      ? "bg-white/20 text-white"
+                                      : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+                                  )}
+                                >
+                                  {meta.iconLabel}
+                                </span>
+                                <span className="font-semibold text-xs truncate">{meta.name}</span>
+                                {isSelected && <Check className="size-3.5 ml-auto shrink-0" />}
                               </div>
                               <span className={cn("text-[10px] mt-1 line-clamp-2", isSelected ? "text-zinc-300 dark:text-zinc-600" : "text-zinc-500")}>
                                 {meta.subtitle}
+                              </span>
+                              <span className="mt-1.5 flex flex-wrap gap-1">
+                                {meta.endpoints.map((endpoint) => (
+                                  <span
+                                    key={endpoint}
+                                    className={cn(
+                                      "rounded px-1.5 py-0.5 text-[9px] font-medium",
+                                      isSelected
+                                        ? "bg-white/15 text-white"
+                                        : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+                                    )}
+                                  >
+                                    {endpoint}
+                                  </span>
+                                ))}
                               </span>
                             </button>
                           );
@@ -761,6 +860,36 @@ export function ProviderWizardModal({
                         </div>
                       </div>
                     )}
+                    {validationSummary && (
+                      <div
+                        className="grid grid-cols-2 gap-2 sm:grid-cols-3"
+                        data-testid="wiz-validation-summary"
+                      >
+                        {(
+                          [
+                            ["Chat models", validationSummary.chat, "chat"],
+                            ["Reasoning models", validationSummary.reasoning, "reasoning"],
+                            ["Embedding models", validationSummary.embeddings, "embeddings"],
+                            ["Image models", validationSummary.image, "image"],
+                            ["Audio models", validationSummary.audio, "audio"],
+                            ["Total", validationSummary.total, "total"],
+                          ] as Array<[string, number, string]>
+                        ).map(([label, count, key]) => (
+                          <div
+                            key={key}
+                            className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30"
+                            data-testid={`wiz-summary-${key}`}
+                          >
+                            <div className="text-[10px] uppercase tracking-wider text-zinc-400">
+                              {label}
+                            </div>
+                            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                              {count}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -822,6 +951,20 @@ export function ProviderWizardModal({
                               <option value="PRICED">Priced</option>
                               <option value="FREE">Free</option>
                             </Select>
+                            <Select
+                              value={endpointFilter}
+                              onChange={(e) => setEndpointFilter(e.target.value)}
+                              data-testid="wiz-endpoint-filter"
+                              sizeVariant="sm"
+                              className="w-32 text-xs"
+                            >
+                              <option value="ALL">All endpoints</option>
+                              {endpointChoices.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </Select>
                           </div>
 
                           <div className="flex items-center justify-between text-xs text-zinc-500 pt-0.5">
@@ -857,52 +1000,63 @@ export function ProviderWizardModal({
                             </div>
                           </div>
                         </div>
-                        <div className="flex max-h-72 flex-col gap-1.5 overflow-y-auto pr-1">
-                          {filtered.map((m) => {
-                            const f = forms[m.model_id];
-                            const checked = selected.has(m.model_id);
-                            const displayName = String(f?.name || m.suggested.name || m.model_id);
-                            const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
-                            return (
-                              <div
-                                key={m.model_id}
-                                className={cn("flex items-start gap-2 rounded-lg border p-2 text-xs", checked ? "border-zinc-300 dark:border-zinc-600" : "border-zinc-200 opacity-70 dark:border-zinc-800")}
-                                data-testid={`wiz-model-${m.model_id}`}
-                              >
-                                <Checkbox
-                                  checked={checked}
-                                  onChange={() => toggle(m.model_id)}
-                                  data-testid={`wiz-select-${m.model_id}`}
-                                  className="mt-0.5"
-                                  aria-label={`Select ${m.model_id}`}
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5">
-                                    <Cpu className="size-3.5 shrink-0 text-zinc-400" />
-                                    <span className="truncate font-medium">{displayName}</span>
-                                    {scopeInfo && (
-                                      <span
-                                        className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
-                                        data-testid={`wiz-match-${m.model_id}`}
-                                        title={`${scopeInfo.label} region`}
-                                      >
-                                        {scopeInfo.label}
-                                      </span>
-                                    )}
+                        <div className="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
+                          {grouped.map(({ category, items }) => (
+                            <div
+                              key={category}
+                              className="flex flex-col gap-1.5"
+                              data-testid={`wiz-group-${category}`}
+                            >
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                                {ENDPOINT_CATEGORY_LABELS[category]} ({items.length})
+                              </p>
+                              {items.map((m) => {
+                                const f = forms[m.model_id];
+                                const checked = selected.has(m.model_id);
+                                const displayName = String(f?.name || m.suggested.name || m.model_id);
+                                const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
+                                return (
+                                  <div
+                                    key={m.model_id}
+                                    className={cn("flex items-start gap-2 rounded-lg border p-2 text-xs", checked ? "border-zinc-300 dark:border-zinc-600" : "border-zinc-200 opacity-70 dark:border-zinc-800")}
+                                    data-testid={`wiz-model-${m.model_id}`}
+                                  >
+                                    <Checkbox
+                                      checked={checked}
+                                      onChange={() => toggle(m.model_id)}
+                                      data-testid={`wiz-select-${m.model_id}`}
+                                      className="mt-0.5"
+                                      aria-label={`Select ${m.model_id}`}
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <Cpu className="size-3.5 shrink-0 text-zinc-400" />
+                                        <span className="truncate font-medium">{displayName}</span>
+                                        {scopeInfo && (
+                                          <span
+                                            className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
+                                            data-testid={`wiz-match-${m.model_id}`}
+                                            title={`${scopeInfo.label} region`}
+                                          >
+                                            {scopeInfo.label}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
+                                        {m.model_id}
+                                        {f?.context_window ? ` · ctx ${Number(f.context_window).toLocaleString()}` : ""}
+                                        {f?.max_output_tokens ? ` · max ${Number(f.max_output_tokens).toLocaleString()}` : ""}
+                                        {` · in ${fmtPrice(f?.input_price)}/1M · out ${fmtPrice(f?.output_price)}/1M`}
+                                      </div>
+                                    </div>
+                                    <Button size="sm" variant="ghost" onClick={() => setEditingModelId(m.model_id)} data-testid={`wiz-edit-${m.model_id}`} title="Edit model" className="h-7 w-7 p-0">
+                                      <Pencil className="size-3.5" />
+                                    </Button>
                                   </div>
-                                  <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
-                                    {m.model_id}
-                                    {f?.context_window ? ` · ctx ${Number(f.context_window).toLocaleString()}` : ""}
-                                    {f?.max_output_tokens ? ` · max ${Number(f.max_output_tokens).toLocaleString()}` : ""}
-                                    {` · in ${fmtPrice(f?.input_price)}/1M · out ${fmtPrice(f?.output_price)}/1M`}
-                                  </div>
-                                </div>
-                                <Button size="sm" variant="ghost" onClick={() => setEditingModelId(m.model_id)} data-testid={`wiz-edit-${m.model_id}`} title="Edit model" className="h-7 w-7 p-0">
-                                  <Pencil className="size-3.5" />
-                                </Button>
-                              </div>
-                            );
-                          })}
+                                );
+                              })}
+                            </div>
+                          ))}
                           {filtered.length === 0 && <p className="text-xs text-zinc-400">No models match the filters.</p>}
                         </div>
                       </>
@@ -913,7 +1067,7 @@ export function ProviderWizardModal({
                 {step === 5 && (
                   <div className="space-y-3 text-xs" data-testid="wizard-step-5">
                     <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-                      <p className="font-semibold text-sm">{name || "(unnamed)"} <span className="font-normal text-zinc-500">· {type}</span></p>
+                      <p className="font-semibold text-sm">{name || "(unnamed)"} <span className="font-normal text-zinc-500">· {providerTypeLabel(type)}</span></p>
                       <p className="mt-1 text-zinc-500">
                         Validation: {validation?.valid ? `valid (${validation.latency_ms.toFixed(0)}ms)` : "not validated"}
                       </p>
@@ -965,8 +1119,12 @@ export function ProviderWizardModal({
                                         {scopeInfo.label}
                                       </span>
                                     )}
-                                    <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 shrink-0">
-                                      {f?.endpoint_type ?? PROVIDER_DEFAULT_ENDPOINTS[type] ?? "chat_completions"}
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
+                                      {endpointLabel(
+                                        f?.primary_endpoint ??
+                                          PROVIDER_DEFAULT_ENDPOINTS[type] ??
+                                          "chat_completions",
+                                      )}
                                     </Badge>
                                   </div>
                                   <Button

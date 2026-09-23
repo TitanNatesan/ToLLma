@@ -17,7 +17,7 @@ test("signup, verify, login, me, logout", async ({ page }) => {
   await page.getByTestId("signup-email").fill(email);
   await page.getByTestId("signup-password").fill("Password123");
   await page.getByTestId("signup-submit").click();
-  await expect(page).toHaveURL("/", { timeout: 15000 });
+  await expect(page).toHaveURL(/\/c\//, { timeout: 15000 });
 
   // Session bootstrapped: avatar shows the account.
   await expect(page.getByTestId("user-avatar")).toBeVisible({ timeout: 15000 });

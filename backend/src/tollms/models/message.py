@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Numeric, String, Text, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
@@ -89,6 +89,8 @@ class Message(SoftDeleteMixin, TimestampedModel):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Structured error taxonomy (core.exceptions.ErrorCode) for actionable UI.
     error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    # Generation details for media messages (generation_type/status/model/...).
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
     # Client idempotency key for the send that created this row. Same-key
     # retries adopt the existing generation instead of duplicating rows.
     client_key: Mapped[str | None] = mapped_column(Text, nullable=True)

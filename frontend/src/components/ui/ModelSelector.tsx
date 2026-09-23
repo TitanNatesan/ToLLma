@@ -13,6 +13,7 @@ import {
 import { SearchInput } from "./SearchInput";
 import { CapabilityBadge } from "./CapabilityBadge";
 import { Bot, ChevronDown, Cpu } from "lucide-react";
+import { providerTypeLabel } from "@/app/providers/fields";
 import type { AIModel, Provider } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -114,7 +115,7 @@ export function ModelSelector({
                     <span className="truncate">{provider.name}</span>
                   </span>
                   <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 font-normal">
-                    {provider.provider_type}
+                    {providerTypeLabel(provider.provider_type)}
                   </Badge>
                 </div>
 
