@@ -1,7 +1,7 @@
 "use client";
 
-import { memo } from "react";
-import { Download } from "lucide-react";
+import { memo, useState } from "react";
+import { Download, Maximize2 } from "lucide-react";
 import {
   Attachment,
   AttachmentInfo,
@@ -9,6 +9,7 @@ import {
   Attachments,
   type AttachmentData,
 } from "@/components/ai-elements/attachments";
+import { MediaLightbox } from "@/app/components/media/MediaLightbox";
 import { attachmentContentUrl } from "@/services/api";
 import type { ChatAttachment } from "@/types";
 
@@ -31,9 +32,12 @@ function toAttachmentData(attachment: ChatAttachment): AttachmentData {
 
 /**
  * Persisted message attachments rendered with AI Elements Attachments:
- * images as a grid, documents as a list with download links.
+ * images open in a fullscreen lightbox, videos get an inline player plus a
+ * fullscreen preview, documents stay as download rows.
  */
 function MessageAttachmentsInner({ attachments }: { attachments?: ChatAttachment[] }) {
+  const [preview, setPreview] = useState<ChatAttachment | null>(null);
+
   if (!attachments || attachments.length === 0) return null;
 
   const images = attachments.filter((a) => a.kind === "image");
@@ -45,17 +49,18 @@ function MessageAttachmentsInner({ attachments }: { attachments?: ChatAttachment
       {images.length > 0 && (
         <Attachments variant="grid">
           {images.map((attachment) => (
-            <a
-              href={attachmentContentUrl(attachment.id)}
+            <button
+              className="cursor-zoom-in text-left"
+              data-testid={`message-image-${attachment.id}`}
               key={attachment.id}
-              rel="noreferrer"
-              target="_blank"
-              title={attachment.filename}
+              onClick={() => setPreview(attachment)}
+              title={`${attachment.filename} (click to preview)`}
+              type="button"
             >
               <Attachment data={toAttachmentData(attachment)}>
                 <AttachmentPreview />
               </Attachment>
-            </a>
+            </button>
           ))}
         </Attachments>
       )}
@@ -74,6 +79,14 @@ function MessageAttachmentsInner({ attachments }: { attachments?: ChatAttachment
               <div className="flex items-center gap-2 text-[10px] text-zinc-400">
                 <span className="truncate">{attachment.filename}</span>
                 <span className="shrink-0">{formatBytes(attachment.file_size)}</span>
+                <button
+                  className="inline-flex shrink-0 items-center gap-1 text-tollma-600 hover:text-tollma-700 dark:text-tollma-400"
+                  data-testid={`message-video-expand-${attachment.id}`}
+                  onClick={() => setPreview(attachment)}
+                  type="button"
+                >
+                  <Maximize2 className="size-3" /> Fullscreen
+                </button>
                 <a
                   className="inline-flex shrink-0 items-center gap-1 text-tollma-600 hover:text-tollma-700 dark:text-tollma-400"
                   download={attachment.filename}
@@ -111,6 +124,16 @@ function MessageAttachmentsInner({ attachments }: { attachments?: ChatAttachment
           ))}
         </Attachments>
       )}
+
+      <MediaLightbox
+        fileSize={preview?.file_size}
+        filename={preview?.filename ?? ""}
+        key={preview?.id ?? "closed"}
+        kind={preview?.kind === "video" ? "video" : "image"}
+        onClose={() => setPreview(null)}
+        open={preview !== null}
+        src={preview ? attachmentContentUrl(preview.id) : ""}
+      />
     </div>
   );
 }

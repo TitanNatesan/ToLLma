@@ -1749,6 +1749,37 @@ Frontend: `app/page.tsx` (create-once + redirect to `/c/{id}`), `components/Side
 
 ---
 
+## 2026-09-24 — Draft Chats, Media Lightbox & Generation Skeletons
+
+### Requirement Completed
+Conversations are no longer created eagerly: `/` is a draft chat with no database row, no sidebar item and no URL id until the first message is sent. Generated images/videos open in fullscreen lightboxes, and media generations show an instant skeleton instead of blank space.
+
+### Files Created
+`frontend/src/app/components/media/MediaLightbox.tsx` (90vw/90vh modal: blurred black backdrop, ESC/backdrop/close button, wheel + pinch zoom, drag-to-pan, Fit and 1:1 buttons, download; video variant with native controls, duration/resolution/size), `frontend/src/app/components/media/MediaGenerationSkeleton.tsx` (1:1 image / 16:9 video pulse placeholder + state label), `frontend/e2e/live-draft-media.spec.ts` (draft + skeleton + lightbox validation).
+
+### Files Modified
+Frontend: `app/page.tsx` (renders `<ChatWorkspace conversationId={null}>`; creation logic deleted), `app/components/ChatWorkspace.tsx` (`conversationId: string | null`; the existing send-time adoption mints the conversation and `router.replace`s to `/c/{id}` on stream meta), `components/Sidebar/SidebarConversations.tsx` (New chat routes to `/`; sidebar filters `message_count > 0`), `app/components/MessageView.tsx` (streaming media shows the skeleton with the live progress label; completed media shows a compact caption instead of the raw progress log), `app/components/chat/attachments/MessageAttachments.tsx` (images click-to-preview, videos get Fullscreen + Download, lightbox state), `types/index.ts` (`Conversation.message_count`).
+Backend: `api/conversations/service.py` (batch message counts attached as a transient `message_count` on list rows), `api/conversations/schemas.py` (`ConversationRead.message_count`).
+Tests: `e2e/navigation.spec.ts` (logo returns to the draft `/`).
+
+### Decisions
+- **Draft is pure frontend state**: `ChatWorkspace` already knew how to adopt a backend-created conversation from stream meta, so the draft simply sends `conversation_id: null` and replaces the URL when the id arrives — no new endpoints, no schema changes.
+- Empty conversations are hidden by a new `message_count` on the list payload (existing abandoned rows disappear from the sidebar; nothing is deleted).
+- Media results render from message attachments, so the lightbox is just a viewer over the existing authenticated content endpoint.
+- Skeletons are derived from the streamed generation text (`Generating image|video…`), so no new streaming event schema was needed; state labels come from the last progress line (Generating → Uploading).
+
+### Verification
+- `e2e/live-draft-media.spec.ts` headed, 1920×1080: `/` stays draft with no redirect and no new row; New chat + refresh leave the DB unchanged; the first message creates the conversation and adopts `/c/{id}`; image skeleton visible immediately (`test-results/draft-skeleton-image.png`); image lightbox opened at 972×972 (within 90% viewport), zoomed, closed on ESC (`draft-lightbox-image.png`); video lightbox opened with duration + resolution (`draft-lightbox-video.png`). **4/4 passed (1.4m)**.
+- `tsc`/`eslint` clean on all touched files.
+
+### Recommended Next Steps
+- Add the same skeleton treatment to the `/generate` debug page; expose a gallery per conversation.
+- Consider a background sweep to soft-delete the historical empty conversations (now hidden, still present).
+- Wire lightbox keyboard navigation (arrow keys between media in a message).
+- **Known residual race (not fully fixed):** when a draft send is refreshed very early, recovery can still settle on a partial overlay (`slow-word-14` observed) because the route remount aborts the reattached stream before the terminal refresh; the settings provider-switch test can likewise observe the previous conversation when a send immediately follows a route change. The client-key probe + `tollma-pending-conversation` key recover the correct conversation; a follow-up should re-probe/refresh on stall and await route commits before enabling send.
+
+---
+
 ## 2026-09-23 — ChatGPT-style conversation routing (`/c/{conversationId}`)
 
 ### Requirement Completed
@@ -1775,3 +1806,33 @@ Every conversation now lives at `/c/{conversationId}`. Visiting `/` immediately 
 ### Recommended Next Steps
 - Update the four e2e specs above (navigation.spec/auth.spec/generation.spec/settings.spec) for URL-based conversation identity.
 - Consider a backend follow-up: stamp `provider_id`/`model_id` on the first generation of a pre-created conversation, and/or pass the first message title through the streaming `touch`.
+
+## 2026-09-24 — OpenCode config migrated to native V2 shape
+
+### Requirement Completed
+Audit the local OpenCode config files and convert them from V1 syntax to the native OpenCode V2 shape, preserving behavior. Backup of originals: `/tmp/opencode-config-backup/`.
+
+### Files Modified
+- `.opencode/opencode.json` — `plugin` → `plugins`; `mcp.<name>` → `mcp.servers.<name>`; dropped `enabled: true` (V2 inverts it to `disabled`, default false); `timeout: 60000` → `timeout: {catalog: 60000, execution: 60000}`; removed `lsp: true` (V2 accepts but never runs LSP servers or diagnostics); `compaction.auto` unchanged.
+- `~/.config/opencode/opencode.jsonc` — `provider` → `providers`; `npm` → `package: "aisdk:@ai-sdk/openai-compatible"`; `options.baseURL|timeout|chunkTimeout` → `settings.*`; `options.headers` → `headers`; `disabled_providers: [...]` → `experimental.policies` provider.use deny statements.
+- `.opencode/package.json` and `~/.config/opencode/package.json` — `@opencode-ai/plugin@1.18.x` (V1) → `@opencode/plugin@^2.0.15`; `npm install` re-run in both.
+
+### Decisions
+- Used the documented migration mappings (opencode.ai/v2/docs/migrate-v1) rather than guessing field shapes; behavior preserved for MCP timeouts (V1 single timeout applied to both catalog and execution purposes).
+- Removed `lsp: true` instead of leaving dead config — V2 explicitly does not run language servers; lint/typecheck belong in project commands.
+- Kept `aisdk:@ai-sdk/openai-compatible` for the custom providers rather than switching to the native `@opencode/ai/providers/openai-compatible` package, to preserve the exact runtime behavior; the native package is a later, optional upgrade.
+- Did not restart the service — config reloads live (verified).
+
+### Verification
+- Both JSON files parse.
+- `opencode mcp list` → `graphify`, `playwright`, `sequential-thinking` all `connected` from the new `mcp.servers` shape.
+- `opencode models` → only `ollama`, `opencode`, `opencode-go`; the five denied providers are absent, confirming the policies conversion matches the old `disabled_providers` behavior.
+- No new config warnings in `~/.local/share/opencode/log/opencode.log`.
+- `~/.config/opencode/cli.json` checked and already native V2 (schema `https://opencode.ai/v2/cli.json`, valid keys); `.opencode/rules/*.md` and `memory.md` are AGENTS.md-referenced docs, not OpenCode definitions — no V2 format applies.
+
+### Known Issue (upstream, not config)
+`@dietrichgebert/ponytail` is V1-only — both the installed 4.8.4 and the latest 4.10.0 export `async ({ client }) => ({...V1 hooks...})`, while V2 requires `Plugin.define({ id, setup })`. The server log records `failed to load plugin … Plugin must export a default definition with an id and an effect or setup function` on every start, so ponytail is inactive despite `~/.config/opencode/.ponytail-active` reading `full`. The `plugins` entry is kept so it starts working when upstream ports it; otherwise remove the entry or file upstream.
+
+### Recommended Next Steps
+- Replace the plaintext `Authorization` bearer in the global `vercel2` provider with `{env:VERCEL_API_KEY}` (docs recommend env substitution; the token is currently readable in config).
+- Re-run `/graphify --update` after doc changes (unchanged from the previous entry).

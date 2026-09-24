@@ -65,6 +65,34 @@ function clearPendingSend(): void {
   }
 }
 
+// Draft sends learn their conversation id from the stream meta. Persisting it
+// lets a reload (which can beat the URL replace) still adopt `/c/{id}`.
+const PENDING_CONVERSATION_KEY = "tollma-pending-conversation";
+
+function readPendingConversation(): string | null {
+  try {
+    return sessionStorage.getItem(PENDING_CONVERSATION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setPendingConversation(id: string): void {
+  try {
+    sessionStorage.setItem(PENDING_CONVERSATION_KEY, id);
+  } catch {
+    // storage unavailable — the URL replace still runs in the live tab
+  }
+}
+
+function clearPendingConversation(): void {
+  try {
+    sessionStorage.removeItem(PENDING_CONVERSATION_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 /** Route id the backend can't resolve: deleted/unknown (404) or malformed (422). */
 function isNotFound(error: unknown): boolean {
   if (!error) return false;
@@ -78,7 +106,7 @@ function isNotFound(error: unknown): boolean {
  * aligned), and every action that switches conversations navigates to
  * `/c/{id}` instead of only mutating the store.
  */
-export function ChatWorkspace({ conversationId }: { conversationId: string }) {
+export function ChatWorkspace({ conversationId }: { conversationId: string | null }) {
   const router = useRouter();
   const {
     providerId,
@@ -147,6 +175,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string }) {
     setActiveGeneration(null);
     clearOptimistic();
     clearPendingSend();
+    clearPendingConversation();
     refreshAll(convId);
     perfDone(status);
     if (status === "failed") {
@@ -170,6 +199,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string }) {
         return;
       }
       setConversation(meta.conversation_id);
+      setPendingConversation(meta.conversation_id);
       const genId = meta.generation_id;
       const msgId = meta.message_id ?? genId;
       if (genId && msgId) {
@@ -317,6 +347,25 @@ export function ChatWorkspace({ conversationId }: { conversationId: string }) {
     // Sending from an unknown route id: the backend creates the conversation
     // and reports it in meta — adopt it in the URL (unless the user moved on).
     const routeAtSend = routeIdRef.current;
+    if (!targetConversationId) {
+      // Draft sends must not depend on catching the meta event: probe the
+      // idempotency key briefly and adopt the conversation as soon as it exists.
+      let tries = 0;
+      const timer = window.setInterval(() => {
+        tries += 1;
+        void getGenerationByClientKey(clientKey)
+          .then((found) => {
+            if (!found?.conversation_id) return;
+            window.clearInterval(timer);
+            setPendingConversation(found.conversation_id);
+            if (routeIdRef.current === routeAtSend) {
+              router.replace(`/c/${found.conversation_id}`);
+            }
+          })
+          .catch(() => null);
+        if (tries >= 12) window.clearInterval(timer);
+      }, 700);
+    }
     const cbs = streamCallbacks(ctrl);
     void streamChat(
       {
@@ -447,6 +496,17 @@ export function ChatWorkspace({ conversationId }: { conversationId: string }) {
   const pendingChecked = useRef(false);
   useEffect(() => {
     if (useChatStore.getState().streaming) return;
+    // Draft route with a known pending conversation (send raced the reload):
+    // jump to its permanent URL; the route recovery below then reattaches.
+    if (!activeId) {
+      const pendingConversation = readPendingConversation();
+      if (pendingConversation) {
+        clearPendingConversation();
+        clearPendingSend();
+        router.replace(`/c/${pendingConversation}`);
+        return;
+      }
+    }
     if (activeId) {
       if (recoveredFor.current === activeId) return;
       recoveredFor.current = activeId;

@@ -63,7 +63,8 @@ test("navigation reveals only via the profile settings toggle", async ({ page })
 
   // Logo returns home: chat is the home page.
   await page.getByTestId("app-logo").click();
-  await expect(page).toHaveURL(/\/c\//);
+  // Home is now the draft chat: it stays at "/" until the first message.
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId("new-chat")).toBeVisible();
   await expect(page.getByTestId("top-navigation")).toHaveCount(0);
 });

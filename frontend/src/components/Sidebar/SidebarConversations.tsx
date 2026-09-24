@@ -120,17 +120,8 @@ export function SidebarConversations() {
   const mutations = useConversationMutations();
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // New chat lives at a fresh `/c/{id}`: create it, then navigate (the URL is
-  // the conversation's identity).
-  const newChat = useCallback(() => {
-    mutations.create.mutate(
-      {},
-      {
-        onSuccess: (conv) => router.push(`/c/${conv.id}`),
-        onError: (error) => toastApiError(error, { title: "Could not start chat" }),
-      },
-    );
-  }, [mutations.create, router]);
+  // New chat is a draft: no database row until the first message is sent.
+  const newChat = useCallback(() => router.push("/"), [router]);
 
   const select = useCallback((id: string) => router.push(`/c/${id}`), [router]);
 
@@ -144,8 +135,10 @@ export function SidebarConversations() {
     return () => window.removeEventListener("tollma:focus-conversation-search", focusSearch);
   }, []);
 
-  const pinnedConvs = convs.filter((c) => c.is_pinned);
-  const recentConvs = convs.filter((c) => !c.is_pinned);
+  // Draft chats never reach the database, and abandoned empty chats stay hidden.
+  const visibleConvs = convs.filter((c) => (c.message_count ?? 0) > 0);
+  const pinnedConvs = visibleConvs.filter((c) => c.is_pinned);
+  const recentConvs = visibleConvs.filter((c) => !c.is_pinned);
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="Conversations">

@@ -33,6 +33,7 @@ import { Sources } from "./chat/sources/Sources";
 import { ToolCall } from "./chat/tools/ToolCall";
 import { MessageContext } from "./chat/context/MessageContext";
 import { MessageAttachments } from "./chat/attachments/MessageAttachments";
+import { MediaGenerationSkeleton } from "./media/MediaGenerationSkeleton";
 import { MessageHistoryDialog } from "./chat/message/MessageHistoryDialog";
 import type { CitationSource } from "./chat/citations/InlineCitation";
 import type { ToolCallProps } from "./chat/tools/ToolCall";
@@ -295,6 +296,17 @@ function MessageViewInner({
         ? "failed"
         : "complete";
 
+  // Media generations stream progress text; render a skeleton instead of the
+  // raw log, and a compact caption once the attachment is stored.
+  const mediaKind = /^Generating (image|video)/.exec(message.content)?.[1] as "image" | "video" | undefined;
+  const progressLabel = mediaKind
+    ? message.content
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(-1)[0]
+    : undefined;
+
   const generations = msg.generations ?? [];
   const activeGenerationIndex = Math.max(
     0,
@@ -432,14 +444,25 @@ function MessageViewInner({
 
               {toolCalls?.map((tool, index) => <ToolCall key={index} {...tool} />)}
 
-              <AssistantContent
-                content={message.content}
-                isStreaming={isStreaming}
-                reasoningTokens={msg.reasoning_tokens}
-                sources={sources}
-                status={reasoningStatus}
-                thinkingMs={msg.thinking_ms}
-              />
+              {mediaKind ? (
+                isStreaming ? (
+                  <MediaGenerationSkeleton kind={mediaKind} label={progressLabel} />
+                ) : (
+                  <p className="text-xs text-zinc-500" data-testid="media-generated-caption">
+                    {mediaKind === "image" ? "Image generated" : "Video generated"}
+                    {typeof msg.metadata?.filename === "string" ? ` · ${msg.metadata.filename}` : ""}
+                  </p>
+                )
+              ) : (
+                <AssistantContent
+                  content={message.content}
+                  isStreaming={isStreaming}
+                  reasoningTokens={msg.reasoning_tokens}
+                  sources={sources}
+                  status={reasoningStatus}
+                  thinkingMs={msg.thinking_ms}
+                />
+              )}
 
               <Sources sources={sources} />
             </>

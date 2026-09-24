@@ -67,7 +67,21 @@ def list_conversations(
             Message.content.ilike(f"%{search}%"),
         ).exists()
         stmt = stmt.where(or_(Conversation.title.ilike(f"%{search}%"), content_match))
-    return list(db.scalars(stmt))
+    rows = list(db.scalars(stmt))
+    # Transient count (serialized as message_count) so clients can hide drafts.
+    counts = dict(
+        db.execute(
+            select(Message.conversation_id, func.count(Message.id))
+            .where(
+                Message.conversation_id.in_([c.id for c in rows] or [None]),
+                Message.is_deleted.is_(False),
+            )
+            .group_by(Message.conversation_id)
+        ).all()
+    )
+    for conv in rows:
+        conv.message_count = int(counts.get(conv.id, 0))
+    return rows
 
 
 def get_conversation_with_messages(

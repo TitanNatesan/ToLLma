@@ -69,6 +69,8 @@ class ConversationRead(BaseModel):
     model_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    # Number of live messages; clients hide empty (draft/abandoned) chats.
+    message_count: int = 0
     messages: list[MessageRead] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}

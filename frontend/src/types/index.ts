@@ -179,6 +179,8 @@ export interface Conversation {
   id: string;
   title: string;
   is_pinned: boolean;
+  /** Live message count; 0 for abandoned/empty chats (hidden in the sidebar). */
+  message_count?: number;
   provider_id: string | null;
   model_id: string | null;
   created_at: string;
