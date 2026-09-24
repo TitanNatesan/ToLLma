@@ -5,6 +5,7 @@ import {
   defaultReasoningLevel,
   getModelCapabilities,
   kindForFile,
+  mediaRates,
   suggestModels,
   unsupportedMessage,
   uploadKinds,
@@ -157,5 +158,83 @@ describe("suggestModels", () => {
     expect(suggestModels(models, "image", "v").map((m) => m.id)).toEqual([]);
     expect(suggestModels(models, "image", "t").map((m) => m.id)).toEqual(["v"]);
     expect(suggestModels(models, null, "t")).toEqual([]);
+  });
+});
+
+// --- Media capabilities + rate card (cost intelligence) ----------------------
+
+function mediaModel(overrides: Partial<AIModel> = {}): AIModel {
+  return model({
+    model_id: "gpt-image-1",
+    name: "GPT Image 1",
+    endpoint_type: "images_generations",
+    primary_endpoint: "images/generations",
+    supported_endpoints: ["images/generations"],
+    supports_text: false,
+    supports_image_generation: true,
+    supports_streaming: false,
+    repository_model_key: "openai/gpt-image-1",
+    ...overrides,
+  });
+}
+
+describe("media capabilities", () => {
+  it("reads extended capabilities from metadata only", () => {
+    const caps = getModelCapabilities(
+      mediaModel({
+        metadata: {
+          supports_prompt_caching: true,
+          supports_image_editing: true,
+          supports_video_generation: true,
+          supports_responses: true,
+          supports_video_input: true,
+        },
+      }),
+    );
+    expect(caps.supportsPromptCaching).toBe(true);
+    expect(caps.supportsImageEditing).toBe(true);
+    expect(caps.supportsVideoGeneration).toBe(true);
+    expect(caps.supportsResponses).toBe(true);
+    expect(caps.supportsVideoInput).toBe(true);
+    expect(caps.supportsImageGeneration).toBe(true);
+  });
+
+  it("defaults extended capabilities off without a model", () => {
+    const caps = getModelCapabilities(null);
+    expect(caps.supportsPromptCaching).toBe(false);
+    expect(caps.supportsImageGeneration).toBe(false);
+    expect(caps.supportsVideoGeneration).toBe(false);
+    expect(caps.supportsResponses).toBe(false);
+  });
+});
+
+describe("mediaRates", () => {
+  it("returns the repository-seeded media rate card", () => {
+    const rates = mediaRates(
+      mediaModel({
+        metadata: {
+          image_low_price: "0.011",
+          image_medium_price: "0.042",
+          image_high_price: "0.167",
+          video_price_per_second: "0.10",
+        },
+      }),
+    );
+    expect(rates).toEqual({
+      imageLow: "0.011",
+      imageMedium: "0.042",
+      imageHigh: "0.167",
+      videoPerSecond: "0.10",
+    });
+  });
+
+  it("ignores empty and zero prices", () => {
+    const rates = mediaRates(
+      mediaModel({ metadata: { image_low_price: "0", image_medium_price: "" } }),
+    );
+    expect(rates.imageLow).toBeNull();
+    expect(rates.imageMedium).toBeNull();
+    expect(rates.imageHigh).toBeNull();
+    expect(rates.videoPerSecond).toBeNull();
   });
 });

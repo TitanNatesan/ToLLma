@@ -42,6 +42,11 @@ class RepositoryModelRead(BaseModel):
     supports_streaming: bool
     supports_embeddings: bool
     supports_prompt_caching: bool
+    # Capability view derived from supported_endpoints at sync time.
+    supports_responses: bool = False
+    supports_image_generation: bool = False
+    supports_image_editing: bool = False
+    supports_video_generation: bool = False
     context_window: int | None
     max_input_tokens: int | None
     max_output_tokens: int | None
@@ -59,6 +64,11 @@ class RepositoryModelRead(BaseModel):
     video_input_cost: Decimal | None
     video_output_cost: Decimal | None
     reasoning_cost: Decimal | None
+    # Media rate card (official per-image / per-second prices).
+    image_low_price: Decimal | None = None
+    image_medium_price: Decimal | None = None
+    image_high_price: Decimal | None = None
+    video_price_per_second: Decimal | None = None
     # `metadata` is reserved on SQLAlchemy models; the column attribute is `metadata_`.
     metadata_: dict[str, Any] = Field(alias="metadata")
     raw_source_payload: dict[str, Any]

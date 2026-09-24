@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from tollms.models.model_repository import RepositoryModel, RepositorySource, SyncRun
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_invalidate_sync
+from tollms.services.cost_estimator import official_media_prices
 from tollms.services.model_repository.canonical import canonicalize
 from tollms.services.model_repository.sources import (
     LITELLM_URL,
@@ -41,6 +42,10 @@ CAPABILITY_FIELDS = (
     "supports_streaming",
     "supports_embeddings",
     "supports_prompt_caching",
+    "supports_responses",
+    "supports_image_generation",
+    "supports_image_editing",
+    "supports_video_generation",
 )
 
 CHAT_WIRE_ENDPOINTS = frozenset({"chat_completions", "responses", "messages", "converse"})
@@ -57,6 +62,10 @@ PRICE_FIELDS = (
     "video_input_cost",
     "video_output_cost",
     "reasoning_cost",
+    "image_low_price",
+    "image_medium_price",
+    "image_high_price",
+    "video_price_per_second",
 )
 
 LIMIT_FIELDS = (
@@ -109,6 +118,13 @@ def merge_records(groups: dict[str, list[NormalizedModel]]) -> dict[str, dict[st
             row[limit] = next((getattr(r, limit) for r in ordered if getattr(r, limit) is not None), None)
         for price in PRICE_FIELDS:
             row[price] = next((r.pricing.get(price) for r in ordered if r.pricing.get(price) is not None), None)
+        # Media rate card: upstream sources publish no per-image/per-second
+        # prices, so seed the official OpenAI rate card for capable models.
+        if row.get("supports_image_generation") or row.get("supports_video_generation"):
+            official = official_media_prices(row.get("provider_model_id") or row["model_key"])
+            for field, value in official.items():
+                if value is not None:
+                    row[field] = row.get(field) if row.get(field) is not None else value
         merged[key] = row
     return merged
 

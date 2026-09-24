@@ -155,6 +155,8 @@ export interface ChatMessage {
   versions_count?: number;
   /** Generation details for media messages (generation_type/status/model/...). */
   metadata?: Record<string, unknown>;
+  /** True when tokens/cost were estimated because the provider reported none. */
+  usage_estimated?: boolean;
   thinking_ms?: number | null;
   attachments?: ChatAttachment[];
   provider_id: string | null;
@@ -196,6 +198,8 @@ export interface UsageBreakdown {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   total_cost: string;
 }
 
@@ -212,6 +216,8 @@ export interface UsageTotals {
   cache_read_cost: string;
   cache_write_cost: string;
   reasoning_cost: string;
+  /** Net prompt-cache savings vs. full input price (estimated). */
+  cache_savings?: string;
   by_model: UsageBreakdown[];
   by_provider: UsageBreakdown[];
 }

@@ -14,6 +14,7 @@ import { deriveSources } from "@/app/components/chat/sources/Sources";
 import { useConversation } from "@/hooks/useChat";
 import {
   cancelGeneration,
+  createConversation,
   getActiveGeneration,
   getConversation,
   getGeneration,
@@ -130,6 +131,9 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   const routeIdRef = useRef(conversationId);
   useEffect(() => {
     routeIdRef.current = conversationId;
+    // A real conversation route owns the draft send: the recovery key is only
+    // needed while the URL still points at the draft.
+    if (conversationId) clearPendingConversation();
   }, [conversationId]);
 
   // URL is authoritative on load and on every param change.
@@ -147,6 +151,15 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     void qc.invalidateQueries({ queryKey: ["conversations"] });
   }, [qc]);
   const abortRef = useRef<AbortController | null>(null);
+  // Draft-send probe: adopts the conversation id by idempotency key when the
+  // meta event is missed. Cleared whenever the send settles.
+  const probeTimerRef = useRef<number | null>(null);
+  const stopDraftProbe = useCallback(() => {
+    if (probeTimerRef.current !== null) {
+      window.clearInterval(probeTimerRef.current);
+      probeTimerRef.current = null;
+    }
+  }, []);
 
   const persistedMessages: ChatMessage[] = useMemo(
     () => conversation?.messages ?? [],
@@ -294,11 +307,15 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     streamCallbacks,
   ]);
 
-  const send = useCallback((payload: ChatSendPayload, targetConversationId: string | null) => {
+  const startSend = useCallback((payload: ChatSendPayload, targetConversationId: string | null) => {
     if (!providerId || !modelId) return;
     // Single-flight: the composer already guards, this kills programmatic
     // double-sends (double-clicked regenerate) before a second POST exists.
     if (useChatStore.getState().streaming) return;
+    // The caller owns draft semantics (the `send` wrapper mints the
+    // conversation first). Re-deriving "draft" here from the URL raced the
+    // router commit and could create a second conversation.
+    const target = targetConversationId;
     const text = payload.text;
 
     const ts = Date.now();
@@ -326,16 +343,16 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     // first-message title here so the sidebar shows the same snippet.
     // (Cache-first; one lookup when the conversation isn't loaded yet.)
     void (async () => {
-      if (!targetConversationId) return;
-      const cached = qc.getQueryData<{ title?: string }>(["conversation", targetConversationId]);
-      const title = cached?.title ?? (await getConversation(targetConversationId).catch(() => null))?.title;
+      if (!target) return;
+      const cached = qc.getQueryData<{ title?: string }>(["conversation", target]);
+      const title = cached?.title ?? (await getConversation(target).catch(() => null))?.title;
       if (title !== "New conversation") return;
       const autoTitle = (
         text.slice(0, 60) ||
         (payload.attachments[0] ? `Attachment: ${payload.attachments[0].name}` : "")
       ).slice(0, 60);
       if (!autoTitle) return;
-      await renameConversation(targetConversationId, autoTitle).catch(() => null);
+      await renameConversation(target, autoTitle).catch(() => null);
       void qc.invalidateQueries({ queryKey: ["conversations"] });
     })();
 
@@ -347,23 +364,26 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     // Sending from an unknown route id: the backend creates the conversation
     // and reports it in meta — adopt it in the URL (unless the user moved on).
     const routeAtSend = routeIdRef.current;
-    if (!targetConversationId) {
+    if (!target) {
       // Draft sends must not depend on catching the meta event: probe the
-      // idempotency key briefly and adopt the conversation as soon as it exists.
+      // idempotency key briefly and adopt the conversation as soon as it
+      // exists. The probe stops when this send settles and never persists a
+      // key after the route moved on (a stale key would hijack the next
+      // New Chat).
+      stopDraftProbe();
       let tries = 0;
-      const timer = window.setInterval(() => {
+      probeTimerRef.current = window.setInterval(() => {
         tries += 1;
         void getGenerationByClientKey(clientKey)
           .then((found) => {
             if (!found?.conversation_id) return;
-            window.clearInterval(timer);
+            stopDraftProbe();
+            if (routeIdRef.current !== routeAtSend) return;
             setPendingConversation(found.conversation_id);
-            if (routeIdRef.current === routeAtSend) {
-              router.replace(`/c/${found.conversation_id}`);
-            }
+            router.replace(`/c/${found.conversation_id}`);
           })
           .catch(() => null);
-        if (tries >= 12) window.clearInterval(timer);
+        if (tries >= 12) stopDraftProbe();
       }, 700);
     }
     const cbs = streamCallbacks(ctrl);
@@ -371,7 +391,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       {
         provider_id: providerId,
         model_id: modelId,
-        conversation_id: targetConversationId,
+        conversation_id: target,
         message: text,
         reasoning_level: payload.reasoningLevel,
         attachment_ids: payload.attachments
@@ -384,7 +404,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         onMeta: (meta) => {
           cbs.onMeta?.(meta);
           if (
-            !targetConversationId &&
+            !target &&
             meta.conversation_id &&
             routeIdRef.current === routeAtSend
           ) {
@@ -395,7 +415,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
           // Another generation owns this conversation: drop the unpersisted
           // echo and adopt the live generation — never reset, never duplicate.
           removeOptimistic(userMsgId);
-          const convId = targetConversationId ?? useChatStore.getState().activeConversationId;
+          const convId = target ?? useChatStore.getState().activeConversationId;
           void (async () => {
             const live = convId ? await getActiveGeneration(convId).catch(() => null) : null;
             if (live && (live.status === "running" || live.status === "queued") && convId) {
@@ -424,7 +444,47 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     refreshAll,
     router,
     qc,
+    stopDraftProbe,
   ]);
+
+  /**
+   * Send entry point. The first message of a draft mints the conversation
+   * before streaming, so the URL adopts deterministically and the sidebar
+   * shows the chat immediately — no dependency on the stream meta event or
+   * the idempotency-key probe.
+   */
+  const send = useCallback(
+    (payload: ChatSendPayload, targetConversationId: string | null) => {
+      // Draft = the URL says so OR the store was cleared synchronously by
+      // New chat (a send can land before the router commits the new URL).
+      const onDraftRoute =
+        window.location.pathname === "/" ||
+        useChatStore.getState().activeConversationId === null;
+      const target = onDraftRoute ? null : targetConversationId;
+      if (target) {
+        startSend(payload, target);
+        return;
+      }
+      if (!providerId || !modelId) return;
+      if (useChatStore.getState().streaming) return;
+      const title = payload.text.slice(0, 60) || "New conversation";
+      void (async () => {
+        try {
+          const conv = await createConversation({
+            title,
+            provider_id: providerId,
+            model_id: modelId,
+          });
+          setConversation(conv.id);
+          router.replace(`/c/${conv.id}`);
+          startSend(payload, conv.id);
+        } catch (error) {
+          toastApiError(error, { title: "Could not start chat" });
+        }
+      })();
+    },
+    [providerId, modelId, startSend, setConversation, router],
+  );
 
   const lastUser = [...persistedMessages].reverse().find((m) => m.role === "user");
   const lastAssistantId = [...persistedMessages].reverse().find((m) => m.role === "assistant")?.id;

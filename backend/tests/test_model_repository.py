@@ -1,6 +1,7 @@
 """Model Intelligence Repository: sync, dedupe, update, deactivate, search, stats."""
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -164,3 +165,80 @@ def test_openrouter_prefixed_keys_canonicalize() -> None:
     assert len(records) == 1
     assert records[0].model_key == "anthropic/claude-x"
     assert records[0].provider == "anthropic"
+
+
+MEDIA_SAMPLE = {
+    "openai/gpt-image-1": {
+        "litellm_provider": "openai",
+        "mode": "image_generation",
+        "supported_endpoints": ["/v1/images/generations", "/v1/images/edits"],
+        "supports_prompt_caching": False,
+    },
+    "openai/sora-2": {
+        "litellm_provider": "openai",
+        "mode": "video_generation",
+        "supported_endpoints": ["/v1/video/generations"],
+    },
+    "openai/gpt-5": {
+        "litellm_provider": "openai",
+        "mode": "responses",
+        "supported_endpoints": ["/v1/responses", "/v1/chat/completions"],
+        "supports_prompt_caching": True,
+    },
+}
+
+
+def test_sync_derives_media_capabilities_and_seeds_rate_card(db: Session) -> None:
+    run = service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []})
+    assert run.status == "done" and run.errors_count == 0
+
+    image = service.list_entries(db, search="gpt-image-1", active_only=True)[0][0]
+    assert image.supports_image_generation is True
+    assert image.supports_image_editing is True
+    assert image.supports_video_generation is False
+    # Official OpenAI per-image rate card is seeded by the sync engine.
+    assert float(image.image_low_price) == pytest.approx(0.011)
+    assert float(image.image_medium_price) == pytest.approx(0.042)
+    assert float(image.image_high_price) == pytest.approx(0.167)
+
+    video = service.list_entries(db, search="sora-2", active_only=True)[0][0]
+    assert video.supports_video_generation is True
+    assert float(video.video_price_per_second) == pytest.approx(0.10)
+
+    responses = service.list_entries(db, search="gpt-5", active_only=True)[0][0]
+    assert responses.supports_responses is True
+    assert responses.supports_prompt_caching is True
+
+
+def test_repository_api_exposes_capabilities_and_media_prices(
+    client: TestClient, db: Session, user_factory
+) -> None:
+    user_factory()
+    service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []})
+    entry_id = client.get("/api/v1/model-repository/models", params={"search": "gpt-image-1"}).json()[
+        "items"
+    ][0]["id"]
+    body = client.get(f"/api/v1/model-repository/models/{entry_id}").json()
+    assert body["supports_image_generation"] is True
+    assert body["supports_image_editing"] is True
+    assert body["supports_video_generation"] is False
+    assert body["supports_responses"] is False
+    assert float(body["image_low_price"]) == pytest.approx(0.011)
+    assert body["video_price_per_second"] is None
+
+
+def test_suggest_payload_carries_caching_and_media_rates(db: Session) -> None:
+    from tollms.services.model_repository import lookup
+
+    service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []})
+    image_entry = service.list_entries(db, search="gpt-image-1", active_only=True)[0][0]
+    suggested = lookup.suggest_payload(image_entry)
+    assert suggested["supports_image_generation"] is True
+    assert Decimal(suggested["metadata"]["image_low_price"]) == Decimal("0.011")
+    assert suggested["metadata"]["supports_image_editing"] is True
+    assert "video_price_per_second" not in suggested["metadata"]
+
+    responses_entry = service.list_entries(db, search="gpt-5", active_only=True)[0][0]
+    responses = lookup.suggest_payload(responses_entry)
+    assert responses["metadata"]["supports_prompt_caching"] is True
+    assert responses["metadata"]["supports_responses"] is True

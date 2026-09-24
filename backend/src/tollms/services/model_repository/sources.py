@@ -114,10 +114,15 @@ _ENDPOINT_ALIASES = {
     "embeddings": "embeddings",
     "images/generations": "images/generations",
     "image_generation": "images/generations",
+    "images/edits": "images/edits",
+    "image_edit": "images/edits",
+    "image_editing": "images/edits",
     "audio/transcriptions": "audio/transcriptions",
     "audio_transcription": "audio/transcriptions",
     "audio/speech": "audio/speech",
     "audio_speech": "audio/speech",
+    "video/generations": "video/generations",
+    "video_generation": "video/generations",
 }
 
 # LiteLLM `mode` -> wire endpoints when the entry carries no explicit list.
@@ -127,6 +132,8 @@ _LITELLM_MODE_ENDPOINTS = {
     "responses": ["responses"],
     "embedding": ["embeddings"],
     "image_generation": ["images/generations"],
+    "image_edit": ["images/edits"],
+    "video_generation": ["video/generations"],
     "audio_transcription": ["audio/transcriptions"],
     "audio_speech": ["audio/speech"],
 }
@@ -168,7 +175,25 @@ def derive_endpoints(
         endpoints.append("audio/transcriptions")
     if "audio" in outputs and "audio/speech" not in endpoints:
         endpoints.append("audio/speech")
+    if "video" in outputs and "video/generations" not in endpoints:
+        endpoints.append("video/generations")
     return endpoints
+
+
+def endpoint_capabilities(
+    endpoints: list[str], *, image_output: bool = False, video_output: bool = False
+) -> dict[str, bool]:
+    """Capability view derived from the endpoint set (repository read model).
+
+    Image/video generation accept either an explicit generation endpoint or the
+    modality flag (OpenRouter reports modalities, not endpoints).
+    """
+    return {
+        "supports_responses": "responses" in endpoints,
+        "supports_image_generation": "images/generations" in endpoints or image_output,
+        "supports_image_editing": "images/edits" in endpoints,
+        "supports_video_generation": "video/generations" in endpoints or video_output,
+    }
 
 
 class LiteLLMSourceAdapter:
@@ -226,6 +251,10 @@ class LiteLLMSourceAdapter:
             "supports_streaming": mode in ("chat", "completion", "responses"),
             "supports_embeddings": mode == "embedding",
             "supports_prompt_caching": bool(info.get("supports_prompt_caching")),
+            **endpoint_capabilities(
+                endpoints,
+                image_output=mode == "image_generation" or "image" in out_modalities,
+            ),
         }
         return NormalizedModel(
             source=self.name,
@@ -308,6 +337,11 @@ class OpenRouterSourceAdapter:
             "supports_streaming": True,
             "supports_embeddings": False,
             "supports_prompt_caching": _cost(pricing.get("discount")) is not None,
+            **endpoint_capabilities(
+                endpoints,
+                image_output="image" in out_modalities,
+                video_output="video" in out_modalities,
+            ),
         }
         return NormalizedModel(
             source=self.name,

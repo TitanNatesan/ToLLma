@@ -199,7 +199,11 @@ export function ChatHeader() {
               size="sm"
               variant="ghost"
               className="h-8 w-8 p-0"
-              onClick={() => router.push("/")}
+              onClick={() => {
+                // Draft intent is synchronous; the router commit is async.
+                setConversation(null);
+                router.push("/");
+              }}
               aria-label="New chat"
             >
               <Plus className="size-3.5 text-zinc-500" />

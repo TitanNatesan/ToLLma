@@ -57,6 +57,31 @@ body {
   50% { opacity: 0; }
 }
 
+/* Media viewer + media cards: fade media in as its skeleton is replaced. */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.35s ease;
+}
+
+/* Media skeleton: indeterminate progress sweep. */
+@keyframes media-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.media-progress-bar {
+  animation: media-progress 1.4s ease-in-out infinite;
+}
+
+html[data-animations="off"] .media-progress-bar,
+html[data-animations="off"] .animate-fade-in {
+  animation: none;
+}
+
 .streaming-cursor::after {
   content: "▌";
   display: inline-block;

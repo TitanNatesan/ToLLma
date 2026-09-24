@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from tollms.services.gateway.caching import openai_params
 from tollms.services.gateway.adapters.base import (
     THINK_CLOSE,
     THINK_OPEN,
@@ -236,6 +237,7 @@ class OpenAIChatAdapter(OpenAIBaseAdapter):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        body.update(openai_params(self.prompt_cache))
         effort = reasoning_effort(self.reasoning_level)
         if effort:
             # Reasoning-capable models on OpenAI-compatible surfaces
@@ -314,6 +316,7 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
             "input": [{"role": m.role, "content": self._content(m)} for m in messages],
             "stream": True,
         }
+        body.update(openai_params(self.prompt_cache))
         effort = reasoning_effort(self.reasoning_level)
         if effort:
             # Summary must be requested explicitly or the API streams no
@@ -426,7 +429,10 @@ class OpenAIImagesAdapter(OpenAIBaseAdapter):
                 detail = r.text[:500]
                 logger.warning("openai images error %s: %s", r.status_code, detail)
                 raise RuntimeError(f"provider error {r.status_code}: {detail}")
-            items = r.json().get("data") or []
+            payload = r.json()
+            usage = payload.get("usage")
+            self.last_media_usage = usage if isinstance(usage, dict) else None
+            items = payload.get("data") or []
             if not items:
                 raise RuntimeError("provider returned no image data")
             item = items[0]

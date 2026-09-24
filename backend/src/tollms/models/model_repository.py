@@ -64,6 +64,12 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     supports_streaming: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     supports_embeddings: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_prompt_caching: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Capability view derived at sync time from supported_endpoints; stored so
+    # clients (and the cost/caching engines) read one row without parsing JSON.
+    supports_responses: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    supports_image_generation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    supports_image_editing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    supports_video_generation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -83,6 +89,12 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     video_input_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     video_output_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     reasoning_cost: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
+    # Media rate card (official OpenAI pricing, per image / per second of video).
+    # Polled per quality so clients can estimate before a generation runs.
+    image_low_price: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
+    image_medium_price: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
+    image_high_price: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
+    video_price_per_second: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
 
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
     # Full per-source raw payloads, keyed by source name. New upstream fields

@@ -29,6 +29,7 @@ export type ConversationProps = ComponentProps<typeof StickToBottom> & {
 export const Conversation = ({
   className,
   scrollTestId,
+  children,
   ...props
 }: ConversationProps) => {
   const contextRef = useRef<StickToBottomContext>(null);
@@ -40,6 +41,21 @@ export const Conversation = ({
     }
   });
 
+  const anchored =
+    typeof children === "function"
+      ? (context: StickToBottomContext) => (
+          <>
+            <ResizeAnchor />
+            {children(context)}
+          </>
+        )
+      : (
+          <>
+            <ResizeAnchor />
+            {children}
+          </>
+        );
+
   return (
     <StickToBottom
       className={cn("relative flex-1 overflow-y-hidden", className)}
@@ -48,9 +64,42 @@ export const Conversation = ({
       resize="smooth"
       role="log"
       {...props}
-    />
+    >
+      {anchored}
+    </StickToBottom>
   );
 };
+
+/**
+ * Re-pins the list to the bottom when the scroll container itself resizes
+ * (window resize, sidebar toggle, panel open) while the user was already at
+ * the bottom. The stick-to-bottom library only reacts to content growth, so a
+ * shrinking viewport used to leave the latest message off-screen.
+ */
+function ResizeAnchor() {
+  const { scrollRef, scrollToBottom } = useStickToBottomContext();
+  const pinned = useRef(true);
+
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const updatePinned = () => {
+      pinned.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
+    };
+    updatePinned();
+    scroller.addEventListener("scroll", updatePinned, { passive: true });
+    const observer = new ResizeObserver(() => {
+      if (pinned.current) void scrollToBottom("instant");
+    });
+    observer.observe(scroller);
+    return () => {
+      scroller.removeEventListener("scroll", updatePinned);
+      observer.disconnect();
+    };
+  }, [scrollRef, scrollToBottom]);
+
+  return null;
+}
 
 export type ConversationContentProps = ComponentProps<typeof StickToBottom.Content>;
 

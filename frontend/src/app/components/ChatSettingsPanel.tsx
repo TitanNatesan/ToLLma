@@ -9,6 +9,7 @@ import { Badge, Button, Tooltip } from "@/components/ui";
 import {
   Brain,
   Cpu,
+  Database,
   Layers,
   PanelRightClose,
   Sparkles,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fmtCompactTokens, fmtCost, fmtPrice, fmtTokens } from "@/lib/utils";
-import { getModelCapabilities } from "@/app/components/chat/capabilities";
+import { getModelCapabilities, mediaRates } from "@/app/components/chat/capabilities";
 import { endpointLabel } from "@/app/providers/fields";
 
 export const INTELLIGENCE_MIN_WIDTH = 320;
@@ -104,6 +105,10 @@ export function IntelligencePanel() {
   const provider = providers.find((p) => p.id === providerId);
   const model = models.find((m) => m.id === modelId);
   const caps = getModelCapabilities(model);
+  const rates = mediaRates(model);
+  const cacheSavings = parseFloat(usage?.cache_savings ?? "0") || 0;
+  const cacheActive =
+    (usage?.cache_read_tokens ?? 0) > 0 || (usage?.cache_write_tokens ?? 0) > 0;
 
   const messageCount = conv?.messages?.length ?? 0;
   const width = Math.min(
@@ -269,9 +274,104 @@ export function IntelligencePanel() {
                   <StatRow label="Output Price" value={fmtPrice(model.output_price)} mono />
                   <StatRow label="Cache Read" value={fmtPrice(model.cache_read_price)} mono />
                   <StatRow label="Cache Write" value={fmtPrice(model.cache_write_price)} mono />
+                  {(rates.imageLow || rates.imageMedium || rates.imageHigh) && (
+                    <div
+                      className="mt-1 border-t border-zinc-100 pt-1 dark:border-zinc-800"
+                      data-testid="intelligence-media-pricing"
+                    >
+                      <p className="mb-1 text-[9px] font-semibold uppercase text-zinc-400">
+                        Media (/image)
+                      </p>
+                      {rates.imageLow && <StatRow label="Image · low" value={fmtCost(rates.imageLow)} mono />}
+                      {rates.imageMedium && (
+                        <StatRow label="Image · medium" value={fmtCost(rates.imageMedium)} mono />
+                      )}
+                      {rates.imageHigh && (
+                        <StatRow label="Image · high" value={fmtCost(rates.imageHigh)} mono />
+                      )}
+                    </div>
+                  )}
+                  {rates.videoPerSecond && (
+                    <div className="mt-1 border-t border-zinc-100 pt-1 dark:border-zinc-800">
+                      <StatRow
+                        label="Video · per second"
+                        value={fmtCost(rates.videoPerSecond)}
+                        mono
+                      />
+                    </div>
+                  )}
                 </div>
               </Section>
             )}
+
+            {/* 3b. Prompt Cache — capability + live cache metrics */}
+            <Section
+              title="Prompt Cache"
+              icon={Database}
+              testid="intelligence-cache"
+              badge={
+                caps.supportsPromptCaching ? (
+                  <span className="text-[9px] text-tollma-600 rounded bg-tollma-100 dark:bg-tollma-900 dark:text-tollma-300 px-1">
+                    ✓ Enabled
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-zinc-400 rounded bg-zinc-100 dark:bg-zinc-800 px-1">
+                    Not Supported
+                  </span>
+                )
+              }
+            >
+              <div className="flex flex-col gap-0.5">
+                <StatRow
+                  label="Prompt Cache"
+                  value={
+                    caps.supportsPromptCaching ? (
+                      <span className="text-tollma-600 dark:text-tollma-400">✓ Enabled</span>
+                    ) : (
+                      <span className="text-zinc-400">Not Supported</span>
+                    )
+                  }
+                />
+                {cacheActive && (
+                  <>
+                    <StatRow
+                      label="Cached Tokens"
+                      value={<span data-testid="cache-read-tokens">{fmtTokens(usage?.cache_read_tokens ?? 0)}</span>}
+                      mono
+                    />
+                    {(usage?.cache_write_tokens ?? 0) > 0 && (
+                      <StatRow
+                        label="Cache Write Tokens"
+                        value={fmtTokens(usage?.cache_write_tokens ?? 0)}
+                        mono
+                      />
+                    )}
+                    {cacheSavings > 0 && (
+                      <StatRow
+                        label="Cache Savings"
+                        value={
+                          <span
+                            className="text-tollma-600 dark:text-tollma-400"
+                            data-testid="cache-savings"
+                          >
+                            {fmtCost(cacheSavings)}
+                          </span>
+                        }
+                        mono
+                      />
+                    )}
+                    <p className="mt-0.5 text-[9px] text-zinc-400">
+                      Estimated savings vs. full input price
+                    </p>
+                  </>
+                )}
+                {!cacheActive && caps.supportsPromptCaching && (
+                  <p className="text-[10px] text-zinc-400">
+                    No cached requests yet in this conversation.
+                  </p>
+                )}
+              </div>
+            </Section>
 
             {/* 4. Reasoning & Tooling — single home for capability info */}
             <Section
@@ -301,6 +401,18 @@ export function IntelligencePanel() {
                 <StatRow label="Audio" value={<SupportValue on={caps.supportsAudioInput} />} />
                 <StatRow label="Video" value={<SupportValue on={caps.supportsVideoInput} />} />
                 <StatRow label="Files" value={<SupportValue on={caps.supportsFiles} />} />
+                <StatRow
+                  label="Image Generation"
+                  value={<SupportValue on={caps.supportsImageGeneration} />}
+                />
+                <StatRow
+                  label="Image Editing"
+                  value={<SupportValue on={caps.supportsImageEditing} />}
+                />
+                <StatRow
+                  label="Video Generation"
+                  value={<SupportValue on={caps.supportsVideoGeneration} />}
+                />
                 <StatRow
                   label="Diagrams"
                   value={<span className="text-tollma-500 font-medium">Mermaid SVG</span>}

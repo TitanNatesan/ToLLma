@@ -17,6 +17,11 @@ export interface ModelCapabilities {
   supportsReasoning: boolean;
   supportsStreaming: boolean;
   supportsToolCalling: boolean;
+  supportsPromptCaching: boolean;
+  supportsImageGeneration: boolean;
+  supportsImageEditing: boolean;
+  supportsVideoGeneration: boolean;
+  supportsResponses: boolean;
   reasoningLevels: string[];
 }
 
@@ -101,6 +106,11 @@ export function getModelCapabilities(model: AIModel | null | undefined): ModelCa
       supportsReasoning: false,
       supportsStreaming: false,
       supportsToolCalling: false,
+      supportsPromptCaching: false,
+      supportsImageGeneration: false,
+      supportsImageEditing: false,
+      supportsVideoGeneration: false,
+      supportsResponses: false,
       reasoningLevels: [],
     };
   }
@@ -115,9 +125,36 @@ export function getModelCapabilities(model: AIModel | null | undefined): ModelCa
     supportsReasoning,
     supportsStreaming: model.supports_streaming === true,
     supportsToolCalling: model.supports_tool_calling === true,
+    supportsPromptCaching: metaBool(model, "supports_prompt_caching"),
+    supportsImageGeneration: model.supports_image_generation === true,
+    supportsImageEditing: metaBool(model, "supports_image_editing"),
+    supportsVideoGeneration: metaBool(model, "supports_video_generation"),
+    supportsResponses: metaBool(model, "supports_responses"),
     reasoningLevels: supportsReasoning
       ? normalizeReasoningLevels(levels.length > 0 ? levels : DEFAULT_REASONING_LEVELS)
       : [],
+  };
+}
+
+export interface MediaRates {
+  imageLow: string | null;
+  imageMedium: string | null;
+  imageHigh: string | null;
+  videoPerSecond: string | null;
+}
+
+/** Media rate card from model metadata (seeded by the repository). */
+export function mediaRates(model: AIModel | null | undefined): MediaRates {
+  const source = model ? meta(model) : {};
+  const value = (key: string): string | null => {
+    const raw = source[key];
+    return typeof raw === "string" && raw.length > 0 && raw !== "0" ? raw : null;
+  };
+  return {
+    imageLow: value("image_low_price"),
+    imageMedium: value("image_medium_price"),
+    imageHigh: value("image_high_price"),
+    videoPerSecond: value("video_price_per_second"),
   };
 }
 

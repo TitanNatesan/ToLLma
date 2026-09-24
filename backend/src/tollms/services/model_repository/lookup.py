@@ -193,12 +193,30 @@ def suggest_payload(entry: RepositoryModel) -> dict[str, Any]:
         "supports_reasoning": entry.supports_reasoning,
         "supports_embeddings": entry.supports_embeddings or "embeddings" in endpoints,
         "supports_streaming": entry.supports_streaming and chat_capable,
-        # Extended composer capabilities live in model metadata (no extra columns):
-        # video has a real upstream signal; files has none, so it defaults off
-        # and is user-editable per model.
+        # Extended composer capabilities live in model metadata (no extra
+        # columns): video/files/caching plus the media rate card the cost
+        # estimator reads. Image generation is also a first-class flag below.
         "metadata": {
-            "supports_video_input": entry.supports_video_input,
-            "supports_files": False,
+            key: value
+            for key, value in {
+                "supports_video_input": entry.supports_video_input,
+                "supports_files": False,
+                "supports_responses": entry.supports_responses,
+                "supports_image_editing": entry.supports_image_editing,
+                "supports_video_generation": entry.supports_video_generation,
+                "supports_prompt_caching": entry.supports_prompt_caching,
+                "image_low_price": str(entry.image_low_price) if entry.image_low_price is not None else None,
+                "image_medium_price": str(entry.image_medium_price)
+                if entry.image_medium_price is not None
+                else None,
+                "image_high_price": str(entry.image_high_price)
+                if entry.image_high_price is not None
+                else None,
+                "video_price_per_second": str(entry.video_price_per_second)
+                if entry.video_price_per_second is not None
+                else None,
+            }.items()
+            if value is not None
         },
         "context_window": entry.context_window,
         "max_output_tokens": entry.max_output_tokens,

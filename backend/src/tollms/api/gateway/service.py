@@ -49,8 +49,17 @@ from tollms.api.conversations.service import (
 from tollms.api.conversations.schemas import ConversationCreate
 from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessage, ChatResult, MediaPart
 from tollms.services.gateway import attachments as attachment_engine
+from tollms.services.gateway import caching as caching_engine
 from tollms.services.gateway.costing import CostBreakdown, UsageTokens, calculate, prices_for_model
 from tollms.services.gateway.factory import build_adapter
+from tollms.services.cost_estimator import (
+    CostEstimate,
+    actual_image_cost,
+    estimate_image_cost,
+    estimate_video_cost,
+    media_rate_card,
+    video_resolution,
+)
 from tollms.api.gateway.schemas import (
     ActiveGenerationRead,
     ChatRequest,
@@ -78,9 +87,57 @@ def _estimate_tokens(text: str) -> int:
 # regeneration and history for free.
 MEDIA_ENDPOINTS = ("images/generations", "video/generations")
 
+# Request defaults per media endpoint. Kept beside the adapter so the cost
+# estimate and the provider call always describe the same generation.
+IMAGE_DEFAULT_OPTIONS: dict = {"size": "1024x1024", "quality": "low"}
+VIDEO_DEFAULT_OPTIONS: dict = {"size": "1280x720", "seconds": "4"}
+
 
 def _is_media_model(model) -> bool:
     return (getattr(model, "primary_endpoint", None) or "") in MEDIA_ENDPOINTS
+
+
+def media_options(endpoint: str) -> dict:
+    """Default request options for a media endpoint (single source of truth)."""
+    return dict(IMAGE_DEFAULT_OPTIONS if endpoint == "images/generations" else VIDEO_DEFAULT_OPTIONS)
+
+
+def media_cost_estimate(db: Session, provider, model, endpoint: str, options: dict) -> CostEstimate:
+    """Estimated cost for one media generation, honouring the media rate card."""
+    repo = find_for_model(db, provider.provider_type.value, model.model_id)
+    card = media_rate_card(model, repo)
+    if endpoint == "images/generations":
+        return estimate_image_cost(
+            model_id=model.model_id,
+            quality=options.get("quality"),
+            size=options.get("size"),
+            count=int(options.get("n", 1) or 1),
+            low=card.image_low,
+            medium=card.image_medium,
+            high=card.image_high,
+        )
+    return estimate_video_cost(
+        model_id=model.model_id,
+        seconds=options.get("seconds"),
+        size=options.get("size"),
+        price_per_second=card.video_per_second,
+    )
+
+
+def caching_for_model(db: Session, provider, model, conversation_id) -> caching_engine.CachingPlan:
+    """Provider-aware prompt-cache plan for a freshly built adapter.
+
+    Unsupported models get a disabled plan, so the request body is unchanged.
+    """
+    if _is_media_model(model):
+        return caching_engine.plan(provider.provider_type.value, supported=False)
+    repo = find_for_model(db, provider.provider_type.value, model.model_id)
+    return caching_engine.plan(
+        provider.provider_type.value,
+        supported=caching_engine.supports_prompt_caching(model, repo),
+        conversation_id=str(conversation_id) if conversation_id else None,
+        model_id=model.model_id,
+    )
 
 
 class _MediaGenerationAdapter(BaseProviderAdapter):
@@ -103,6 +160,9 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
         prompt: str,
         provider_type: str,
         reference_attachment_id: uuid.UUID | None = None,
+        options: dict | None = None,
+        cost_estimate: CostEstimate | None = None,
+        session_factory=None,
     ) -> None:
         super().__init__(credentials={}, model_id=model.model_id)
         self.model = model
@@ -114,30 +174,52 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
         self.user_id = user_id
         self.prompt = prompt
         self.reference_attachment_id = reference_attachment_id
+        self.options = options or media_options(endpoint)
+        self.cost_estimate = cost_estimate
+        if session_factory is None:
+            from tollms.db.session import SessionLocal
+
+            session_factory = SessionLocal
+        self.session_factory = session_factory
         self.reasoning_level = None
+        # Final cost used by the generation runner: actual provider usage when
+        # the endpoint reports it, otherwise the rate-card estimate. Stays None
+        # until the provider call succeeds, so cancelled/failed runs bill zero.
+        self.final_cost: CostEstimate | None = None
+
+    def _actual_cost(self, kind: str) -> CostEstimate | None:
+        if kind != "image":
+            return None
+        usage = getattr(self.adapter, "last_media_usage", None)
+        if not isinstance(usage, dict):
+            return None
+        details = usage.get("input_tokens_details") or {}
+        return actual_image_cost(
+            model_id=self.model.model_id,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            text_input_tokens=details.get("text_tokens"),
+            image_input_tokens=details.get("image_tokens"),
+        )
 
     async def chat_stream(self, messages) -> AsyncIterator[StreamChunk]:
-        from tollms.db.session import SessionLocal
         from tollms.services.gateway.dispatch import call_endpoint
 
         kind = "image" if self.media_endpoint == "images/generations" else "video"
-        if kind == "image":
-            options: dict = {"size": "1024x1024", "quality": "low"}
-        else:
-            options = {"size": "1280x720", "seconds": "4"}
-            if self.reference_attachment_id is not None:
-                db = SessionLocal()
-                try:
-                    reference, content = attachment_service.read_content(
-                        db, self.reference_attachment_id, self.user_id
-                    )
-                finally:
-                    db.close()
-                options.update(
-                    image=content,
-                    image_filename=reference.filename,
-                    image_mime=reference.mime_type,
+        options = dict(self.options)
+        if kind == "video" and self.reference_attachment_id is not None:
+            db = self.session_factory()
+            try:
+                reference, content = attachment_service.read_content(
+                    db, self.reference_attachment_id, self.user_id
                 )
+            finally:
+                db.close()
+            options.update(
+                image=content,
+                image_filename=reference.filename,
+                image_mime=reference.mime_type,
+            )
         yield StreamChunk(delta=f"Generating {kind}…\n")
         try:
             result = await call_endpoint(self.adapter, self.media_endpoint, prompt=self.prompt, options=options)
@@ -145,8 +227,10 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
             yield StreamChunk(delta=f"\nGeneration failed: {exc}")
             raise
         yield StreamChunk(delta="Uploading…\n")
+        cost = self._actual_cost(kind) or self.cost_estimate
+        self.final_cost = cost
         filename = f"{self.model.model_id}-{uuid.uuid4().hex[:8]}.{'png' if kind == 'image' else 'mp4'}"
-        db = SessionLocal()
+        db = self.session_factory()
         try:
             attachment = attachment_service.upload_attachment(
                 db,
@@ -156,21 +240,27 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
                 data=result,
             )
             attachment_service.link_to_message(db, attachment, self.conversation_id, self.message_id)
+            metadata: dict = {
+                "generation_type": kind,
+                "status": "completed",
+                "model": self.model.model_id,
+                "provider": self.provider_type.lower(),
+                "size": options.get("size"),
+                "filename": filename,
+            }
+            if kind == "image":
+                metadata["quality"] = options.get("quality")
+            else:
+                metadata["seconds"] = options.get("seconds")
+                metadata["resolution"] = video_resolution(options.get("size"))
+            if cost is not None:
+                metadata["estimated_cost"] = str(cost.estimated_cost)
+                metadata["cost_source"] = cost.source
+                metadata["cost_estimated"] = cost.estimated
             db.execute(
                 update(Message)
                 .where(Message.id == self.message_id)
-                .values(
-                    metadata_={
-                        "generation_type": kind,
-                        "status": "completed",
-                        "model": self.model.model_id,
-                        "provider": self.provider_type.lower(),
-                        "size": options.get("size"),
-                        "filename": filename,
-                        **({"quality": options.get("quality")} if kind == "image" else {}),
-                        **({"seconds": options.get("seconds")} if kind == "video" else {}),
-                    }
-                )
+                .values(metadata_={key: value for key, value in metadata.items() if value is not None})
             )
             db.commit()
         finally:
@@ -418,6 +508,7 @@ async def run_chat(
             conv = get_conversation(db, data.conversation_id, user_id)
             conv_id = conv.id
         history = _history(db, conv_id, data.system, user_id, adapter, model)
+        adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
         texts, media = await _assemble_attachments(
             db, rows=rows, model=model, adapter=adapter,
             transcriber=transcriber, transport=transport, strict=True,
@@ -523,6 +614,8 @@ class _Setup:
     history: list[ChatMessage]
     history_text: str
     media_endpoint: str | None = None
+    media_options: dict | None = None
+    media_cost: CostEstimate | None = None
 
 
 async def _setup_generation(
@@ -554,13 +647,23 @@ async def _setup_generation(
         conv = get_conversation(db, data.conversation_id, user_id)
         conv_id = conv.id
     history = _history(db, conv_id, data.system, user_id, adapter, model)
+    # Prompt caching is planned once the conversation id is known (OpenAI uses
+    # it as the cache key). Disabled plans leave the request body untouched.
+    adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
     media_endpoint = model.primary_endpoint if _is_media_model(model) else None
+    media_opts: dict | None = None
+    media_cost: CostEstimate | None = None
     if media_endpoint:
         # Media models take the prompt directly; long text history and document
         # text injection do not apply. Uploaded rows stay available as reference.
         history = [ChatMessage(role="user", content=data.message)]
         texts, media = [], []
-        logger.info("gateway stream: media model %s endpoint=%s", model.model_id, media_endpoint)
+        media_opts = media_options(media_endpoint)
+        media_cost = media_cost_estimate(db, provider, model, media_endpoint, media_opts)
+        logger.info(
+            "gateway stream: media model %s endpoint=%s cost=%s",
+            model.model_id, media_endpoint, media_cost.estimated_cost,
+        )
     else:
         texts, media = await _assemble_attachments(
             db, rows=rows, model=model, adapter=adapter,
@@ -569,13 +672,14 @@ async def _setup_generation(
         content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
         history.append(ChatMessage(role="user", content=content, media=media))
         logger.info(
-            "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d",
+            "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d cache=%s",
             provider.provider_type, model.model_id, conv_id, len(rows), len(media),
+            adapter.prompt_cache.strategy if adapter.prompt_cache else "none",
         )
     return _Setup(
         conv_id=conv_id, provider=provider, model=model, adapter=adapter,
         rows=rows, history=history, history_text="".join(m.content for m in history),
-        media_endpoint=media_endpoint,
+        media_endpoint=media_endpoint, media_options=media_opts, media_cost=media_cost,
     )
 
 
@@ -702,7 +806,14 @@ async def start_generation(
             prompt=data.message,
             provider_type=provider.provider_type.value,
             reference_attachment_id=setup.rows[0].id if setup.rows else None,
+            options=setup.media_options,
+            cost_estimate=setup.media_cost,
+            session_factory=session_factory or generation_engine.manager.session_factory(),
         )
+        # Rate-card estimate is the runner's fallback; the adapter upgrades it
+        # to actual provider usage when the endpoint reports usage.
+        spec.media_cost = setup.media_cost.estimated_cost if setup.media_cost else None
+        spec.media_cost_source = setup.media_cost.source if setup.media_cost else None
     generation_engine.manager.spawn(spec, session_factory=session_factory)
     logger.info(
         "generation started: %s conv=%s setup=%.0fms",
@@ -1007,6 +1118,7 @@ async def start_regeneration(
     adapter.reasoning_level = reasoning_level
     adapter.max_output_tokens = model.max_output_tokens
     history = _history_until(db, conv_id, preceding, user_id, adapter, model)
+    adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
     if not history:
         raise ValidationError("no conversation history to regenerate from")
 
@@ -1063,16 +1175,24 @@ async def start_regeneration(
     )
     if _is_media_model(model):
         # Retry/regenerate reuses the preceding user prompt, no duplicate rows.
+        regen_endpoint = model.primary_endpoint
+        regen_options = media_options(regen_endpoint)
+        regen_cost = media_cost_estimate(db, provider, model, regen_endpoint, regen_options)
         spec.adapter = _MediaGenerationAdapter(
             model=model,
             adapter=adapter,
-            endpoint=model.primary_endpoint,
+            endpoint=regen_endpoint,
             conversation_id=conv_id,
             message_id=assistant.id,
             user_id=user_id,
             prompt=preceding.content,
             provider_type=provider.provider_type.value,
+            options=regen_options,
+            cost_estimate=regen_cost,
+            session_factory=session_factory or generation_engine.manager.session_factory(),
         )
+        spec.media_cost = regen_cost.estimated_cost
+        spec.media_cost_source = regen_cost.source
     generation_engine.manager.spawn(spec, session_factory=session_factory)
     logger.info(
         "regeneration started: message=%s run=%s number=%s model=%s",

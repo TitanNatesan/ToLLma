@@ -196,6 +196,19 @@ function formatLatency(ms: number | null): string | null {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${stripTrailingZeros((ms / 1000).toFixed(1))}s`;
 }
 
+/** Human generation state from the streamed progress log. */
+function mediaProgressLabel(kind: "image" | "video", content: string): string {
+  const lines = content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const last = (lines[lines.length - 1] ?? "").toLowerCase();
+  if (last.startsWith("uploading")) return `Uploading ${kind}…`;
+  if (last.startsWith("generated")) return "Finalizing…";
+  if (last.startsWith("generating")) return `Generating ${kind}…`;
+  return lines[lines.length - 1] ?? `Generating ${kind}…`;
+}
+
 function MessageHeaderMeta({
   role,
   timestamp,
@@ -266,7 +279,8 @@ function MessageViewInner({
   const role = message.role as "user" | "assistant" | "system";
   const isUser = role === "user";
   const msg = message as ChatMessage;
-  const costStr = formatCost(msg.total_cost ?? null);
+  const costEstimated = msg.usage_estimated === true;
+  const costStr = `${formatCost(msg.total_cost ?? null)}${costEstimated ? " est." : ""}`;
   const inCostStr = formatCost(msg.input_cost ?? null);
   const outCostStr = formatCost(msg.output_cost ?? null);
   const latencyStr = formatLatency(msg.latency_ms ?? null);
@@ -297,15 +311,9 @@ function MessageViewInner({
         : "complete";
 
   // Media generations stream progress text; render a skeleton instead of the
-  // raw log, and a compact caption once the attachment is stored.
+  // raw log. The label tracks the live generation state.
   const mediaKind = /^Generating (image|video)/.exec(message.content)?.[1] as "image" | "video" | undefined;
-  const progressLabel = mediaKind
-    ? message.content
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .slice(-1)[0]
-    : undefined;
+  const progressLabel = mediaKind ? mediaProgressLabel(mediaKind, message.content) : undefined;
 
   const generations = msg.generations ?? [];
   const activeGenerationIndex = Math.max(
@@ -361,7 +369,12 @@ function MessageViewInner({
               : "w-full"
           }
         >
-          <MessageAttachments attachments={msg.attachments} />
+          <MessageAttachments
+            attachments={msg.attachments}
+            cost={msg.total_cost ?? null}
+            costEstimated={costEstimated}
+            metadata={msg.metadata}
+          />
           <MessageContext contextItems={contextItems} />
 
           {isUser ? (
@@ -447,12 +460,7 @@ function MessageViewInner({
               {mediaKind ? (
                 isStreaming ? (
                   <MediaGenerationSkeleton kind={mediaKind} label={progressLabel} />
-                ) : (
-                  <p className="text-xs text-zinc-500" data-testid="media-generated-caption">
-                    {mediaKind === "image" ? "Image generated" : "Video generated"}
-                    {typeof msg.metadata?.filename === "string" ? ` · ${msg.metadata.filename}` : ""}
-                  </p>
-                )
+                ) : null
               ) : (
                 <AssistantContent
                   content={message.content}

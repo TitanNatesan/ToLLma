@@ -7,6 +7,8 @@ from typing import ClassVar
 
 import httpx
 
+from tollms.services.gateway.caching import CachingPlan
+
 logger = logging.getLogger(__name__)
 
 
@@ -146,6 +148,13 @@ class BaseProviderAdapter:
     # Registered model's declared max output; lets thinking budgets clamp
     # without capping long answers. None = unknown.
     max_output_tokens: int | None = None
+    # Prompt-cache plan (services/gateway/caching). None = caching unsupported
+    # or not requested; adapters then send their default request body.
+    prompt_cache: CachingPlan | None = None
+    # Last non-chat provider usage payload (image generation reports token
+    # usage); None when the provider reported none. Actual cost wins over
+    # estimates when this is present.
+    last_media_usage: dict | None = None
 
     # Native wire support per media kind. Document text needs no wire support:
     # the gateway injects extracted text as plain content (supports_files=True).

@@ -28,6 +28,8 @@ from tollms.api.conversations.schemas import (
 from tollms.models.registered_model import AIModel
 from tollms.models.provider import Provider
 
+_MILLION = Decimal(1_000_000)
+
 logger = logging.getLogger(__name__)
 
 
@@ -398,6 +400,7 @@ def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTota
             model_id=r[0], model_name=r[1] or "unknown model",
             prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
             total_tokens=int(r[4]), total_cost=r[5],
+            cache_read_tokens=int(r[6]), cache_write_tokens=int(r[7]),
         )
         for r in db.execute(
             select(
@@ -406,13 +409,50 @@ def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTota
                 func.coalesce(func.sum(Message.completion_tokens), 0),
                 func.coalesce(func.sum(Message.total_tokens), 0),
                 func.coalesce(func.sum(Message.total_cost), 0),
+                func.coalesce(func.sum(Message.cache_read_tokens), 0),
+                func.coalesce(func.sum(Message.cache_write_tokens), 0),
+                AIModel.input_price,
+                AIModel.cache_read_price,
+                AIModel.cache_write_price,
             )
             .outerjoin(AIModel, AIModel.id == Message.model_id)
             .where(*scope)
-            .group_by(Message.model_id, AIModel.name)
+            .group_by(
+                Message.model_id,
+                AIModel.name,
+                AIModel.input_price,
+                AIModel.cache_read_price,
+                AIModel.cache_write_price,
+            )
             .order_by(func.coalesce(func.sum(Message.total_cost), 0).desc())
         )
     ]
+    # Net cache savings: reads bill below input, writes bill at a premium.
+    # Only counted when the model publishes the relevant rate (else 0).
+    cache_savings = Decimal(0)
+    for r in db.execute(
+        select(
+            func.coalesce(func.sum(Message.cache_read_tokens), 0),
+            func.coalesce(func.sum(Message.cache_write_tokens), 0),
+            AIModel.input_price,
+            AIModel.cache_read_price,
+            AIModel.cache_write_price,
+        )
+        .outerjoin(AIModel, AIModel.id == Message.model_id)
+        .where(*scope)
+        .group_by(
+            Message.model_id,
+            AIModel.input_price,
+            AIModel.cache_read_price,
+            AIModel.cache_write_price,
+        )
+    ):
+        read_tokens, write_tokens = int(r[0]), int(r[1])
+        input_price, read_price, write_price = (r[2] or 0), (r[3] or 0), (r[4] or 0)
+        if read_price and input_price:
+            cache_savings += Decimal(read_tokens) * (Decimal(input_price) - Decimal(read_price)) / _MILLION
+        if write_price and input_price:
+            cache_savings += Decimal(write_tokens) * (Decimal(input_price) - Decimal(write_price)) / _MILLION
     by_provider = [
         ProviderUsageBreakdown(
             provider_id=r[0], provider_name=r[1] or "unknown provider",
@@ -446,6 +486,7 @@ def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTota
         cache_read_cost=row[9],
         cache_write_cost=row[10],
         reasoning_cost=row[11],
+        cache_savings=cache_savings,
         by_model=by_model,
         by_provider=by_provider,
     )

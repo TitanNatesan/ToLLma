@@ -41,7 +41,7 @@ from tollms.core.exceptions import classify_provider_failure
 from tollms.models.message_history import GenerationRun
 from tollms.models.request_log import RequestStatus
 from tollms.services import request_logs as request_log_engine
-from tollms.services.gateway.costing import UsageTokens, calculate, prices_for_model
+from tollms.services.gateway.costing import CostBreakdown, UsageTokens, calculate, prices_for_model
 from tollms.services.model_repository.lookup import find_for_model
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,10 @@ class GenerationSpec:
     # normalizes reasoning into these spans).
     think_started_at: float | None = None
     think_ended_at: float | None = None
+    # Media generations: rate-card cost (Decimal) replaces token pricing. The
+    # driver prefers the adapter's actual provider-usage cost when it set one.
+    media_cost: Decimal | None = None
+    media_cost_source: str | None = None
 
 
 @dataclass
@@ -132,6 +136,24 @@ def _thinking_duration_ms(spec: GenerationSpec) -> int | None:
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
+
+
+def _media_breakdown(spec: GenerationSpec, *, partial: bool = False):
+    """(CostBreakdown, estimated) for media specs, or None for token-priced runs.
+
+    Actual provider usage (the adapter's ``final_cost``) always wins. Partial
+    content (cancel/failure before the media existed) bills nothing.
+    """
+    adapter_cost = getattr(getattr(spec, "adapter", None), "final_cost", None)
+    if adapter_cost is not None:
+        cost = Decimal(str(adapter_cost.estimated_cost))
+        return CostBreakdown(output_cost=cost, total_cost=cost), bool(adapter_cost.estimated)
+    if partial:
+        return CostBreakdown(), False
+    if spec.media_cost is not None:
+        cost = Decimal(str(spec.media_cost))
+        return CostBreakdown(output_cost=cost, total_cost=cost), True
+    return None
 
 
 class GenerationManager:
@@ -260,6 +282,10 @@ class GenerationManager:
         active.task = asyncio.create_task(self._run(active), name=f"generation-{spec.generation_id}")
         self._active[spec.generation_id] = active
         return active
+
+    def session_factory(self) -> Callable:
+        """Effective session factory for background work (test override or app)."""
+        return self._sessions
 
     def shutdown_tasks(self, reason: str) -> list[asyncio.Task]:
         """Lifespan shutdown: every driver stops and persists FAILED.
@@ -407,7 +433,12 @@ class GenerationManager:
 
     def _price(self, db, spec: GenerationSpec, result: ChatResult, *, partial: bool):
         """Provider usage wins; otherwise estimate from text (always estimated
-        for partial/cancelled/failed content)."""
+        for partial/cancelled/failed content). Media generations use the
+        media rate card instead of token pricing."""
+        media = _media_breakdown(spec, partial=partial)
+        if media is not None:
+            breakdown, estimated = media
+            return UsageTokens(), breakdown, estimated
         estimated = partial
         prompt, completion = result.prompt_tokens, result.completion_tokens
         if not prompt and not completion:

@@ -77,6 +77,23 @@ Image and video generation now run through the conversation pipeline (`/c/{id}`)
 
 Routing regressions (`generation`, `navigation`, `auth`, `settings`): 15/15. Video duration floor is 4s (API-supported: 4/8/12 only).
 
+## Media viewer, cost intelligence & prompt caching (2026-09-24)
+
+Unified media viewer, aligned media cards, generation skeletons, official OpenAI cost estimation (actual usage wins), provider-aware prompt caching, and repository-sourced capabilities/rate cards. No paid generation was performed: validation used mock transports, existing generated assets, and a free repository re-sync.
+
+| Check | Result |
+| --- | --- |
+| Unified `MediaViewer` (24px blur backdrop, 90vw/90vh, single toolbar, zoom/fit/1:1/download/close) on existing generated images | PASS |
+| Video opens directly in the viewer on click (no separate fullscreen button), native controls + duration/resolution/size | PASS |
+| Media cards capped at 512px (image) / 720px (video), centered, filename·resolution·size·cost inside one card | PASS |
+| Skeletons: 512×512 image / 16:9 video, shimmer + indeterminate progress, live state label, crossfade into the card | PASS (component + prior live run) |
+| Official image prices (gpt-image-1 0.011/0.042/0.167; gpt-image-2 0.006/0.053/0.211) and video rates (sora-2 $0.10/s; sora-2-pro $0.30/$0.50/$0.70/s) | PASS |
+| Actual provider usage overrides estimates (image API `usage`; sora per-second) — mocked image with usage stored $0.1667 as actual | PASS |
+| Prompt caching: OpenAI cache key, Anthropic system + conversation breakpoints, Bedrock Claude cache point, Gemini/Vertex/Custom implicit; unsupported = byte-identical body | PASS |
+| Repository sync derives capability flags and seeds media prices from the official rate card | PASS (live re-sync: `openai/gpt-image-1`, `openai/gpt-image-2`, `sora-2`, `sora-2-pro`) |
+
+Backend suite: **254 passed / 0 failed**. Frontend: `tsc`/`eslint` clean, `vitest` **119/119**. Headed Playwright (`e2e/`, all non-live specs): see "Tests passed / failed" below.
+
 ## How validation runs
 
 | Suite | Command | Scope |
@@ -120,12 +137,9 @@ repository-metadata tests (`tests/test_endpoints.py`).
 
 ## Tests passed / failed
 
-- Validation matrix: **8 passed / 0 failed**.
-- Endpoint architecture + repository metadata + discovery precedence: **10 passed / 0 failed**.
-- Provider/discovery/wizard/cache/registry suites: **33 passed / 0 failed**.
-- Full backend suite: **215 passed / 0 failed** (was 194; +8 matrix, +10 endpoint/repository, +3 provider tests).
-- Frontend: `vitest` 115/115, `tsc`/`eslint`/`next build` clean; provider Playwright specs **11/11**
-  (`providers`, `wizard`, `discovery`, `validation`, `repository`, `intelligence`).
+- Full backend suite: **254 passed / 0 failed** (adds cost estimator, prompt caching, media cost, repository capabilities).
+- Frontend: `vitest` **119/119**, `tsc`/`eslint` clean.
+- Headed Playwright (`e2e/`, non-live specs; live specs auto-skip): full runs pass 59–61 specs, with occasional environment flakes (Docker stack restarts mid-run, screenshot protocol errors). After the final draft-send fixes the affected suites pass with `--retries=0`: `settings`+`history`+`generation`+`conversation-intelligence` **18/18**, `live-draft-media`+`manage`+`reasoning-selector`+`settings` **12/12**.
 
 ## Estimated cost
 

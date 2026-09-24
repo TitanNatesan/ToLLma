@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Download, Loader2, Sparkles, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
+import { MediaViewer } from "@/app/components/media/MediaViewer";
 import { useModels } from "@/hooks/useRegistry";
 import {
   attachmentContentUrl,
@@ -50,6 +51,7 @@ export default function GeneratePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<MediaGenerateResult | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const selected = options.find((option) => option.key === optionKey) ?? options[0];
@@ -234,20 +236,33 @@ export default function GeneratePage() {
         >
           {result.attachment.kind === "video" ? (
             <video
-              className="max-h-[420px] w-fit rounded-lg bg-black"
+              className="max-h-[420px] w-fit cursor-zoom-in rounded-lg bg-black"
               controls
               data-testid="media-result-video"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                if (event.clientY - rect.top < rect.height - 48) setViewerOpen(true);
+              }}
               src={attachmentContentUrl(result.attachment.id)}
             />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               alt={prompt}
-              className="max-h-[420px] w-fit rounded-lg"
+              className="max-h-[420px] w-fit cursor-zoom-in rounded-lg"
               data-testid="media-result-img"
+              onClick={() => setViewerOpen(true)}
               src={attachmentContentUrl(result.attachment.id)}
             />
           )}
+          <MediaViewer
+            fileSize={result.attachment.file_size}
+            filename={result.attachment.filename}
+            kind={result.attachment.kind === "video" ? "video" : "image"}
+            onClose={() => setViewerOpen(false)}
+            open={viewerOpen}
+            src={attachmentContentUrl(result.attachment.id)}
+          />
           <div className="flex items-center gap-3 text-xs text-zinc-500">
             <a
               className="inline-flex items-center gap-1 text-tollma-600 hover:text-tollma-700 dark:text-tollma-400"

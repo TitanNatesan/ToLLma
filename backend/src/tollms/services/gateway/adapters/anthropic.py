@@ -5,6 +5,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
+from tollms.services.gateway.caching import anthropic_messages, anthropic_system
 from tollms.services.gateway.adapters.base import (
     THINK_CLOSE,
     THINK_OPEN,
@@ -77,9 +78,10 @@ class AnthropicAdapter(BaseProviderAdapter):
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
         system = "\n".join(m.content for m in messages if m.role == "system")
         rest = [{"role": m.role, "content": self._content(m)} for m in messages if m.role != "system"]
+        rest = anthropic_messages(self.prompt_cache, rest)
         body: dict = {"model": self.model_id, "messages": rest, "stream": True, "max_tokens": 4096}
         if system:
-            body["system"] = system
+            body["system"] = anthropic_system(self.prompt_cache, system)
         params = thinking_params(self.reasoning_level, self.max_output_tokens)
         if params is not None:
             # Extended thinking must be explicitly requested or Claude emits

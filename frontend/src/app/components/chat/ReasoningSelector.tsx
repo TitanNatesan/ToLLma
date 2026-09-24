@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { cycleReasoningLevel, stepReasoningLevel } from "./reasoningLevels";
@@ -12,6 +13,16 @@ export const REASONING_WHEEL_COOLDOWN_MS = 120;
 /** Accumulated wheel delta required before a gesture steps a level
  *  (trackpads emit many tiny deltas per gesture). */
 export const REASONING_WHEEL_STEP_DELTA = 24;
+/** Gap between the indicator and the floating scale (px). */
+const PANEL_OFFSET_PX = 8;
+/** Popover layer: above the composer and every chat wrapper. */
+const PANEL_Z_INDEX = 1000;
+
+interface PanelPosition {
+  left: number;
+  top: number | null;
+  bottom: number | null;
+}
 
 /** Slider generated from the model's reasoning_levels — never hardcoded.
  *  Compact indicator by default; the full scale reveals on hover / keyboard
@@ -19,7 +30,13 @@ export const REASONING_WHEEL_STEP_DELTA = 24;
  *  (None → Low → … → High → None); scrolling over the selector steps through
  *  them. Expand is instant, collapse waits REASONING_CLOSE_DELAY_MS so
  *  accidental cursor slips don't close it. Hidden entirely when the model has
- *  no levels (caller also gates on supports_reasoning). */
+ *  no levels (caller also gates on supports_reasoning).
+ *
+ *  The scale renders in a body portal with fixed positioning: an absolutely
+ *  positioned panel inside the composer was both clipped by the input
+ *  containers and trapped below the message area's stacking context. The
+ *  portal plus a top-level z-index keeps it fully visible above the composer
+ *  at every viewport size. */
 export function ReasoningSelector({
   levels,
   value,
@@ -31,8 +48,16 @@ export function ReasoningSelector({
 }) {
   const [dragging, setDragging] = useState(false);
   const [open, setOpen] = useState(false);
+  // Portals need a browser: true only on the client (SSR/hydration safe).
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+  const [position, setPosition] = useState<PanelPosition | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   // Mouse clicks move focus to the indicator; that must cycle, not open the
   // scale. Keyboard focus still opens it.
   const pointerFocus = useRef(false);
@@ -47,12 +72,42 @@ export function ReasoningSelector({
     };
   }, []);
 
+  /** Pin the scale above the indicator; flip below when there is no room. */
+  const updatePosition = useCallback(() => {
+    const trigger = rootRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = panelRef.current?.offsetWidth ?? 240;
+    const height = panelRef.current?.offsetHeight ?? 128;
+    const left = Math.min(
+      Math.max(PANEL_OFFSET_PX, rect.left),
+      Math.max(PANEL_OFFSET_PX, window.innerWidth - width - PANEL_OFFSET_PX),
+    );
+    const fitsAbove = rect.top >= height + PANEL_OFFSET_PX * 2;
+    setPosition({
+      left,
+      top: fitsAbove ? null : rect.bottom + PANEL_OFFSET_PX,
+      bottom: fitsAbove ? window.innerHeight - rect.top + PANEL_OFFSET_PX : null,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!expanded) return;
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [expanded, updatePosition]);
+
   // React's synthetic wheel handler cannot preventDefault (passive root
   // listener), so a non-passive native listener owns wheel stepping. While
   // the scale is closed the handler bails out and the page scrolls untouched.
   useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
+    const targets = [rootRef.current, panelRef.current].filter(Boolean) as HTMLElement[];
+    if (targets.length === 0) return;
     function handleWheel(e: WheelEvent) {
       if (!expanded) return;
       e.preventDefault();
@@ -66,8 +121,10 @@ export function ReasoningSelector({
       const next = stepReasoningLevel(levels, value, direction);
       if (next && next !== value) onChange(next);
     }
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheel);
+    for (const target of targets) target.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      for (const target of targets) target.removeEventListener("wheel", handleWheel);
+    };
   }, [expanded, levels, value, onChange]);
 
   function handleEnter() {
@@ -75,10 +132,16 @@ export function ReasoningSelector({
       clearTimeout(closeTimer.current);
       closeTimer.current = null;
     }
+    // Position before the open render commits: the scale is measured as soon
+    // as it appears, so it must never paint unpositioned.
+    updatePosition();
     setOpen(true);
   }
 
   function handleLeave() {
+    // Keyboard focus inside the scale keeps it open (portal is not a DOM
+    // descendant of the trigger, so focus/blur must be bridged explicitly).
+    if (panelRef.current?.contains(document.activeElement)) return;
     pointerFocus.current = false;
     wheelAccum.current = 0;
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -120,13 +183,12 @@ export function ReasoningSelector({
   // Native range thumbs travel inset by half their width; stop dots and
   // labels share that geometry so every label sits under its stop.
   const stopPct = (i: number) => (levels.length > 1 ? i / (levels.length - 1) : 0);
-  const labelLeft = (i: number) => `calc(8px + (100% - 16px) * ${stopPct(i)})`;
   const panelWidth = levels.length > 5 ? "w-72" : levels.length > 4 ? "w-64" : "w-56";
 
   return (
     <div
       ref={rootRef}
-      className="relative flex items-center"
+      className="flex items-center"
       data-testid="reasoning-selector"
       role="group"
       aria-label="Thinking level"
@@ -165,89 +227,112 @@ export function ReasoningSelector({
         <span className="font-medium capitalize">{current}</span>
       </button>
 
-      {/* Expanded scale — hover / keyboard focus / drag, with close delay */}
-      {levels.length > 1 && (
-        <div
-          data-testid="reasoning-scale"
-          className={cn(
-            "absolute bottom-full left-0 z-20 mb-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg",
-            "dark:border-zinc-700 dark:bg-zinc-900",
-            "transition-all duration-150",
-            panelWidth,
-            expanded
-              ? "pointer-events-auto translate-y-0 opacity-100"
-              : "pointer-events-none translate-y-1 opacity-0",
-          )}
-        >
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-              Thinking
-            </span>
-            <span
-              data-testid="reasoning-scale-value"
-              className="text-xs font-medium capitalize text-tollma-600 dark:text-tollma-400"
-            >
-              {current}
-            </span>
-          </div>
-
-          {/* Discrete stop dots — one per level, walking the thumb travel */}
-          <div className="relative mb-1 h-2">
-            <div className="pointer-events-none absolute inset-x-2 top-0 h-full" aria-hidden="true">
-              {levels.map((level, i) => (
-                <span
-                  key={level}
-                  data-testid={`reasoning-stop-${level}`}
-                  className={cn(
-                    "absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors",
-                    i === index ? "bg-tollma-600 dark:bg-tollma-400" : "bg-zinc-300 dark:bg-zinc-600",
-                  )}
-                  style={{ left: `${stopPct(i) * 100}%` }}
-                />
-              ))}
-            </div>
-          </div>
-
-          <input
-            type="range"
-            min={0}
-            max={levels.length - 1}
-            step={1}
-            value={index}
-            onChange={(e) => selectLevel(levels[Number(e.target.value)])}
-            onPointerDown={() => setDragging(true)}
-            onPointerUp={() => setDragging(false)}
-            onBlur={() => setDragging(false)}
-            aria-label="Thinking level slider"
-            aria-valuetext={current}
-            data-testid="reasoning-slider"
-            className="w-full accent-tollma-600 dark:accent-tollma-500"
-          />
-
-          {/* Labels under their stop points; click selects immediately */}
-          <div className="relative mt-1.5 h-5">
-            {levels.map((level, i) => (
-              <button
-                key={level}
-                type="button"
-                onClick={() => selectLevel(level)}
-                aria-pressed={i === index}
-                aria-label={`Thinking level ${level}`}
-                data-testid={`reasoning-level-${level}`}
-                className={cn(
-                  "absolute top-0 -translate-x-1/2 whitespace-nowrap rounded px-1 py-0.5 text-center text-[10px] capitalize transition-colors",
-                  i === index
-                    ? "bg-tollma-600 font-medium text-white dark:bg-tollma-500"
-                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200",
-                )}
-                style={{ left: labelLeft(i) }}
+      {/* Expanded scale — hover / keyboard focus / drag, with close delay.
+          Portaled to the document body so no chat wrapper can clip it. */}
+      {mounted &&
+        levels.length > 1 &&
+        createPortal(
+          <div
+            ref={panelRef}
+            data-testid="reasoning-scale"
+            style={{
+              position: "fixed",
+              left: position?.left ?? 0,
+              top: position?.top ?? undefined,
+              bottom: position?.bottom ?? undefined,
+              zIndex: PANEL_Z_INDEX,
+              visibility: position ? undefined : "hidden",
+            }}
+            className={cn(
+              "rounded-lg border border-zinc-200 bg-white p-3 shadow-lg",
+              "dark:border-zinc-700 dark:bg-zinc-900",
+              // Fade + slide only: animating the fixed position would slide the
+              // panel across the viewport and break label/stop alignment.
+              "transition-[opacity,transform] duration-150",
+              panelWidth,
+              expanded
+                ? "pointer-events-auto translate-y-0 opacity-100"
+                : "pointer-events-none translate-y-1 opacity-0",
+            )}
+            onMouseEnter={handleEnter}
+            onMouseLeave={handleLeave}
+            onFocus={handleEnter}
+            onBlur={handleLeave}
+            onKeyDown={handleKeyDown}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                Thinking
+              </span>
+              <span
+                data-testid="reasoning-scale-value"
+                className="text-xs font-medium capitalize text-tollma-600 dark:text-tollma-400"
               >
-                {level}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+                {current}
+              </span>
+            </div>
+
+            {/* Discrete stop dots — one per level, walking the thumb travel */}
+            <div className="relative mb-1 h-2">
+              <div className="pointer-events-none absolute inset-x-2 top-0 h-full" aria-hidden="true">
+                {levels.map((level, i) => (
+                  <span
+                    key={level}
+                    data-testid={`reasoning-stop-${level}`}
+                    className={cn(
+                      "absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors",
+                      i === index ? "bg-tollma-600 dark:bg-tollma-400" : "bg-zinc-300 dark:bg-zinc-600",
+                    )}
+                    style={{ left: `${stopPct(i) * 100}%` }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <input
+              type="range"
+              min={0}
+              max={levels.length - 1}
+              step={1}
+              value={index}
+              onChange={(e) => selectLevel(levels[Number(e.target.value)])}
+              onPointerDown={() => setDragging(true)}
+              onPointerUp={() => setDragging(false)}
+              onBlur={() => setDragging(false)}
+              aria-label="Thinking level slider"
+              aria-valuetext={current}
+              data-testid="reasoning-slider"
+              className="w-full accent-tollma-600 dark:accent-tollma-500"
+            />
+
+            {/* Labels share the stop-dot container geometry so every label is
+                centered exactly under its stop. */}
+            <div className="relative mt-1.5 h-5">
+              <div className="absolute inset-x-2 top-0 h-full">
+                {levels.map((level, i) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => selectLevel(level)}
+                    aria-pressed={i === index}
+                    aria-label={`Thinking level ${level}`}
+                    data-testid={`reasoning-level-${level}`}
+                    className={cn(
+                      "absolute top-0 -translate-x-1/2 whitespace-nowrap rounded px-1 py-0.5 text-center text-[10px] capitalize transition-colors",
+                      i === index
+                        ? "bg-tollma-600 font-medium text-white dark:bg-tollma-500"
+                        : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200",
+                    )}
+                    style={{ left: `${stopPct(i) * 100}%` }}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

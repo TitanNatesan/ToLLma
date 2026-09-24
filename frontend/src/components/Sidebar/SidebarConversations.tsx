@@ -121,9 +121,20 @@ export function SidebarConversations() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   // New chat is a draft: no database row until the first message is sent.
-  const newChat = useCallback(() => router.push("/"), [router]);
+  // The store is cleared synchronously so a send fired immediately after the
+  // click already sees the draft route (the URL/router commit is async).
+  const newChat = useCallback(() => {
+    setConversation(null);
+    router.push("/");
+  }, [router, setConversation]);
 
-  const select = useCallback((id: string) => router.push(`/c/${id}`), [router]);
+  const select = useCallback(
+    (id: string) => {
+      setConversation(id);
+      router.push(`/c/${id}`);
+    },
+    [router, setConversation],
+  );
 
   // Ctrl+Shift+F / "Search Conversations" command.
   useEffect(() => {

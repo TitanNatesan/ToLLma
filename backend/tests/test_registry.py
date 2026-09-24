@@ -40,6 +40,7 @@ def test_conversation_lifecycle_and_usage(client: TestClient, provider_factory, 
         "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
         "input_cost": "0", "output_cost": "0", "total_cost": "0",
         "cache_read_cost": "0", "cache_write_cost": "0", "reasoning_cost": "0",
+        "cache_savings": "0",
         "by_model": [], "by_provider": [],
     }
 

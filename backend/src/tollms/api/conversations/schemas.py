@@ -55,6 +55,9 @@ class MessageRead(BaseModel):
     generations: list["GenerationRunRead"] = Field(default_factory=list)
     active_generation_id: uuid.UUID | None = None
     versions_count: int = 0
+    # True when cost/tokens were estimated (no provider usage) — the UI labels
+    # estimated values so actual usage is never implied.
+    usage_estimated: bool = False
     # Generation details for media messages (serialized as `metadata`).
     metadata_: dict[str, Any] = Field(default_factory=dict, serialization_alias="metadata")
 
@@ -82,6 +85,8 @@ class ModelUsageBreakdown(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     total_cost: Decimal
 
 
@@ -107,6 +112,9 @@ class UsageTotals(BaseModel):
     cache_read_cost: Decimal = Decimal(0)
     cache_write_cost: Decimal = Decimal(0)
     reasoning_cost: Decimal = Decimal(0)
+    # Net prompt-cache savings vs. paying full input price for the same tokens
+    # (write premiums subtract). Zero when the model publishes no cache rates.
+    cache_savings: Decimal = Decimal(0)
     by_model: list[ModelUsageBreakdown] = Field(default_factory=list)
     by_provider: list[ProviderUsageBreakdown] = Field(default_factory=list)
 

@@ -1836,3 +1836,62 @@ Audit the local OpenCode config files and convert them from V1 syntax to the nat
 ### Recommended Next Steps
 - Replace the plaintext `Authorization` bearer in the global `vercel2` provider with `{env:VERCEL_API_KEY}` (docs recommend env substitution; the token is currently readable in config).
 - Re-run `/graphify --update` after doc changes (unchanged from the previous entry).
+
+---
+
+## 2026-09-24 — Unified Media Viewer, Cost Intelligence & Prompt Caching
+
+### Requirement Completed
+Media UX refinement (one reusable `MediaViewer`, aligned media cards, 512/16:9 generation skeletons with crossfade), official OpenAI cost estimation for chat/image/video with actual-usage override, provider-aware prompt caching with graceful fallback, and repository-sourced capabilities + media rate cards. No image/video generation was performed during validation (mock transports, existing assets, free repository re-sync only).
+
+### Files Created
+Backend: `services/cost_estimator.py` (official rate card, `estimate_cost`, `media_rate_card`), `services/gateway/caching.py` (provider plans + body annotators), `alembic/versions/c9f1a2b3d4e5_repository_media_capabilities.py`, `tests/test_cost_estimator.py`, `tests/test_caching.py`.
+Frontend: `app/components/media/MediaViewer.tsx` (replaces `MediaLightbox`), `app/components/media/MediaCard.tsx`, `e2e/media-viewer.spec.ts`.
+
+### Files Modified
+Backend: `models/model_repository.py` (+`supports_responses|image_generation|image_editing|video_generation`, +`image_{low,medium,high}_price`, +`video_price_per_second`), `services/model_repository/{sources,sync,lookup}.py` (endpoint-derived capability flags, images/edits + video endpoints, official media-price seeding, suggest payload), `api/repository/schemas.py`, `api/conversations/{schemas,service}.py` (per-model cache tokens + `cache_savings`), `api/gateway/service.py` (media options/cost/actual usage, caching plan, injected session factory), `services/generation.py` (media cost replaces token pricing; `session_factory()` accessor), `services/gateway/adapters/{base,openai,anthropic,bedrock}.py` (`prompt_cache`, image usage capture), tests `test_media.py`, `test_model_repository.py`, `test_registry.py`.
+Frontend: `MediaGenerationSkeleton.tsx` (512/16:9 + progress + shimmer), `chat/attachments/MessageAttachments.tsx` (media cards + viewer), `MessageView.tsx` (state labels, no raw progress log, “est.” costs), `ChatSettingsPanel.tsx` (Prompt Cache + media pricing + cache savings), `chat/capabilities.ts` (+`mediaRates`), `types/index.ts`, `globals.css` (fade/progress keyframes), `generate/page.tsx` (viewer), `ChatWorkspace.tsx`, `Sidebar/SidebarConversations.tsx`, `ChatHeader.tsx`, `hooks/useShortcuts.ts`, `ai-elements/conversation.tsx`, `e2e/live-draft-media.spec.ts`.
+
+### Decisions
+- Official 2026 rate card: per-image quality tables (gpt-image-1/1-mini/1.5/2) plus a token-rate fallback for gpt-image-2.5; Sora per-second by resolution ($0.10/$0.30/$0.50/$0.70).
+- Estimates are always labelled (`source`: official/derived/model/actual). Provider usage wins: the Images API `usage` becomes actual cost; Sora's per-second rate is inherently actual. Cancelled/failed media bills zero.
+- Media cost replaces token pricing via `GenerationSpec.media_cost` + `adapter.final_cost`; the runner short-circuits token estimation for media specs.
+- Caching: OpenAI `prompt_cache_key` (conversation id), Anthropic ephemeral breakpoints on system + final message, Bedrock Claude `cachePoint`, Gemini/Vertex implicit, CUSTOM untouched; unsupported = disabled plan, byte-identical body.
+- Repository is the source of truth: sync derives capability flags from endpoints and seeds official media prices; `suggest_payload` carries caching/media rates into registered-model metadata.
+- Draft chat now **mints the conversation at send time** (`createConversation` before streaming) so the URL adopts deterministically; the store is cleared synchronously on New chat (sidebar + header) so an immediate send sees the draft.
+- Media adapter takes an injected session factory (test hermeticity; no hidden global).
+
+### Verification
+- Backend full suite: **254 passed / 0 failed** (`docker compose exec -T backend python -m pytest -q`); `alembic check` clean after the new migration.
+- Frontend: `tsc`/`eslint` clean, `vitest` **119/119**, `next build` clean (all routes).
+- Headed Playwright (1920×1080): full `e2e/` runs 59–61 passed with a few environment flakes (Docker stack restarts, Postgres outage, cold dev server); after the final fixes the affected specs pass **with `--retries=0`**: settings+history+generation+conversation-intelligence **18/18**, live-draft-media+manage+reasoning-selector+settings **12/12**.
+- Repository live re-sync (free): `openai/gpt-image-1` seeded 0.011/0.042/0.167, `openai/gpt-image-2` 0.006/0.053/0.211, `sora-2` $0.10/s, `sora-2-pro` $0.30/s; capability flags set.
+- `e2e/media-viewer.spec.ts` validated the unified viewer against existing generated assets (24px blur backdrop, 90vw/90vh, toolbar, zoom, ESC, video native controls) without any generation.
+
+### Recommended Next Steps
+- Backfill media rate metadata onto pre-existing registered models (repository refresh action or a one-off script).
+- Extend the estimator/caching tables when Anthropic/Gemini expose media rates.
+- Dedicated GenerationCard with live quality/size chips and partial-image previews (streaming image API supports `partial_images`).
+
+---
+
+## 2026-09-24 — Thinking Level Selector Layering Fix
+
+### Requirement Completed
+The thinking-level scale (`None / Low / Medium / High`) rendered clipped and painted underneath the chat composer/input. It now renders fully visible, clickable, and above every chat wrapper at all viewport sizes.
+
+### Files Modified
+`frontend/src/app/components/chat/ReasoningSelector.tsx` (only file changed).
+
+### Decisions
+- **Body portal + fixed positioning + `z-index: 1000`**: the scale was trapped in the composer's stacking context (a hit test at the label center returned a covering wrapper DIV) and clipped by the input containers. Portaling to `document.body` escapes both; no ancestor can clip it.
+- **Position anchored to the indicator** (flip below when there is no room above; horizontal clamp to the viewport) so the scale stays adjacent to its trigger and the existing hover/close-delay semantics keep working across the portal boundary.
+- **`transition-[opacity,transform]` instead of `transition-all`**: animating the fixed `left` made the panel slide across the viewport on open, which broke label/stop alignment and click actionability.
+- **Labels now share the stop-dot container geometry** (`absolute inset-x-2`), so every label is centered exactly under its stop.
+- **Hover/focus bridge**: the portaled panel carries `onMouseEnter/Leave` + `onFocus/Blur`; the close timer is skipped while focus is inside the panel; wheel stepping listens on both trigger and panel. SSR-safe via `useSyncExternalStore` client detection.
+
+### Verification
+- `e2e/reasoning-selector.spec.ts`: **8/8 with `--retries=0`** (click cycling, hover open/close delay, slider keyboard, label/stop alignment, wheel stepping, None payload, capability gating). Two consecutive runs green after the transition fix.
+- Temporary headed checks (removed after use): panel fully inside the viewport with `elementFromPoint` returning the label (nothing paints over it) at 1920×1080 and 1366×768; screenshot at `frontend/test-results/thinking-selector-final.png`.
+- `tsc` and `eslint` clean on the modified file. No other chat UI touched.
+- Note: the 390px mobile check could not run because the mock test setup's model dropdown does not open at that width (test-harness limitation, not the selector).

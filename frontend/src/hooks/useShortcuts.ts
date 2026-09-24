@@ -119,8 +119,9 @@ export function useGlobalShortcuts({ openShortcuts, openCommandPalette }: Shortc
         run("focus_input");
         return;
       }
-      if (editable) {
-        // Don't steal typing keys; composer handles Enter itself.
+      if (editable && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Don't steal plain typing keys while the composer has focus; modifier
+        // combos (Ctrl/Alt/Meta) are global and still run.
         pendingG = 0;
         return;
       }

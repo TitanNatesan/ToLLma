@@ -87,7 +87,7 @@ test("image generation shows the skeleton instantly and opens the lightbox", asy
   await expect(imageButton).toBeVisible({ timeout: 30_000 });
   await imageButton.click();
 
-  const lightbox = page.getByTestId("media-lightbox");
+  const lightbox = page.getByTestId("media-viewer");
   await expect(lightbox).toBeVisible({ timeout: 15_000 });
   const image = page.getByTestId("lightbox-image");
   await expect(image).toBeVisible();
@@ -123,10 +123,11 @@ test("video preview opens the fullscreen lightbox", async ({ page }) => {
   }
   test.skip(!target, "no conversation with a video attachment found");
   await page.goto(`/c/${target}`);
-  const expand = page.locator('[data-testid^="message-video-expand-"]').first();
-  await expect(expand).toBeVisible({ timeout: 30_000 });
-  await expand.click();
-  await expect(page.getByTestId("media-lightbox")).toBeVisible({ timeout: 15_000 });
+  const video = page.locator('[data-testid^="message-video-"]').first();
+  await expect(video).toBeVisible({ timeout: 30_000 });
+  // Clicking the video frame (above the native control bar) opens the viewer.
+  await video.click({ position: { x: 40, y: 40 } });
+  await expect(page.getByTestId("media-viewer")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("lightbox-video")).toBeVisible();
   await expect(page.getByTestId("lightbox-video-duration")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("lightbox-video-resolution")).toBeVisible();

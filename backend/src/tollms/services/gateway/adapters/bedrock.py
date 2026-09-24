@@ -5,6 +5,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
+from tollms.services.gateway.caching import bedrock_system
 from tollms.services.gateway.adapters.base import (
     THINK_CLOSE,
     THINK_OPEN,
@@ -195,7 +196,7 @@ class BedrockAdapter(BaseProviderAdapter):
         resolved_model_id = resolve_bedrock_model_id(self.model_id, self.credentials.get("region", "us-east-1"))
         payload: dict = {"modelId": resolved_model_id, "messages": rest}
         if system:
-            payload["system"] = system
+            payload["system"] = bedrock_system(self.prompt_cache, system)
         thinking = bedrock_thinking_fields(
             resolved_model_id, self.reasoning_level, self.max_output_tokens
         )
