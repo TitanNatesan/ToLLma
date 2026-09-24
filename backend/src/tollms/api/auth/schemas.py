@@ -30,6 +30,7 @@ class UserRead(BaseModel):
     full_name: str | None
     username: str | None = None
     email_verified: bool
+    platform_role: str = "user"
     auth_provider: AuthProvider
     # Provider-aware surface: "local" shows password management, "google" does not.
     provider: str = "local"

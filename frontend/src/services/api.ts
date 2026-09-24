@@ -257,34 +257,6 @@ export function attachmentContentUrl(attachmentId: string): string {
   return `${apiBase()}/api/v1/chat/attachments/${attachmentId}/content`;
 }
 
-// --- media generation (images + videos) -----------------------------------
-
-export interface MediaGenerateResult {
-  attachment: ChatAttachment;
-  latency_ms: number;
-}
-
-export function generateMediaImage(data: {
-  provider_id: string;
-  model_id: string;
-  prompt: string;
-  size?: string;
-  quality?: string;
-}): Promise<MediaGenerateResult> {
-  return post<MediaGenerateResult>("/api/v1/media/images", data);
-}
-
-export function generateMediaVideo(data: {
-  provider_id: string;
-  model_id: string;
-  prompt: string;
-  size?: string;
-  seconds?: string;
-  reference_attachment_id?: string | null;
-}): Promise<MediaGenerateResult> {
-  return post<MediaGenerateResult>("/api/v1/media/videos", data);
-}
-
 export async function streamChat(
   body: {
     provider_id: string;

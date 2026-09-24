@@ -60,6 +60,9 @@ class RequestLog(TimestampedModel):
         Index("ix_request_logs_user_created", "user_id", "created_at"),
         Index("ix_request_logs_status", "status"),
         Index("ix_request_logs_conversation", "conversation_id", "created_at"),
+        # Platform-admin error analytics.
+        Index("ix_request_logs_completed_status", "request_completed_at", "status"),
+        Index("ix_request_logs_error_code", "error_code"),
     )
 
 

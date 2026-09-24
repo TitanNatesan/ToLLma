@@ -3,12 +3,16 @@ export interface HealthResponse {
   database?: string;
 }
 
+/** Platform-wide role returned by `/auth/me`; gates the /admin console. */
+export type PlatformRole = "user" | "platform_admin";
+
 export interface User {
   id: string;
   email: string;
   full_name: string | null;
   username?: string | null;
   email_verified: boolean;
+  platform_role: PlatformRole;
   auth_provider: "EMAIL" | "GOOGLE";
   /** Auth identity: "local" shows password management, "google" does not. */
   provider: "local" | "google";

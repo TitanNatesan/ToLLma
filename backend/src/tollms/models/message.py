@@ -50,6 +50,10 @@ class Message(SoftDeleteMixin, TimestampedModel):
         Index("ix_messages_status", "status"),
         # Analytics: user-scoped time-range scans (always filtered to role=ASSISTANT).
         Index("ix_messages_user_role_created", "user_id", "role", "created_at"),
+        # Platform-admin aggregations (time + route dimensions).
+        Index("ix_messages_created_status", "created_at", "status"),
+        Index("ix_messages_provider_created", "provider_id", "created_at"),
+        Index("ix_messages_model_created", "model_id", "created_at"),
         Index(
             "ix_messages_session_id", "session_id",
             postgresql_where=text("session_id IS NOT NULL"),

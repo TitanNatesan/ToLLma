@@ -21,6 +21,8 @@ class Attachment(SoftDeleteMixin, TimestampedModel):
         Index("ix_attachments_conversation", "conversation_id"),
         Index("ix_attachments_message", "message_id"),
         Index("ix_attachments_created", "created_at"),
+        # Platform-admin media analytics (kind + time).
+        Index("ix_attachments_kind_created", "kind", "created_at"),
     )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -46,6 +46,7 @@ def _read(user: User):
         full_name=user.full_name,
         username=user.username,
         email_verified=user.email_verified,
+        platform_role=user.platform_role.value,
         auth_provider=user.auth_provider,
         provider=user.provider,
         has_password=user.has_password,

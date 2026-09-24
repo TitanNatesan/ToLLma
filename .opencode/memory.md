@@ -1895,3 +1895,93 @@ The thinking-level scale (`None / Low / Medium / High`) rendered clipped and pai
 - Temporary headed checks (removed after use): panel fully inside the viewport with `elementFromPoint` returning the label (nothing paints over it) at 1920×1080 and 1366×768; screenshot at `frontend/test-results/thinking-selector-final.png`.
 - `tsc` and `eslint` clean on the modified file. No other chat UI touched.
 - Note: the 390px mobile check could not run because the mock test setup's model dropdown does not open at that width (test-harness limitation, not the selector).
+
+---
+
+## 2026-09-24 — Platform Administration System (analytics, costs, cache, health)
+
+### Requirement Completed
+Platform-wide admin analytics + monitoring: a role-gated `/api/admin/*` surface (11 endpoints) returning aggregates only, a dark-first Recharts dashboard at `/admin` with eleven sections, daily usage rollups, cost/cache/media/error/health intelligence, a security & privacy audit, and future-proofing for organizations/RBAC/billing. Delivered with four parallel sub-agents (analytics engines, observability engines, frontend dashboard, tests/security) plus a Lead-frozen contract.
+
+### Files Created
+Backend: `models/usage_aggregate.py`; migrations `d1a2b3c4d5e6_user_platform_role.py`, `e2b3c4d5e6f7_admin_usage_aggregates.py`; `api/admin/{__init__,schemas,router}.py`; `services/admin/{__init__,dashboard,usage,tokens,costs,cache,media,errors,health,models,providers,users,rollup}.py`; `scripts/promote_admin.py`; `tests/admin/{__init__,test_admin_access,test_admin_privacy,test_admin_aggregation,test_admin_rollup}.py`.
+Frontend: `app/admin/page.tsx` + 24 components (`KpiCard`, `TrendChart`, `StackedBarChart`, `HBarChart`, `DonutBreakdown`, `DataTable`, `RangePicker`, `TabNav`, `ForbiddenState`, `HealthPanel`, eleven section components, skeletons, page-local `format.ts`); `services/admin.ts`; `types/admin.ts`; `app/admin/__tests__/format.test.ts`; `e2e/admin.spec.ts`.
+Docs: `docs/admin-architecture.md`, `docs/admin-security-report.md`.
+
+### Files Modified
+`models/user.py` (+`PlatformRole`, `platform_role`), `models/{message,request_log,attachment}.py` (admin composite indexes), `models/__init__.py`, `core/security.py` (`platform_admin_required` placed after `get_current_user`), `api/auth/{schemas,service}.py` (`platform_role` in `/auth/me`), `main.py` (admin router), `frontend/src/components/Sidebar/Sidebar.tsx` (role-gated Admin nav), `frontend/src/types/index.ts` (+`platform_role`), `frontend/package.json` (+`recharts@3.10.1`), admin components (`fmtPercent` for pre-percent error rates).
+
+### Decisions
+- **Role:** `users.platform_role` enum (`USER`|`PLATFORM_ADMIN`) with `platform_admin_required` (401 anonymous, 403 regular, 200 admin); promotion/demotion via `scripts/promote_admin.py`. Future organization roles live on memberships so they can never widen the platform gate.
+- **Real ledger, no parallel tables:** the task named `usage_records`/`requests`/`provider_requests`/`generation_jobs`, which do not exist; the system maps onto `messages` + `request_logs` + `attachments` + `generation_runs`.
+- **Live aggregation is authoritative** (new composite indexes), with `usage_daily_aggregates` (day/user/provider/model, idempotent `ON CONFLICT` upsert) as the long-range/billing accelerator — chosen over a materialized view because a matview cannot carry the per-scope unique constraint, cannot upsert incrementally, and is harder to test idempotently.
+- **Layering:** engines return plain mappings validated by frozen Pydantic `response_model`s; `AdminWindow` crosses the api→services boundary so `services/admin/*` never imports `api/*`.
+- **Privacy boundary:** static scan + runtime marker tests + content-free schemas. Admins see counts/tokens/costs/latency/statuses/names/emails/media bytes; never content, prompts, responses, attachments, or credentials.
+- **Units:** `error_rate` is percent (0..100); `hit_rate`/`cached_share`/`estimated_share` are fractions (0..1) — frontend uses `fmtPercent` vs `fmtRate` accordingly.
+
+### Verification
+- **Targeted backend tests:** `tests/admin` **16 passed / 0 failed** (401/403/200 access matrix, privacy static+runtime scans, aggregation correctness, rollup idempotency).
+- **Frontend:** `tsc`/`eslint` clean; vitest admin format **7 passed**; `recharts` installed **inside the container** (`docker compose exec frontend npm install recharts`) after a host-only install caused a dev-server "Module not found" build error.
+- **Live API** (promoted live admin): all 11 endpoints **200**; **dashboard 268 ms** (<300 ms target), other endpoints 24–149 ms, health 36 ms warm; regular account **403** on every endpoint; dashboard payload free of content keys.
+- **Headed Playwright** `e2e/admin.spec.ts`: regular user sees the forbidden state and no admin nav; platform admin sees the gated nav, overview KPIs, all eleven tabs and Recharts containers (2 passed, 1 retry after the first cold compile).
+- `alembic check` green; `tollms.main` imports; migration applied to the dev database.
+
+### Recommended Next Steps
+- Schedule `rollup.rebuild_day` (APScheduler) and add an `admin_audit_log` table (admin id, endpoint, window, at).
+- Organizations/memberships + subscriptions tables when billing lands; enterprise ranges read from the rollup table.
+- Fix the pre-existing cache bridge lock (`services/cache/manager.py::_bridge`) that makes the first sync cache call slow.
+
+---
+
+## 2026-09-24 — Admin Navigation Refactor, /generate Removal, Live SSE Health
+
+### Requirement Completed
+`/admin` now behaves like a SaaS observability dashboard: the left sidebar switches from conversations to an **Admin Navigation** list (Overview…Health), sections are stacked `<section id>` blocks with hash navigation (`/admin#tokens`), smooth scroll and IntersectionObserver active highlighting. The standalone `/generate` page and its debug media API are removed — image/video generation stays chat-native. The Health section is now a live SSE panel (psutil host metrics, DB/cache/queue probes every 2s, rolling 60-sample charts, Live/Reconnecting/Disconnected badge with 1s/2s/5s/10s backoff).
+
+### Files Created
+Backend: `services/admin/live_health.py` (sample/stream engine), `services/admin/activity.py` (in-flight request counter), `tests/admin/test_admin_live_health.py`.
+Frontend: `components/Sidebar/SidebarAdmin.tsx`, `app/admin/useSectionObserver.ts`, `hooks/useAdminHealthStream.ts`, `app/admin/components/LiveHealthCharts.tsx`.
+
+### Files Modified
+Backend: `api/admin/{router,schemas}.py` (`GET /api/admin/health/stream` + `AdminLiveHealth`), `main.py` (media router removed; request-counter middleware), `pyproject.toml`/`uv.lock` (+`psutil` 7.2.2), `tests/test_media.py` (media-API tests removed; chat media tests kept).
+Frontend: `components/Sidebar/Sidebar.tsx` (admin navigator on `/admin`), `app/admin/page.tsx` (stacked sections + hash), `app/admin/components/HealthSection.tsx` (live cards/charts/badge + sample counter), `types/admin.ts` (live payload types), `services/api.ts` (`generateMedia*` removed), `components/Sidebar/SidebarNavigation.tsx` (Generate entry removed), `e2e/admin.spec.ts` (nav + live-health tests).
+Deleted: `backend/src/tollms/api/media/**`, `frontend/src/app/generate/**`, `frontend/src/app/admin/components/TabNav.tsx`, `frontend/e2e/live-media.spec.ts`.
+Docs: `docs/validation-report.md` (removal noted; no dead `/generate` references).
+
+### Decisions
+- **Hash-driven admin nav**: sidebar highlight comes from `hashchange` (validated against the section id list, default `overview`); the page scrollspy uses IntersectionObserver with `rootMargin: -20% 0px -60% 0px` (highest ratio wins, top tiebreak). Conversation routes keep the conversation list untouched.
+- **Generate removal end-to-end**: page, sidebar entry, API client helpers, `api/media` debug router, and its tests. Chat media flows through the gateway `_MediaGenerationAdapter` and is unaffected; authenticated `/generate` now 404s. `uploadChatAttachment` stays (composer uses it).
+- **Live health sampling**: psutil for CPU/memory/disk/load/uptime; in-process active-request counter middleware; DB probe with `pg_stat_activity` count + latency; Valkey `INFO memory` for cache MB; queue running = local active generations, pending = RUNNING rows without a local driver (documented approximation). SSE yields immediately then every 2s with disconnect checks and a per-tick session (no request session held).
+- **Frontend stream**: `EventSource` with credentials, 60-sample ring buffer, backoff 1s→2s→5s→10s (reset on event), 403 stops reconnecting; only the Health section re-renders — no react-query invalidation, no page refetch.
+
+### Verification
+- Backend: `tests/admin` + `tests/test_media.py` → **22 passed / 0 failed**; `alembic check` green; `tollms.main` imports; psutil 7.2.2 in the container.
+- Live SSE (curl, admin cookie): **3 events in 5 s**, exact frozen keys, real metrics (CPU 4.6 %, mem 30.1 %, disk 12.4 %, DB ok/5 conns/13 ms, cache ok/1.1 MB); anonymous → 401.
+- Frontend: `tsc`/`eslint` clean; vitest **126/126**.
+- Headed Playwright `e2e/admin.spec.ts`: regular-user forbidden state + no admin nav; admin stacked sections with hash navigation; live health SSE cards/charts/rolling window (all passing).
+- `/generate`: authenticated **404**; no dead references (docs updated).
+
+### Recommended Next Steps
+- Schedule `rollup.rebuild_day` and add an `admin_audit_log`.
+- Replace the pending-jobs approximation with a real queue if one lands.
+- Consider persisting the active section hash across reloads (currently the hash drives it naturally).
+
+---
+
+## 2026-09-24 — Admin Page: Single-Section Rendering (no stacked duplication)
+
+### Requirement Completed
+The admin dashboard stacked all eleven sections on one long page (charts/tables appeared repeatedly). It now renders **exactly one section at a time**, chosen from the sidebar/URL hash — no duplicated components on screen.
+
+### Files Modified
+`frontend/src/app/admin/page.tsx` (hash-driven `useHashSection` via `useSyncExternalStore`; renders only the active `<section>`), `frontend/e2e/admin.spec.ts` (asserts exactly one `admin-panel-*`, section swapping, no duplicate panels), `.opencode/memory.md`.
+Deleted: `frontend/src/app/admin/useSectionObserver.ts` (scrollspy no longer needed).
+
+### Decisions
+- The URL hash stays the single source of truth (`/admin#tokens`); sidebar clicks and deep links both drive it.
+- Section queries remain registered with react-query (cached, no refetch churn) but only the active section's component tree renders — so the live health SSE connection exists only while Health is open.
+- Overview keeps its summary cards/charts by design; the dedicated sections are unchanged, they simply no longer render simultaneously.
+
+### Verification
+- Headed Playwright `e2e/admin.spec.ts`: **4 passed** with `--retries=0` (regular-user gate, one-section-at-a-time + hash swap, live SSE health cards/charts/rolling window).
+- `tsc`/`eslint` clean; vitest **126/126**. UI-only change — no backend touched.

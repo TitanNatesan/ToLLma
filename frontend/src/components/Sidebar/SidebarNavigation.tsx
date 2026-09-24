@@ -6,7 +6,6 @@ import { BarChart3, Cpu, Image as ImageIcon, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ALL_NAV = [
-  { href: "/generate", label: "Generate", icon: ImageIcon },
   { href: "/providers", label: "Providers", icon: Cpu },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },

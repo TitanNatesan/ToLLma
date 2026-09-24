@@ -38,7 +38,7 @@ chat/reasoning ≈ fractions of a cent. OpenWebUI calls were against the user's 
 
 ## In-UI media generation (2026-09-23)
 
-`/generate` (new page + `POST /api/v1/media/images` and `/videos`) runs image and video generation through the same
+`/generate` (removed 2026-09-24 — generation is chat-native; the debug `POST /api/v1/media/images|videos` routes are gone) ran image and video generation through the same
 endpoint-aware adapter factory and stores results as attachments. Verified full-screen headed Playwright
 (`e2e/live-media.spec.ts`, 2 passed in 2.9m):
 
@@ -59,8 +59,8 @@ Constraints and fixes discovered while testing in the UI:
   generation; video create/poll/download now retry transport errors with backoff, and provider failures map to 502
   instead of an unhandled 500.
 - **`/api/v1/models` omitted endpoint fields**: the models router built `ModelRead` by hand and dropped
-  `primary_endpoint`/`supported_endpoints`/`supports_embeddings`; fixed, which is what lets `/generate` discover the
-  media-capable models.
+  `primary_endpoint`/`supported_endpoints`/`supports_embeddings`; fixed, which is what lets the chat composer discover
+  the media-capable models.
 
 ## Unified chat media generation (2026-09-23)
 

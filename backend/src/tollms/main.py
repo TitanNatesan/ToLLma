@@ -14,6 +14,8 @@ from tollms.api.attachments.router import router as attachments_router
 from tollms.api.auth.router import router as auth_router
 from tollms.api.conversations.router import router as conversations_router
 from tollms.api.gateway.router import router as gateway_router
+from tollms.api.admin.router import router as admin_router
+from tollms.services.admin import activity as admin_activity
 from tollms.api.health.router import router as health_router
 from tollms.api.models.router import router as models_router
 from tollms.api.providers.router import router as providers_router
@@ -21,7 +23,6 @@ from tollms.api.repository.router import router as repository_router
 from tollms.api.settings.router import router as settings_router
 from tollms.api.exports.router import router as exports_router
 from tollms.api.messages.router import router as messages_router
-from tollms.api.media.router import router as media_router
 from tollms.api.request_logs.router import router as request_logs_router
 from tollms.api.search.router import router as search_router
 from tollms.api.shares.router import router as shares_router
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
     async def access_log(request: Request, call_next):
         request_id = uuid.uuid4().hex[:8]
         start = time.monotonic()
+        admin_activity.request_started()
         try:
             response = await call_next(request)
             logger.info(
@@ -120,6 +122,8 @@ def create_app() -> FastAPI:
         except Exception:
             logger.exception("%s %s %s failed", request_id, request.method, request.url.path)
             raise
+        finally:
+            admin_activity.request_finished()
 
     app.include_router(health_router)
     app.include_router(auth_router)
@@ -135,8 +139,8 @@ def create_app() -> FastAPI:
     app.include_router(exports_router)
     app.include_router(shares_router)
     app.include_router(messages_router)
-    app.include_router(media_router)
     app.include_router(request_logs_router)
+    app.include_router(admin_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app
 

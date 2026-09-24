@@ -22,6 +22,14 @@ class AuthProvider(str, enum.Enum):
     GOOGLE = "GOOGLE"
 
 
+class PlatformRole(str, enum.Enum):
+    """Platform-wide role. Extensible for future RBAC (org roles live on
+    memberships, never here) — analytics/admin gates read this column only."""
+
+    USER = "user"
+    PLATFORM_ADMIN = "platform_admin"
+
+
 class User(SoftDeleteMixin, TimestampedModel):
     __tablename__ = "users"
     __table_args__ = (
@@ -63,6 +71,15 @@ class User(SoftDeleteMixin, TimestampedModel):
     google_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Platform administration (analytics/monitoring only). Future RBAC keeps
+    # organization roles on memberships; this stays the platform-level gate.
+    platform_role: Mapped[PlatformRole] = mapped_column(
+        Enum(PlatformRole, name="platform_role"),
+        default=PlatformRole.USER,
+        server_default="USER",
+        nullable=False,
+        index=True,
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Per-user UI/chat preferences (accent, enter behavior, thinking default,
     # auto-scroll, animations). JSONB so new preferences ship without a migration.

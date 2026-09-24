@@ -11,4 +11,5 @@ from tollms.models.registered_model import AIModel, EndpointType  # noqa: F401
 from tollms.models.request_log import ExportEvent, RequestLog, RequestStatus  # noqa: F401
 from tollms.models.search_index import ConversationSearchEntry  # noqa: F401
 from tollms.models.share import ConversationShare  # noqa: F401
-from tollms.models.user import AuthProvider, User  # noqa: F401
+from tollms.models.usage_aggregate import UsageDailyAggregate  # noqa: F401
+from tollms.models.user import AuthProvider, PlatformRole, User  # noqa: F401

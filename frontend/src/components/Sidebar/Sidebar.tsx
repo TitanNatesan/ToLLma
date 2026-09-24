@@ -1,23 +1,48 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { ShieldCheck } from "lucide-react";
 import { useChatStore } from "@/store/chat";
+import { useAuthStore } from "@/store/auth";
 import { cn } from "@/lib/utils";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarNavigation } from "./SidebarNavigation";
+import { SidebarAdmin, ADMIN_SECTION_IDS, type AdminSectionId } from "./SidebarAdmin";
 import { SidebarConversations } from "./SidebarConversations";
 import { SidebarProviders } from "./SidebarProviders";
 import { SidebarAnalytics } from "./SidebarAnalytics";
 import { SidebarSettings } from "./SidebarSettings";
 import { SidebarFooter } from "./SidebarFooter";
 
+/** Admin sidebar highlight follows the URL hash (fragment navigation fires hashchange). */
+function subscribeAdminHash(callback: () => void) {
+  window.addEventListener("hashchange", callback);
+  return () => window.removeEventListener("hashchange", callback);
+}
+
+function getAdminHash(): string {
+  return window.location.hash.slice(1);
+}
+
+function getAdminHashServer(): string {
+  return "";
+}
+
+function adminSectionFromHash(hash: string): AdminSectionId {
+  return (ADMIN_SECTION_IDS as readonly string[]).includes(hash)
+    ? (hash as AdminSectionId)
+    : "overview";
+}
+
 /**
  * Primary application navigation (ChatGPT-style).
  * Content switches on the active route; the header and profile footer persist.
  *
  *   /c/*, /      -> conversations context + full nav
+ *   /admin*      -> admin section navigator (platform admins only)
  *   /providers*  -> providers context + nav minus Providers
  *   /analytics*  -> report shortcuts + nav minus Analytics
  *   /settings*   -> settings sections (nav lives one hop away via logo)
@@ -25,6 +50,11 @@ import { SidebarFooter } from "./SidebarFooter";
 export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => void }) {
   const pathname = usePathname();
   const { leftSidebarOpen, sidebarWidth, setSidebarWidth } = useChatStore();
+  const user = useAuthStore((s) => s.user);
+  const isPlatformAdmin = user?.platform_role === "platform_admin";
+  const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
+  const adminHash = useSyncExternalStore(subscribeAdminHash, getAdminHash, getAdminHashServer);
+  const adminActiveId = adminSectionFromHash(adminHash);
 
   // Navigation links stay hidden until the profile gear toggles them open.
   // navPath records which route the menu was opened on; navigating away
@@ -62,13 +92,15 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   }, [isResizing, setSidebarWidth]);
 
   const currentWidth = leftSidebarOpen ? sidebarWidth : 0;
-  const ariaLabel = isProvidersPage
-    ? "Provider list"
-    : isAnalyticsPage
-      ? "Analytics"
-      : isSettingsPage
-        ? "Settings"
-        : "Conversations";
+  const ariaLabel = isAdminPage
+    ? "Admin navigation"
+    : isProvidersPage
+      ? "Provider list"
+      : isAnalyticsPage
+        ? "Analytics"
+        : isSettingsPage
+          ? "Settings"
+          : "Conversations";
 
   // Below md the sidebar becomes an off-canvas overlay so page content keeps
   // the full viewport width (analytics/settings need it).
@@ -90,7 +122,11 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
 
       {/* Route-aware context (the only scrollable region; footer stays put) */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {isProvidersPage ? (
+        {isAdminPage ? (
+          isPlatformAdmin ? (
+            <SidebarAdmin activeId={adminActiveId} />
+          ) : null
+        ) : isProvidersPage ? (
           <SidebarProviders />
         ) : isAnalyticsPage ? (
           <SidebarAnalytics />
@@ -102,6 +138,27 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
       </div>
 
       <SidebarNavigation open={navOpen} />
+      {navOpen && isPlatformAdmin && (
+        <nav
+          aria-label="Platform administration"
+          className="border-t border-zinc-200 px-2 py-2 dark:border-zinc-800"
+          data-testid="sidebar-admin-nav"
+        >
+          <Link
+            href="/admin"
+            aria-current={isAdminPage ? "page" : undefined}
+            data-testid="sidebar-nav-admin"
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+              "text-tollma-700 hover:bg-tollma-50 dark:text-tollma-300 dark:hover:bg-tollma-950/40",
+              isAdminPage && "bg-tollma-50 dark:bg-tollma-950/40",
+            )}
+          >
+            <ShieldCheck className="size-3.5 shrink-0" />
+            <span>Admin</span>
+          </Link>
+        </nav>
+      )}
       <SidebarFooter navOpen={navOpen} onToggleNav={toggleNav} />
     </div>
   );

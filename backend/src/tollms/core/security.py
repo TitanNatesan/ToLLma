@@ -301,3 +301,17 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
     # UI without a Valkey write on every request.
     await touch_session_throttled(sid, session)
     return user
+async def platform_admin_required(user=Depends(get_current_user)):
+    """Platform admin gate for /api/admin/*. 403 for regular accounts.
+
+    Reads the platform-level role only — organization/RBAC roles will live on
+    memberships and must not widen this gate.
+    """
+    from tollms.core.exceptions import ForbiddenError
+    from tollms.models.user import PlatformRole
+
+    if user.platform_role != PlatformRole.PLATFORM_ADMIN:
+        raise ForbiddenError("platform administrator access required")
+    return user
+
+
