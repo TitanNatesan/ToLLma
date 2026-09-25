@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Cpu, Image as ImageIcon, Settings } from "lucide-react";
+import { BarChart3, Cpu, Image as ImageIcon, KeyRound, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ALL_NAV = [
   { href: "/providers", label: "Providers", icon: Cpu },
+  { href: "/api-keys", label: "API Keys", icon: KeyRound },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -31,7 +32,7 @@ export function SidebarNavigation({ open }: { open: boolean }) {
             <Link
               key={item.href}
               href={item.href}
-              data-testid={`sidebar-nav-${item.label.toLowerCase()}`}
+              data-testid={`sidebar-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
               className={cn(
                 "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
                 "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",

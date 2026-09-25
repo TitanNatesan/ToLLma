@@ -13,6 +13,7 @@
 import { ApiError } from "@/services/api";
 import { getAccessToken, useAuthStore } from "@/store/auth";
 import type {
+  AdminApiKeys,
   AdminCache,
   AdminCosts,
   AdminDashboard,
@@ -136,4 +137,9 @@ export function getAdminUsers(params: AdminQueryParams): Promise<AdminUsers> {
 /** Health is platform-wide (not range-scoped); extra query params are ignored. */
 export function getAdminHealth(): Promise<AdminHealth> {
   return adminGet<AdminHealth>("/api/admin/health");
+}
+
+/** Platform-wide API-key inventory and usage analytics. */
+export function getAdminApiKeys(params: AdminQueryParams): Promise<AdminApiKeys> {
+  return adminGet<AdminApiKeys>(`/api/admin/api-keys?${query(params)}`);
 }

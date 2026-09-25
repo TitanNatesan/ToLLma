@@ -25,6 +25,7 @@ ADMIN_ENDPOINTS: dict[str, set[str]] = {
         "error_rate",
         "images",
         "videos",
+        "api_keys",
         "spend_series",
         "token_series",
         "top_models",

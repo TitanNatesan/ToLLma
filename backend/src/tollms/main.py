@@ -10,11 +10,14 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from tollms.api.analytics.router import router as analytics_router
+from tollms.api.analytics_api.router import router as analytics_api_router
 from tollms.api.attachments.router import router as attachments_router
 from tollms.api.auth.router import router as auth_router
 from tollms.api.conversations.router import router as conversations_router
 from tollms.api.gateway.router import router as gateway_router
 from tollms.api.admin.router import router as admin_router
+from tollms.api.keys.router import router as keys_router
+from tollms.api.public_gateway.router import router as public_gateway_router
 from tollms.services.admin import activity as admin_activity
 from tollms.api.health.router import router as health_router
 from tollms.api.models.router import router as models_router
@@ -134,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(attachments_router)
     app.include_router(gateway_router)
     app.include_router(analytics_router)
+    app.include_router(analytics_api_router)
     app.include_router(settings_router)
     app.include_router(search_router)
     app.include_router(exports_router)
@@ -141,6 +145,8 @@ def create_app() -> FastAPI:
     app.include_router(messages_router)
     app.include_router(request_logs_router)
     app.include_router(admin_router)
+    app.include_router(keys_router)
+    app.include_router(public_gateway_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app
 

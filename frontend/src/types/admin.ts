@@ -291,6 +291,58 @@ export interface AdminHealth {
   checks: AdminHealthCheck[];
 }
 
+// --- API keys ---------------------------------------------------------------
+
+export interface AdminApiKeyTopRow {
+  key_id: string;
+  name: string;
+  requests: number;
+  spend: string;
+  tokens: number;
+}
+
+export interface AdminApiKeySpendRow {
+  key_id: string;
+  name: string;
+  spend: string;
+  /** Fraction of total spend (0..1). */
+  share: number;
+}
+
+export interface AdminApiKeyErrorRow {
+  key_id: string;
+  name: string;
+  errors: number;
+  /** Percent (0..100), matching the other admin error surfaces. */
+  error_rate: number;
+}
+
+export interface AdminApiKeyCacheRow {
+  key_id: string;
+  name: string;
+  savings: string;
+}
+
+export interface AdminApiKeyGrowthPoint {
+  bucket: string;
+  created: number;
+}
+
+/** `GET /api/admin/api-keys?preset=…` — platform-wide key analytics. */
+export interface AdminApiKeys {
+  range: AdminRange;
+  total: number;
+  active: number;
+  disabled: number;
+  expired: number;
+  rotated: number;
+  top_keys: AdminApiKeyTopRow[];
+  spend_by_key: AdminApiKeySpendRow[];
+  errors_by_key: AdminApiKeyErrorRow[];
+  cache_savings_by_key: AdminApiKeyCacheRow[];
+  growth: AdminApiKeyGrowthPoint[];
+}
+
 // --- Live health stream -----------------------------------------------------
 
 /** Connection state of the admin health SSE stream. */

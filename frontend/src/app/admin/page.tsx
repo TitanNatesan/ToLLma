@@ -15,6 +15,7 @@ import { ADMIN_SECTIONS, ADMIN_SECTION_IDS, type AdminSectionId } from "@/compon
 import { useAuthStore } from "@/store/auth";
 import { cn } from "@/lib/utils";
 import {
+  getAdminApiKeys,
   getAdminCache,
   getAdminCosts,
   getAdminDashboard,
@@ -29,6 +30,7 @@ import {
   isForbiddenError,
 } from "@/services/admin";
 import type { AdminPreset, AdminQueryParams } from "@/types/admin";
+import { ApiKeysSection } from "./components/ApiKeysSection";
 import { CacheSection } from "./components/CacheSection";
 import { CostsSection } from "./components/CostsSection";
 import { ErrorsSection } from "./components/ErrorsSection";
@@ -88,9 +90,18 @@ interface SectionQuery {
 }
 
 /** Per-section load state: skeleton while pending, retryable error otherwise. */
-function SectionBody({ query, children }: { query: SectionQuery; children: ReactNode }) {
+function SectionBody({
+  query,
+  children,
+  degrade = false,
+}: {
+  query: SectionQuery;
+  children: ReactNode;
+  /** Let the section render its own empty state instead of a hard error. */
+  degrade?: boolean;
+}) {
   if (query.isPending) return <SectionSkeleton />;
-  if (query.isError) {
+  if (query.isError && !degrade) {
     return (
       <ErrorState
         title="Admin analytics unavailable"
@@ -175,6 +186,7 @@ export default function AdminPage() {
   const cache = useAdminQuery("cache", params, getAdminCache, enabled);
   const errors = useAdminQuery("errors", params, getAdminErrors, enabled);
   const health = useAdminQuery("health", params, getAdminHealth, enabled);
+  const apiKeys = useAdminQuery("api-keys", params, getAdminApiKeys, enabled);
 
   const queries = [
     dashboard,
@@ -188,6 +200,7 @@ export default function AdminPage() {
     cache,
     errors,
     health,
+    apiKeys,
   ];
   const forbidden = !isAdmin || queries.some((query) => isForbiddenError(query.error));
   const refreshing = queries.some((query) => query.isFetching);
@@ -256,6 +269,8 @@ export default function AdminPage() {
         return errors;
       case "health":
         return health;
+      case "api-keys":
+        return apiKeys;
     }
   }
 
@@ -297,6 +312,8 @@ export default function AdminPage() {
         return errors.data ? <ErrorsSection data={errors.data} /> : null;
       case "health":
         return health.data ? <HealthSection data={health.data} /> : null;
+      case "api-keys":
+        return <ApiKeysSection data={apiKeys.data ?? null} error={apiKeys.error} />;
     }
   }
 
@@ -323,7 +340,7 @@ export default function AdminPage() {
                 icon={section.icon}
                 active
               />
-              <SectionBody query={sectionQuery(section.id)}>
+              <SectionBody query={sectionQuery(section.id)} degrade={section.id === "api-keys"}>
                 {renderSectionBody(section.id)}
               </SectionBody>
             </section>

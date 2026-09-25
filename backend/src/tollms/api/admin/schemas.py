@@ -157,6 +157,7 @@ class AdminDashboard(BaseModel):
     top_models: list[AdminModelRow] = Field(default_factory=list)
     top_providers: list[AdminProviderRow] = Field(default_factory=list)
     recent_errors: list[AdminErrorRow] = Field(default_factory=list)
+    api_keys: "AdminApiKeys"
     health: "AdminHealthSummary"
 
 
@@ -349,6 +350,58 @@ class AdminAnalyticsRequest(BaseModel):
     granularity: str | None = None
     limit: int = Field(default=10, ge=1, le=50)
     search: str | None = Field(default=None, max_length=120)
+
+
+# --- API keys ---------------------------------------------------------------
+
+
+class AdminApiKeyUsageRow(BaseModel):
+    key_id: uuid.UUID | None = None
+    name: str
+    requests: int = 0
+    spend: Decimal = Decimal(0)
+    tokens: int = 0
+
+
+class AdminApiKeySpendRow(BaseModel):
+    key_id: uuid.UUID | None = None
+    name: str
+    spend: Decimal = Decimal(0)
+    share: float = 0.0
+
+
+class AdminApiKeyErrorRow(BaseModel):
+    key_id: uuid.UUID | None = None
+    name: str
+    errors: int = 0
+    error_rate: float = 0.0
+
+
+class AdminApiKeySavingsRow(BaseModel):
+    key_id: uuid.UUID | None = None
+    name: str
+    savings: Decimal = Decimal(0)
+
+
+class AdminApiKeyGrowthPoint(BaseModel):
+    bucket: datetime
+    created: int = 0
+
+
+class AdminApiKeys(BaseModel):
+    """Frozen API-key section for `/api/admin/api-keys` and the dashboard."""
+
+    range: AdminRange
+    total: int = 0
+    active: int = 0
+    disabled: int = 0
+    expired: int = 0
+    rotated: int = 0
+    top_keys: list[AdminApiKeyUsageRow] = Field(default_factory=list)
+    spend_by_key: list[AdminApiKeySpendRow] = Field(default_factory=list)
+    errors_by_key: list[AdminApiKeyErrorRow] = Field(default_factory=list)
+    cache_savings_by_key: list[AdminApiKeySavingsRow] = Field(default_factory=list)
+    growth: list[AdminApiKeyGrowthPoint] = Field(default_factory=list)
 
 
 AdminDashboard.model_rebuild()

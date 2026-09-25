@@ -1,0 +1,193 @@
+"""API Gateway keys: virtual-key schema (keys, policies, IP rules, model access).
+
+Raw keys are never stored — only a SHA-256 hash plus a public prefix for
+identification. Policies, IP rules and per-model overrides are nullable:
+NULL means unlimited / not restricted. `parent_key_id`, `routing_strategy` and
+`metadata` are reserved for future virtual-key routing (fallback chains, load
+balancing, provider weights) so no schema rewrite is needed.
+"""
+
+import enum
+import uuid
+from datetime import datetime
+from decimal import Decimal
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
+
+
+class IpRuleType(str, enum.Enum):
+    ALLOW = "allow"
+    DENY = "deny"
+
+
+class ApiKey(SoftDeleteMixin, TimestampedModel):
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        UniqueConstraint("key_prefix", name="uq_api_keys_prefix"),
+        UniqueConstraint("key_hash", name="uq_api_keys_hash"),
+        Index("ix_api_keys_user", "user_id"),
+        Index("ix_api_keys_created", "created_at"),
+        Index("ix_api_keys_enabled", "enabled"),
+        Index("ix_api_keys_parent", "parent_key_id"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Public, non-secret identifier shown in lists (e.g. "tma_sk_live_ab12cd34").
+    key_prefix: Mapped[str] = mapped_column(String(32), nullable=False)
+    # SHA-256 hex of the raw key. The raw value is shown exactly once at creation.
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Reserved for future virtual keys: a child key inherits/routes through a
+    # parent; routing_strategy + metadata carry fallback chains, weights, etc.
+    parent_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
+    )
+    routing_strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+
+    policy: Mapped["ApiKeyPolicy | None"] = relationship(
+        back_populates="api_key", cascade="all, delete-orphan", uselist=False
+    )
+    ip_rules: Mapped[list["ApiKeyIpRule"]] = relationship(
+        back_populates="api_key", cascade="all, delete-orphan"
+    )
+    model_permissions: Mapped[list["ApiKeyModelPermission"]] = relationship(
+        back_populates="api_key", cascade="all, delete-orphan"
+    )
+
+
+class ApiKeyPolicy(TimestampedModel):
+    """One policy row per key. NULL = unlimited; 0 means blocked when set."""
+
+    __tablename__ = "api_key_policies"
+    __table_args__ = (UniqueConstraint("api_key_id", name="uq_api_key_policies_key"),)
+
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=False
+    )
+    max_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    budget_reset_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rph: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rpd: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tpd: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    daily_spend_limit: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    monthly_spend_limit: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+
+    api_key: Mapped["ApiKey"] = relationship(back_populates="policy")
+
+
+class ApiKeyIpRule(TimestampedModel):
+    __tablename__ = "api_key_ip_rules"
+    __table_args__ = (
+        Index("ix_api_key_ip_rules_key", "api_key_id"),
+        UniqueConstraint("api_key_id", "type", "cidr", name="uq_api_key_ip_rule"),
+    )
+
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[IpRuleType] = mapped_column(
+        Enum(IpRuleType, name="api_key_ip_rule_type"), nullable=False
+    )
+    # Single IP or CIDR block, IPv4 or IPv6 (validated at the API layer).
+    cidr: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    api_key: Mapped["ApiKey"] = relationship(back_populates="ip_rules")
+
+
+class ApiKeyModelPermission(TimestampedModel):
+    """Per-model override. A key with any row is restricted to those rows'
+    enabled models; provider_id/model_id NULL means "any" for that dimension."""
+
+    __tablename__ = "api_key_model_permissions"
+    __table_args__ = (
+        Index("ix_api_key_model_perms_key", "api_key_id"),
+        Index("ix_api_key_model_perms_model", "model_id"),
+        UniqueConstraint("api_key_id", "provider_id", "model_id", name="uq_api_key_model_scope"),
+    )
+
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=False
+    )
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("providers.id", ondelete="CASCADE"), nullable=True
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("models.id", ondelete="CASCADE"), nullable=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    max_budget: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
+    rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    api_key: Mapped["ApiKey"] = relationship(back_populates="model_permissions")
+
+
+class ApiRequestLog(TimestampedModel):
+    """One row per public-gateway request. Aggregates only — no payloads."""
+
+    __tablename__ = "api_request_logs"
+    __table_args__ = (
+        Index("ix_api_request_logs_key_created", "api_key_id", "created_at"),
+        Index("ix_api_request_logs_user_created", "user_id", "created_at"),
+        Index("ix_api_request_logs_created", "created_at"),
+        Index("ix_api_request_logs_model_created", "model", "created_at"),
+        Index("ix_api_request_logs_endpoint", "endpoint"),
+        Index("ix_api_request_logs_country", "country"),
+    )
+
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="success", nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(nullable=True)
+    cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 8), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    device_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    platform: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    browser: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_streaming: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

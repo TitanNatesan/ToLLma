@@ -1985,3 +1985,78 @@ Deleted: `frontend/src/app/admin/useSectionObserver.ts` (scrollspy no longer nee
 ### Verification
 - Headed Playwright `e2e/admin.spec.ts`: **4 passed** with `--retries=0` (regular-user gate, one-section-at-a-time + hash swap, live SSE health cards/charts/rolling window).
 - `tsc`/`eslint` clean; vitest **126/126**. UI-only change — no backend touched.
+
+---
+
+## 2026-09-25 — API Gateway & API Key Management (public /v1 API, budgets, analytics)
+
+### Requirement Completed
+A provider-agnostic public gateway: API keys (`tma_sk_live_…`, SHA-256 at rest, shown once), policies (budget/reset/rate/token/spend limits), IP allow/deny rules, per-model permissions, OpenAI/Anthropic/Responses-compatible endpoints translating into a single `UnifiedRequest`, Valkey rate limits + hard budgets, per-request analytics with client metadata, and a full API-keys console with Recharts analytics. Delivered with four parallel agents (keys API, public gateway, limits/analytics, frontend) over a Lead-frozen schema and contracts.
+
+### Files Created
+Backend: `models/api_key.py` (ApiKey/Policy/IpRule/ModelPermission/ApiRequestLog + future virtual-key columns), `alembic/versions/f3c4d5e6f7a8_api_gateway_keys.py`, `services/api_keys/keys.py` (generate/hash/authenticate/compile + 30s Valkey context cache), `services/gateway/unified.py` (`UnifiedRequest`), `services/gateway/model_resolution.py`, `services/gateway/translators.py`, `services/gateway/limits.py`, `services/gateway/api_logs.py`, `api/keys/{__init__,schemas,service,router}.py`, `api/public_gateway/{__init__,schemas,service,router}.py`, `tests/keys/*`, `tests/public_gateway/*`.
+Frontend: `types/apiKeys.ts`, `services/apiKeys.ts`, `app/api-keys/page.tsx` + 11 components (KeyTable, KeyForm, RawKeyDialog, PolicyForm, IpRulesEditor, ModelPermissionsEditor, KeyAnalytics, KeyDetailsPanel, …).
+Docs: memory only.
+
+### Files Modified
+`models/__init__.py`, `main.py` (keys + public gateway routers), `frontend/src/components/Sidebar/SidebarNavigation.tsx` (API Keys entry), `services/gateway/api_logs.py` (log commit fix by the Lead).
+
+### Decisions
+- **O(1) auth**: unique `key_hash` lookup + short-lived compiled `KeyContext` in Valkey (policy/permissions/IP rules included); every mutation invalidates it. 401 unknown vs 403 disabled/expired/IP-denied.
+- **Unified translation**: every endpoint → `UnifiedRequest` → adapter; no provider logic in the router/service. Adapters remain the source of truth.
+- **Model resolution**: `provider/model` (family/type/name hints) or a bare id only when unique; multiple matches → `ambiguous_model` (verified live).
+- **Limits**: atomic Valkey counters with fixed windows (rpm/rph/rpd/tpm/tpd), integer micro-USD spend counters, reservations refunded on settle; **budgets hard-403 with no overage**; rate limits fail open on cache outage, budgets fail closed while a spend counter is readable.
+- **Analytics**: one `api_request_logs` row per request (tokens/cost/latency/status/client metadata); UA parsed locally; geo is `local` for private IPs and NULL otherwise (never fabricated; optional MaxMind path).
+- **No conversations/messages** are created for public API traffic.
+- **Future virtual keys**: `parent_key_id`, `routing_strategy`, `metadata` columns reserved — no schema rewrite needed.
+
+### Verification
+- Targeted backend: `pytest -q tests/keys tests/public_gateway` → **77 passed / 0 failed**; `alembic check` green; `tollms.main` imports.
+- **Live smoke** (user-provided gateway `http://115.247.148.78:3002/api`, qwen/gpt-oss models; tiny prompts):
+  - `POST /v1/chat/completions` `model="LiveGateway/gpt-oss:20b"` → 200 `chat.completion`, usage 72/40/112.
+  - `POST /v1/messages` (Anthropic payload) `model="LiveGateway/qwen3-coder:30b"` → 200 `type=message`, `stop_reason=end_turn`, text "pong", usage 13/2.
+  - Bare alias `qwen3-coder:30b` → **`ambiguous_model`** (correct: two providers expose it).
+  - `GET /v1/models` → 9 allowed models.
+  - `api_request_logs` → rows with endpoint/model/status/tokens/cost/device_type/country/latency.
+- Frontend: tsc/eslint clean, vitest 126/126; headed `/api-keys` check (list + create form) with screenshots.
+- **Lead fix**: `api_logs.log_request` flushed but never committed (request session rolled back) — now commits its own row; re-verified live.
+
+### Recommended Next Steps
+- Strip/normalize ` thinking` spans for public API responses (or expose `reasoning_content`).
+- Add `/v1/images/edits` adapter support when an adapter exposes an edit method.
+- Geo: wire a MaxMind DB path for country/city/region.
+- Virtual keys: implement fallback chains/routing using the reserved columns.
+
+---
+
+## 2026-09-25 — API Key Analytics, Visualization & UX (V1.5)
+
+### Requirement Completed
+The API Keys console became a developer-grade observability platform: micro-UX (budget bars, 7-state status pills, no native controls), a rich Analytics tab (request/performance/cost/token/provider/model/endpoint metrics, 8+ visualizations, derived insights), Network intelligence (IPs/locations/devices/SDK clients), a platform-admin API Keys section, and a reusable analytics engine (`services/analytics/*`) behind a frozen `/api/analytics/*` API with Valkey caching and bounded query budgets.
+
+### Files Created
+Backend: `services/analytics/{__init__,aggregations,costs,latency,tokens,providers,models,apikeys,network,timeseries,insights}.py`; `api/analytics_api/{__init__,schemas,service,router}.py`; `services/admin/api_keys.py`; `tests/analytics_api/*`.
+Frontend: `app/api-keys/components/analytics/*` (15 components), `NetworkPanel.tsx`, `BudgetBar.tsx`, `SelectField.tsx`, `app/admin/components/ApiKeysSection.tsx`, `e2e/api-keys-analytics.spec.ts`, `e2e/api-keys-ux.spec.ts`.
+
+### Files Modified
+Backend: `api/admin/{router,schemas}.py` (+`GET /api/admin/api-keys`, `dashboard.api_keys`), `main.py` (analytics_api router), `tests/admin/test_admin_access.py` (expected dashboard keys + `api_keys`).
+Frontend: `types/apiKeys.ts`, `services/apiKeys.ts`, `KeyAnalytics.tsx`, `KeyDetailsPanel.tsx`, `KeyTable.tsx`, `StatusPill.tsx`, `NumberField.tsx`, `PolicyForm.tsx`, `IpRulesEditor.tsx`, `RawKeyDialog.tsx`, `KeyForm.tsx`, `admin/page.tsx`, `SidebarAdmin.tsx`, `services/admin.ts`, `types/admin.ts`.
+
+### Decisions
+- **One reusable engine** (`services/analytics/*`) serves both per-key and platform scopes; routers thin; frozen Pydantic models; 60s Valkey caching keyed by (user, endpoint, params, minute-floored end) so live windows stay cacheable.
+- **Performance**: bounded grouped SQL per endpoint (platform 6 queries, per-key detail 5, timeseries 4, network 6, insights 3); measured **159–245ms** on the dev dataset (<300ms target).
+- **Insights are derived, not dumped**: cost-driver share, traffic-driver share, token efficiency, cache savings, and period-over-period deltas with severity.
+- **Network intelligence**: top/unique/new/blocked IPs (CIDR rules), locations (NULL-safe; private = "local"), devices, and SDK client detection from User-Agent (openai-python, anthropic, claude-code, cursor, cline, continue, curl, custom/unknown).
+- **UX**: budget = progress bar + `% used` + `$ remaining`; seven status states (Enabled/Disabled/Expired/Rate Limited/Budget Exceeded/Rotated/Inactive) with icons + tooltips; number/select controls replaced with styled primitives (no native widgets).
+- Rates are fractions (0..1) in this API (admin uses percent) — the UI normalizes defensively.
+
+### Verification
+- Backend targeted: `pytest -q tests/analytics_api tests/admin/test_admin_access.py` → **19 passed / 0 failed**; `compileall` + `alembic check` green.
+- Frontend: `tsc`/`eslint` clean; vitest **126/126**.
+- Headed Playwright: `api-keys-analytics` + `api-keys-ux` specs pass (agents' runs 2+2 with screenshots `api-keys-analytics.png`, `api-keys-network.png`, `api-keys-ux.png`, `admin-api-keys.png`).
+- Live endpoints returned 200 with the seeded "smoke" key (2 requests, 124 tokens) and the admin section rendered real KPIs.
+
+### Recommended Next Steps
+- Add hourly rollups for very large ranges; expose ASN/ISP via a geo database.
+- Record rate-limit/budget denials as first-class error categories in `api_request_logs`.
+- Dedupe `services/admin` aggregations onto the new analytics engine over time.

@@ -14,6 +14,7 @@ from tollms.api.admin import schemas
 from tollms.core.deps import get_db
 from tollms.core.security import platform_admin_required
 from tollms.services.admin import AdminWindow
+from tollms.services.admin import api_keys as api_keys_service
 from tollms.services.admin import cache as cache_service
 from tollms.services.admin import costs as costs_service
 from tollms.services.admin import dashboard as dashboard_service
@@ -69,7 +70,20 @@ def dashboard(
     db: Session = Depends(get_db),
     _admin=Depends(platform_admin_required),
 ) -> schemas.AdminDashboard:
-    return dashboard_service.dashboard(db, window, limit=limit)
+    payload = dashboard_service.dashboard(db, window, limit=limit)
+    payload["api_keys"] = api_keys_service.api_keys(db, window, limit=limit)
+    return payload
+
+
+@router.get("/api-keys", response_model=schemas.AdminApiKeys)
+def api_keys(
+    window: AdminWindow = Depends(_window),
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _admin=Depends(platform_admin_required),
+) -> schemas.AdminApiKeys:
+    """Key inventory, creation trend and top/spend/error/savings rankings."""
+    return api_keys_service.api_keys(db, window, limit=limit)
 
 
 @router.get("/usage", response_model=schemas.AdminUsage)
