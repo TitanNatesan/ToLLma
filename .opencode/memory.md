@@ -2060,3 +2060,31 @@ Frontend: `types/apiKeys.ts`, `services/apiKeys.ts`, `KeyAnalytics.tsx`, `KeyDet
 - Add hourly rollups for very large ranges; expose ASN/ISP via a geo database.
 - Record rate-limit/budget denials as first-class error categories in `api_request_logs`.
 - Dedupe `services/admin` aggregations onto the new analytics engine over time.
+
+---
+
+## 2026-09-26 — API Keys Read/Edit Split & Analytics Enhancement
+
+### Requirement Completed
+Split the crowded API Keys drawer into an analytics-first read drawer (Analytics + Network tabs only) and a dedicated edit drawer, added model/endpoint/budget analytics widgets, and kept the admin API-Keys section intact. UI-only change; no backend touched.
+
+### Files Created
+- `frontend/src/app/api-keys/components/KeyEditDrawer.tsx` (+ shared `DrawerBackdrop`, `useEscapeClose`)
+- `frontend/src/app/api-keys/components/EndpointPermissions.tsx` (display-only, "not enforced yet")
+- `frontend/src/app/api-keys/components/analytics/{stacked.ts,KeyHealthSection.tsx,UsageOverview.tsx,SpendTrend.tsx,TokenTrend.tsx,ModelUsageTrend.tsx,TopModelsChart.tsx,ModelCostEfficiency.tsx,EndpointDonut.tsx,EndpointTrend.tsx,BudgetBurnRate.tsx,BudgetGauge.tsx,DailySpendHeatmap.tsx}`
+
+### Files Modified
+- `KeyDetailsPanel.tsx` (analytics-only shell, 2 tabs 50/50, `[Edit Key]` button, memoized slots)
+- `KeyTable.tsx` (summary rows, click/Enter/Space opens drawer, memo)
+- `page.tsx` (independent details/edit drawer state, stacked z-order)
+- `KeyAnalytics.tsx` (same `{keyId}` props; 6 read-only sections), `NetworkPanel.tsx` (same props; IP/geo/client/device panels)
+
+### Decisions
+- `KeyEditDrawer` takes `apiKey` (not `key` — React strips `key`); single Save submits only dirty slices in parallel; edit backdrop sits above analytics panel.
+- Token trend uses range totals for kind mix (no per-bucket per-kind series exists); remaining budget is range-spend based and labelled; burn rate is relative ("in N days"); network groupings are frontend classifiers.
+- Admin `ApiKeysSection` already wired — verified, no changes needed.
+
+### Verification
+- `tsc` clean, `eslint` clean on all touched files, admin vitest 7/7.
+- Headed `e2e/admin.spec.ts` via system Chrome (Playwright browser binary missing in env; temp config, removed after): **3 passed** — forbidden gate, one-section hash nav, live SSE health.
+- No backend tests run (no backend changes); no full suite per scope.

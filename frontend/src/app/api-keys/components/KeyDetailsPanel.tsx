@@ -1,37 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { Activity, Gauge, KeyRound, Loader2, Network, ShieldCheck } from "lucide-react";
+import { memo, useState } from "react";
+import { AnimatePresence } from "framer-motion";
+import { Activity, KeyRound, Network, Pencil } from "lucide-react";
 import { Badge, Button, DetailPanel } from "@/components/ui";
 import { cn } from "@/lib/utils";
-import {
-  apiKeyErrorMessage,
-  updateApiKeyIpRules,
-  updateApiKeyModelPermissions,
-  updateApiKeyPolicy,
-} from "@/services/apiKeys";
 import { KeyAnalytics } from "./KeyAnalytics";
 import { NetworkPanel } from "./NetworkPanel";
-import { SectionFrame } from "./analytics/shared";
-import { IpRulesEditor, ipRulesToText, parseIpRules } from "./IpRulesEditor";
-import { ModelPermissionsEditor, modelPermissionsToInput } from "./ModelPermissionsEditor";
-import { PolicyForm, policyToInput } from "./PolicyForm";
+import { DrawerBackdrop, useEscapeClose } from "./KeyEditDrawer";
 import { ApiKeyStatusPill, apiKeyStatus, fmtDateTime } from "./StatusPill";
-import type {
-  ApiKey,
-  ApiKeyModelPermissionInput,
-  ApiKeyPolicyInput,
-} from "@/types/apiKeys";
+import type { ApiKey } from "@/types/apiKeys";
 
-type Tab = "analytics" | "limits" | "network" | "models";
+type Tab = "analytics" | "network";
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: typeof Activity }> = [
   { id: "analytics", label: "Analytics", icon: Activity },
-  { id: "limits", label: "Limits", icon: Gauge },
   { id: "network", label: "Network", icon: Network },
-  { id: "models", label: "Models", icon: ShieldCheck },
 ];
 
 function Meta({ label, value }: { label: string; value: React.ReactNode }) {
@@ -43,86 +27,74 @@ function Meta({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+/** Memoized slot so tab switches and drawer state don't refetch analytics. */
+const AnalyticsSlot = memo(function AnalyticsSlot({ keyId }: { keyId: string }) {
+  return <KeyAnalytics keyId={keyId} />;
+});
+
+/** Memoized slot so tab switches and drawer state don't refetch network data. */
+const NetworkSlot = memo(function NetworkSlot({ keyId }: { keyId: string }) {
+  return <NetworkPanel keyId={keyId} />;
+});
+
 interface KeyDetailsPanelProps {
   apiKey: ApiKey | null;
   open: boolean;
   onClose: () => void;
+  /** Opens the dedicated edit drawer for this key. */
+  onEdit?: (apiKey: ApiKey) => void;
 }
 
 /**
- * Right-side key console: analytics plus the three replace-payload editors
- * (limits, network rules, model access). Each editor saves through its own
- * endpoint and refetches the key list.
+ * Read-only key console: identity summary plus Analytics and Network tabs.
+ * All editing moved to KeyEditDrawer — this panel renders no inputs.
  */
-export function KeyDetailsPanel({ apiKey, open, onClose }: KeyDetailsPanelProps) {
-  if (!apiKey) return null;
-  return <KeyDetailsContent key={apiKey.id} apiKey={apiKey} open={open} onClose={onClose} />;
+export function KeyDetailsPanel({ apiKey, open, onClose, onEdit }: KeyDetailsPanelProps) {
+  useEscapeClose(open && !!apiKey, onClose);
+  return (
+    <>
+      <AnimatePresence>
+        {open && apiKey && (
+          <DrawerBackdrop
+            key="details-backdrop"
+            onClose={onClose}
+            zIndex={30}
+            testId="key-details-backdrop"
+          />
+        )}
+      </AnimatePresence>
+      {apiKey && (
+        <KeyDetailsContent
+          key={apiKey.id}
+          apiKey={apiKey}
+          open={open}
+          onClose={onClose}
+          onEdit={onEdit}
+        />
+      )}
+    </>
+  );
 }
 
-function KeyDetailsContent({
+const KeyDetailsContent = memo(function KeyDetailsContent({
   apiKey,
   open,
   onClose,
+  onEdit,
 }: {
   apiKey: ApiKey;
   open: boolean;
   onClose: () => void;
+  onEdit?: (apiKey: ApiKey) => void;
 }) {
-  const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("analytics");
-
-  const initialIp = ipRulesToText(apiKey.ip_rules);
-  const [policy, setPolicy] = useState<ApiKeyPolicyInput>(() => policyToInput(apiKey.policy));
-  const [allow, setAllow] = useState(initialIp.allow);
-  const [deny, setDeny] = useState(initialIp.deny);
-  const [permissions, setPermissions] = useState<ApiKeyModelPermissionInput[]>(() =>
-    modelPermissionsToInput(apiKey.model_permissions),
-  );
-
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ["api-keys"] });
-
-  const policyMutation = useMutation({
-    mutationFn: (body: ApiKeyPolicyInput) => updateApiKeyPolicy(apiKey.id, body),
-    onSuccess: () => {
-      invalidate();
-      toast.success("Limits updated");
-    },
-    onError: (error) =>
-      toast.error("Could not update limits", { description: apiKeyErrorMessage(error) }),
-  });
-
-  const ipMutation = useMutation({
-    mutationFn: (rules: ReturnType<typeof parseIpRules>["rules"]) =>
-      updateApiKeyIpRules(apiKey.id, rules),
-    onSuccess: () => {
-      invalidate();
-      toast.success("Network rules updated");
-    },
-    onError: (error) =>
-      toast.error("Could not update network rules", { description: apiKeyErrorMessage(error) }),
-  });
-
-  const modelsMutation = useMutation({
-    mutationFn: (value: ApiKeyModelPermissionInput[]) =>
-      updateApiKeyModelPermissions(apiKey.id, value),
-    onSuccess: () => {
-      invalidate();
-      toast.success("Model access updated");
-    },
-    onError: (error) =>
-      toast.error("Could not update model access", { description: apiKeyErrorMessage(error) }),
-  });
-
-  const parsedIp = parseIpRules(allow, deny);
   const status = apiKeyStatus(apiKey);
-  // Observability tabs need room for charts and tables; editors stay compact.
-  const wide = tab === "analytics" || tab === "network";
 
   return (
     <DetailPanel
       open={open}
       onClose={onClose}
-      width={wide ? "min(96vw, 1180px)" : "min(94vw, 460px)"}
+      width="min(96vw, 1180px)"
       title={
         <span className="flex items-center gap-2">
           <KeyRound className="size-3.5 text-zinc-400" />
@@ -130,6 +102,19 @@ function KeyDetailsContent({
         </span>
       }
       subtitle={<span className="font-mono">{apiKey.masked}</span>}
+      actions={
+        onEdit ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onEdit(apiKey)}
+            data-testid="key-edit-button"
+          >
+            <Pencil className="size-3.5" />
+            Edit Key
+          </Button>
+        ) : undefined
+      }
       testId="key-details-panel"
     >
       <div className="space-y-4">
@@ -151,8 +136,8 @@ function KeyDetailsContent({
 
         <div
           role="tablist"
-          aria-label="Key configuration"
-          className="flex flex-wrap gap-0.5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+          aria-label="Key observability"
+          className="grid grid-cols-2 gap-0.5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
         >
           {TABS.map((item) => {
             const Icon = item.icon;
@@ -166,7 +151,7 @@ function KeyDetailsContent({
                 onClick={() => setTab(item.id)}
                 data-testid={`key-tab-${item.id}`}
                 className={cn(
-                  "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors",
+                  "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors",
                   active
                     ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
                     : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100",
@@ -179,106 +164,9 @@ function KeyDetailsContent({
           })}
         </div>
 
-        {tab === "analytics" && <KeyAnalytics keyId={apiKey.id} />}
-
-        {tab === "limits" && (
-          <div className="space-y-4">
-            <PolicyForm value={policy} onChange={setPolicy} disabled={policyMutation.isPending} />
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPolicy(policyToInput(apiKey.policy))}
-                disabled={policyMutation.isPending}
-              >
-                Reset
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => policyMutation.mutate(policy)}
-                disabled={policyMutation.isPending}
-                data-testid="policy-save"
-              >
-                {policyMutation.isPending && <Loader2 className="size-3.5 animate-spin" />}
-                Save limits
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {tab === "network" && (
-          <div className="space-y-4">
-            <NetworkPanel keyId={apiKey.id} />
-            <SectionFrame
-              title="IP access rules"
-              description="Allow/deny list enforced by the gateway, separate from analytics."
-              testId="key-ip-rules"
-            >
-              <div className="space-y-4">
-                <IpRulesEditor
-                  allow={allow}
-                  deny={deny}
-                  onAllowChange={setAllow}
-                  onDenyChange={setDeny}
-                  disabled={ipMutation.isPending}
-                />
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      const current = ipRulesToText(apiKey.ip_rules);
-                      setAllow(current.allow);
-                      setDeny(current.deny);
-                    }}
-                    disabled={ipMutation.isPending}
-                  >
-                    Reset
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => ipMutation.mutate(parsedIp.rules)}
-                    disabled={ipMutation.isPending || parsedIp.invalid.length > 0}
-                    data-testid="ip-rules-save"
-                  >
-                    {ipMutation.isPending && <Loader2 className="size-3.5 animate-spin" />}
-                    Save rules
-                  </Button>
-                </div>
-              </div>
-            </SectionFrame>
-          </div>
-        )}
-
-        {tab === "models" && (
-          <div className="space-y-4">
-            <ModelPermissionsEditor
-              value={permissions}
-              onChange={setPermissions}
-              disabled={modelsMutation.isPending}
-            />
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPermissions(modelPermissionsToInput(apiKey.model_permissions))}
-                disabled={modelsMutation.isPending}
-              >
-                Reset
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => modelsMutation.mutate(permissions)}
-                disabled={modelsMutation.isPending}
-                data-testid="model-permissions-save"
-              >
-                {modelsMutation.isPending && <Loader2 className="size-3.5 animate-spin" />}
-                Save access
-              </Button>
-            </div>
-          </div>
-        )}
+        {tab === "analytics" && <AnalyticsSlot keyId={apiKey.id} />}
+        {tab === "network" && <NetworkSlot keyId={apiKey.id} />}
       </div>
     </DetailPanel>
   );
-}
+});

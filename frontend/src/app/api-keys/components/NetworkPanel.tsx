@@ -2,7 +2,17 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Ban, Globe, Network, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Ban,
+  Building2,
+  Globe,
+  Globe2,
+  MapPin,
+  MonitorSmartphone,
+  Network,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { Badge, EmptyState, ErrorState } from "@/components/ui";
 import { fmtTokens } from "@/lib/utils";
 import { apiKeyErrorMessage, getKeyNetwork, isApiKeyStatus } from "@/services/apiKeys";
@@ -37,6 +47,13 @@ const IP_COLUMNS: Array<TableColumn<ApiKeyNetworkIp>> = [
     ),
   },
   {
+    key: "requests",
+    header: "Requests",
+    align: "right",
+    sortValue: (row) => num(row.requests),
+    render: (row) => <span className="font-mono">{fmtTokens(row.requests)}</span>,
+  },
+  {
     key: "blocked",
     header: "Status",
     render: (row) =>
@@ -49,13 +66,6 @@ const IP_COLUMNS: Array<TableColumn<ApiKeyNetworkIp>> = [
           Allowed
         </Badge>
       ),
-  },
-  {
-    key: "requests",
-    header: "Requests",
-    align: "right",
-    sortValue: (row) => num(row.requests),
-    render: (row) => <span className="font-mono">{fmtTokens(row.requests)}</span>,
   },
   {
     key: "last_seen",
@@ -131,6 +141,95 @@ const DEVICE_COLUMNS: Array<TableColumn<ApiKeyNetworkDevice>> = [
       >
         {row.user_agent ? truncate(row.user_agent, 64) : "—"}
       </span>
+    ),
+  },
+  {
+    key: "requests",
+    header: "Requests",
+    align: "right",
+    sortValue: (row) => num(row.requests),
+    render: (row) => <span className="font-mono">{fmtTokens(row.requests)}</span>,
+  },
+];
+
+type ClientGroup = "SDK" | "Browser" | "CLI" | "Custom";
+
+/** Map a raw client/sdk pair to a display label + one of the four groups. */
+function classifyClient(client: string, sdk: string | null): { group: ClientGroup; label: string } {
+  const hay = `${client} ${sdk ?? ""}`.toLowerCase();
+  if (hay.includes("openai")) return { group: "SDK", label: "OpenAI SDK" };
+  if (hay.includes("anthropic")) return { group: "SDK", label: "Anthropic SDK" };
+  if (hay.includes("curl")) return { group: "CLI", label: "Curl" };
+  if (hay.includes("python-requests") || (hay.includes("python") && hay.includes("requests"))) {
+    return { group: "SDK", label: "Python Requests" };
+  }
+  if (hay.includes("node") || hay.includes("undici") || hay.includes("node-fetch")) {
+    return { group: "SDK", label: "Node Fetch" };
+  }
+  if (
+    hay.includes("mozilla") ||
+    hay.includes("chrome") ||
+    hay.includes("safari") ||
+    hay.includes("firefox") ||
+    hay.includes("edge") ||
+    hay.includes("browser")
+  ) {
+    return { group: "Browser", label: "Browser" };
+  }
+  if (hay.includes("cli") || hay.includes("terminal") || hay.includes("shell")) {
+    return { group: "CLI", label: client || "CLI" };
+  }
+  if (
+    hay.includes("sdk") ||
+    hay.includes("langchain") ||
+    hay.includes("llama") ||
+    hay.includes("golang") ||
+    hay.includes("go-http") ||
+    hay.includes("java") ||
+    hay.includes("ruby") ||
+    hay.includes("rust") ||
+    hay.includes("php") ||
+    hay.includes("dotnet")
+  ) {
+    return { group: "SDK", label: client || "SDK" };
+  }
+  return { group: "Custom", label: client || "Custom" };
+}
+
+type DeviceCategory = "Desktop" | "Mobile" | "Server" | "Unknown";
+
+/** Roll raw device rows into Desktop / Mobile / Server / Unknown. */
+function categorizeDevice(row: ApiKeyNetworkDevice): DeviceCategory {
+  const hay = `${row.device_type ?? ""} ${row.platform ?? ""} ${row.browser ?? ""}`.toLowerCase();
+  if (/mobile|phone|android|iphone|ios|ipad|tablet/.test(hay)) return "Mobile";
+  if (/server|bot|crawler|spider|curl|cli|headless|datacenter|scraper/.test(hay)) return "Server";
+  if (/desktop|windows|mac|linux|laptop|chromebook/.test(hay)) return "Desktop";
+  // A recognised browser without a device hint still means an end-user machine.
+  if (row.browser) return "Desktop";
+  return "Unknown";
+}
+
+const CLIENT_ROW_COLUMNS: Array<
+  TableColumn<ApiKeyNetworkClient & { group: ClientGroup; label: string }>
+> = [
+  {
+    key: "client",
+    header: "Client",
+    sortValue: (row) => row.label ?? "",
+    render: (row) => (
+      <span className="text-zinc-800 dark:text-zinc-200" title={row.client}>
+        {row.label}
+      </span>
+    ),
+  },
+  {
+    key: "group",
+    header: "Group",
+    sortValue: (row) => row.group,
+    render: (row) => (
+      <Badge variant="secondary" className="px-1.5 py-0 text-[9px] uppercase">
+        {row.group}
+      </Badge>
     ),
   },
   {
@@ -245,16 +344,89 @@ function NetworkBody({ data }: { data: ApiKeyNetwork }) {
     num(data.unique_ips) > 0 ||
     (data.ips?.length ?? 0) > 0 ||
     (data.clients?.length ?? 0) > 0 ||
-    (data.devices?.length ?? 0) > 0;
+    (data.devices?.length ?? 0) > 0 ||
+    (data.locations?.length ?? 0) > 0;
+
+  const geo = useMemo(() => {
+    const locations = data.locations ?? [];
+    const countries = new Set<string>();
+    const regions = new Set<string>();
+    const cities = new Set<string>();
+    const byCountry = new Map<string, number>();
+    for (const row of locations) {
+      if (row.country) countries.add(row.country);
+      if (row.region) regions.add(`${row.country ?? ""}:${row.region}`);
+      if (row.city) cities.add(`${row.region ?? ""}:${row.city}`);
+      const key = row.country || "Unknown";
+      byCountry.set(key, (byCountry.get(key) ?? 0) + num(row.requests));
+    }
+    const top = (pick: (row: ApiKeyNetworkLocation) => string | null) => {
+      let best = "";
+      let bestRequests = -1;
+      for (const row of locations) {
+        const name = pick(row) || "Unknown";
+        if (num(row.requests) > bestRequests) {
+          best = name;
+          bestRequests = num(row.requests);
+        }
+      }
+      return bestRequests >= 0 ? { name: best, requests: bestRequests } : null;
+    };
+    return {
+      countryCount: countries.size,
+      regionCount: regions.size,
+      cityCount: cities.size,
+      topCountry: top((row) => row.country),
+      topRegion: top((row) => row.region),
+      topCity: top((row) => row.city),
+      countryDonut: [...byCountry.entries()].map(([name, value]) => ({ name, value })),
+    };
+  }, [data.locations]);
+
   const clients = useMemo(
     () =>
-      (data.clients ?? []).map((row: ApiKeyNetworkClient) => ({
-        name: row.client || "unknown",
+      (data.clients ?? []).map((row: ApiKeyNetworkClient) => {
+        const { group, label } = classifyClient(row.client, row.sdk);
+        return { ...row, group, label };
+      }),
+    [data.clients],
+  );
+
+  const clientGroups = useMemo(() => {
+    const order: ClientGroup[] = ["SDK", "Browser", "CLI", "Custom"];
+    return order.map((group) => {
+      const members = clients
+        .filter((row) => row.group === group)
+        .sort((a, b) => num(b.requests) - num(a.requests));
+      return {
+        group,
+        requests: members.reduce((sum, row) => sum + num(row.requests), 0),
+        examples: members.slice(0, 3).map((row) => row.label),
+      };
+    });
+  }, [clients]);
+
+  const clientDonut = useMemo(
+    () =>
+      clients.map((row) => ({
+        name: row.label || "unknown",
         value: num(row.requests),
         hint: row.sdk ? `${row.sdk} · ${sharePct(row.share, 0)}` : sharePct(row.share, 0),
       })),
-    [data.clients],
+    [clients],
   );
+
+  const deviceCategories = useMemo(() => {
+    const order: DeviceCategory[] = ["Desktop", "Mobile", "Server", "Unknown"];
+    return order.map((category) => {
+      const members = (data.devices ?? []).filter((row) => categorizeDevice(row) === category);
+      return {
+        category,
+        sources: members.length,
+        requests: members.reduce((sum, row) => sum + num(row.requests), 0),
+      };
+    });
+  }, [data.devices]);
 
   if (!hasTraffic) {
     return (
@@ -303,17 +475,70 @@ function NetworkBody({ data }: { data: ApiKeyNetwork }) {
         />
       </div>
 
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricGroup
+          title="Top country"
+          icon={Globe2}
+          items={[
+            { label: geo.topCountry?.name ?? "No data", value: fmtTokens(geo.topCountry?.requests ?? 0) },
+            { label: "Countries", value: fmtTokens(geo.countryCount) },
+          ]}
+          testId="key-network-geo-country"
+        />
+        <MetricGroup
+          title="Top region"
+          icon={MapPin}
+          items={[
+            { label: geo.topRegion?.name ?? "No data", value: fmtTokens(geo.topRegion?.requests ?? 0) },
+            { label: "Regions", value: fmtTokens(geo.regionCount) },
+          ]}
+          testId="key-network-geo-region"
+        />
+        <MetricGroup
+          title="Top city"
+          icon={Building2}
+          items={[
+            { label: geo.topCity?.name ?? "No data", value: fmtTokens(geo.topCity?.requests ?? 0) },
+            { label: "Cities", value: fmtTokens(geo.cityCount) },
+          ]}
+          testId="key-network-geo-city"
+        />
+        <MetricGroup
+          title="Devices"
+          icon={MonitorSmartphone}
+          items={deviceCategories.slice(0, 2).map((row) => ({
+            label: row.category,
+            value: fmtTokens(row.requests),
+          }))}
+          testId="key-network-device-summary"
+        />
+      </div>
+
+      <SectionFrame
+        title="Top IP addresses"
+        description="Most active sources with request volume, allow/deny state and last activity."
+        testId="key-network-ips"
+      >
+        <DataTable
+          columns={IP_COLUMNS}
+          rows={data.ips ?? []}
+          rowKey={(row) => row.ip}
+          testId="key-network-ip-table"
+          initialSortKey="requests"
+        />
+      </SectionFrame>
+
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         <SectionFrame
-          title="Client distribution"
-          description="SDK, CLI and integration clients hitting this key."
-          testId="key-network-clients"
+          title="Geographic distribution"
+          description="Request share by country of origin."
+          testId="key-network-geo-chart"
         >
           <DistributionDonut
-            items={clients}
+            items={geo.countryDonut}
             valueFormat={(value) => `${fmtTokens(value)} req`}
-            ariaLabel="Requests by client"
-            testId="key-network-clients-donut"
+            ariaLabel="Requests by country"
+            testId="key-network-geo-donut"
           />
         </SectionFrame>
 
@@ -335,19 +560,67 @@ function NetworkBody({ data }: { data: ApiKeyNetwork }) {
         </SectionFrame>
       </div>
 
-      <SectionFrame
-        title="Top IP addresses"
-        description="Most active sources with allow/deny state."
-        testId="key-network-ips"
-      >
-        <DataTable
-          columns={IP_COLUMNS}
-          rows={data.ips ?? []}
-          rowKey={(row) => row.ip}
-          testId="key-network-ip-table"
-          initialSortKey="requests"
-        />
-      </SectionFrame>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {clientGroups.map((row) => (
+          <MetricGroup
+            key={row.group}
+            title={row.group}
+            icon={Network}
+            items={[
+              { label: "Requests", value: fmtTokens(row.requests), tone: "accent" },
+              {
+                label: "Seen as",
+                value: row.examples.length > 0 ? truncate(row.examples.join(", "), 28) : "—",
+              },
+            ]}
+            testId={`key-network-clients-${row.group.toLowerCase()}`}
+          />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <SectionFrame
+          title="Client distribution"
+          description="SDK, CLI and integration clients hitting this key."
+          testId="key-network-clients"
+        >
+          <DistributionDonut
+            items={clientDonut}
+            valueFormat={(value) => `${fmtTokens(value)} req`}
+            ariaLabel="Requests by client"
+            testId="key-network-clients-donut"
+          />
+        </SectionFrame>
+
+        <SectionFrame
+          title="Client identification"
+          description="Every client labelled and grouped: SDK, browser, CLI or custom."
+          testId="key-network-client-groups"
+        >
+          <DataTable
+            columns={CLIENT_ROW_COLUMNS}
+            rows={clients}
+            rowKey={(row) => `${row.group}:${row.client}:${row.sdk ?? ""}`}
+            testId="key-network-client-table"
+            initialSortKey="requests"
+          />
+        </SectionFrame>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {deviceCategories.map((row) => (
+          <MetricGroup
+            key={row.category}
+            title={row.category}
+            icon={MonitorSmartphone}
+            items={[
+              { label: "Requests", value: fmtTokens(row.requests), tone: "accent" },
+              { label: "Sources", value: fmtTokens(row.sources) },
+            ]}
+            testId={`key-network-devices-${row.category.toLowerCase()}`}
+          />
+        ))}
+      </div>
 
       <SectionFrame
         title="Devices"

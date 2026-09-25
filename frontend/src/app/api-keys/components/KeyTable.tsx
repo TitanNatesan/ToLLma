@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   BarChart3,
   Check,
@@ -74,7 +74,8 @@ function CopyPrefix({ apiKey }: { apiKey: ApiKey }) {
     };
   }, []);
 
-  async function copy() {
+  async function copy(event: React.MouseEvent) {
+    event.stopPropagation();
     try {
       await navigator.clipboard.writeText(apiKey.key_prefix);
       setCopied(true);
@@ -96,7 +97,7 @@ function CopyPrefix({ apiKey }: { apiKey: ApiKey }) {
       <Tooltip content={copied ? "Copied" : "Copy prefix"}>
         <button
           type="button"
-          onClick={() => void copy()}
+          onClick={(event) => void copy(event)}
           aria-label={`Copy key prefix for ${apiKey.name}`}
           data-testid={`key-copy-prefix-${apiKey.id}`}
           className={cn(
@@ -113,7 +114,7 @@ function CopyPrefix({ apiKey }: { apiKey: ApiKey }) {
   );
 }
 
-function RowActions({
+function RowActionsInner({
   apiKey,
   busy,
   onEdit,
@@ -138,7 +139,7 @@ function RowActions({
     );
   }
   return (
-    <div className="flex justify-end">
+    <div className="flex justify-end" onClick={(event) => event.stopPropagation()}>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -186,8 +187,15 @@ function RowActions({
   );
 }
 
-/** User key inventory: identity, lifecycle, budget usage and row actions. */
-export function KeyTable({
+/** Row action menu, memoized so drawer state changes don't re-render rows. */
+const RowActions = memo(RowActionsInner);
+
+/**
+ * User key inventory: identity, lifecycle, budget usage and row actions.
+ * Summary view only — no inline editing. Activating a row opens the
+ * read-only analytics drawer.
+ */
+export const KeyTable = memo(function KeyTable({
   keys,
   budgetCost,
   budgetLoading = false,
@@ -266,8 +274,18 @@ export function KeyTable({
               return (
                 <tr
                   key={apiKey.id}
+                  onClick={() => onOpenDetails(apiKey)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenDetails(apiKey);
+                    }
+                  }}
+                  tabIndex={0}
+                  aria-label={`Open details for ${apiKey.name}`}
                   className={cn(
-                    "group transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/50",
+                    "group cursor-pointer transition-colors hover:bg-zinc-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-tollma-500/40 dark:hover:bg-zinc-900/50",
                     dimmed && "opacity-75 hover:opacity-100",
                   )}
                   data-testid={`key-row-${apiKey.id}`}
@@ -352,4 +370,4 @@ export function KeyTable({
       </p>
     </div>
   );
-}
+});
