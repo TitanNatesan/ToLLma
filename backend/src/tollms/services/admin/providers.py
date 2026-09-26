@@ -45,10 +45,11 @@ def _scope(window: AdminWindow) -> list[Any]:
     ]
 
 
-def _row(row: Any) -> dict[str, Any]:
+def _row(row: Any, health: dict) -> dict[str, Any]:
     """One ``AdminProviderRow`` shaped mapping (never content)."""
     requests = int(row[3] or 0)
     provider_type = row[2]
+    status = health.get(row[0], {})
     return {
         "provider_id": row[0],
         "provider_name": row[1] or "Unknown",
@@ -58,11 +59,39 @@ def _row(row: Any) -> dict[str, Any]:
         "total_cost": Decimal(str(row[5] or 0)),
         "error_rate": round(int(row[6] or 0) / requests * 100, 2) if requests else 0.0,
         "avg_latency_ms": float(row[7]) if row[7] is not None else None,
+        "validation_status": status.get("validation_status", "unknown"),
+        "validation_message": status.get("validation_message"),
+        "last_validated_at": status.get("last_validated_at"),
     }
+
+
+def _credential_health(db: Session) -> tuple[dict[str, int], dict]:
+    """Live-provider credential states + per-id lookup (one query)."""
+    rows = db.execute(
+        select(
+            Provider.id,
+            Provider.validation_status,
+            Provider.validation_message,
+            Provider.last_validated_at,
+        ).where(Provider.is_deleted.is_(False))
+    ).all()
+    summary: dict[str, int] = {"healthy": 0, "broken": 0, "unknown": 0}
+    by_id: dict = {}
+    for row in rows:
+        state = (row[1] or "unknown").lower()
+        bucket = "healthy" if state in ("valid", "healthy", "ok") else "broken" if state in ("invalid", "error", "failed") else "unknown"
+        summary[bucket] += 1
+        by_id[row[0]] = {
+            "validation_status": row[1] or "unknown",
+            "validation_message": row[2],
+            "last_validated_at": row[3],
+        }
+    return summary, by_id
 
 
 def providers(db: Session, window: AdminWindow, *, limit: int = 10) -> dict[str, Any]:
     """Provider usage rows, spend-descending (matches ``AdminProviders``)."""
+    summary, by_id = _credential_health(db)
     rows = db.execute(
         select(
             Message.provider_id,
@@ -81,4 +110,8 @@ def providers(db: Session, window: AdminWindow, *, limit: int = 10) -> dict[str,
         .order_by(func.coalesce(func.sum(Message.total_cost), 0).desc())
         .limit(limit)
     ).all()
-    return {"range": _window_range(window), "rows": [_row(row) for row in rows]}
+    return {
+        "range": _window_range(window),
+        "rows": [_row(row, by_id) for row in rows],
+        "credential_health": summary,
+    }

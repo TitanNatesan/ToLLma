@@ -33,6 +33,7 @@ from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
 from tollms.services import cache as cache_service
 from tollms.services import generation as generation_engine
+from tollms.services.jobs import scheduler as jobs_scheduler
 from tollms.services.model_repository import scheduler as repository_scheduler
 
 
@@ -42,8 +43,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _sweep_stale_generations("backend restarted")
     await generation_engine.manager.clear_all_cached_state()
     repository_scheduler.start()
+    jobs_scheduler.start()
     yield
     await _shutdown_generations()
+    jobs_scheduler.shutdown()
     repository_scheduler.shutdown()
     await cache_service.disconnect()
 

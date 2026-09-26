@@ -47,7 +47,7 @@ ADMIN_ENDPOINTS: dict[str, set[str]] = {
         "by_provider",
     },
     "/api/admin/models": {"range", "rows"},
-    "/api/admin/providers": {"range", "rows"},
+    "/api/admin/providers": {"range", "rows", "credential_health"},
     "/api/admin/users": {"range", "total_users", "active_users", "new_users", "rows"},
     "/api/admin/costs": {
         "range",

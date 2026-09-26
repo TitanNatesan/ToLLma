@@ -37,6 +37,12 @@ const errorRateCell = (rate: number) =>
     <span className="text-zinc-400">—</span>
   );
 
+const CredentialCell = ({ status, message }: { status: string; message: string | null }) => (
+  <span title={message ?? status}>
+    <StatusPill status={status} />
+  </span>
+);
+
 const MODEL_COLUMNS: Array<DataTableColumn<AdminModelRow>> = [
   {
     key: "model",
@@ -71,6 +77,12 @@ const PROVIDER_COLUMNS: Array<DataTableColumn<AdminProviderRow>> = [
   { key: "cost", header: "Cost", align: "right", render: (row) => fmtMoney(row.total_cost) },
   { key: "error_rate", header: "Errors", align: "right", render: (row) => errorRateCell(row.error_rate) },
   { key: "latency", header: "Avg latency", align: "right", render: (row) => fmtMs(row.avg_latency_ms) },
+  {
+    key: "credential",
+    header: "Credential",
+    align: "right",
+    render: (row) => <CredentialCell status={row.validation_status} message={row.validation_message} />,
+  },
 ];
 
 const USER_COLUMNS: Array<DataTableColumn<AdminUserRow>> = [

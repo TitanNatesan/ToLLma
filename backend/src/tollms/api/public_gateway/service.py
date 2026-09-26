@@ -376,6 +376,21 @@ class _Prepared:
         self.model_label = self.model.model_id
 
 
+# Endpoint -> required model capability. Chat endpoints require nothing
+# beyond text (default True); media endpoints are gated on their flag.
+ENDPOINT_CAPABILITY: dict[str, str] = {
+    "images": "supports_image_generation",
+    "image_edits": "supports_image_generation",
+    "videos": "supports_video_generation",
+}
+
+
+def _require_capability(model, endpoint: str) -> None:
+    flag = ENDPOINT_CAPABILITY.get(endpoint)
+    if flag is not None and not getattr(model, flag, False):
+        raise ForbiddenError(f"model_not_allowed: {model.model_id} lacks {flag} for {endpoint}")
+
+
 def _prepare(
     db: Session, ctx: KeyContext, unified: UnifiedRequest, meta: ClientMeta
 ) -> _Prepared:
@@ -384,6 +399,7 @@ def _prepare(
     provider, model = resolved.provider, resolved.model
     if not ctx.model_allowed(provider.id, model.id):
         raise ForbiddenError("model_not_allowed")
+    _require_capability(model, unified.endpoint)
     decision = check_request(
         ctx,
         provider_id=provider.id,
@@ -910,6 +926,23 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
 
 
 # --- model listing ------------------------------------------------------------------
+
+
+def key_identity(db: Session, ctx: KeyContext) -> dict:
+    """Identity + budget snapshot for `GET /v1/me`. No provider I/O."""
+    from tollms.services.gateway.limits import current_spend
+
+    models = list_public_models(db, ctx)
+    return {
+        "object": "api_key",
+        "id": ctx.key_prefix,
+        "name": ctx.name,
+        "enabled": ctx.enabled,
+        "models": [f"{provider.name}/{model.model_id}" for provider, model in models],
+        "model_count": len(models),
+        "spend_usd": str(current_spend(ctx)),
+        "budget_usd": str(ctx.policy.max_budget_usd) if ctx.policy.max_budget_usd is not None else None,
+    }
 
 
 def list_public_models(db: Session, ctx: KeyContext) -> list[tuple[Provider, AIModel]]:

@@ -15,6 +15,7 @@ CAPABILITY_FIELDS = (
     "supports_audio_input",
     "supports_audio_output",
     "supports_image_generation",
+    "supports_video_generation",
     "supports_tool_calling",
     "supports_reasoning",
     "supports_embeddings",
@@ -41,6 +42,7 @@ class ModelCreate(BaseModel):
     supports_audio_input: bool = False
     supports_audio_output: bool = False
     supports_image_generation: bool = False
+    supports_video_generation: bool = False
     supports_tool_calling: bool = False
     supports_reasoning: bool = False
     supports_embeddings: bool = False
@@ -67,6 +69,7 @@ class ModelUpdate(BaseModel):
     supports_audio_input: bool | None = None
     supports_audio_output: bool | None = None
     supports_image_generation: bool | None = None
+    supports_video_generation: bool | None = None
     supports_tool_calling: bool | None = None
     supports_reasoning: bool | None = None
     supports_embeddings: bool | None = None
@@ -96,6 +99,7 @@ class ModelRead(BaseModel):
     supports_audio_input: bool
     supports_audio_output: bool
     supports_image_generation: bool
+    supports_video_generation: bool = False
     supports_tool_calling: bool
     supports_reasoning: bool
     supports_embeddings: bool = False

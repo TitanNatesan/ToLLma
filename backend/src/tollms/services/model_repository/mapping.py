@@ -47,6 +47,7 @@ FALLBACK_SUGGESTED: dict[str, Any] = {
     "supports_audio_input": False,
     "supports_audio_output": False,
     "supports_image_generation": False,
+    "supports_video_generation": False,
     "supports_tool_calling": False,
     "supports_reasoning": False,
     "supports_streaming": True,

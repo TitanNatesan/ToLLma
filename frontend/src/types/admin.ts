@@ -69,6 +69,9 @@ export interface AdminProviderRow {
   total_cost: string;
   error_rate: number;
   avg_latency_ms: number | null;
+  validation_status: string;
+  validation_message: string | null;
+  last_validated_at: string | null;
 }
 
 export interface AdminUserRow {
@@ -202,6 +205,7 @@ export interface AdminModels {
 export interface AdminProviders {
   range: AdminRange;
   rows: AdminProviderRow[];
+  credential_health: Record<string, number>;
 }
 
 export interface AdminUsers {

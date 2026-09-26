@@ -59,6 +59,9 @@ class AdminProviderRow(BaseModel):
     total_cost: Decimal
     error_rate: float = 0.0
     avg_latency_ms: float | None = None
+    validation_status: str = "unknown"
+    validation_message: str | None = None
+    last_validated_at: datetime | None = None
 
 
 class AdminUserRow(BaseModel):
@@ -193,6 +196,7 @@ class AdminModels(BaseModel):
 class AdminProviders(BaseModel):
     range: AdminRange
     rows: list[AdminProviderRow] = Field(default_factory=list)
+    credential_health: dict[str, int] = Field(default_factory=dict)
 
 
 class AdminUsers(BaseModel):

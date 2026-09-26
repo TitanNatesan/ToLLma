@@ -2088,3 +2088,43 @@ Split the crowded API Keys drawer into an analytics-first read drawer (Analytics
 - `tsc` clean, `eslint` clean on all touched files, admin vitest 7/7.
 - Headed `e2e/admin.spec.ts` via system Chrome (Playwright browser binary missing in env; temp config, removed after): **3 passed** — forbidden gate, one-section hash nav, live SSE health.
 - No backend tests run (no backend changes); no full suite per scope.
+
+---
+
+## 2026-09-26 — V1 Foundation: Gateway Core, Capabilities, Jobs, Docs, SDK Compat
+
+### Requirement Completed
+Closed the remaining V1 foundation gaps on top of the existing gateway platform: `GET /v1/me`, endpoint↔capability enforcement (incl. new `AIModel.supports_video_generation`), periodic operations scheduler (provider health 5m, usage rollups 1h, cleanup 1d), user-facing `/docs` (index, auth, OpenAI, Anthropic, responses/media/limits), and permanent SDK-compatibility tests. Verified with targeted suites, two parallel verification agents, and live testing against Bedrock + OpenWebUI with the two designated accounts.
+
+### Files Created
+Backend: `alembic/versions/b2c3d4e5f6a7_model_video_capability.py`, `services/jobs/scheduler.py`, `tests/public_gateway/test_sdk_compat.py`.
+Frontend: `app/docs/page.tsx`, `app/docs/components/DocBlock.tsx`, `app/docs/authentication/page.tsx`, `app/docs/openai/page.tsx`, `app/docs/anthropic/page.tsx`, `app/docs/advanced/page.tsx`.
+
+### Files Modified
+Backend: `api/public_gateway/{router,service}.py` (`/v1/me`, `ENDPOINT_CAPABILITY` gate), `models/registered_model.py` (+`supports_video_generation`), `api/models/schemas.py` (field in Create/Update/Read + CAPABILITY_FIELDS), `services/model_repository/mapping.py` (fallback default), `services/admin/providers.py` + `api/admin/schemas.py` (credential health per-row + summary), `tests/admin/test_admin_access.py` (expected providers keys), `main.py` (jobs scheduler lifespan).
+Frontend: `components/Sidebar/SidebarNavigation.tsx` (API Docs entry), `app/admin/components/{ProvidersSection,tables}.tsx` (credential KPIs + Credential column), `types/admin.ts`.
+
+### Decisions
+- Capability gating returns 403 `model_not_allowed` (consistent with model access control); chat endpoints need nothing beyond text.
+- Jobs live in a dedicated `services/jobs/scheduler.py` engine (own APScheduler, lock-guarded, per-provider exception isolation, pytest-skipped) rather than extending the repo-sync scheduler.
+- Cleanup is conservative: only expired AND used password-reset tokens.
+- SDK compat tests run through TestClient with a mocked transport (no network/paid calls, CI-permanent); live SDK verification done separately via curl + one headless UI run.
+- Docs are static Next.js pages reusing PageHeader + a local DocBlock (no new deps).
+
+### Verification
+- New: `pytest -q tests/public_gateway/test_sdk_compat.py` → **9 passed** (OpenAI/Anthropic shapes, /v1/models, /v1/me, ambiguous_model 422, image 403 gate, image 200 for capable model, SSE shape, 401).
+- Targeted backend agent run: `tests/public_gateway tests/keys test_admin_access test_admin_aggregation test_registry test_gateway` → **102 passed** (one transient flaky run, two consecutive clean runs); `alembic check` green.
+- Frontend agent: tsc/eslint clean, vitest 126/126; headless navigation+admin specs show only environmental flakes; new Docs entry + Credential column probed live and rendering.
+- Live (accounts titannatesan@gmail.com promoted to platform_admin, natesantitan@gmail.com regular; secrets via env only, never committed):
+  - OpenWebUI provider validated live; qwen3-coder:30b + gpt-oss:20b registered and chatted (real usage/cost persisted; "pong" exact).
+  - `/v1/chat/completions` (OpenAI shape) + `/v1/messages` (Anthropic shape) live 200 via API key; bare ambiguous alias → `ambiguous_model`; zero-budget key → **403 budget** before any provider call.
+  - Bedrock provider validated; haiku/minimax/deepseek each answered live via gateway chat.
+  - Headless UI chat as natesantitan with live qwen model → assistant "pong" asserted.
+  - No image/video generation performed anywhere.
+- Known pre-existing failure (verified on stashed HEAD, untouched): `test_admin_privacy.py::test_admin_modules_never_touch_private_content_or_credentials` (banned substring `api_key` matches the prior task's module names).
+
+### Recommended Next Steps
+- Fix the pre-existing privacy-scanner over-match (`api_key` vs `api_keys`) or rename the scan target.
+- Normalize gpt-oss `<think>` spans for public API responses (or expose `reasoning_content`).
+- Add `/v1/images/edits` adapter support when an adapter exposes an edit method.
+- Consider `GET /v1/*` rate-limit headers (`X-RateLimit-*`) for SDK friendliness.

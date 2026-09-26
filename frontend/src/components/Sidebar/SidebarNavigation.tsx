@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Cpu, Image as ImageIcon, KeyRound, Settings } from "lucide-react";
+import { BarChart3, BookOpen, Cpu, Image as ImageIcon, KeyRound, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ALL_NAV = [
   { href: "/providers", label: "Providers", icon: Cpu },
   { href: "/api-keys", label: "API Keys", icon: KeyRound },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/docs", label: "API Docs", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

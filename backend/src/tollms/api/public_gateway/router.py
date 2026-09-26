@@ -187,6 +187,14 @@ async def messages(
     return _anthropic_payload(result)
 
 
+@router.get("/me")
+async def key_identity(
+    ctx=Depends(service.api_key_required),
+    db: Session = Depends(get_db),
+):
+    return service.key_identity(db, ctx)
+
+
 @router.get("/models")
 async def list_models(
     ctx=Depends(service.api_key_required),

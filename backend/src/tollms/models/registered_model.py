@@ -122,6 +122,7 @@ class AIModel(SoftDeleteMixin, TimestampedModel):
     supports_audio_input: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_audio_output: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_image_generation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    supports_video_generation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_tool_calling: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_reasoning: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     supports_embeddings: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
