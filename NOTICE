@@ -1,0 +1,29 @@
+ToLLma ("Toll to your Large Language Models & Agents")
+Copyright 2026 Titan Natesan
+
+This product includes software developed by Titan Natesan
+(https://github.com/tollma — update if the canonical repository URL differs).
+
+Licensed under the Apache License, Version 2.0; see LICENSE for details.
+
+Third-party attributions
+------------------------
+This project depends on third-party open-source software. Each dependency
+retains its own copyright and license terms. Key dependencies include:
+
+* Next.js (MIT License) — https://github.com/vercel/next.js
+* React and React DOM (MIT License) — https://github.com/facebook/react
+* FastAPI (MIT License) — https://github.com/fastapi/fastapi
+* SQLAlchemy (MIT License) — https://github.com/sqlalchemy/sqlalchemy
+* Pydantic and pydantic-settings (MIT License) — https://github.com/pydantic/pydantic
+* Valkey, and the `redis` Python client library used to talk to it
+  (Valkey: BSD-3-Clause; `redis` client: MIT) — https://github.com/valkey-io/valkey
+* PostgreSQL database server (PostgreSQL Licence) — https://www.postgresql.org
+  (Python driver `psycopg` is distributed under its own LGPL-3.0 terms —
+  see https://github.com/psycopg/psycopg)
+* Tailwind CSS (MIT License) — https://github.com/tailwindlabs/tailwindcss
+* lucide-react icons (ISC License) — https://github.com/lucide-icons/lucide
+
+This list is informational and may not be exhaustive. Refer to
+backend/pyproject.toml and frontend/package.json for the full,
+authoritative dependency lists and to each package for its exact terms.

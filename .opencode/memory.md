@@ -2413,3 +2413,26 @@ Final full-suite re-run (single over-strict audit-label assertion corrected test
 ## 2026-09-27 — V1 COMPLETE: final validation green
 
 Full backend suite: **526 passed, 0 failed** (6m01s; excl. bedrock + 1 deselected privacy-scanner test that Phase 13 fixed and proved green in the admin run). Frontend: tsc/eslint clean, vitest 126/126. Migrations: d9e0f1a2b3c4 (pending_email), e7f8a9b0c1d2 (deletion + purge_audit_log); head single, alembic check green. All work uncommitted; no Org/Team/RBAC/Billing touched.
+
+---
+
+## 2026-09-27 — Open Source Release Preparation COMPLETE
+
+### Requirement Completed
+Apache 2.0 licensing, full docs suite, community files, standalone landing page + Pages workflow, brand guide, release audit report.
+
+### Files Created
+LICENSE, NOTICE, docs/{ARCHITECTURE,FEATURES,ROADMAP,CONTRIBUTING,SECURITY,FAQ,BRAND}.md, .github/{ISSUE_TEMPLATE/{bug_report,feature_request}.md,PULL_REQUEST_TEMPLATE.md,CODE_OF_CONDUCT.md,FUNDING.yml,SECURITY.md,workflows/deploy-pages.yml}, landing/ (Next.js static export, 10 sections, 5 mockups), OPEN_SOURCE_RELEASE_REPORT.md.
+
+### Files Modified
+README.md (rewrite + badges + license), backend/pyproject.toml + frontend/package.json + landing/package.json (Apache-2.0), docs/SECURITY.md (version-line alignment).
+
+### Decisions
+- Positioning: "The Open Source AI Gateway for Models and Agents" throughout; objective competitor comparison.
+- 6 provider families documented (merged OPENAI enum correction).
+- No dates in roadmap; V1 verified vs code, V2+ planned.
+- Real GitHub org/repo, contact emails, workflow live-run, real screenshots remain open items (placeholders marked).
+
+### Verification
+- Release audit: 18 links resolve; license consistent; roadmap-vs-code match; landing/out builds; workflow parses.
+- Backend 526 + frontend 126 suites untouched by this phase (docs/landing only).

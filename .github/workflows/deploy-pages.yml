@@ -1,0 +1,74 @@
+# Deploy the ToLLma landing page to GitHub Pages.
+#
+# The landing/ directory is a Next.js static export (`output: "export"`):
+# `npm run build` emits plain HTML/CSS/JS into `landing/out/` with no
+# server runtime, no API routes, and no secrets. That folder is uploaded
+# as the Pages artifact and deployed by the `deploy-pages` action.
+#
+# One-time repo setup: Settings → Pages → Source → "GitHub Actions".
+
+name: Deploy landing page to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "landing/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+# Least privilege: build only reads the repo; deploy mints the Pages token.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Cancel superseded runs so only the latest commit deploys.
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: landing/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static export
+        # BASE_PATH defaults to the repo name so project Pages sites
+        # (<owner>.github.io/<repo>/) resolve assets correctly.
+        # For a user/org site or custom domain, set BASE_PATH to "" via
+        # a repository variable instead (see landing/README.md).
+        run: npm run build
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: landing/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
