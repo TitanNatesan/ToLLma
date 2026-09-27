@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { QueryProvider } from "@/lib/query";
-import { AppShell, Toaster, TooltipProvider } from "@/components/ui";
+import { AppShell, DeletionWarningScreen, Toaster, TooltipProvider } from "@/components/ui";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { getCurrentUser } from "@/services/api";
 import { usePreferencesSync } from "@/hooks/useSettings";
@@ -67,6 +67,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
     );
   } else if (!user) {
     content = <AuthCard initialMode="login" />;
+  } else if (user.deletion_scheduled_for) {
+    // Phase 7 hard gate: pending-deletion accounts never see the AppShell.
+    content = <DeletionWarningScreen />;
   } else {
     content = <AppShell>{children}</AppShell>;
   }
@@ -75,7 +78,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <QueryProvider>
       <TooltipProvider>
         {content}
-        <PreferencesSync enabled={!!user} />
+        <PreferencesSync enabled={!!user && !user.deletion_scheduled_for} />
         <Toaster />
       </TooltipProvider>
     </QueryProvider>

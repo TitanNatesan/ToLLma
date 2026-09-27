@@ -6,7 +6,7 @@ durable per-session usage aggregates (messages.session_id).
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -14,9 +14,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tollms.api.auth import service as auth_service
+from tollms.api.keys import service as keys_service
 from tollms.api.settings.schemas import (
     DEFAULT_PREFERENCES,
+    AccountDeleteRequest,
+    AccountDeletionStatus,
     PasswordChange,
+    PasswordSet,
     PreferencesRead,
     PreferencesUpdate,
     ProfileUpdate,
@@ -27,14 +31,19 @@ from tollms.core import security
 from tollms.core.exceptions import (
     AuthenticationError,
     ConflictError,
+    EmailVerificationRequiredError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
 )
 from tollms.models.message import Message, Role
 from tollms.models.user import User
+from tollms.services.email import send_account_deletion_requested
 
 logger = logging.getLogger(__name__)
+
+# Grace period between a delete-request and the hard purge (fixed; no settings).
+DELETION_GRACE_DAYS = 15
 
 
 # --- preferences ------------------------------------------------------------
@@ -66,21 +75,68 @@ def update_preferences(db: Session, user: User, data: PreferencesUpdate) -> Pref
 
 # --- profile ----------------------------------------------------------------
 
+# Passwordless accounts confirm an email change with a fresh Google login:
+# the caller's session must be google-method and created within this window.
+_RECENT_GOOGLE_SESSION_SECONDS = 15 * 60
 
-async def update_profile(db: Session, user: User, data: ProfileUpdate) -> User:
-    """Update profile fields. Email changes reset verification and re-send the link."""
+
+async def _authorize_email_change(
+    user: User, data: ProfileUpdate, current_session_id: str | None
+) -> None:
+    """Fail-closed confirmation for a staged email change.
+
+    Local-with-password accounts prove with `current_password` (missing ->
+    422, wrong -> 401). Passwordless accounts (Google / OAuth-only) must hold
+    a google-method session created within 15 minutes, otherwise 403.
+    """
+    if user.has_password and user.password_hash:
+        if not data.current_password:
+            raise ValidationError("current password is required to change email")
+        if not security.verify_password(data.current_password, user.password_hash):
+            raise AuthenticationError("current password is incorrect")
+        return
+    if not current_session_id:
+        raise ForbiddenError("recent Google sign-in required")
+    session = await security.get_session(current_session_id)
+    if session is None or session.get("user_id") != str(user.id):
+        raise ForbiddenError("recent Google sign-in required")
+    if str(session.get("login_method", "")) != "google":
+        raise ForbiddenError("recent Google sign-in required")
+    created = _parse_iso(session.get("created_at"))
+    if created is None:
+        raise ForbiddenError("recent Google sign-in required")
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - created).total_seconds()
+    if age < 0 or age > _RECENT_GOOGLE_SESSION_SECONDS:
+        raise ForbiddenError("recent Google sign-in required")
+
+
+async def update_profile(
+    db: Session, user: User, data: ProfileUpdate, *, current_session_id: str | None = None
+) -> User:
+    """Update profile fields.
+
+    Email changes never swap `email` directly: after confirmation they stage
+    `pending_email`/`pending_email_requested_at` (replacing any previous
+    request), keep `email_verified` as-is, and send the verification link to
+    the NEW address plus a fact-only notice to the OLD address. The swap
+    happens when the new address is verified. Same-address changes are a
+    no-op 200; taken addresses 409 before anything is sent.
+    """
     fields = data.model_fields_set
-    email_changed = False
+    pending_address: str | None = None
 
     if "email" in fields and data.email is not None:
         address = auth_service.normalize_email(str(data.email))
         if address != user.email:
+            await _authorize_email_change(user, data, current_session_id)
             existing = auth_service.get_by_email(db, address)
             if existing is not None and existing.id != user.id:
                 raise ConflictError("email already registered")
-            user.email = address
-            user.email_verified = False
-            email_changed = True
+            pending_address = address
+            user.pending_email = address
+            user.pending_email_requested_at = datetime.now(timezone.utc)
 
     if "full_name" in fields:
         user.full_name = data.full_name or None
@@ -109,9 +165,18 @@ async def update_profile(db: Session, user: User, data: ProfileUpdate) -> User:
         raise ConflictError("email or username already in use") from e
     db.refresh(user)
 
-    if email_changed:
-        await auth_service.issue_verification(db, user)
-        logger.info("profile email changed for user %s (verification sent)", user.id)
+    if pending_address is not None:
+        old_email = user.email
+        await auth_service.issue_email_change_verification(db, user, pending_address)
+        auth_service.send_email_change_notice_to_old(
+            old_email, pending_address, user.pending_email_requested_at or datetime.now(timezone.utc)
+        )
+        logger.info(
+            "email change requested: user_id=%s old=%s new=%s",
+            user.id,
+            auth_service.mask_email(old_email),
+            auth_service.mask_email(pending_address),
+        )
     return user
 
 
@@ -123,10 +188,11 @@ async def change_password(
 ) -> int:
     """Verify the current password, store the new hash, revoke every other session.
 
-    Local-auth only: OAuth accounts have no local password (403, never 422, so
-    the UI can hide the section and the API stays honest).
+    Any account with a local password (email or Google-with-password) may
+    change it; passwordless OAuth accounts get 403 (never 422, so the UI can
+    hide the section and the API stays honest).
     """
-    if user.provider != "local" or not user.has_password:
+    if not user.has_password:
         raise ForbiddenError("password management is not available for OAuth accounts")
     if not user.password_hash:
         raise ForbiddenError("this account has no local password")
@@ -141,6 +207,21 @@ async def change_password(
     revoked = await security.revoke_other_sessions(user.id, keep_session_id or "")
     logger.info("password changed for user %s (%d other sessions revoked)", user.id, revoked)
     return revoked
+
+
+def set_initial_password(db: Session, user: User, data: PasswordSet) -> None:
+    """Set the first password on a passwordless (OAuth-only) account.
+
+    409 when a password already exists (use change-password instead).
+    Single write path via auth `set_password` (strength policy + hash +
+    has_password mirror). Audit log carries user_id only, never the password.
+    """
+    if user.has_password:
+        raise ConflictError("password already set; use change-password instead")
+    auth_service.set_password(user, data.password)
+    db.commit()
+    db.refresh(user)
+    logger.info("initial password set for user %s", user.id)
 
 
 # --- sessions ---------------------------------------------------------------
@@ -274,3 +355,42 @@ async def revoke_session(
 
 async def revoke_other_sessions(user_id: uuid.UUID, current_session_id: str | None) -> int:
     return await security.revoke_other_sessions(user_id, current_session_id or "")
+
+
+# --- account deletion ---------------------------------------------------------
+
+
+async def request_account_deletion(
+    db: Session, user: User, data: AccountDeleteRequest, *, current_session_id: str | None = None
+) -> AccountDeletionStatus:
+    """Schedule the account for hard purge after the fixed grace period.
+
+    Verified-only. A re-request while pending is an idempotent 200 (no
+    re-auth, no side effects) so pending accounts can poll status. Otherwise
+    fresh re-auth, stamp requested/scheduled (+15d) with stage 1, revoke
+    every other session (caller keeps theirs, like change-password),
+    soft-delete + invalidate every API key immediately, and mail the notice.
+    Audit log carries user_id only.
+    """
+    if not user.email_verified:
+        raise EmailVerificationRequiredError("email verification required")
+    if user.deletion_scheduled_for is not None:
+        return AccountDeletionStatus(
+            scheduled_for=user.deletion_scheduled_for, days_remaining=DELETION_GRACE_DAYS
+        )
+    await security.require_fresh_confirmation(user, data.current_password, current_session_id)
+    now = datetime.now(timezone.utc)
+    user.deletion_requested_at = now
+    user.deletion_scheduled_for = now + timedelta(days=DELETION_GRACE_DAYS)
+    user.deletion_notice_stage = 1
+    db.commit()
+    await security.revoke_other_sessions(user.id, current_session_id or "")
+    for key in keys_service.list_keys(db, user.id):
+        keys_service.delete_key(db, key.id, user.id)
+    send_account_deletion_requested(
+        user.email, user.deletion_scheduled_for.astimezone(timezone.utc).isoformat()
+    )
+    logger.info("account deletion requested: user_id=%s", user.id)
+    return AccountDeletionStatus(
+        scheduled_for=user.deletion_scheduled_for, days_remaining=DELETION_GRACE_DAYS
+    )

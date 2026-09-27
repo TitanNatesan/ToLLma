@@ -18,4 +18,5 @@ export * from "./ModelSelector";
 export * from "./ProviderSelector";
 export * from "./Logo";
 export * from "./AppShell";
+export * from "./DeletionWarningScreen";
 export * from "./VerificationBanner";

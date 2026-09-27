@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from tollms.api.request_logs import service
 from tollms.api.request_logs.schemas import RequestLogPage, RequestLogSummary
 from tollms.core.deps import get_db
-from tollms.core.security import require_verified_user
+from tollms.core.security import require_active_user
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/request-logs", tags=["request-logs"])
@@ -24,7 +24,7 @@ def list_logs(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> RequestLogPage:
     return service.list_logs(
         db,
@@ -42,7 +42,7 @@ def list_logs(
 def summary(
     days: int = Query(default=30, ge=1, le=365),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> RequestLogSummary:
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)

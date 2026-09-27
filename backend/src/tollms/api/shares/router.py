@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from tollms.api.shares import service
 from tollms.api.shares.schemas import PublicShareRead, ShareCreate, ShareRead, ShareUpdate
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user, require_verified_user
+from tollms.core.security import get_current_user, require_active_user
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/shares", tags=["shares"])
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/v1/shares", tags=["shares"])
 def create(
     data: ShareCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> ShareRead:
     return service.create_share(db, user.id, data.conversation_id, data.expires_in_hours)
 
@@ -27,7 +27,7 @@ def create(
 def list_all(
     conversation_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> list[ShareRead]:
     return service.list_shares(db, user.id, conversation_id)
 
@@ -37,7 +37,7 @@ def update(
     share_id: uuid.UUID,
     data: ShareUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> ShareRead:
     return service.update_share(
         db, user.id, share_id, is_public=data.is_public, expires_in_hours=data.expires_in_hours
@@ -48,7 +48,7 @@ def update(
 def disable(
     share_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> ShareRead:
     return service.disable_share(db, user.id, share_id)
 
@@ -57,7 +57,7 @@ def disable(
 def regenerate(
     share_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> ShareRead:
     return service.regenerate_share(db, user.id, share_id)
 

@@ -45,6 +45,7 @@ class ErrorCode(str, enum.Enum):
     UNAUTHENTICATED = "UNAUTHENTICATED"
     FORBIDDEN = "FORBIDDEN"
     EMAIL_VERIFICATION_REQUIRED = "EMAIL_VERIFICATION_REQUIRED"
+    ACCOUNT_PENDING_DELETION = "ACCOUNT_PENDING_DELETION"
     CONFLICT = "CONFLICT"
 
 
@@ -113,6 +114,15 @@ class EmailVerificationRequiredError(ForbiddenError):
     """Unverified account gated from feature access. 403, not retryable."""
 
     code = ErrorCode.EMAIL_VERIFICATION_REQUIRED
+    status_code = 403
+
+
+class AccountPendingDeletionError(ForbiddenError):
+    """Account scheduled for deletion: feature access denied until the
+    grace period ends (purge) or the user restores the account. 403, not
+    retryable."""
+
+    code = ErrorCode.ACCOUNT_PENDING_DELETION
     status_code = 403
 
 

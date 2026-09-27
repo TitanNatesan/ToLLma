@@ -6,6 +6,7 @@ import { AppearanceSection } from "./components/AppearanceSection";
 import { ChatPreferencesSection } from "./components/ChatPreferencesSection";
 import { ProfileSection } from "./components/ProfileSection";
 import { AccountSecuritySection } from "./components/AccountSecuritySection";
+import { DangerZoneSection } from "./components/DangerZoneSection";
 import { SessionsSection } from "./components/SessionsSection";
 import { ProvidersSection } from "./components/ProvidersSection";
 
@@ -71,6 +72,16 @@ export default function SettingsPage() {
             testId="settings-section-providers"
           >
             <ProvidersSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="danger-zone"
+            title="Danger zone"
+            description="Irreversible account actions."
+            testId="danger-zone-section"
+            className="border-red-200 dark:border-red-950"
+          >
+            <DangerZoneSection />
           </SettingsCard>
         </div>
     </main>

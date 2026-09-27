@@ -2213,3 +2213,106 @@ Tests: conftest.py (user_factory auto-verifies), test_auth.py (+me lifecycle, 2 
 
 ### Recommended Next Steps
 - Await full regression → Phase 3 report → Phase 4 Auth Matrix (Google set-password, has_password reset inclusion, collision review).
+
+---
+
+## 2026-09-27 — V1 Phase 3: COMPLETE (full regression green)
+
+### Verification
+- Full backend suite: **402 passed, 0 failed** (3m22s; excl. test_bedrock.py + 1 pre-existing privacy-scanner over-match). Root-caused the earlier red run: test env sent LIVE Gmail (quota exhausted → 19s timeouts + cascading 422s). Fix: PYTEST_CURRENT_TEST forces email outbox mode (services/email/service.py). No quota burn, no delays since.
+- Frontend: tsc + eslint clean, vitest 126/126.
+- Gate proven end-to-end: 403-before-404 on bogus ids, idempotent resend, cooldown/burst 429s, Google-verified unaffected.
+
+### Remaining
+- Phase 4 Auth Matrix next (Google set-password, has_password reset inclusion, collision review, matrix tests).
+
+---
+
+## 2026-09-27 — V1 Phase 4: Auth Matrix COMPLETE
+
+### Requirement Completed
+Google set-password + dual login, has_password reset inclusion, collision posture kept + explained, change-password relaxed to has_password-only, set-password verified-gated per Phase 3 contract.
+
+### Files Created
+- frontend/src/app/settings/components/CreatePasswordSection.tsx
+
+### Files Modified
+Backend: api/settings/{schemas (PasswordSet), service (set_initial_password, change gate has_password-only), router (POST /password/set, verified gate)}; api/auth/service.py (forgot/reset has_password gates, collision message + comment).
+Frontend: types (has_password optional), services/api.ts (setPassword), hooks/useSettings.ts (useSetPassword), AccountSecuritySection (routing), ProviderAuthSection (copy + Set/Not set).
+Tests: test_password_reset.py (+6), test_auth.py (+2 collision).
+
+### Decisions
+- Collision posture KEPT (link on verified Google email, else 401 with recovery explanation).
+- set-password verified-gated (overrode implementer's non-gated choice — Phase 3 contract: all settings mutations blocked).
+- login needs no change (no provider gate; null-hash fail-closed).
+
+### Verification
+- Targeted 5 files: **70 passed**. Frontend tsc/eslint clean.
+- Known pre-existing: call_sync session warmup order-dependence (passes in full suite, fails isolated) — flagged, untouched.
+
+---
+
+## 2026-09-27 — V1 Phase 5: Session Hardening COMPLETE
+
+### Requirement Completed
+Refresh rotation (jti) + reuse family-revoke, absolute 90d, idle 8h, cap 10 (oldest evicted), login audit events. No migration (Valkey-only: refresh_jti/created_at/last_active on session hash).
+
+### Files Created
+- backend/tests/test_session_hardening.py (9 tests)
+
+### Files Modified
+Backend: core/{security (jti, rotation, reuse-revoke, absolute/idle denial, cap, audit), config (3 settings)}; api/auth/{service (login/google bind jti, rotating refresh), router (dual cookies), schemas (RefreshResponse.refresh_token)}.
+Tests: none existing (all green as-is).
+
+### Decisions
+- Parallel double-refresh race accepted (last-write-wins; true single-use needs Lua/CAS — flagged, not built).
+- Reverted 3 out-of-scope over-gatings found during integration (auth resend/me, repository reads, settings GETs) to the approved Phase 3 allowed-surface contract; corrected 2 test expectations with citations.
+
+### Verification
+- Auth-adjacent 9 files: **94 passed**. Full backend suite earlier: 402 passed.
+
+---
+
+## 2026-09-27 — V1 Phase 6: Email Change Hardening COMPLETE (auto-run ends here)
+
+### Requirement Completed
+Staged email change (pending_email + requested_at, migration d9e0f1a2b3c4): current-password re-auth (422/401), fresh-Google-session ≤15min (403 verbatim), dual notification (link to new, fact-only notice to old), consume token-email == pending + 24h TTL, resend-to-pending, overwrite semantics, pending_email on UserRead.
+
+### Files Created
+- alembic/versions/d9e0f1a2b3c4_email_change_pending.py
+- backend/src/tollms/services/email/templates/email-change-notice.html
+
+### Files Modified
+Backend: models/user.py, settings/{schemas, service, router}, auth/{service (issue/verify/resend pending branches, UserRead.pending_email), schemas}, services/email/{service, __init__}.
+Frontend: ProfileSection.tsx (editor + confirmation + pending), services/api.ts, types.
+Tests: test_settings.py (+9).
+
+### Verification
+- Targeted 4 files: **69 passed**. Alembic check green. Frontend tsc/eslint clean.
+- Phases 1–6 implementation complete. Phase 7+ NOT started (approval required).
+
+---
+
+## 2026-09-27 — V1 Phase 7: Account Deletion System COMPLETE
+
+### Requirement Completed
+Full deletion lifecycle (ACTIVE → PENDING 15d → PURGED): Danger Zone request w/ re-auth, hard-gate warning screen (restore / logout-only), 403 ACCOUNT_PENDING_DELETION, immediate key disable, keys stay dead on restore, NULL analytics preservation, surviving purge audit rows, re-registration.
+
+### Files Created
+- alembic/versions/e7f8a9b0c1d2_account_deletion.py (3 user cols + purge_audit_log)
+- backend/src/tollms/models/purge_audit.py
+- backend/tests/test_account_deletion.py (11 tests)
+- frontend DeletionWarningScreen.tsx + DangerZoneSection.tsx
+- 4 email templates (requested/reminder/restored/purged)
+
+### Files Modified
+Backend: models/user (+3 cols), core/{exceptions, security (require_active_user, require_fresh_confirmation)}, settings/{router (gate swaps + delete-request), service, schemas}, auth/{router (restore), service, schemas (me timestamps)}, jobs/scheduler (_deletion_job), email service, 14 routers (verified→active swaps).
+Frontend: Shell.tsx (hard gate), AppShell, api.ts, types, settings page.
+
+### Decisions
+- All approved: A NULL, B revoke-others, C 403, D fixed windows, AR1–AR4.
+- Residual Valkey tokens (24h/10m TTL) accepted; double-refresh race accepted; bridge-warmup test fixture added (pre-existing order-dependence).
+
+### Verification
+- New: test_account_deletion 11/11. Full backend: **439 passed, 0 failed** (2m44s). Frontend tsc/eslint clean, vitest 126/126.
+- Phase 8 NOT started (approval required).

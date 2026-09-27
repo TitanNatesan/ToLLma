@@ -35,8 +35,11 @@ class UserRead(BaseModel):
     # Provider-aware surface: "local" shows password management, "google" does not.
     provider: str = "local"
     has_password: bool = False
+    pending_email: str | None = None
     avatar_url: str | None
     created_at: datetime
+    deletion_requested_at: datetime | None = None
+    deletion_scheduled_for: datetime | None = None
 
 
 class AuthResponse(BaseModel):
@@ -59,6 +62,8 @@ class ResendVerificationResponse(BaseModel):
 class RefreshResponse(BaseModel):
     user: UserRead
     access_token: str | None = None
+    # Rotated refresh token for non-cookie API clients (cookies carry it too).
+    refresh_token: str | None = None
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -85,3 +90,11 @@ class ResetPasswordResponse(BaseModel):
     success: bool = True
     email: str
     message: str = "Password updated successfully."
+
+
+class RestoreRequest(BaseModel):
+    """Cancel a pending account deletion. Re-auth mirrors delete-request:
+    local-with-password accounts pass `current_password`; passwordless
+    accounts rely on a recent Google-method session instead."""
+
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)

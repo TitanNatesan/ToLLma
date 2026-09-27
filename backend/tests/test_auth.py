@@ -248,3 +248,83 @@ def test_google_login_unconfigured(client: TestClient, monkeypatch: pytest.Monke
     monkeypatch.setattr(settings, "google_client_id", "")
     r = client.get("/auth/google/login", follow_redirects=False)
     assert r.status_code == 422
+
+
+# --- Google collision matrix --------------------------------------------------
+
+
+def _google_callback(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, *, sub: str, email: str, verified: bool
+) -> object:
+    """Drive the google-callback flow with a mocked Google profile."""
+    from urllib.parse import parse_qs, urlparse
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_client_id", "test-id")
+    monkeypatch.setattr(settings, "google_client_secret", "test-secret")
+    monkeypatch.setattr(settings, "google_redirect_uri", "http://localhost:8000/auth/google/callback")
+
+    async def _tokens(code: str) -> dict:
+        assert code == "auth-code"
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        assert token == "google-at"
+        return {"sub": sub, "email": email, "email_verified": verified,
+                "name": "G User", "picture": "http://pic"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    login = client.get("/auth/google/login", follow_redirects=False)
+    assert login.status_code in (302, 307), login.text
+    state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+    return client.get(
+        "/auth/google/callback",
+        params={"code": "auth-code", "state": state},
+        follow_redirects=False,
+    )
+
+
+def test_google_callback_links_verified_email_to_local_account(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import select
+
+    from tollms.models.user import User
+
+    body = _signup(client, email="collision-link@example.com")
+    _verify(client, body)
+    local_id = body["user"]["id"]
+    client.cookies.clear()
+
+    cb = _google_callback(
+        client, monkeypatch,
+        sub="g-link-123", email="collision-link@example.com", verified=True,
+    )
+    assert cb.status_code in (302, 307), cb.text
+    assert client.cookies.get("access_token")
+
+    me = client.get("/auth/me").json()
+    assert me["id"] == local_id
+
+    db.expire_all()
+    rows = db.execute(
+        select(User).where(User.email == "collision-link@example.com")
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].google_id == "g-link-123"
+
+
+def test_google_callback_unverified_collision_rejected(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _verify(client, _signup(client, email="collision@example.com"))
+    client.cookies.clear()
+
+    cb = _google_callback(
+        client, monkeypatch,
+        sub="g-other-456", email="collision@example.com", verified=False,
+    )
+    assert cb.status_code == 401, cb.text
+    assert "already registered" in cb.json()["error"]["message"]

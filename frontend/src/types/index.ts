@@ -16,7 +16,25 @@ export interface User {
   auth_provider: "EMAIL" | "GOOGLE";
   /** Auth identity: "local" shows password management, "google" does not. */
   provider: "local" | "google";
-  has_password: boolean;
+  /**
+   * Pending email-change target. Set while a new address awaits confirmation;
+   * null when nothing is pending. Optional: older /auth/me responses omit
+   * it — readers must treat undefined as "unknown" and hide pending UI.
+   */
+  pending_email?: string | null;
+  /**
+   * Whether a local password exists. Optional: older /auth/me responses omit
+   * it — readers must treat undefined as "unknown" and hide password surfaces.
+   */
+  has_password?: boolean;
+  /**
+   * Phase 7: pending account-deletion timestamps. Set while deletion is
+   * scheduled; null when nothing is pending. Optional: older /auth/me
+   * responses omit them — readers must treat undefined as "unknown" and hide
+   * deletion UI (same tolerance pattern as pending_email/has_password).
+   */
+  deletion_requested_at?: string | null;
+  deletion_scheduled_for?: string | null;
   avatar_url: string | null;
   created_at: string;
 }

@@ -57,6 +57,11 @@ class ProfileUpdate(BaseModel):
     username: str | None = Field(default=None, max_length=30)
     email: EmailStr | None = None
     avatar_url: str | None = Field(default=None, max_length=2048)
+    # Email-change confirmation for local-with-password accounts: required
+    # (422 when missing, 401 when wrong) whenever `email` actually changes.
+    # Passwordless accounts ignore it — they confirm via a recent Google
+    # session instead.
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("full_name")
     @classmethod
@@ -95,6 +100,12 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class PasswordSet(BaseModel):
+    """First password for a passwordless (OAuth-only) account."""
+
+    password: str = Field(min_length=8, max_length=128)
+
+
 class SessionRead(BaseModel):
     """One live login session, enriched with durable usage aggregates."""
 
@@ -126,3 +137,16 @@ class RevokeOthersRead(BaseModel):
 class RevokedRead(BaseModel):
     status: str = "revoked"
     session_id: str | None = None
+
+
+class AccountDeleteRequest(BaseModel):
+    """Schedule account deletion. Re-auth mirrors the email-change proof:
+    local-with-password accounts pass `current_password`; passwordless
+    accounts rely on a recent Google-method session instead."""
+
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class AccountDeletionStatus(BaseModel):
+    scheduled_for: datetime
+    days_remaining: int = 15

@@ -276,3 +276,156 @@ def test_signup_enforces_password_policy(client: TestClient) -> None:
     weak = client.post("/auth/signup", json={"email": "weak@example.com", "password": "alllowercase1"})
     assert weak.status_code == 422
     assert "uppercase" in weak.json()["error"]["message"]
+
+
+# --- Google-with-password reset matrix ---------------------------------------
+
+
+def _google_with_password(db: Session) -> tuple[User, str]:
+    """Google account that later set a local password (dual login).
+
+    DB-insert pattern mirrored from `_google_user` + the single write path
+    (`auth_service.set_password`) so `has_password` is True.
+    """
+    user, token = _google_user(db)
+    auth_service.set_password(user, "Password123")
+    db.commit()
+    db.refresh(user)
+    assert user.has_password is True
+    return user, token
+
+
+def test_forgot_reset_end_to_end_google_with_password(
+    client: TestClient, db: Session, sent_reset_emails: list[dict]
+) -> None:
+    user, _token = _google_with_password(db)
+    email = user.email
+
+    r = client.post("/auth/forgot-password", json={"email": email})
+    assert r.status_code == 200
+    assert r.json() == {"success": True}
+    assert len(sent_reset_emails) == 1
+    assert sent_reset_emails[0]["to"] == email
+    token = _token_from(sent_reset_emails)
+
+    ok = client.post("/auth/reset-password", json={"token": token, "password": "BrandNew123"})
+    assert ok.status_code == 200, ok.text
+
+    # Dual login: email+password works after the reset; old password is dead.
+    client.cookies.clear()
+    assert client.post("/auth/login", json={"email": email, "password": "BrandNew123"}).status_code == 200
+    assert client.post("/auth/login", json={"email": email, "password": "Password123"}).status_code == 401
+
+
+def test_google_only_forgot_silent_reset_rejected(
+    client: TestClient, db: Session, sent_reset_emails: list[dict]
+) -> None:
+    user, _token = _google_user(db)
+
+    r = client.post("/auth/forgot-password", json={"email": user.email})
+    assert r.status_code == 200
+    assert r.json() == {"success": True}
+    assert sent_reset_emails == []
+
+    rows = db.execute(select(PasswordResetToken)).scalars().all()
+    assert rows == []
+
+    bad = client.post("/auth/reset-password", json={"token": "x" * 40, "password": "BrandNew123"})
+    assert bad.status_code == 422
+    assert client.get("/auth/reset-password/validate", params={"token": "x" * 40}).json() == {
+        "valid": False,
+        "email": None,
+    }
+
+
+# --- set-password endpoint ----------------------------------------------------
+
+
+def test_set_password_google_verified_end_to_end(client: TestClient, db: Session) -> None:
+    user, token = _google_user(db)
+    assert user.has_password is False
+
+    r = client.post(
+        "/api/v1/settings/password/set",
+        headers=_auth(token),
+        json={"password": "NewPassword123"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"status": "password set"}
+
+    me = client.get("/auth/me", headers=_auth(token)).json()
+    assert me["has_password"] is True
+
+    # Dual login: email+password now works alongside Google.
+    client.cookies.clear()
+    login = client.post("/auth/login", json={"email": user.email, "password": "NewPassword123"})
+    assert login.status_code == 200, login.text
+
+    # Change-password accepts the freshly set password (has_password-keyed).
+    changed = client.post(
+        "/api/v1/settings/password",
+        json={"current_password": "NewPassword123", "new_password": "AnotherPass123"},
+    )
+    assert changed.status_code == 200, changed.text
+
+    # Second set is a conflict (use change-password instead). Note: the
+    # change-password above revoked the original Google session, so the
+    # current (password-login) session is used here.
+    again = client.post(
+        "/api/v1/settings/password/set",
+        json={"password": "YetAnother123"},
+    )
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "CONFLICT"
+
+
+def test_set_password_weak_rejected(client: TestClient, db: Session) -> None:
+    _user, token = _google_user(db)
+    r = client.post(
+        "/api/v1/settings/password/set",
+        headers=_auth(token),
+        json={"password": "alllowercase1"},
+    )
+    assert r.status_code == 422
+    assert "uppercase" in r.json()["error"]["message"]
+
+
+def test_set_password_unverified_forbidden(client: TestClient, db: Session) -> None:
+    """Passwordless + unverified account: the verified gate denies with 403."""
+    google_id = f"google-{uuid.uuid4().hex[:10]}"
+    user = User(
+        email=f"g-{uuid.uuid4().hex[:8]}@gmail.com",
+        provider="google",
+        provider_user_id=google_id,
+        auth_provider=AuthProvider.GOOGLE,
+        google_id=google_id,
+        has_password=False,
+        email_verified=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    sid = call_sync(
+        security.create_session(
+            user.id,
+            user.email,
+            "google",
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            ip="172.19.0.1",
+        )
+    )
+    token = security.create_access_token(user.id, user.email, sid)
+
+    r = client.post(
+        "/api/v1/settings/password/set",
+        headers=_auth(token),
+        json={"password": "NewPassword123"},
+    )
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "EMAIL_VERIFICATION_REQUIRED"
+
+
+def test_set_password_anonymous_unauthorized(client: TestClient) -> None:
+    anon = TestClient(client.app)
+    r = anon.post("/api/v1/settings/password/set", json={"password": "NewPassword123"})
+    assert r.status_code == 401

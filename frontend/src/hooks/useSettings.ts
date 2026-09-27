@@ -7,6 +7,7 @@ import {
   listSessions,
   revokeOtherSessions,
   revokeSession,
+  setPassword,
   updatePreferences,
   updateProfile,
 } from "@/services/api";
@@ -70,6 +71,11 @@ export function useUpdateProfile() {
 
 export function useChangePassword() {
   return useMutation({ mutationFn: changePassword });
+}
+
+/** Phase 4: first local password for Google-only accounts (no current password). */
+export function useSetPassword() {
+  return useMutation({ mutationFn: setPassword });
 }
 
 export function sessionsQueryKey() {

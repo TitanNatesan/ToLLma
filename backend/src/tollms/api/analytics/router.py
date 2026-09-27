@@ -21,7 +21,7 @@ from tollms.api.analytics.schemas import (
     ModelSort,
 )
 from tollms.core.deps import get_db
-from tollms.core.security import require_verified_user
+from tollms.core.security import require_active_user
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
@@ -41,7 +41,7 @@ def range_query(
 def summary(
     q: service.RangeQuery = Depends(range_query),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsSummary:
     return service.get_summary(db, user.id, q)
 
@@ -51,7 +51,7 @@ def timeseries(
     q: service.RangeQuery = Depends(range_query),
     granularity: Granularity | None = Query(None),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsTimeseries:
     return service.get_timeseries(db, user.id, q, granularity)
 
@@ -60,7 +60,7 @@ def timeseries(
 def breakdown(
     q: service.RangeQuery = Depends(range_query),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsBreakdown:
     return service.get_breakdown(db, user.id, q)
 
@@ -70,7 +70,7 @@ def models(
     q: service.RangeQuery = Depends(range_query),
     sort: ModelSort = Query("most_expensive"),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsModels:
     return service.get_models(db, user.id, q, sort)
 
@@ -79,7 +79,7 @@ def models(
 def heatmap(
     q: service.RangeQuery = Depends(range_query),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsHeatmap:
     return service.get_heatmap(db, user.id, q)
 
@@ -88,7 +88,7 @@ def heatmap(
 def performance(
     q: service.RangeQuery = Depends(range_query),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsPerformance:
     return service.get_performance(db, user.id, q)
 
@@ -97,7 +97,7 @@ def performance(
 def conversations(
     q: service.RangeQuery = Depends(range_query),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsConversations:
     return service.get_conversations(db, user.id, q)
 
@@ -106,7 +106,7 @@ def conversations(
 def widgets(
     q: service.RangeQuery = Depends(range_query),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> AnalyticsWidgets:
     """History/branching/sharing/export counters."""
     return service.get_widgets(db, user.id, q)
@@ -118,7 +118,7 @@ def export(
     dataset: ExportDataset = Query("summary"),
     format: ExportFormat = Query("csv"),
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> Response:
     content, filename, media_type = service.export(db, user.id, q, dataset, format)
     return Response(

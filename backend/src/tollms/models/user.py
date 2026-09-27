@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, Index, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum, Index, SmallInteger, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -51,6 +51,14 @@ class User(SoftDeleteMixin, TimestampedModel):
     )
 
     email: Mapped[str] = mapped_column(String(320), nullable=False)
+    # Staged email change (Phase 6 hardening): a PATCH /settings/profile email
+    # change never swaps `email` directly — it stages the new address here
+    # (+ requested_at) until the verification link sent to the NEW address is
+    # consumed, which swaps the email and clears both columns.
+    pending_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_email_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)  # null for OAuth-only users
     # Auth identity (authoritative for provider-aware UI/API decisions).
     # "local" = email + password, "google" = Google OAuth.
@@ -81,6 +89,20 @@ class User(SoftDeleteMixin, TimestampedModel):
         index=True,
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Account deletion (Phase 7): a delete-request stamps requested_at and
+    # schedules the hard purge 15 days out (scheduled_for); notice_stage
+    # tracks reminder progress (0 = none, 1 = requested, 2 = 7-day sent,
+    # 3 = 1-day sent). While scheduled_for is set the account is
+    # pending-deletion: feature routers deny, restore clears all three.
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_scheduled_for: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deletion_notice_stage: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
     # Per-user UI/chat preferences (accent, enter behavior, thinking default,
     # auto-scroll, animations). JSONB so new preferences ship without a migration.
     preferences: Mapped[dict] = mapped_column(

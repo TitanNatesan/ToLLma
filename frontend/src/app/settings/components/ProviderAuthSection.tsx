@@ -4,10 +4,10 @@ import { CheckCircle2, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui";
 
 /**
- * Shown instead of password management for OAuth accounts: they have no local
- * password, so the only honest surface is provider information.
+ * Google sign-in summary. Google-only accounts (no local password yet) get a
+ * create-password form alongside this card; once set, the change form appears.
  */
-export function ProviderAuthSection() {
+export function ProviderAuthSection({ hasPassword }: { hasPassword: boolean }) {
   return (
     <div className="space-y-4" data-testid="provider-auth-section">
       <div className="flex items-start gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
@@ -26,8 +26,8 @@ export function ProviderAuthSection() {
             </Badge>
           </div>
           <p className="mt-1.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-            This account is authenticated through Google OAuth. Password management is handled by
-            Google.
+            This account signs in with Google. You can also create a local password below to
+            sign in with email and password.
           </p>
           <a
             className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-tollma-600 hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300"
@@ -50,7 +50,7 @@ export function ProviderAuthSection() {
       </div>
       <div className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800">
         <span className="text-zinc-500 dark:text-zinc-400">Local password</span>
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">Not set</span>
+        <span className="font-medium text-zinc-800 dark:text-zinc-200">{hasPassword ? "Set" : "Not set"}</span>
       </div>
     </div>
   );

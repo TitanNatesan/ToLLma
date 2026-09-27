@@ -124,6 +124,15 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
         () => {},
       );
     }
+    if (res.status === 403 && path !== "/auth/me" && isAccountPendingDeletion(data)) {
+      // Deletion was scheduled mid-session (another tab/device): refetch so
+      // the Shell hard gate takes over on the next render. Fire-and-forget —
+      // same pattern as the verification 403→refetch above.
+      void getCurrentUser().then(
+        (u) => useAuthStore.getState().setUser(u),
+        () => {},
+      );
+    }
     const method = init?.method ?? "GET";
     const retryAfterHeader = res.headers.get("retry-after");
     const retryAfterSeconds =
@@ -494,6 +503,13 @@ export function isEmailVerificationRequired(data: unknown): boolean {
   return code === "EMAIL_VERIFICATION_REQUIRED";
 }
 
+/** Phase 7: true when a parsed error body carries the pending-deletion gate code. */
+export function isAccountPendingDeletion(data: unknown): boolean {
+  if (typeof data !== "object" || data === null) return false;
+  const code = (data as { error?: { code?: unknown } }).error?.code;
+  return code === "ACCOUNT_PENDING_DELETION";
+}
+
 /** Re-send the verification email. 429s surface via ApiError.retryAfterSeconds. */
 export function resendVerificationEmail(): Promise<ResendVerificationResponse> {
   return post<ResendVerificationResponse>("/auth/resend-verification", {});
@@ -532,10 +548,26 @@ export const updateProfile = (body: {
   full_name?: string | null;
   username?: string | null;
   email?: string;
+  /**
+   * Phase 6: email-change confirmation for local-with-password accounts.
+   * Required by the backend when `email` differs (missing → 422).
+   */
+  current_password?: string;
   avatar_url?: string | null;
 }) => patch<User>("/api/v1/settings/profile", body);
 export const changePassword = (body: { current_password: string; new_password: string }) =>
   post<{ status: string; revoked_sessions: number }>("/api/v1/settings/password", body);
+/**
+ * Phase 4: Google-only accounts create their first local password.
+ * 200 generic success; 409 when a password is already set; 422 on weak input.
+ * The response carries no user, so callers must refetch /auth/me afterwards.
+ */
+export interface SetPasswordResult {
+  status: string;
+  message?: string;
+}
+export const setPassword = (body: { password: string }) =>
+  post<SetPasswordResult>("/api/v1/settings/password/set", body);
 export interface SessionsResponse {
   sessions: LoginSession[];
   total: number;
@@ -545,6 +577,31 @@ export const revokeSession = (sessionId: string) =>
   del<{ status: string; session_id: string }>(`/api/v1/settings/sessions/${sessionId}`);
 export const revokeOtherSessions = () =>
   post<{ revoked: number }>("/api/v1/settings/sessions/revoke-others", {});
+
+// --- Phase 7: account deletion ------------------------------------------------
+
+export interface DeleteRequestResult {
+  scheduled_for: string;
+  days_remaining: number;
+}
+
+/**
+ * Phase 7: schedule account deletion (15-day retention window).
+ * 401 wrong password; 422 missing password (local-with-password accounts);
+ * 403 when a passwordless account needs a fresh Google sign-in; 409 when
+ * deletion is already pending. The response carries no user — callers must
+ * refetch /auth/me afterwards so the Shell hard gate takes over.
+ */
+export const requestAccountDeletion = (body: { current_password?: string }) =>
+  post<DeleteRequestResult>("/api/v1/settings/account/delete-request", body);
+
+/**
+ * Phase 7: cancel a pending deletion. 409 when nothing is pending.
+ * Returns the restored user — callers set it into the auth store so the
+ * hard gate clears.
+ */
+export const restoreAccount = (body: { current_password?: string }) =>
+  post<User>("/auth/restore", body);
 
 // --- analytics --------------------------------------------------------------
 

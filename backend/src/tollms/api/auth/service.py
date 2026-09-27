@@ -15,12 +15,23 @@ from sqlalchemy.orm import Session
 from tollms.core import rate_limit as auth_limits
 from tollms.core import security
 from tollms.core.config import get_settings
-from tollms.core.exceptions import AuthenticationError, NotFoundError, TooManyRequestsError, ValidationError
+from tollms.core.exceptions import (
+    AuthenticationError,
+    ConflictError,
+    NotFoundError,
+    TooManyRequestsError,
+    ValidationError,
+)
 from tollms.models.password_reset import PasswordResetToken
 from tollms.models.user import AuthProvider, User
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import get_manager
-from tollms.services.email import send_password_reset_email, send_verification_email
+from tollms.services.email import (
+    send_account_restored,
+    send_email_change_notice,
+    send_password_reset_email,
+    send_verification_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +66,11 @@ def _read(user: User):
         auth_provider=user.auth_provider,
         provider=user.provider,
         has_password=user.has_password,
+        pending_email=user.pending_email,
         avatar_url=user.avatar_url,
         created_at=user.created_at,
+        deletion_requested_at=user.deletion_requested_at,
+        deletion_scheduled_for=user.deletion_scheduled_for,
     )
 
 
@@ -130,8 +144,42 @@ async def issue_verification(db: Session, user: User) -> str:
     return token
 
 
+async def issue_email_change_verification(db: Session, user: User, new_address: str) -> str:
+    """Mint a change-verification token bound to the NEW address and email it there.
+
+    The token's `email` claim is the pending address (never the old one), so
+    `verify_email` can require token-email == pending_email. No DB write here:
+    callers stage pending_email/requested_at themselves.
+    """
+    address = normalize_email(new_address)
+    token = security.create_verification_token(user.id, address)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    await get_manager().set(
+        cache_keys.verify_email(digest), {"user_id": str(user.id)}, ttl=_verify_ttl_seconds()
+    )
+    url = f"{get_settings().frontend_url.rstrip('/')}/verify?token={token}"
+    send_verification_email(address, url)
+    return token
+
+
+def send_email_change_notice_to_old(user_email: str, new_address: str, requested_at: datetime) -> None:
+    """Fact-only notice to the OLD address. Never carries tokens or links."""
+    send_email_change_notice(
+        user_email,
+        normalize_email(new_address),
+        requested_at.astimezone(timezone.utc).isoformat(),
+    )
+
+
 async def verify_email(db: Session, token: str) -> User:
-    """Consume a verification token: activate the account. Single-use, 24h."""
+    """Consume a verification token: activate the account. Single-use, 24h.
+
+    Change-verification (user.pending_email set): the token email must equal
+    the pending address and the request must be unexpired (24h verification
+    TTL from pending_email_requested_at); success swaps the email, clears the
+    pending fields and marks verified. Signup-verification (no pending) keeps
+    the historical behavior.
+    """
     payload = security.decode_token(token)
     if payload is None or payload.get("type") != "verify_email":
         raise ValidationError("invalid or expired verification link")
@@ -161,6 +209,25 @@ async def verify_email(db: Session, token: str) -> User:
     user = db.get(User, user_id)
     if user is None or user.is_deleted:
         raise NotFoundError("account not found")
+    if user.pending_email:
+        pending = normalize_email(user.pending_email)
+        if str(payload.get("email", "")).strip().lower() != pending:
+            raise ValidationError("invalid or expired verification link")
+        requested_at = user.pending_email_requested_at
+        if requested_at is None:
+            raise ValidationError("invalid or expired verification link")
+        if requested_at.tzinfo is None:
+            requested_at = requested_at.replace(tzinfo=timezone.utc)
+        if (datetime.now(timezone.utc) - requested_at).total_seconds() > _verify_ttl_seconds():
+            raise ValidationError("verification link expired")
+        user.email = pending
+        user.pending_email = None
+        user.pending_email_requested_at = None
+        user.email_verified = True
+        db.commit()
+        await manager.delete(key)
+        logger.info("user email changed via verification: %s", user.id)
+        return user
     user.email_verified = True
     db.commit()
     await manager.delete(key)
@@ -174,7 +241,33 @@ async def resend_verification(db: Session, user: User) -> tuple[bool, int]:
     Returns (sent, cooldown_seconds). Already-verified is idempotent
     (no email). Raises 429 while cooling, 503 when Valkey is down.
     Audit logs carry user_id + outcome only, never tokens or emails.
+
+    While an email change is pending the link re-sends to the PENDING
+    address (even for already-verified users whose current address is
+    verified) — the current address needs no proof.
     """
+    if user.pending_email:
+        pending = normalize_email(user.pending_email)
+        cooldown = max(1, get_settings().verification_resend_cooldown_seconds)
+        try:
+            await auth_limits.check_fixed_window(
+                key=cache_keys.auth_rate_limit("auth:resend-cooldown", str(user.id)),
+                limit=1,
+                window_seconds=cooldown,
+                scope="auth:resend-cooldown",
+            )
+        except TooManyRequestsError as exc:
+            logger.warning(
+                "verification resend cooldown (pending change): user_id=%s retry_after=%s",
+                user.id, exc.retry_after,
+            )
+            raise
+        await issue_email_change_verification(db, user, pending)
+        logger.info(
+            "verification resend sent (pending change): user_id=%s masked=%s cooldown=%ds",
+            user.id, mask_email(pending), cooldown,
+        )
+        return True, cooldown
     if user.email_verified:
         logger.info("verification resend skipped (already verified): user_id=%s", user.id)
         return False, 0
@@ -223,20 +316,27 @@ async def login(
     await auth_limits.clear_failed_logins(address, ip)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
+    refresh_jti = security.generate_refresh_jti()
     session_id = await security.create_session(
-        user.id, user.email, "password", user_agent=user_agent, ip=ip
+        user.id, user.email, "password", user_agent=user_agent, ip=ip,
+        refresh_jti=refresh_jti,
     )
     logger.info("user logged in: %s (password)", user.id)
     return (
         user,
         security.create_access_token(user.id, user.email, session_id),
-        security.create_refresh_token(user.id, session_id),
+        security.create_refresh_token(user.id, session_id, refresh_jti),
         session_id,
     )
 
 
-async def refresh(db: Session, refresh_token: str) -> tuple[User, str]:
-    """Exchange a live refresh token for a new access token (same session)."""
+async def refresh(db: Session, refresh_token: str) -> tuple[User, str, str]:
+    """Rotate a live refresh token: invalidates the presented jti, issues new pair.
+
+    Reuse (stale jti, or any unexpired refresh for an unknown session) revokes
+    the entire family and denies. Absolute lifetime + idle timeout deny with
+    re-login. Returns (user, new_access_token, new_refresh_token).
+    """
     payload = security.decode_token(refresh_token)
     if payload is None or payload.get("type") != "refresh":
         raise AuthenticationError("invalid or expired refresh token")
@@ -244,14 +344,40 @@ async def refresh(db: Session, refresh_token: str) -> tuple[User, str]:
         user_id = uuid.UUID(str(payload["sub"]))
     except ValueError:
         raise AuthenticationError("invalid refresh token") from None
-    session = await security.get_session(str(payload.get("sid", "")))
+    sid = str(payload.get("sid", ""))
+    presented_jti = payload.get("jti")
+    session = await security.get_session(sid)
     if session is None or session.get("user_id") != str(user_id):
+        # Orphaned but decodable refresh (rotated-out, logged-out, revoked):
+        # never resurrect; treat as reuse-suspect and kill the family.
+        await security.revoke_all_user_sessions(user_id)
+        logger.warning("refresh reuse suspected (unknown session): user_id=%s", user_id)
+        raise AuthenticationError("session expired")
+    if security.session_bounds_error(session) is not None:
+        await security.destroy_session(sid)
+        raise AuthenticationError("session expired")
+    stored_jti = session.get("refresh_jti")
+    if (
+        isinstance(stored_jti, str)
+        and stored_jti
+        and isinstance(presented_jti, str)
+        and presented_jti
+        and presented_jti != stored_jti
+    ):
+        revoked = await security.revoke_all_user_sessions(user_id)
+        logger.warning(
+            "refresh token reuse detected: user_id=%s sessions_revoked=%d", user_id, revoked
+        )
         raise AuthenticationError("session expired")
     user = db.get(User, user_id)
     if user is None or user.is_deleted or not user.is_active:
         raise AuthenticationError("account unavailable")
-    await security.touch_session(str(payload["sid"]))
-    return user, security.create_access_token(user.id, user.email, str(payload["sid"]))
+    new_jti = await security.rotate_session_refresh(sid, session)
+    return (
+        user,
+        security.create_access_token(user.id, user.email, sid),
+        security.create_refresh_token(user.id, sid, new_jti),
+    )
 
 
 async def logout(session_id: str) -> None:
@@ -265,6 +391,8 @@ async def logout_with_tokens(access_token: str | None, refresh_token: str | None
     Refresh fallback: when the access token is missing or expired its `sid`
     is unrecoverable, so a live refresh token (cookie or body) is decoded for
     the same purpose. Unknown/expired tokens are skipped; logout never fails.
+    Stale refreshes (old jti after rotation) only destroy by `sid` — they
+    never resurrect a session and never trigger family revocation here.
     """
     revoked = 0
     for token in (access_token, refresh_token):
@@ -383,18 +511,28 @@ async def handle_google_callback(
             set_google_identity(user, google_id)
             db.add(user)
         else:
-            raise AuthenticationError("email already registered with password login")
+            # Approved conservative collision posture: never link or merge on an
+            # UNVERIFIED Google email — the claimant may not own the address.
+            # Linking happens only above, on Google-verified email. Flow
+            # unchanged on purpose; only the message explains the recovery.
+            raise AuthenticationError(
+                "email already registered with password login: "
+                "verify your Google email, or log in with your password first "
+                "and link Google from settings"
+            )
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
+    refresh_jti = security.generate_refresh_jti()
     session_id = await security.create_session(
-        user.id, user.email, "google", user_agent=user_agent, ip=ip
+        user.id, user.email, "google", user_agent=user_agent, ip=ip,
+        refresh_jti=refresh_jti,
     )
     logger.info("user logged in: %s (google)", user.id)
     return (
         user,
         security.create_access_token(user.id, user.email, session_id),
-        security.create_refresh_token(user.id, session_id),
+        security.create_refresh_token(user.id, session_id, refresh_jti),
         session_id,
     )
 
@@ -437,12 +575,13 @@ def mask_email(email: str) -> str:
 async def forgot_password(db: Session, email: str, *, ip: str | None = None) -> None:
     """Request a reset link. Always a no-op success (no account enumeration).
 
-    Reset emails are only sent to local accounts that actually have a password;
-    Google-only accounts silently receive nothing.
+    Reset emails are only sent to accounts that actually have a password
+    (`has_password`) — local accounts and Google users who later set one.
+    Passwordless (OAuth-only) accounts silently receive nothing.
     """
     user = get_by_email(db, normalize_email(email))
-    if user is None or not is_local_user(user):
-        logger.info("password reset requested for unknown or OAuth account")
+    if user is None or not user.has_password:
+        logger.info("password reset requested for unknown or passwordless account")
         return
 
     token = security.generate_reset_token()
@@ -482,7 +621,9 @@ async def reset_password(db: Session, token: str, password: str) -> User:
     user = db.get(User, row.user_id)
     if user is None or user.is_deleted:
         raise ValidationError("invalid or expired reset token")
-    if not is_local_user(user):
+    # `has_password` (not provider): Google users who set a password reset it
+    # here; passwordless accounts never hold a usable token for this path.
+    if not user.has_password:
         raise ValidationError("this account does not use a local password")
 
     security.validate_password_strength(password)
@@ -507,4 +648,29 @@ async def reset_password(db: Session, token: str, password: str) -> User:
         logger.info("password reset for user %s (%d sessions revoked)", user.id, revoked)
     else:
         logger.info("password reset for user %s (sessions kept)", user.id)
+    return user
+
+
+async def restore_account(
+    db: Session, user: User, current_password: str | None, *, current_session_id: str | None = None
+) -> User:
+    """Cancel a pending account deletion. 409 when nothing is pending.
+
+    Same fresh re-auth as delete-request, then clear all three deletion
+    columns. API keys disabled at request time stay deleted (AR3) — restore
+    never resurrects credentials. Mails the restored notice; audit log
+    carries user_id only.
+    """
+    if user.deletion_scheduled_for is None:
+        raise ConflictError("no pending account deletion")
+    await security.require_fresh_confirmation(user, current_password, current_session_id)
+    user.deletion_requested_at = None
+    user.deletion_scheduled_for = None
+    user.deletion_notice_stage = 0
+    db.commit()
+    db.refresh(user)
+    # AR3: keys soft-deleted + invalidated at delete-request time stay
+    # deleted — restoring access must mint new keys, never revive old ones.
+    send_account_restored(user.email)
+    logger.info("account deletion cancelled: user_id=%s", user.id)
     return user

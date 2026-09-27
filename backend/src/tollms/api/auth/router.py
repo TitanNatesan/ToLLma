@@ -19,6 +19,7 @@ from tollms.api.auth.schemas import (
     ResetValidationResponse,
     RefreshRequest,
     RefreshResponse,
+    RestoreRequest,
     SignupRequest,
     UserRead,
     VerifyResponse,
@@ -66,9 +67,13 @@ async def signup(
     _: None = Depends(rate_limit.limit("auth:signup")),
 ) -> AuthResponse:
     user, verify_token = await service.signup(db, str(data.email), data.password, data.full_name)
-    session_id = await security.create_session(user.id, user.email, "password", **security.client_meta(request))
+    refresh_jti = security.generate_refresh_jti()
+    session_id = await security.create_session(
+        user.id, user.email, "password", **security.client_meta(request),
+        refresh_jti=refresh_jti,
+    )
     access = security.create_access_token(user.id, user.email, session_id)
-    refresh_tok = security.create_refresh_token(user.id, session_id)
+    refresh_tok = security.create_refresh_token(user.id, session_id, refresh_jti)
     _set_session_cookies(response, access, refresh_tok)
     return AuthResponse(
         user=service.read_user(user),
@@ -138,10 +143,15 @@ async def refresh(request: Request, response: Response, data: RefreshRequest | N
         from tollms.core.exceptions import AuthenticationError
 
         raise AuthenticationError("missing refresh token")
-    user, access = await service.refresh(db, token)
+    user, access, new_refresh = await service.refresh(db, token)
+    flags = _cookie_flags()
     response.set_cookie(ACCESS_COOKIE, access,
-                        max_age=get_settings().access_token_minutes * 60, **_cookie_flags())
-    return RefreshResponse(user=service.read_user(user), access_token=access)
+                        max_age=get_settings().access_token_minutes * 60, **flags)
+    response.set_cookie(REFRESH_COOKIE, new_refresh,
+                        max_age=get_settings().refresh_token_days * 86400, **flags)
+    return RefreshResponse(
+        user=service.read_user(user), access_token=access, refresh_token=new_refresh
+    )
 
 
 @router.post("/logout")
@@ -164,6 +174,21 @@ async def logout(
 @router.get("/me", response_model=UserRead)
 async def me(user: User = Depends(get_current_user)) -> UserRead:
     return service.read_user(user)
+
+
+@router.post("/restore", response_model=UserRead)
+async def restore(
+    data: RestoreRequest, request: Request, db: Session = Depends(get_db),
+    # get_current_user only: pending accounts are denied by
+    # require_active_user, but restore must stay reachable while pending.
+    user: User = Depends(get_current_user),
+) -> UserRead:
+    """Cancel a pending account deletion. 409 when nothing is pending."""
+    restored = await service.restore_account(
+        db, user, data.current_password,
+        current_session_id=security.get_current_session_id(request),
+    )
+    return service.read_user(restored)
 
 
 def _client_ip(request: Request) -> str | None:

@@ -1,9 +1,12 @@
 """Authentication primitives: argon2 passwords, HS256 JWTs, Valkey sessions.
 
-Token model: access (15m) + refresh (30d) both carry `sid` (session id).
-Sessions live in Valkey (`session:{sid}`, 30d TTL); logout deletes the
-session, which invalidates both tokens. `get_current_user` accepts Bearer
-or the `access_token` httpOnly cookie (browser flows).
+Token model: access (15m) + refresh (30d, rotating with `jti`) both carry
+`sid` (session id). Sessions live in Valkey (`session:{sid}`, absolute-lifetime
+TTL); logout deletes the session, which invalidates both tokens.
+Refresh rotation: every refresh mints a new `jti`, stores it on the session
+record, and invalidates the presented one. A stale `jti` (or any use of an
+unexpired refresh for an unknown session) revokes the whole family.
+`get_current_user` accepts Bearer or the `access_token` httpOnly cookie.
 """
 
 import hashlib
@@ -123,17 +126,23 @@ def create_access_token(user_id: uuid.UUID, email: str, session_id: str) -> str:
     )
 
 
-def create_refresh_token(user_id: uuid.UUID, session_id: str) -> str:
+def create_refresh_token(user_id: uuid.UUID, session_id: str, jti: str | None = None) -> str:
     now = datetime.now(timezone.utc)
     return _encode(
         {
             "sub": str(user_id),
             "sid": session_id,
             "type": "refresh",
+            "jti": jti or uuid.uuid4().hex,
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(days=get_settings().refresh_token_days)).timestamp()),
         }
     )
+
+
+def generate_refresh_jti() -> str:
+    """New refresh-token id for rotation and initial issuance."""
+    return uuid.uuid4().hex
 
 
 def create_verification_token(user_id: uuid.UUID, email: str) -> str:
@@ -161,6 +170,86 @@ def client_meta(request: Request) -> dict[str, str]:
     return {"user_agent": request.headers.get("user-agent", "")[:512], "ip": ip[:64]}
 
 
+def _session_ttl_seconds() -> int:
+    """Valkey TTL bounds the whole rotation chain (absolute lifetime)."""
+    return max(1, get_settings().session_absolute_lifetime_days) * 86400
+
+
+def _parse_session_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _mask_session_email(email: str) -> str:
+    """Masked email for audit logs (mirrors auth service; avoids a cycle)."""
+    local, _, domain = (email or "").partition("@")
+    if not domain:
+        return "***"
+    if len(local) <= 2:
+        return f"{local[:1]}***@{domain}"
+    return f"{local[0]}***{local[-1]}@{domain}"
+
+
+def _mask_session_ip(ip: str) -> str:
+    """Masked IP for audit logs: last IPv4 octet hidden, all else redacted."""
+    text = (ip or "").strip()
+    if not text:
+        return "unknown"
+    if "." in text:
+        head, _, _ = text.rpartition(".")
+        return f"{head}.***" if head else "***"
+    return "***"
+
+
+def _session_last_active(session: dict) -> datetime | None:
+    return _parse_session_time(session.get("last_active")) or _parse_session_time(
+        session.get("last_seen")
+    )
+
+
+def session_absolute_expired(session: dict) -> bool:
+    """True past the absolute lifetime. Legacy records without created_at pass."""
+    created = _parse_session_time(session.get("created_at"))
+    if created is None:
+        return False
+    lifetime = max(1, get_settings().session_absolute_lifetime_days) * 86400
+    return (datetime.now(timezone.utc) - created).total_seconds() >= lifetime
+
+
+def session_idle_expired(session: dict) -> bool:
+    """True past the idle timeout. Legacy records without activity pass."""
+    last_active = _session_last_active(session)
+    if last_active is None:
+        return False
+    idle = max(1, get_settings().session_idle_timeout_hours) * 3600
+    return (datetime.now(timezone.utc) - last_active).total_seconds() >= idle
+
+
+def session_bounds_error(session: dict) -> str | None:
+    """'absolute' | 'idle' | None. Single check for get_current_user + refresh."""
+    if session_absolute_expired(session):
+        return "absolute"
+    if session_idle_expired(session):
+        return "idle"
+    return None
+
+
+def _remaining_session_ttl(session: dict) -> int:
+    """Remaining absolute lifetime for Valkey TTL (floored so keys die promptly)."""
+    created = _parse_session_time(session.get("created_at"))
+    if created is None:
+        return _session_ttl_seconds()
+    age = (datetime.now(timezone.utc) - created).total_seconds()
+    return max(60, int(_session_ttl_seconds() - age)) if age < _session_ttl_seconds() else 60
+
+
 async def create_session(
     user_id: uuid.UUID,
     email: str,
@@ -168,21 +257,48 @@ async def create_session(
     *,
     user_agent: str | None = None,
     ip: str | None = None,
+    refresh_jti: str | None = None,
 ) -> str:
-    """Persist a Valkey session; returns the session id embedded in both tokens."""
+    """Persist a Valkey session; returns the session id embedded in both tokens.
+
+    Fail-closed: raises 503 when Valkey cannot persist (sessions require it).
+    `refresh_jti` lets callers mint the first refresh token without an extra
+    read; when omitted one is generated internally. Beyond the per-user cap
+    the oldest sessions are destroyed.
+    """
+    from tollms.core.exceptions import ServiceUnavailableError
+
     session_id = uuid.uuid4().hex
+    jti = refresh_jti or uuid.uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
+    record = {
+        "user_id": str(user_id),
+        "email": email,
+        "login_method": login_method,
+        "user_agent": user_agent or "",
+        "ip": ip or "",
+        "created_at": now,
+        "last_seen": now,
+        "last_active": now,
+        "refresh_jti": jti,
+    }
     manager = get_manager()
-    await manager.set(
-        cache_keys.session(session_id),
-        {"user_id": str(user_id), "email": email, "login_method": login_method,
-         "user_agent": user_agent or "", "ip": ip or "",
-         "created_at": now, "last_seen": now},
-        ttl=get_settings().refresh_token_days * 86400,
+    stored = await manager.set(cache_keys.session(session_id), record, ttl=_session_ttl_seconds())
+    if not stored:
+        logger.error("session store unavailable, denying login: user_id=%s", user_id)
+        raise ServiceUnavailableError("authentication temporarily unavailable")
+    added = await manager.sadd(cache_keys.user_sessions(user_id), session_id)
+    if not added:
+        # Fresh sid cannot already be a member: 0 means the index write failed.
+        await manager.delete(cache_keys.session(session_id))
+        logger.error("session index unavailable, denying login: user_id=%s", user_id)
+        raise ServiceUnavailableError("authentication temporarily unavailable")
+    await manager.expire(cache_keys.user_sessions(user_id), _session_ttl_seconds() + 60)
+    await enforce_session_cap(user_id, keep_session_id=session_id)
+    logger.info(
+        "new session: user_id=%s method=%s email=%s ip=%s",
+        user_id, login_method, _mask_session_email(email), _mask_session_ip(ip or ""),
     )
-    index = cache_keys.user_sessions(user_id)
-    await manager.sadd(index, session_id)
-    await manager.expire(index, get_settings().refresh_token_days * 86400 + 60)
     return session_id
 
 
@@ -211,8 +327,81 @@ async def list_session_records(user_id: uuid.UUID, current_session_id: str | Non
         records.append({"session_id": sid, "current": sid == current_session_id, **value})
     if stale:
         await manager.srem(index, *stale)
-    records.sort(key=lambda r: str(r.get("last_seen", "")), reverse=True)
+    records.sort(
+        key=lambda r: str(r.get("last_active", r.get("last_seen", ""))), reverse=True
+    )
     return records
+
+
+async def revoke_all_user_sessions(user_id: uuid.UUID) -> int:
+    """Destroy every live session for one user (reuse detection)."""
+    manager = get_manager()
+    index = cache_keys.user_sessions(user_id)
+    session_ids = await manager.smembers(index)
+    revoked = 0
+    for sid in session_ids:
+        await manager.delete(cache_keys.session(sid))
+        await manager.srem(index, sid)
+        revoked += 1
+    return revoked
+
+
+async def enforce_session_cap(user_id: uuid.UUID, keep_session_id: str | None = None) -> int:
+    """Destroy oldest sessions beyond the per-user cap. Returns evicted count."""
+    max_sessions = max(1, get_settings().session_max_per_user)
+    records = await list_session_records(user_id, keep_session_id)
+    if len(records) <= max_sessions:
+        return 0
+
+    def _age_key(record: dict) -> tuple[str, str]:
+        return (
+            str(record.get("created_at", "")),
+            str(record.get("last_active", record.get("last_seen", ""))),
+        )
+
+    newest_first = sorted(records, key=_age_key, reverse=True)
+    keep = {str(r["session_id"]) for r in newest_first[:max_sessions]}
+    if keep_session_id is not None:
+        keep.add(keep_session_id)
+        while len(keep) > max_sessions:
+            # Keep set overflowed (keep was not among newest): evict the
+            # oldest kept entry that is not the protected one.
+            for candidate in sorted(
+                (r for r in newest_first if str(r["session_id"]) in keep
+                 and str(r["session_id"]) != keep_session_id),
+                key=_age_key,
+            ):
+                keep.discard(str(candidate["session_id"]))
+                break
+            else:
+                break
+    evicted = 0
+    for record in records:
+        sid = str(record["session_id"])
+        if sid not in keep:
+            await destroy_session(sid)
+            evicted += 1
+    if evicted:
+        logger.info("session cap enforced: user_id=%s evicted=%d", user_id, evicted)
+    return evicted
+
+
+async def rotate_session_refresh(session_id: str, session: dict) -> str:
+    """Store a fresh refresh jti + activity; returns the new jti for minting."""
+    from tollms.core.exceptions import ServiceUnavailableError
+
+    new_jti = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    session["refresh_jti"] = new_jti
+    session["last_seen"] = now
+    session["last_active"] = now
+    stored = await get_manager().set(
+        cache_keys.session(session_id), session, ttl=_remaining_session_ttl(session)
+    )
+    if not stored:
+        logger.error("session rotation store failed, denying refresh")
+        raise ServiceUnavailableError("authentication temporarily unavailable")
+    return new_jti
 
 
 async def revoke_other_sessions(user_id: uuid.UUID, keep_session_id: str) -> int:
@@ -234,16 +423,21 @@ async def touch_session(session_id: str) -> None:
     key = cache_keys.session(session_id)
     session = await manager.get(key)
     if isinstance(session, dict):
-        session["last_seen"] = datetime.now(timezone.utc).isoformat()
-        await manager.set(key, session, ttl=get_settings().refresh_token_days * 86400)
+        now = datetime.now(timezone.utc).isoformat()
+        session["last_seen"] = now
+        session["last_active"] = now
+        await manager.set(key, session, ttl=_remaining_session_ttl(session))
 
 
 async def touch_session_throttled(session_id: str, session: dict) -> None:
     """Activity write-behind: refresh last_seen at most once per interval."""
-    last_seen = session.get("last_seen")
+    last_seen = session.get("last_active", session.get("last_seen"))
     if isinstance(last_seen, str):
         try:
-            if (datetime.now(timezone.utc) - datetime.fromisoformat(last_seen)).total_seconds() < _ACTIVITY_TOUCH_INTERVAL:
+            moment = datetime.fromisoformat(last_seen)
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - moment).total_seconds() < _ACTIVITY_TOUCH_INTERVAL:
                 return
         except ValueError:
             pass
@@ -294,6 +488,10 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
     session = await get_session(sid)
     if session is None:
         raise AuthenticationError("session expired")
+    if session_bounds_error(session) is not None:
+        # Absolute lifetime or idle timeout: force re-login, never extend.
+        await destroy_session(sid)
+        raise AuthenticationError("session expired")
     try:
         user_id = uuid.UUID(str(payload["sub"]))
     except ValueError:
@@ -323,7 +521,64 @@ async def require_verified_user(request: Request, db: Session = Depends(get_db))
     return user
 
 
-async def platform_admin_required(user=Depends(get_current_user)):
+async def require_active_user(request: Request, db: Session = Depends(get_db)) -> "User":
+    """Verified user whose account is NOT pending deletion.
+
+    Feature-router gate: verified + deletion_scheduled_for unset, otherwise
+    403 ACCOUNT_PENDING_DELETION. Delete-request (idempotent re-request) and
+    restore stay on `get_current_user` so pending accounts can reach them.
+    """
+    from tollms.core.exceptions import AccountPendingDeletionError
+
+    user = await require_verified_user(request, db)
+    if user.deletion_scheduled_for is not None:
+        raise AccountPendingDeletionError("Account scheduled for deletion.")
+    return user
+
+
+# Passwordless accounts confirm a destructive action with a fresh Google
+# login: the caller's session must be google-method and recent.
+_RECENT_GOOGLE_SESSION_SECONDS = 15 * 60
+
+
+async def require_fresh_confirmation(
+    user: "User", current_password: str | None, session_id: str | None
+) -> None:
+    """Fail-closed re-auth for destructive account actions (delete-request,
+    restore). Shared single path so both endpoints enforce identical proof.
+
+    Local-with-password accounts prove with `current_password` (missing ->
+    422, wrong -> 401). Passwordless accounts (Google / OAuth-only) must hold
+    a google-method session created within 15 minutes, otherwise 403.
+    """
+    from tollms.core.exceptions import (
+        AuthenticationError,
+        ForbiddenError,
+        ValidationError,
+    )
+
+    if user.has_password and user.password_hash:
+        if not current_password:
+            raise ValidationError("current password is required")
+        if not verify_password(current_password, user.password_hash):
+            raise AuthenticationError("current password is incorrect")
+        return
+    if not session_id:
+        raise ForbiddenError("recent Google sign-in required")
+    session = await get_session(session_id)
+    if session is None or session.get("user_id") != str(user.id):
+        raise ForbiddenError("recent Google sign-in required")
+    if str(session.get("login_method", "")) != "google":
+        raise ForbiddenError("recent Google sign-in required")
+    created = _parse_session_time(session.get("created_at"))
+    if created is None:
+        raise ForbiddenError("recent Google sign-in required")
+    age = (datetime.now(timezone.utc) - created).total_seconds()
+    if age < 0 or age > _RECENT_GOOGLE_SESSION_SECONDS:
+        raise ForbiddenError("recent Google sign-in required")
+
+
+async def platform_admin_required(user=Depends(require_verified_user)):
     """Platform admin gate for /api/admin/*. 403 for regular accounts.
 
     Reads the platform-level role only — organization/RBAC roles will live on

@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     access_token_minutes: int = 15
     refresh_token_days: int = 30
     verification_token_hours: int = 24
+    # Session hardening (Valkey-only state): absolute lifetime bounds the
+    # refresh-rotation chain, idle timeout bounds inactivity, and the per-user
+    # cap evicts the oldest session. No migration: all three live in the
+    # session record + user_sessions index.
+    session_absolute_lifetime_days: int = 90
+    session_idle_timeout_hours: int = 8
+    session_max_per_user: int = 10
     # Verification-resend per-user cooldown (Valkey fixed-window, fail-closed).
     verification_resend_cooldown_seconds: int = 60
 

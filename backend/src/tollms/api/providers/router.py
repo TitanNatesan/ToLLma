@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
-from tollms.core.security import require_verified_user
+from tollms.core.security import require_active_user
 from tollms.models.user import User
 from tollms.api.providers import service
 from tollms.api.providers.schemas import (
@@ -46,33 +46,33 @@ def _read(p) -> ProviderRead:
 
 
 @router.post("", response_model=ProviderRead, status_code=201)
-def create(data: ProviderCreate, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> ProviderRead:
+def create(data: ProviderCreate, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ProviderRead:
     return _read(service.create_provider(db, data, user.id))
 
 
 @router.get("", response_model=list[ProviderRead])
-def list_all(active_only: bool = False, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> list[ProviderRead]:
+def list_all(active_only: bool = False, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> list[ProviderRead]:
     return [_read(p) for p in service.list_providers(db, active_only=active_only, user_id=user.id)]
 
 
 @router.get("/{provider_id}", response_model=ProviderRead)
-def get(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> ProviderRead:
+def get(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ProviderRead:
     return _read(service.get_provider(db, provider_id, user.id))
 
 
 @router.patch("/{provider_id}", response_model=ProviderRead)
-def update(provider_id: uuid.UUID, data: ProviderUpdate, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> ProviderRead:
+def update(provider_id: uuid.UUID, data: ProviderUpdate, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ProviderRead:
     return _read(service.update_provider(db, provider_id, data, user.id))
 
 
 @router.delete("/{provider_id}", status_code=204)
-def delete(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> None:
+def delete(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> None:
     service.delete_provider(db, provider_id, user.id)
 
 
 @router.post("/draft-validate", response_model=DraftValidationResult)
 async def draft_validate(
-    data: DraftValidate, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
+    data: DraftValidate, db: Session = Depends(get_db), user: User = Depends(require_active_user)
 ) -> DraftValidationResult:
     """Validate credentials without persisting anything (wizard step 3)."""
     # Audit carries user + provider type only — never credentials, tokens or keys.
@@ -101,7 +101,7 @@ async def draft_validate(
 
 
 @router.post("/register", response_model=RegisterResult, status_code=201)
-def register(data: ProviderRegister, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> RegisterResult:
+def register(data: ProviderRegister, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> RegisterResult:
     """Atomic wizard registration (step 5): provider + selected models or nothing."""
     provider, models, match_stats = service.register_provider(db, data, user.id)
     return RegisterResult(
@@ -110,13 +110,13 @@ def register(data: ProviderRegister, db: Session = Depends(get_db), user: User =
 
 
 @router.post("/{provider_id}/validate", response_model=ValidationResult)
-async def validate(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> ValidationResult:
+async def validate(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ValidationResult:
     valid, message, latency = await service.validate_provider(db, provider_id, user_id=user.id)
     return ValidationResult(valid=valid, message=message, latency_ms=latency)
 
 
 @router.post("/{provider_id}/discover", response_model=DiscoveryResult)
-async def discover(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> DiscoveryResult:
+async def discover(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> DiscoveryResult:
     return await service.discover_provider_models(db, provider_id, user_id=user.id)
 
 
@@ -124,7 +124,7 @@ async def discover(provider_id: uuid.UUID, db: Session = Depends(get_db), user: 
 def security(
     provider_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(require_verified_user),
+    user: User = Depends(require_active_user),
 ) -> ProviderSecurityRead:
     """Encryption validation for a provider's stored credentials."""
     provider = service.get_provider(db, provider_id, user.id)
