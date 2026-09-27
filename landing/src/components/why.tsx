@@ -1,5 +1,6 @@
 import { Check, Minus } from "lucide-react";
-import { SectionHeading, Reveal } from "./nav";
+import { SectionHeading } from "./nav";
+import { FadeUp } from "@/lib/motion";
 
 /**
  * Objective, category-level comparison. Describes what each project
@@ -79,53 +80,83 @@ function Cell({ value, highlight }: { value: string; highlight?: boolean }) {
 
 export default function Why() {
   return (
-    <section id="why" className="scroll-mt-20 bg-slate-50 py-16 sm:py-20">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+    <section
+      id="why"
+      aria-label="Why ToLLma"
+      className="noise-overlay scroll-mt-20 bg-slate-50 py-16 sm:py-20"
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(44rem_22rem_at_50%_0%,rgba(37,99,235,0.08),transparent)]"
+      />
+      <div className="relative z-[2] mx-auto max-w-6xl px-4 sm:px-6">
         <SectionHeading
           eyebrow="Why ToLLma"
           title="Different tools solve different slices"
           sub="Open WebUI excels at chat, LiteLLM at proxying. ToLLma combines gateway, agents, and knowledge in one self-hosted stack."
         />
-        <Reveal>
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full min-w-150 border-collapse text-left">
-              <caption className="sr-only">
-                Category comparison of Open WebUI, LiteLLM, and ToLLma
-              </caption>
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/70">
-                  <th scope="col" className="px-4 py-3 text-xs font-bold tracking-wide text-slate-500 uppercase">
-                    Capability
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-sm font-bold">Open WebUI</th>
-                  <th scope="col" className="px-4 py-3 text-sm font-bold">LiteLLM</th>
-                  <th scope="col" className="bg-brand-light/50 px-4 py-3 text-sm font-bold text-brand-dark">
-                    ToLLma
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {ROWS.map((r) => (
-                  <tr key={r.label} className="border-b border-slate-100 last:border-0">
-                    <th scope="row" className="px-4 py-3 text-xs font-semibold text-slate-600 sm:text-sm">
-                      {r.label}
-                    </th>
-                    <td className="px-4 py-3"><Cell value={r.openwebui} /></td>
-                    <td className="px-4 py-3"><Cell value={r.litellm} /></td>
-                    <td className="bg-brand-light/30 px-4 py-3"><Cell value={r.tollma} highlight /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,4fr)_minmax(0,8fr)] lg:gap-10">
+          {/* Sticky intro column */}
+          <div className="lg:sticky lg:top-24 lg:self-start">
+            <FadeUp>
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <p className="text-xs font-bold tracking-widest text-brand uppercase">
+                  The matrix
+                </p>
+                <h3 className="mt-1 text-xl font-bold text-balance">
+                  One stack instead of three tools.
+                </h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted">
+                  If you only need a proxy, LiteLLM is a great fit; if you only
+                  need a chat UI, so is Open WebUI. ToLLma is for teams that
+                  want the gateway, the agents, and the knowledge base together.
+                </p>
+                <p className="mt-4 border-t border-dashed border-slate-200 pt-4 text-xs leading-relaxed text-slate-500">
+                  Categories describe each project&apos;s documented focus, not
+                  a benchmark. “Partial” means the capability exists in limited
+                  form or via plugins.
+                </p>
+              </div>
+            </FadeUp>
           </div>
-        </Reveal>
-        <p className="mx-auto mt-4 max-w-3xl text-center text-xs leading-relaxed text-slate-500">
-          Categories describe each project's documented focus, not a benchmark.
-          “Partial” means the capability exists in limited form or via plugins.
-          If you only need a proxy, LiteLLM is a great fit; if you only need a
-          chat UI, so is Open WebUI. ToLLma is for teams that want the gateway,
-          the agents, and the knowledge base together.
-        </p>
+
+          {/* Matrix card */}
+          <FadeUp delay={0.08}>
+            <div className="gradient-border overflow-hidden rounded-2xl bg-white shadow-[0_24px_48px_-24px_rgba(15,23,42,0.25)]">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-150 border-collapse text-left">
+                  <caption className="sr-only">
+                    Category comparison of Open WebUI, LiteLLM, and ToLLma
+                  </caption>
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50/70">
+                      <th scope="col" className="px-4 py-3 text-xs font-bold tracking-wide text-slate-500 uppercase">
+                        Capability
+                      </th>
+                      <th scope="col" className="px-4 py-3 text-sm font-bold">Open WebUI</th>
+                      <th scope="col" className="px-4 py-3 text-sm font-bold">LiteLLM</th>
+                      <th scope="col" className="bg-brand-light/50 px-4 py-3 text-sm font-bold text-brand-dark">
+                        ToLLma
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ROWS.map((r) => (
+                      <tr key={r.label} tabIndex={0} className="matrix-row border-b border-slate-100 last:border-0">
+                        <th scope="row" className="px-4 py-3 text-xs font-semibold text-slate-600 sm:text-sm">
+                          {r.label}
+                        </th>
+                        <td className="px-4 py-3"><Cell value={r.openwebui} /></td>
+                        <td className="px-4 py-3"><Cell value={r.litellm} /></td>
+                        <td className="bg-brand-light/30 px-4 py-3"><Cell value={r.tollma} highlight /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </FadeUp>
+        </div>
       </div>
     </section>
   );

@@ -6,27 +6,36 @@ import {
   ScrollText,
   Server,
 } from "lucide-react";
-import { SectionHeading, Reveal } from "./nav";
+import { SectionHeading } from "./nav";
+import { FadeUp, ScaleIn } from "@/lib/motion";
 
 function Frame({
   title,
+  url,
   children,
 }: {
   title: string;
+  url: string;
   children: React.ReactNode;
 }) {
   return (
-    <figure className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
-        <span className="h-2.5 w-2.5 rounded-full bg-red-400" aria-hidden />
-        <span className="h-2.5 w-2.5 rounded-full bg-gold" aria-hidden />
-        <span className="h-2.5 w-2.5 rounded-full bg-mint" aria-hidden />
-        <span className="ml-2 truncate font-mono text-xs text-slate-500">
-          tollma · {title}
+    <figure className="glass-reflection overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_28px_56px_-28px_rgba(15,23,42,0.35)]">
+      {/* Mac-style chrome */}
+      <div className="relative z-[2] flex items-center gap-2 border-b border-slate-200 bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-2.5">
+        <span className="flex gap-1.5" aria-hidden>
+          <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
+          <span className="h-2.5 w-2.5 rounded-full bg-gold" />
+          <span className="h-2.5 w-2.5 rounded-full bg-mint" />
+        </span>
+        <span className="ml-1 hidden max-w-44 truncate rounded-md bg-white px-2 py-0.5 font-mono text-[11px] text-slate-500 ring-1 ring-slate-200 sm:block">
+          {url}
+        </span>
+        <span className="ml-auto font-mono text-[11px] text-slate-400">
+          {title}
         </span>
       </div>
-      <div className="p-4">{children}</div>
-      <figcaption className="border-t border-dashed border-slate-200 bg-slate-50/60 px-4 py-2 text-center text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
+      <div className="relative z-[2] p-4">{children}</div>
+      <figcaption className="relative z-[2] border-t border-dashed border-slate-200 bg-slate-50/60 px-4 py-2 text-center text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
         UI mockup — illustrative, not a screenshot
       </figcaption>
     </figure>
@@ -35,7 +44,7 @@ function Frame({
 
 function ChatMock() {
   return (
-    <Frame title="chat">
+    <Frame title="chat" url="tollma/ui/chat">
       <div className="space-y-2.5 text-xs">
         <div className="flex gap-2">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 font-bold text-slate-600">U</span>
@@ -69,7 +78,7 @@ function ProvidersMock() {
     { name: "Custom agent", model: "rag-support", ok: false },
   ];
   return (
-    <Frame title="providers">
+    <Frame title="providers" url="tollma/ui/providers">
       <ul className="space-y-2 text-xs">
         {rows.map((r) => (
           <li key={r.name} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2">
@@ -88,7 +97,7 @@ function ProvidersMock() {
 
 function RepoMock() {
   return (
-    <Frame title="repository">
+    <Frame title="repository" url="tollma/ui/repository">
       <div className="space-y-2 text-xs">
         {[
           { n: "policy.pdf", s: "2.1 MB · 48 chunks", w: "w-full" },
@@ -115,7 +124,7 @@ function RepoMock() {
 function AnalyticsMock() {
   const bars = [35, 55, 42, 70, 58, 85, 64, 92, 76, 60, 48, 66];
   return (
-    <Frame title="analytics">
+    <Frame title="analytics" url="tollma/ui/analytics">
       <div className="mb-2 flex gap-3 text-[10px] font-bold text-slate-500">
         <span><span className="font-extrabold text-ink">1.2M</span> tokens</span>
         <span><span className="font-extrabold text-ink">$18.42</span> spend</span>
@@ -145,7 +154,7 @@ function LogsMock() {
     { m: "POST /v1/chat", s: "200", t: "521 ms", c: "text-emerald-600" },
   ];
   return (
-    <Frame title="gateway logs">
+    <Frame title="gateway logs" url="tollma/ui/logs">
       <ul className="space-y-1.5 font-mono text-[11px]">
         {rows.map((r, i) => (
           <li key={i} className="flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-slate-300">
@@ -161,34 +170,56 @@ function LogsMock() {
 }
 
 const SHOTS = [
-  { icon: Bot, label: "Chat", el: <ChatMock /> },
-  { icon: Server, label: "Providers", el: <ProvidersMock /> },
-  { icon: FolderOpen, label: "Repository", el: <RepoMock /> },
-  { icon: BarChart3, label: "Analytics", el: <AnalyticsMock /> },
-  { icon: ScrollText, label: "Gateway logs", el: <LogsMock /> },
+  { icon: Bot, label: "Chat", url: "tollma/ui/chat", el: <ChatMock /> },
+  { icon: Server, label: "Providers", url: "tollma/ui/providers", el: <ProvidersMock /> },
+  { icon: FolderOpen, label: "Repository", url: "tollma/ui/repository", el: <RepoMock /> },
+  { icon: BarChart3, label: "Analytics", url: "tollma/ui/analytics", el: <AnalyticsMock /> },
+  { icon: ScrollText, label: "Gateway logs", url: "tollma/ui/logs", el: <LogsMock /> },
 ];
 
 export default function Screenshots() {
   return (
-    <section id="screenshots" className="scroll-mt-20 bg-white py-16 sm:py-20">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+    <section
+      id="screenshots"
+      aria-label="Product tour"
+      className="relative scroll-mt-20 overflow-hidden bg-white py-16 sm:py-20"
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(40rem_20rem_at_50%_100%,rgba(16,185,129,0.07),transparent),radial-gradient(40rem_22rem_at_50%_0%,rgba(37,99,235,0.06),transparent)]"
+      />
+      <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
         <SectionHeading
           eyebrow="Product tour"
           title="One dashboard for all of it"
           sub="Stylized mockups of the ToLLma UI: chat, providers, knowledge repository, analytics, and gateway logs."
         />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Layered perspective gallery: no carousels, active-card focus */}
+        <div className="perspective-stage group/gallery grid gap-5 sm:grid-cols-2 lg:grid-cols-3 [&:has(:hover)_.tilt-card:not(:hover)]:opacity-90">
           {SHOTS.map((s, i) => (
-            <Reveal key={s.label} delay={Math.min(i * 0.06, 0.24)}>
-              <div>
-                <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
-                  <s.icon className="h-4 w-4 text-brand" aria-hidden /> {s.label}
-                </p>
-                {s.el}
-              </div>
-            </Reveal>
+            <div key={s.label} className="tilt-card" tabIndex={0} role="group" aria-label={`${s.label} UI mockup`}>
+              {i < 2 ? (
+                <ScaleIn delay={Math.min(i * 0.07, 0.14)}>
+                  <div>
+                    <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
+                      <s.icon className="h-4 w-4 text-brand" aria-hidden /> {s.label}
+                    </p>
+                    {s.el}
+                  </div>
+                </ScaleIn>
+              ) : (
+                <FadeUp delay={Math.min((i - 2) * 0.06, 0.18)}>
+                  <div>
+                    <p className="mb-2 flex items-center gap-1.5 text-sm font-bold">
+                      <s.icon className="h-4 w-4 text-brand" aria-hidden /> {s.label}
+                    </p>
+                    {s.el}
+                  </div>
+                </FadeUp>
+              )}
+            </div>
           ))}
-          <Reveal delay={0.24}>
+          <FadeUp delay={0.18}>
             <div className="flex h-full min-h-48 flex-col justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center">
               <p className="text-sm font-bold text-slate-700">Real screenshots ship with v1</p>
               <p className="mt-1 text-xs leading-relaxed text-slate-500">
@@ -196,7 +227,7 @@ export default function Screenshots() {
                 actual product screenshots before the first stable release.
               </p>
             </div>
-          </Reveal>
+          </FadeUp>
         </div>
       </div>
     </section>

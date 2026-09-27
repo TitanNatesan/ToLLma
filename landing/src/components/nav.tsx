@@ -1,10 +1,10 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { Boxes, Menu, X } from "lucide-react";
 import { useState } from "react";
 import { GithubIcon } from "./icons";
 import { DOCS_URL, GET_STARTED_URL, GITHUB_URL } from "@/lib/site";
+import { FadeUp } from "@/lib/motion";
 
 const LINKS = [
   { label: "Problem", href: "#problem" },
@@ -24,7 +24,10 @@ export default function Nav() {
         aria-label="Primary"
         className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6"
       >
-        <a href="#top" className="flex items-center gap-2">
+        <a
+          href="#top"
+          className="flex items-center gap-2 rounded-lg focus-visible:outline-2"
+        >
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white">
             <Boxes className="h-5 w-5" aria-hidden />
           </span>
@@ -116,15 +119,9 @@ export function Reveal({
   className?: string;
 }) {
   return (
-    <motion.div
-      className={className}
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.55, delay, ease: "easeOut" }}
-    >
+    <FadeUp className={className} delay={delay}>
       {children}
-    </motion.div>
+    </FadeUp>
   );
 }
 
@@ -141,7 +138,7 @@ export function SectionHeading({
 }) {
   const dark = tone === "dark";
   return (
-    <Reveal className="mx-auto mb-10 max-w-2xl text-center sm:mb-12">
+    <FadeUp className="mx-auto mb-10 max-w-2xl text-center sm:mb-12">
       <p
         className={`mb-2 text-xs font-bold tracking-widest uppercase ${
           dark ? "text-blue-300" : "text-brand"
@@ -165,6 +162,6 @@ export function SectionHeading({
           {sub}
         </p>
       )}
-    </Reveal>
+    </FadeUp>
   );
 }

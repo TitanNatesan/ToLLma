@@ -1,120 +1,203 @@
 "use client";
 
-import { useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Check } from "lucide-react";
-import { SectionHeading, Reveal } from "./nav";
+import { useEffect, useRef, useState } from "react";
+import { Check } from "lucide-react";
+import { SectionHeading } from "./nav";
+import { FadeUp } from "@/lib/motion";
 
-const TABS = [
+/**
+ * Sticky scroll-storytelling: pinned narrative on the left, six request
+ * lifecycle steps scrolling on the right. Copy is preserved from the
+ * Route / Govern / Ground lenses — reorganized as a single request journey:
+ * gateway entry → resolution → policy → execution → analytics → streaming.
+ */
+
+const STEPS = [
   {
-    id: "route",
-    label: "Route",
-    title: "One request in, best model out",
-    body: "Your app calls POST /v1/chat/completions with a model alias. ToLLma resolves the alias, checks the key's budget, and forwards to the right provider — OpenAI, Anthropic, a local Ollama box, or an in-house agent. The response streams back unchanged.",
-    bullets: ["Model aliases decouple code from providers", "Per-key routing rules & fallbacks", "Identical OpenAI wire format in and out"],
-    flow: ["App", "ToLLma Gateway", "Best provider"],
+    id: "entry",
+    lens: "Route",
+    title: "1 · Gateway entry",
+    body: "Your app calls POST /v1/chat/completions with a model alias. One endpoint, one wire format — the OpenAI shape your client already speaks.",
+    bullets: ["Identical OpenAI wire format in and out"],
   },
   {
-    id: "govern",
-    label: "Govern",
-    title: "Keys, budgets, and logs on every call",
-    body: "Each hop through the gateway is authenticated, metered, and logged. Issue a scoped key per app or teammate, cap spend per key, and inspect every request — latency, tokens, status — when production surprises you.",
-    bullets: ["Scoped, revocable API keys", "Spend caps enforced before dispatch", "Full request log for debugging"],
-    flow: ["API key", "Budget check", "Audit log"],
+    id: "resolution",
+    lens: "Route",
+    title: "2 · Model resolution",
+    body: "ToLLma resolves the alias to the best provider — OpenAI, Anthropic, a local Ollama box, or an in-house agent.",
+    bullets: ["Model aliases decouple code from providers", "Per-key routing rules & fallbacks"],
   },
   {
-    id: "ground",
-    label: "Ground",
-    title: "Ground answers in your own knowledge",
-    body: "Drop documents into the repository once. At query time ToLLma retrieves the relevant chunks and injects them into the prompt — so any model or agent answers from your docs, not from memory. Nothing to re-index per provider.",
-    bullets: ["Ingest docs once, use everywhere", "Retrieval injected at gateway level", "Works with cloud and local models"],
-    flow: ["Documents", "Repository", "Grounded answer"],
+    id: "policy",
+    lens: "Govern",
+    title: "3 · Policy & budgets",
+    body: "Each hop through the gateway is authenticated, metered, and logged. Spend caps are enforced before dispatch, not discovered on the invoice.",
+    bullets: ["Scoped, revocable API keys", "Spend caps enforced before dispatch"],
+  },
+  {
+    id: "execution",
+    lens: "Ground",
+    title: "4 · Grounded execution",
+    body: "Drop documents into the repository once. At query time ToLLma retrieves the relevant chunks and injects them into the prompt — so any model or agent answers from your docs.",
+    bullets: ["Ingest docs once, use everywhere", "Retrieval injected at gateway level"],
+  },
+  {
+    id: "analytics",
+    lens: "Govern",
+    title: "5 · Logs & analytics",
+    body: "Inspect every request — latency, tokens, status — when production surprises you. Token usage, latency, and error trends per model, key, and time range.",
+    bullets: ["Full request log for debugging"],
+  },
+  {
+    id: "streaming",
+    lens: "Route · Ground",
+    title: "6 · Streaming response",
+    body: "The response streams back unchanged to your app. Works with cloud and local models — switch providers in config, not in code.",
+    bullets: ["Works with cloud and local models"],
   },
 ] as const;
 
 export default function Architecture() {
-  const [active, setActive] = useState<(typeof TABS)[number]["id"]>("route");
-  const tab = TABS.find((t) => t.id === active)!;
+  const [active, setActive] = useState<string>(STEPS[0].id);
+  const stepRefs = useRef<Map<string, HTMLElement>>(new Map());
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) setActive(e.target.getAttribute("data-step")!);
+        }
+      },
+      { rootMargin: "-40% 0px -50% 0px", threshold: 0 },
+    );
+    stepRefs.current.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <section id="architecture" className="scroll-mt-20 bg-slate-50 py-16 sm:py-20">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+    <section
+      id="architecture"
+      aria-label="Architecture: how a request flows"
+      className="noise-overlay scroll-mt-20 bg-slate-50 py-16 sm:py-20"
+    >
+      <div
+        aria-hidden
+        className="bg-grid pointer-events-none absolute inset-0 opacity-50 [mask-image:radial-gradient(54rem_30rem_at_50%_10%,black,transparent_75%)]"
+      />
+      <div className="relative z-[2] mx-auto max-w-6xl px-4 sm:px-6">
         <SectionHeading
           eyebrow="Architecture"
           title="User → ToLLma → Providers"
-          sub="Three jobs, one hop. Pick a lens to see what the gateway does with each request."
+          sub="Three jobs, one hop. Follow a single request through the gateway."
         />
-        <Reveal>
-          <div
-            role="tablist"
-            aria-label="Architecture lenses"
-            className="mx-auto mb-8 flex w-fit rounded-xl border border-slate-200 bg-white p-1 shadow-sm"
-          >
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={active === t.id}
-                onClick={() => setActive(t.id)}
-                className={`rounded-lg px-4 py-2 text-sm font-bold transition sm:px-6 ${
-                  active === t.id
-                    ? "bg-brand text-white shadow"
-                    : "text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </Reveal>
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={tab.id}
-            role="tabpanel"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.3 }}
-            className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
-          >
-            {/* flow diagram */}
-            <div className="mb-6 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-              {tab.flow.map((node, i) => (
-                <div key={node} className="flex flex-1 items-center gap-2">
+
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-12">
+          {/* Pinned narrative */}
+          <div className="lg:sticky lg:top-24 lg:self-start">
+            <FadeUp>
+              <div className="gradient-border rounded-2xl bg-white p-6 shadow-sm sm:p-7">
+                <p className="font-mono text-xs text-slate-500">
+                  POST /v1/chat/completions
+                </p>
+                <p className="mt-2 text-lg font-bold text-balance">
+                  One request in, best model out.
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-muted">
+                  Keys, budgets, and logs on every call — grounded in your own
+                  knowledge. Scroll to walk the six stages.
+                </p>
+                {/* Step index nav (keyboard accessible) */}
+                <nav aria-label="Request lifecycle steps" className="mt-5">
+                  <ol className="space-y-1.5">
+                    {STEPS.map((s, i) => {
+                      const isActive = active === s.id;
+                      return (
+                        <li key={s.id}>
+                          <a
+                            href={`#arch-${s.id}`}
+                            onClick={() => setActive(s.id)}
+                            aria-current={isActive ? "true" : undefined}
+                            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                              isActive
+                                ? "bg-brand text-white shadow-md shadow-blue-600/25"
+                                : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                          >
+                            <span
+                              aria-hidden
+                              className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-extrabold ${
+                                isActive ? "bg-white/20" : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {i + 1}
+                            </span>
+                            {s.title.replace(/^\d · /, "")}
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </nav>
+                {/* Gradient progress line */}
+                <div
+                  aria-hidden
+                  className="mt-5 h-1 overflow-hidden rounded-full bg-slate-100"
+                >
                   <div
-                    className={`flex-1 rounded-xl px-3 py-3 text-center text-sm font-bold ${
-                      i === 1
-                        ? "bg-brand text-white shadow-md shadow-blue-600/25"
-                        : "border border-slate-200 bg-slate-50 text-slate-700"
+                    className="h-full rounded-full bg-gradient-to-r from-brand via-mint to-gold transition-all duration-500"
+                    style={{
+                      width: `${((STEPS.findIndex((s) => s.id === active) + 1) / STEPS.length) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </FadeUp>
+          </div>
+
+          {/* Scrolling steps */}
+          <ol className="space-y-4">
+            {STEPS.map((s, i) => (
+              <li key={s.id}>
+                <FadeUp delay={Math.min(i * 0.03, 0.12)}>
+                  <article
+                    id={`arch-${s.id}`}
+                    data-step={s.id}
+                    ref={(el) => {
+                      if (el) stepRefs.current.set(s.id, el);
+                      else stepRefs.current.delete(s.id);
+                    }}
+                    aria-label={s.title}
+                    tabIndex={0}
+                    className={`scroll-mt-28 rounded-2xl border bg-white p-6 shadow-sm transition sm:p-7 ${
+                      active === s.id
+                        ? "border-blue-300 shadow-[0_20px_44px_-20px_rgba(37,99,235,0.35)]"
+                        : "border-slate-200"
                     }`}
                   >
-                    {node}
-                  </div>
-                  {i < tab.flow.length - 1 && (
-                    <ArrowRight
-                      className="h-4 w-4 shrink-0 rotate-90 text-brand sm:rotate-0"
-                      aria-hidden
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-            <h3 className="text-lg font-bold">{tab.title}</h3>
-            <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-              {tab.body}
-            </p>
-            <ul className="mt-4 space-y-2">
-              {tab.bullets.map((b) => (
-                <li key={b} className="flex items-start gap-2 text-sm font-medium">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-mint-light text-emerald-700">
-                    <Check className="h-3 w-3" aria-hidden />
-                  </span>
-                  {b}
-                </li>
-              ))}
-            </ul>
-          </motion.div>
-        </AnimatePresence>
+                    <p className="text-xs font-bold tracking-widest text-brand uppercase">
+                      {s.lens}
+                    </p>
+                    <h3 className="mt-1 text-lg font-bold">{s.title}</h3>
+                    <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                      {s.body}
+                    </p>
+                    <ul className="mt-4 space-y-2">
+                      {s.bullets.map((b) => (
+                        <li key={b} className="flex items-start gap-2 text-sm font-medium">
+                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-mint-light text-emerald-700">
+                            <Check className="h-3 w-3" aria-hidden />
+                          </span>
+                          {b}
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                </FadeUp>
+              </li>
+            ))}
+          </ol>
+        </div>
       </div>
     </section>
   );

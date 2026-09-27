@@ -1,15 +1,31 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { ArrowRight, BookOpen, FileCode2, ShieldCheck } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  FileCode2,
+  ShieldCheck,
+  Lock,
+  Boxes,
+  CircleCheck,
+  Cpu,
+} from "lucide-react";
 import { GithubIcon } from "./icons";
 import { BRAND, DOCS_URL, GET_STARTED_URL, GITHUB_URL } from "@/lib/site";
+import { useCappedMouseParallax, usePrefersReducedMotion } from "@/lib/motion";
+
+const TRUST_BADGES = [
+  { icon: Boxes, label: "Open Source" },
+  { icon: ShieldCheck, label: "Apache 2.0" },
+  { icon: Lock, label: "Self Hosted" },
+  { icon: Cpu, label: "Developer First" },
+  { icon: CircleCheck, label: "No Vendor Lock-In" },
+] as const;
 
 /**
- * Animated architecture visual: pure inline SVG + SMIL <animateMotion>.
- * No JavaScript runtime, no backend, no network — renders in the static
- * export and respects nothing-else-to-load. Packets flow client → ToLLma →
- * providers along the connector paths.
+ * Interactive architecture visual: inline SVG + SMIL <animateMotion> packets
+ * travelling slowly User → ToLLma → providers. No JS runtime, no network —
+ * renders in the static export. Durations are deliberately slow (4s+).
  */
 function ArchitectureVisual() {
   const packet = (path: string, color: string, dur: string, begin: string) => (
@@ -22,9 +38,9 @@ function ArchitectureVisual() {
     <div
       role="img"
       aria-label="Animated diagram: your app sends one request to the ToLLma gateway, which routes it to OpenAI, Anthropic, Ollama, or your agents"
-      className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-4 shadow-2xl sm:p-6"
+      className="glass-reflection relative overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-4 shadow-[0_32px_64px_-24px_rgba(37,99,235,0.5)] sm:p-6"
     >
-      <svg viewBox="0 0 560 380" className="h-auto w-full">
+      <svg viewBox="0 0 560 380" className="relative z-[2] h-auto w-full">
         {/* client node */}
         <g>
           <rect x="16" y="150" width="130" height="80" rx="12" fill="#1e293b" stroke="#38bdf8" strokeWidth="1.5" />
@@ -84,15 +100,15 @@ function ArchitectureVisual() {
         <path id="lane-c" d="M 345 205 C 375 205, 385 236, 414 236" fill="none" stroke="#eab308" strokeWidth="2" strokeDasharray="6 4" />
         <path id="lane-d" d="M 345 230 C 375 230, 385 326, 414 326" fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="6 4" />
 
-        {/* travelling packets */}
-        {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "1.6s", "0s")}
-        {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "1.6s", "0.8s")}
-        {packet("M 345 150 C 375 150, 385 56, 414 56", "#10b981", "1.8s", "0.2s")}
-        {packet("M 345 175 C 375 175, 385 146, 414 146", "#10b981", "1.8s", "1.1s")}
-        {packet("M 345 205 C 375 205, 385 236, 414 236", "#eab308", "1.8s", "0.6s")}
-        {packet("M 345 230 C 375 230, 385 326, 414 326", "#10b981", "1.8s", "1.5s")}
+        {/* travelling packets (slow, subtle) */}
+        {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "4.2s", "0s")}
+        {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "4.2s", "2.1s")}
+        {packet("M 345 150 C 375 150, 385 56, 414 56", "#10b981", "4.8s", "0.4s")}
+        {packet("M 345 175 C 375 175, 385 146, 414 146", "#10b981", "4.8s", "2.6s")}
+        {packet("M 345 205 C 375 205, 385 236, 414 236", "#eab308", "4.8s", "1.5s")}
+        {packet("M 345 230 C 375 230, 385 326, 414 326", "#10b981", "4.8s", "3.4s")}
       </svg>
-      <div className="mt-2 flex items-center justify-between rounded-lg bg-white/5 px-3 py-2 font-mono text-[11px] text-emerald-300 sm:text-xs">
+      <div className="relative z-[2] mt-2 flex items-center justify-between rounded-lg bg-white/5 px-3 py-2 font-mono text-[11px] text-emerald-300 sm:text-xs">
         <span className="truncate">POST /v1/chat/completions → 200 OK · 412 ms</span>
         <span className="ml-2 hidden shrink-0 rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-300 sm:inline">
           live routing
@@ -103,48 +119,48 @@ function ArchitectureVisual() {
 }
 
 export default function Hero() {
+  const reduce = usePrefersReducedMotion();
+  const parallax = useCappedMouseParallax<HTMLElement>();
+
   return (
-    <section id="top" className="relative overflow-hidden bg-white">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(60rem_30rem_at_50%_-8rem,rgba(37,99,235,0.12),transparent)]"
-      />
-      <div className="relative mx-auto grid max-w-6xl items-center gap-10 px-4 pt-14 pb-12 sm:px-6 sm:pt-20 lg:grid-cols-2 lg:gap-12">
+    <section
+      id="top"
+      aria-label="Introduction"
+      onMouseMove={reduce ? undefined : parallax.onMouseMove}
+      onMouseLeave={reduce ? undefined : parallax.onMouseLeave}
+      className="noise-overlay relative overflow-hidden bg-white"
+    >
+      {/* Layered depth: base wash + grid + glows */}
+      <div aria-hidden className="pointer-events-none absolute inset-0">
+        <div
+          className="absolute inset-0 bg-[radial-gradient(56rem_30rem_at_50%_-8rem,rgba(37,99,235,0.14),transparent),radial-gradient(36rem_22rem_at_85%_30%,rgba(16,185,129,0.08),transparent),radial-gradient(30rem_20rem_at_10%_60%,rgba(234,179,8,0.06),transparent)]"
+          style={parallax.layer("background")}
+        />
+        <div className="bg-grid absolute inset-0 [mask-image:radial-gradient(60rem_36rem_at_50%_0%,black,transparent_75%)]" />
+        <div
+          className="animate-glow-drift absolute -top-24 left-1/4 h-72 w-72 rounded-full bg-blue-500/20 blur-3xl"
+          style={reduce ? undefined : parallax.layer("glow")}
+        />
+        <div className="absolute top-40 right-[8%] hidden h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl lg:block" />
+      </div>
+
+      <div className="relative z-[2] mx-auto grid max-w-6xl items-center gap-10 px-4 pt-14 pb-10 sm:px-6 sm:pt-20 lg:grid-cols-[1.05fr_1fr] lg:gap-14">
+        {/* Copy column */}
         <div>
-          <motion.p
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="mb-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-brand-dark"
-          >
+          <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-brand-dark">
             <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
             {BRAND.positioning}
-          </motion.p>
-          <motion.h1
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.08 }}
-            className="text-3xl font-extrabold tracking-tight text-balance sm:text-5xl sm:leading-[1.1]"
-          >
+          </p>
+          <h1 className="text-3xl font-extrabold tracking-tight text-balance sm:text-5xl sm:leading-[1.08]">
             {BRAND.headline}
-          </motion.h1>
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.16 }}
-            className="mt-5 max-w-xl text-base text-muted text-balance sm:text-lg"
-          >
+          </h1>
+          <p className="mt-5 max-w-xl text-base text-muted text-balance sm:text-lg">
             ToLLma puts one OpenAI-compatible gateway in front of every model —
             cloud APIs, local Ollama, and your own agents — with unified keys,
             budgets, logging, and a knowledge repository. Self-host it in
             minutes. Apache 2.0 licensed, yours forever.
-          </motion.p>
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.24 }}
-            className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center"
-          >
+          </p>
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
             <a
               href={GET_STARTED_URL}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-5 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/25 transition hover:bg-brand-dark"
@@ -163,13 +179,8 @@ export default function Hero() {
             >
               <BookOpen className="h-4 w-4" aria-hidden /> Docs
             </a>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.35 }}
-            className="mt-6 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600"
-          >
+          </div>
+          <div className="mt-6 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
             {["Apache 2.0", "OpenAI-compatible API", "Docker deploy", "Local-first option"].map(
               (b) => (
                 <span
@@ -180,15 +191,55 @@ export default function Hero() {
                 </span>
               ),
             )}
-          </motion.div>
+          </div>
         </div>
-        <motion.div
-          initial={{ opacity: 0, scale: 0.96 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6, delay: 0.2 }}
+
+        {/* Interactive architecture column */}
+        <div
+          className="relative"
+          style={reduce ? undefined : parallax.layer("card")}
         >
-          <ArchitectureVisual />
-        </motion.div>
+          <div
+            aria-hidden
+            className="absolute -inset-6 rounded-[2rem] bg-gradient-to-br from-blue-500/15 via-emerald-400/10 to-amber-300/10 blur-2xl"
+          />
+          <div className="relative">
+            <ArchitectureVisual />
+            {/* Floating status cards */}
+            <div className="absolute -top-4 -right-2 hidden rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur sm:block">
+              <p className="flex items-center gap-1.5 font-mono text-[11px] font-bold text-emerald-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+                200 OK · 412 ms
+              </p>
+              <p className="mt-0.5 text-[10px] text-slate-500">llama-3.1-8b · local</p>
+            </div>
+            <div className="absolute -bottom-4 -left-2 hidden rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur sm:block">
+              <p className="text-[10px] font-semibold tracking-wide text-slate-500 uppercase">
+                Spend this month
+              </p>
+              <p className="font-mono text-[11px] font-bold text-ink">
+                $18.42 <span className="font-normal text-slate-500">/ $50 budget</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Trust bar */}
+      <div className="relative z-[2] mx-auto max-w-6xl px-4 pb-12 sm:px-6">
+        <ul
+          aria-label="Project guarantees"
+          className="flex flex-wrap items-center justify-center gap-2 sm:gap-3"
+        >
+          {TRUST_BADGES.map((b) => (
+            <li key={b.label}>
+              <span className="trust-badge inline-flex cursor-default items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 shadow-sm">
+                <b.icon className="h-3.5 w-3.5 text-brand" aria-hidden />
+                {b.label}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   );

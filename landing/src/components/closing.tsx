@@ -1,6 +1,6 @@
 import { ArrowRight, BookOpen, Boxes } from "lucide-react";
 import { GithubIcon } from "./icons";
-import { Reveal } from "./nav";
+import { FadeUp } from "@/lib/motion";
 import {
   COMMUNITY_URL,
   DOCS_URL,
@@ -13,22 +13,38 @@ import {
 
 export function CTA() {
   return (
-    <section className="bg-white py-16 sm:py-20">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <Reveal>
-          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand via-blue-700 to-slate-900 px-6 py-12 text-center text-white sm:px-12 sm:py-16">
+    <section aria-label="Get started" className="relative overflow-hidden bg-white py-16 sm:py-20">
+      <div
+        aria-hidden
+        className="bg-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:radial-gradient(50rem_26rem_at_50%_100%,black,transparent_75%)]"
+      />
+      <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
+        <FadeUp>
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand via-blue-700 to-slate-900 px-6 py-14 text-center text-white shadow-[0_40px_80px_-32px_rgba(37,99,235,0.6)] sm:px-12 sm:py-18">
+            {/* Animated glow layers */}
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-0 bg-[radial-gradient(40rem_20rem_at_50%_120%,rgba(16,185,129,0.35),transparent)]"
+              className="animate-cta-glow pointer-events-none absolute -bottom-32 left-1/2 h-72 w-[42rem] -translate-x-1/2 rounded-full bg-emerald-400/30 blur-3xl"
             />
-            <h2 className="relative text-2xl font-extrabold tracking-tight text-balance sm:text-4xl">
+            <div
+              aria-hidden
+              className="animate-glow-drift pointer-events-none absolute -top-24 right-[10%] h-56 w-56 rounded-full bg-blue-400/30 blur-3xl"
+            />
+            <div
+              aria-hidden
+              className="bg-grid-dark pointer-events-none absolute inset-0 opacity-60"
+            />
+            <p className="relative text-xs font-bold tracking-[0.2em] text-blue-200 uppercase">
+              Self-host in minutes · Apache 2.0
+            </p>
+            <h2 className="relative mx-auto mt-3 max-w-2xl text-3xl font-extrabold tracking-tight text-balance sm:text-5xl sm:leading-[1.08]">
               Put one gateway in front of all your AI.
             </h2>
-            <p className="relative mx-auto mt-3 max-w-xl text-sm text-blue-100 text-balance sm:text-base">
+            <p className="relative mx-auto mt-4 max-w-xl text-sm text-blue-100 text-balance sm:text-lg">
               Self-host ToLLma in minutes, connect your first provider, and stop
               rewiring your app for every new model.
             </p>
-            <div className="relative mt-7 flex flex-col justify-center gap-3 sm:flex-row">
+            <div className="relative mt-8 flex flex-col justify-center gap-3 sm:flex-row">
               <a
                 href={GET_STARTED_URL}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-bold text-brand-dark shadow-lg transition hover:bg-blue-50"
@@ -43,7 +59,7 @@ export function CTA() {
               </a>
             </div>
           </div>
-        </Reveal>
+        </FadeUp>
       </div>
     </section>
   );

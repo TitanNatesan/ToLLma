@@ -2436,3 +2436,19 @@ README.md (rewrite + badges + license), backend/pyproject.toml + frontend/packag
 ### Verification
 - Release audit: 18 links resolve; license consistent; roadmap-vs-code match; landing/out builds; workflow parses.
 - Backend 526 + frontend 126 suites untouched by this phase (docs/landing only).
+
+---
+
+## 2026-09-28 — Landing Premium Redesign COMPLETE
+
+### Requirement Completed
+Venture-grade visual/motion redesign of landing/ (SaaS quality bar, principles only, no copying): two-column hero + capped parallax + slow packets, trust bar, Without/With problem comparison, magazine features, sticky scroll-storytelling architecture, Mac-frame screenshots with depth, matrix card, timeline, glowing OSS section, full-width CTA, textured backgrounds.
+
+### Files Created
+- landing/src/lib/motion.tsx (FadeUp/ScaleIn/reduced-motion/parallax primitives)
+
+### Files Modified
+- landing globals.css + 10 section components (copy/URLs unchanged); backend/frontend untouched; no new deps.
+
+### Verification
+- tsc clean, static-export build succeeds (landing/out 1.3M), zero runtime API calls, reduced-motion kill-switch, ≤20% animated, GPU-only.

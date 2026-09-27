@@ -24,9 +24,136 @@ body {
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Animated packet travelling along the hero architecture diagram */
+::selection {
+  background: rgba(37, 99, 235, 0.18);
+}
+
+/* ---------- Accessible focus ---------- */
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---------- Texture utilities ---------- */
+
+/* Subtle blueprint grid, layered over section backgrounds. */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(15, 23, 42, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.055) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.bg-grid-dark {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Film-grain noise overlay (tiny inline SVG, no network). */
+.noise-overlay {
+  position: relative;
+  isolation: isolate;
+}
+.noise-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Gradient hairline border for featured cards (background-clip trick). */
+.gradient-border {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    linear-gradient(135deg, rgba(37, 99, 235, 0.55), rgba(16, 185, 129, 0.45), rgba(234, 179, 8, 0.4)) border-box;
+}
+.gradient-border-dark {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(15, 23, 42, 0.72), rgba(15, 23, 42, 0.72)) padding-box,
+    linear-gradient(135deg, rgba(96, 165, 250, 0.6), rgba(52, 211, 153, 0.45), rgba(250, 204, 21, 0.35)) border-box;
+}
+
+/* Glass reflection sweeping the top of browser frames. */
+.glass-reflection {
+  position: relative;
+  overflow: hidden;
+}
+.glass-reflection::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 46%;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0));
+}
+
+/* Perspective stage for the screenshot gallery (GPU transforms only). */
+.perspective-stage {
+  perspective: 1400px;
+}
+.tilt-card {
+  transform: rotateX(2.5deg);
+  transform-style: preserve-3d;
+  transition: transform 0.4s ease, box-shadow 0.4s ease;
+}
+.tilt-card:nth-child(even) {
+  transform: rotateX(2.5deg) rotateY(-1.5deg);
+}
+.tilt-card:hover,
+.tilt-card:focus-within {
+  transform: rotateX(0deg) rotateY(0deg) translateY(-4px);
+}
+
+/* Comparison table row focus. */
+.matrix-row {
+  transition: background-color 0.25s ease;
+}
+.matrix-row:hover,
+.matrix-row:focus-within {
+  background-color: rgba(37, 99, 235, 0.045);
+}
+
+/* Trust badges. */
+.trust-badge {
+  transition: transform 0.3s ease, border-color 0.3s ease, background-color 0.3s ease;
+}
+.trust-badge:hover {
+  transform: translateY(-2px);
+  border-color: rgba(37, 99, 235, 0.4);
+  background-color: #eff6ff;
+}
+
+/* ---------- Ambient keyframes (slow + subtle; entrance-only elsewhere) ---------- */
+@keyframes glow-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.8; }
+  50% { transform: translate3d(2%, -3%, 0) scale(1.06); opacity: 1; }
+}
+.animate-glow-drift {
+  animation: glow-drift 14s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes cta-glow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.08); }
+}
+.animate-cta-glow {
+  animation: cta-glow 9s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+/* Animated packet travelling along the hero architecture diagram (CSS path fallback) */
 @keyframes packet-travel {
   0% {
     offset-distance: 0%;
@@ -58,9 +185,19 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .packet {
+  .packet,
+  .animate-glow-drift,
+  .animate-cta-glow {
     animation: none;
+  }
+  .packet {
     opacity: 0;
+  }
+  .tilt-card,
+  .tilt-card:nth-child(even),
+  .tilt-card:hover,
+  .tilt-card:focus-within {
+    transform: none;
   }
   html {
     scroll-behavior: auto;
