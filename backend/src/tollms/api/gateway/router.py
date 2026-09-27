@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_session_id, get_current_user
+from tollms.core.security import get_current_session_id, require_verified_user
 from tollms.models.user import User
 from tollms.api.gateway import service
 from tollms.api.gateway.schemas import (
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/v1/gateway", tags=["gateway"])
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     data: ChatRequest, request: Request,
-    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), user: User = Depends(require_verified_user),
 ) -> ChatResponse:
     return await service.run_chat(
         db, data, user_id=user.id, session_id=get_current_session_id(request)
@@ -33,7 +33,7 @@ async def chat(
 
 @router.post("/stream")
 async def start_stream(
-    data: ChatRequest, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    data: ChatRequest, request: Request, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> StreamingResponse:
     """Create the generation (assistant row starts RUNNING) and stream its
     progress events. The connection is a subscriber: dropping it never stops
@@ -49,7 +49,7 @@ async def start_stream(
 
 @router.get("/stream/{generation_id}")
 async def reattach_stream(
-    generation_id: uuid.UUID, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    generation_id: uuid.UUID, request: Request, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> StreamingResponse:
     """Refresh recovery: current partial content first, then live deltas."""
     return StreamingResponse(
@@ -60,20 +60,20 @@ async def reattach_stream(
 
 @router.post("/generations/{generation_id}/cancel", response_model=GenerationCancelRead)
 async def cancel_generation(
-    generation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    generation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> GenerationCancelRead:
     return await service.cancel_generation(db, generation_id, user.id)
 
 
 @router.get("/generations/by-client/{client_key}", response_model=ActiveGenerationRead)
 async def generation_by_client_key(
-    client_key: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    client_key: str, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> ActiveGenerationRead:
     return service.generation_by_client_key(db, client_key, user.id)
 
 
 @router.get("/generations/{generation_id}", response_model=ActiveGenerationRead)
 async def generation_status(
-    generation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    generation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> ActiveGenerationRead:
     return service.generation_status(db, generation_id, user.id)

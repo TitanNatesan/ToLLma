@@ -56,6 +56,10 @@ def _other_client() -> TestClient:
     c2 = TestClient(app)
     r = c2.post("/auth/signup", json={"email": "other@tollma.ai", "password": "Password123"})
     assert r.status_code == 200, r.text
+    # Gate-era: verify so cross-user tests exercise ownership (404), not the gate (403).
+    token = r.json().get("debug_verification_token")
+    if token:
+        c2.get("/auth/verify", params={"token": token})
     return c2
 
 

@@ -55,14 +55,18 @@ function apiBase(): string {
 }
 
 export class ApiError extends Error {
+  /** Seconds from the `Retry-After` header on 429s, when present. */
+  public retryAfterSeconds: number | null;
   constructor(
     public status: number,
     public statusText: string,
     public data: unknown,
     message: string,
+    retryAfterSeconds?: number | null,
   ) {
     super(message);
     this.name = "ApiError";
+    this.retryAfterSeconds = retryAfterSeconds ?? null;
   }
 }
 
@@ -112,12 +116,26 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
     } catch {
       // not JSON
     }
+    if (res.status === 403 && path !== "/auth/me" && isEmailVerificationRequired(data)) {
+      // Email just got verified elsewhere (or state went stale): refetch so the
+      // verification banner clears on the next render. Fire-and-forget.
+      void getCurrentUser().then(
+        (u) => useAuthStore.getState().setUser(u),
+        () => {},
+      );
+    }
     const method = init?.method ?? "GET";
+    const retryAfterHeader = res.headers.get("retry-after");
+    const retryAfterSeconds =
+      retryAfterHeader !== null && retryAfterHeader.trim() !== "" && Number.isFinite(Number(retryAfterHeader))
+        ? Math.max(0, Math.ceil(Number(retryAfterHeader)))
+        : null;
     throw new ApiError(
       res.status,
       res.statusText,
       data,
       `${method} ${path} -> ${res.status} ${body.slice(0, 200)}`,
+      retryAfterSeconds,
     );
   }
   return res.json() as Promise<T>;
@@ -462,6 +480,23 @@ export function verifyEmail(token: string, signal?: AbortSignal): Promise<{ user
     `/auth/verify?token=${encodeURIComponent(token)}`,
     signal ? { signal } : undefined,
   );
+}
+
+export interface ResendVerificationResponse {
+  sent: boolean;
+  cooldown_seconds: number;
+}
+
+/** True when a parsed error body carries the email-verification gate code. */
+export function isEmailVerificationRequired(data: unknown): boolean {
+  if (typeof data !== "object" || data === null) return false;
+  const code = (data as { error?: { code?: unknown } }).error?.code;
+  return code === "EMAIL_VERIFICATION_REQUIRED";
+}
+
+/** Re-send the verification email. 429s surface via ApiError.retryAfterSeconds. */
+export function resendVerificationEmail(): Promise<ResendVerificationResponse> {
+  return post<ResendVerificationResponse>("/auth/resend-verification", {});
 }
 
 export function forgotPassword(email: string): Promise<{ success: boolean }> {

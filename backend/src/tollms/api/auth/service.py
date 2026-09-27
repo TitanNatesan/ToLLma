@@ -12,9 +12,10 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tollms.core import rate_limit as auth_limits
 from tollms.core import security
 from tollms.core.config import get_settings
-from tollms.core.exceptions import AuthenticationError, NotFoundError, ValidationError
+from tollms.core.exceptions import AuthenticationError, NotFoundError, TooManyRequestsError, ValidationError
 from tollms.models.password_reset import PasswordResetToken
 from tollms.models.user import AuthProvider, User
 from tollms.services.cache import keys as cache_keys
@@ -23,8 +24,12 @@ from tollms.services.email import send_password_reset_email, send_verification_e
 
 logger = logging.getLogger(__name__)
 
-_VERIFY_TTL = 86400  # 24h, mirrors verification_token_hours default
 _OAUTH_STATE_TTL = 600
+
+
+def _verify_ttl_seconds() -> int:
+    """Single source of truth: mirrors `verification_token_hours` (JWT exp)."""
+    return max(1, get_settings().verification_token_hours) * 3600
 
 
 def normalize_email(email: str) -> str:
@@ -117,7 +122,9 @@ async def issue_verification(db: Session, user: User) -> str:
     """Mint a one-time verification token, store its hash in Valkey, email the link."""
     token = security.create_verification_token(user.id, user.email)
     digest = hashlib.sha256(token.encode()).hexdigest()
-    await get_manager().set(cache_keys.verify_email(digest), {"user_id": str(user.id)}, ttl=_VERIFY_TTL)
+    await get_manager().set(
+        cache_keys.verify_email(digest), {"user_id": str(user.id)}, ttl=_verify_ttl_seconds()
+    )
     url = f"{get_settings().frontend_url.rstrip('/')}/verify?token={token}"
     send_verification_email(user.email, url)
     return token
@@ -161,6 +168,37 @@ async def verify_email(db: Session, token: str) -> User:
     return user
 
 
+async def resend_verification(db: Session, user: User) -> tuple[bool, int]:
+    """Re-send the verification email with a per-user Valkey cooldown.
+
+    Returns (sent, cooldown_seconds). Already-verified is idempotent
+    (no email). Raises 429 while cooling, 503 when Valkey is down.
+    Audit logs carry user_id + outcome only, never tokens or emails.
+    """
+    if user.email_verified:
+        logger.info("verification resend skipped (already verified): user_id=%s", user.id)
+        return False, 0
+    cooldown = max(1, get_settings().verification_resend_cooldown_seconds)
+    try:
+        await auth_limits.check_fixed_window(
+            key=cache_keys.auth_rate_limit("auth:resend-cooldown", str(user.id)),
+            limit=1,
+            window_seconds=cooldown,
+            scope="auth:resend-cooldown",
+        )
+    except TooManyRequestsError as exc:
+        logger.warning(
+            "verification resend cooldown: user_id=%s retry_after=%s", user.id, exc.retry_after
+        )
+        raise
+    await issue_verification(db, user)
+    logger.info(
+        "verification resend sent: user_id=%s masked=%s cooldown=%ds",
+        user.id, mask_email(user.email), cooldown,
+    )
+    return True, cooldown
+
+
 async def login(
     db: Session,
     email: str,
@@ -169,12 +207,20 @@ async def login(
     user_agent: str | None = None,
     ip: str | None = None,
 ) -> tuple[User, str, str, str]:
-    """Password login. Returns (user, access_token, refresh_token, session_id)."""
-    user = get_by_email(db, email)
-    if user is None or not user.is_active:
+    """Password login. Returns (user, access_token, refresh_token, session_id).
+
+    Failed attempts are tracked per email+IP in Valkey with a temporary
+    lockout (429 while locked, 503 when Valkey is down — fail closed).
+    Audit logs carry the masked email only, never passwords or tokens.
+    """
+    address = normalize_email(email)
+    await auth_limits.check_login_lockout(address, ip)
+    user = get_by_email(db, address)
+    if user is None or not user.is_active or not security.verify_password(password, user.password_hash):
+        await auth_limits.record_failed_login(address, ip)
+        logger.warning("login failed for %s", mask_email(address))
         raise AuthenticationError("invalid email or password")
-    if not security.verify_password(password, user.password_hash):
-        raise AuthenticationError("invalid email or password")
+    await auth_limits.clear_failed_logins(address, ip)
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     session_id = await security.create_session(
@@ -211,6 +257,35 @@ async def refresh(db: Session, refresh_token: str) -> tuple[User, str]:
 async def logout(session_id: str) -> None:
     """Invalidate the session: kills access + refresh tokens at once."""
     await security.destroy_session(session_id)
+
+
+async def logout_with_tokens(access_token: str | None, refresh_token: str | None) -> int:
+    """Destroy sessions referenced by either token. Returns sessions revoked.
+
+    Refresh fallback: when the access token is missing or expired its `sid`
+    is unrecoverable, so a live refresh token (cookie or body) is decoded for
+    the same purpose. Unknown/expired tokens are skipped; logout never fails.
+    """
+    revoked = 0
+    for token in (access_token, refresh_token):
+        if not token:
+            continue
+        try:
+            payload = security.decode_token(token)
+        except Exception:
+            logger.warning("logout token decode failed", exc_info=True)
+            continue
+        if payload is None or payload.get("type") not in ("access", "refresh"):
+            continue
+        sid = payload.get("sid")
+        if not sid:
+            continue
+        try:
+            await security.destroy_session(str(sid))
+            revoked += 1
+        except Exception:
+            logger.exception("logout session destroy failed")
+    return revoked
 
 
 # --- Google OAuth ----------------------------------------------------------

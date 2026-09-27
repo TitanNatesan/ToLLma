@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user
+from tollms.core.security import require_verified_user
 from tollms.models.user import User
 from tollms.api.attachments import service
 from tollms.api.attachments.schemas import AttachmentRead, AttachmentUploadResponse
@@ -21,7 +21,7 @@ async def upload(
     file: UploadFile = File(...),
     conversation_id: uuid.UUID | None = Form(default=None),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> AttachmentUploadResponse:
     data = await file.read()
     row = service.upload_attachment(
@@ -39,13 +39,13 @@ async def upload(
 
 
 @router.get("/{attachment_id}", response_model=AttachmentRead)
-def get(attachment_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> AttachmentRead:
+def get(attachment_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> AttachmentRead:
     return AttachmentRead.model_validate(service.get_attachment(db, attachment_id, user.id))
 
 
 @router.get("/{attachment_id}/content")
 def content(
-    attachment_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    attachment_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> FileResponse:
     row, _ = service.read_content(db, attachment_id, user.id)
     return FileResponse(
@@ -56,5 +56,5 @@ def content(
 
 
 @router.delete("/{attachment_id}", status_code=204)
-def delete(attachment_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> None:
+def delete(attachment_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> None:
     service.delete_attachment(db, attachment_id, user.id)

@@ -20,7 +20,7 @@ from tollms.api.keys.schemas import (
     PolicyRead,
 )
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user
+from tollms.core.security import require_verified_user
 from tollms.models.api_key import ApiKey
 from tollms.models.user import User
 
@@ -58,7 +58,7 @@ def _read(key: ApiKey) -> KeyRead:
 
 @router.post("", response_model=KeyCreated, status_code=201)
 def create(
-    data: ApiKeyCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    data: ApiKeyCreate, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> KeyCreated:
     """Create a key. `raw_key` in the response is shown exactly once."""
     key, raw_key = service.create_key(db, data, user.id)
@@ -66,13 +66,13 @@ def create(
 
 
 @router.get("", response_model=list[KeyRead])
-def list_all(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[KeyRead]:
+def list_all(db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> list[KeyRead]:
     return [_read(key) for key in service.list_keys(db, user.id)]
 
 
 @router.get("/{key_id}", response_model=KeyRead)
 def get(
-    key_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    key_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> KeyRead:
     return _read(service.get_key(db, key_id, user.id))
 
@@ -82,21 +82,21 @@ def update(
     key_id: uuid.UUID,
     data: ApiKeyUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> KeyRead:
     return _read(service.update_key(db, key_id, data, user.id))
 
 
 @router.delete("/{key_id}", status_code=204)
 def delete(
-    key_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    key_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> None:
     service.delete_key(db, key_id, user.id)
 
 
 @router.post("/{key_id}/rotate", response_model=KeyCreated)
 def rotate(
-    key_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    key_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)
 ) -> KeyCreated:
     """Replace the stored hash: the old raw key stops working immediately."""
     key, raw_key = service.rotate_key(db, key_id, user.id)
@@ -108,7 +108,7 @@ def put_policy(
     key_id: uuid.UUID,
     data: PolicyIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> KeyRead:
     """Upsert the policy. Every field nullable = unlimited; omitted = NULL."""
     return _read(service.put_policy(db, key_id, data, user.id))
@@ -119,7 +119,7 @@ def put_ip_rules(
     key_id: uuid.UUID,
     rules: list[IpRuleIn],
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> KeyRead:
     """Replace every IP rule; body is the new array (`[]` clears restrictions)."""
     return _read(service.put_ip_rules(db, key_id, rules, user.id))
@@ -130,7 +130,7 @@ def put_model_permissions(
     key_id: uuid.UUID,
     permissions: list[ModelPermissionIn],
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> KeyRead:
     """Replace every model permission; body is the new array (`[]` = unrestricted)."""
     return _read(service.put_model_permissions(db, key_id, permissions, user.id))
@@ -141,6 +141,6 @@ def analytics(
     key_id: uuid.UUID,
     preset: str = Query(default="last_7d", description="today | last_7d | last_30d | last_90d | this_month"),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> KeyAnalytics:
     return service.get_analytics(db, key_id, user.id, preset)

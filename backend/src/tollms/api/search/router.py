@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from tollms.api.search import service
 from tollms.api.search.schemas import SearchResponse, SearchStatusRead
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user
+from tollms.core.security import require_verified_user
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
@@ -25,7 +25,7 @@ def search(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> SearchResponse:
     return service.search_conversations(
         db,
@@ -41,5 +41,5 @@ def search(
 
 
 @router.get("/status", response_model=SearchStatusRead)
-def status(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> SearchStatusRead:
+def status(db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> SearchStatusRead:
     return service.index_status(db, user.id)

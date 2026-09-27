@@ -52,7 +52,8 @@ def test_source_rows_rebuilt_with_payloads(db: Session) -> None:
     assert len(list(db.scalars(select(RepositorySource)))) == 1  # rewritten, not duplicated
 
 
-def test_lookup_and_suggest(client: TestClient, db: Session) -> None:
+def test_lookup_and_suggest(client: TestClient, db: Session, user_factory) -> None:
+    user_factory("lookup@tollma.ai")
     run_sync(
         db,
         litellm_data={

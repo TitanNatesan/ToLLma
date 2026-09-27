@@ -95,8 +95,18 @@ def user_factory(client: TestClient):
     def _make(email: str = "u@tollma.ai", password: str = "Password123", **kw) -> dict:
         r = client.post("/auth/signup", json={"email": email, "password": password, **kw})
         assert r.status_code == 200, r.text
+        body = r.json()
+        # Feature suites exercise gated routes, not verification itself: hand
+        # back a verified user. The signup response body is unchanged, so
+        # tests asserting the unverified signup payload still pass.
+        token = body.get("debug_verification_token")
+        if token:
+            v = client.get("/auth/verify", params={"token": token})
+            assert v.status_code == 200, v.text
+            client._authed = True  # type: ignore[attr-defined]
+            return v.json()["user"]
         client._authed = True  # type: ignore[attr-defined]
-        return r.json()["user"]
+        return body["user"]
 
     return _make
 

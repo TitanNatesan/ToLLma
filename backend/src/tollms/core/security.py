@@ -12,6 +12,7 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import jwt
 from argon2 import PasswordHasher
@@ -24,6 +25,9 @@ from tollms.core.deps import get_db
 from tollms.core.exceptions import ValidationError
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import get_manager
+
+if TYPE_CHECKING:
+    from tollms.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +305,24 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
     # UI without a Valkey write on every request.
     await touch_session_throttled(sid, session)
     return user
+
+
+async def require_verified_user(request: Request, db: Session = Depends(get_db)) -> "User":
+    """Authenticated + email-verified user or 403 EMAIL_VERIFICATION_REQUIRED.
+
+    Google-verified accounts (email_verified=True) pass through. Used by
+    feature routers; auth session endpoints stay on `get_current_user` so
+    unverified users can verify, resend, refresh and logout.
+    """
+    from tollms.core.exceptions import EmailVerificationRequiredError
+    from tollms.models.user import User
+
+    user: User = await get_current_user(request, db)
+    if not user.email_verified:
+        raise EmailVerificationRequiredError("email verification required")
+    return user
+
+
 async def platform_admin_required(user=Depends(get_current_user)):
     """Platform admin gate for /api/admin/*. 403 for regular accounts.
 

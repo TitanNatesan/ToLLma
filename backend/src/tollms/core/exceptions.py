@@ -44,6 +44,7 @@ class ErrorCode(str, enum.Enum):
     NOT_FOUND = "NOT_FOUND"
     UNAUTHENTICATED = "UNAUTHENTICATED"
     FORBIDDEN = "FORBIDDEN"
+    EMAIL_VERIFICATION_REQUIRED = "EMAIL_VERIFICATION_REQUIRED"
     CONFLICT = "CONFLICT"
 
 
@@ -65,7 +66,8 @@ class ApplicationException(Exception):
     status_code: int = 500
     retryable: bool = False
 
-    def __init__(self, message: str, *, code: ErrorCode | None = None, retryable: bool | None = None):
+    def __init__(self, message: str, *, code: ErrorCode | None = None, retryable: bool | None = None,
+                 retry_after: int | None = None):
         super().__init__(message)
         self.message = message
         if code is not None:
@@ -74,6 +76,8 @@ class ApplicationException(Exception):
             self.retryable = retryable
         elif self.code in RETRYABLE_CODES:
             self.retryable = True
+        # 429/503 responses surface this as a `Retry-After` header.
+        self.retry_after = retry_after
 
     def to_payload(self) -> dict:
         return {
@@ -102,6 +106,13 @@ class AuthenticationError(ApplicationException):
 
 class ForbiddenError(ApplicationException):
     code = ErrorCode.FORBIDDEN
+    status_code = 403
+
+
+class EmailVerificationRequiredError(ForbiddenError):
+    """Unverified account gated from feature access. 403, not retryable."""
+
+    code = ErrorCode.EMAIL_VERIFICATION_REQUIRED
     status_code = 403
 
 
@@ -137,6 +148,20 @@ class ModelUnavailableError(ProviderError):
 
 class RateLimitedError(ProviderError):
     code = ErrorCode.RATE_LIMITED
+
+
+class TooManyRequestsError(ApplicationException):
+    """Local rate-limit denial (auth flood guard, login lockout). 429 + Retry-After."""
+
+    code = ErrorCode.RATE_LIMITED
+    status_code = 429
+
+
+class ServiceUnavailableError(ApplicationException):
+    """Fail-closed denial: Valkey-backed auth protection cannot be evaluated."""
+
+    code = ErrorCode.CACHE_ERROR
+    status_code = 503
 
 
 class ProviderTimeoutError(ProviderError):
@@ -191,7 +216,10 @@ def register_handlers(app: FastAPI) -> None:
             logger.exception("application error [%s]: %s", exc.code.value, exc.message)
         else:
             logger.warning("%s [%s]: %s", exc.status_code, exc.code.value, exc.message)
-        return _payload(exc)
+        response = _payload(exc)
+        if getattr(exc, "retry_after", None):
+            response.headers["Retry-After"] = str(exc.retry_after)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def _request_validation(_: Request, exc: RequestValidationError) -> JSONResponse:

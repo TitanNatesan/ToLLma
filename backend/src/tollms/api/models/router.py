@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user
+from tollms.core.security import require_verified_user
 from tollms.models.user import User
 from tollms.api.models import service
 from tollms.api.models.schemas import ModelCreate, ModelRead, ModelUpdate
@@ -49,7 +49,7 @@ def _read(m) -> ModelRead:
 
 
 @router.post("", response_model=ModelRead, status_code=201)
-def create(data: ModelCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ModelRead:
+def create(data: ModelCreate, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> ModelRead:
     return _read(service.create_model(db, data, user_id=user.id))
 
 
@@ -60,23 +60,23 @@ def list_all(
     capability: str | None = None,
     active_only: bool = False,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> list[ModelRead]:
     models = service.list_models(db, provider_id=provider_id, search=search, capability=capability, active_only=active_only, user_id=user.id)
     return [_read(m) for m in models]
 
 
 @router.get("/{model_id}", response_model=ModelRead)
-def get(model_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ModelRead:
+def get(model_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> ModelRead:
     return _read(service.get_model(db, model_id, user.id))
 
 
 
 @router.patch("/{model_id}", response_model=ModelRead)
-def update(model_id: uuid.UUID, data: ModelUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ModelRead:
+def update(model_id: uuid.UUID, data: ModelUpdate, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> ModelRead:
     return _read(service.update_model(db, model_id, data, user.id))
 
 
 @router.delete("/{model_id}", status_code=204)
-def delete(model_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> None:
+def delete(model_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_verified_user)) -> None:
     service.delete_model(db, model_id, user.id)

@@ -51,6 +51,11 @@ class VerifyResponse(BaseModel):
     message: str = "email verified"
 
 
+class ResendVerificationResponse(BaseModel):
+    sent: bool
+    cooldown_seconds: int = 0
+
+
 class RefreshResponse(BaseModel):
     user: UserRead
     access_token: str | None = None

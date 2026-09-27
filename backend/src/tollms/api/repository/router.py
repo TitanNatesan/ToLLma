@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
+from tollms.core import rate_limit
 from tollms.core.security import get_current_user
 from tollms.models.user import User
 from tollms.core.exceptions import NotFoundError
@@ -62,7 +63,9 @@ def get_model(entry_id: uuid.UUID, db: Session = Depends(get_db), user: User = D
 
 @router.get("/lookup", response_model=RepositoryLookupRead)
 def lookup_model(
-    query: str, provider_hint: str | None = None, db: Session = Depends(get_db)
+    query: str, provider_hint: str | None = None, db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    _: None = Depends(rate_limit.limit("repository:lookup")),
 ) -> RepositoryLookupRead:
     entry = service.lookup(db, query, provider_hint)
     if entry is None:

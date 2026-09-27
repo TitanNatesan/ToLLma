@@ -17,7 +17,7 @@ from tollms.api.messages.schemas import (
     MessageVersionRead,
 )
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user
+from tollms.core.security import require_verified_user
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/messages", tags=["messages"])
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/v1/messages", tags=["messages"])
 def history(
     message_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> MessageHistoryRead:
     return service.message_history(db, message_id, user.id)
 
@@ -37,7 +37,7 @@ async def edit(
     message_id: uuid.UUID,
     data: MessageEditRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> MessageEditRead:
     """Edit a user message, then regenerate the response that followed it."""
     message, versions, target = service.edit_message(db, message_id, data.content, user.id)
@@ -60,7 +60,7 @@ async def edit(
 def generations(
     message_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ):
     history_read = service.message_history(db, message_id, user.id)
     return history_read.generations
@@ -71,7 +71,7 @@ async def regenerate(
     message_id: uuid.UUID,
     data: RegenerateRequest | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> GenerationStarted:
     payload = data or RegenerateRequest()
     return await service.regenerate_message(
@@ -89,7 +89,7 @@ def activate(
     message_id: uuid.UUID,
     run_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> GenerationActivateRead:
     message, run = service.activate_generation(db, message_id, run_id, user.id)
     read = message_reads(db, [message], user.id)[0]
@@ -101,7 +101,7 @@ def activate(
 def delete(
     message_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> None:
     service.delete_message(db, message_id, user.id)
 
@@ -110,7 +110,7 @@ def delete(
 def read(
     message_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> MessageRead:
     from tollms.api.conversations.service import get_message
 

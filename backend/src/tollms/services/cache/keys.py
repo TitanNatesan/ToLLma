@@ -93,6 +93,17 @@ def oauth_state(state: str) -> str:
     return _key("oauth_state", state)
 
 
+# --- auth abuse protection (fixed-window counters, no PII in keys) -----------
+def auth_rate_limit(scope: str, identifier: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_:. " else "_" for c in identifier).strip()
+    return _key("ratelimit", f"{scope}:{safe or 'unknown'}")
+
+
+def login_attempts(digest: str) -> str:
+    """Failed-login counter keyed by sha256(email|ip) — the email never lands in Valkey."""
+    return _key("login_attempts", digest)
+
+
 # --- analytics --------------------------------------------------------------
 def analytics(user_id: object, digest: str) -> str:
     """One aggregated analytics payload (digest covers range/granularity/sort)."""

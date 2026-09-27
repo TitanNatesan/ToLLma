@@ -88,15 +88,16 @@ def test_profile_update_validation_and_uniqueness(client: TestClient, db: Sessio
     conflict = client.patch("/api/v1/settings/profile", json={"username": "taken"})
     assert conflict.status_code == 409
 
+    # Another user's email cannot be taken (checked while still verified:
+    # the gate runs before the uniqueness check).
+    db.add(User(email="other@tollma.ai", password_hash="x"))
+    db.commit()
+    assert client.patch("/api/v1/settings/profile", json={"email": "other@tollma.ai"}).status_code == 409
+
     # Email change resets verification (a verification link is re-issued).
     changed = client.patch("/api/v1/settings/profile", json={"email": "settings-profile-new@tollma.ai"})
     assert changed.status_code == 200 and changed.json()["email"] == "settings-profile-new@tollma.ai"
     assert changed.json()["email_verified"] is False
-
-    # Another user's email cannot be taken.
-    db.add(User(email="other@tollma.ai", password_hash="x"))
-    db.commit()
-    assert client.patch("/api/v1/settings/profile", json={"email": "other@tollma.ai"}).status_code == 409
 
 
 def test_password_change_verifies_and_revokes_other_sessions(client: TestClient, user_factory) -> None:

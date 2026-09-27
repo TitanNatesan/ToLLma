@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/signup", "/verify", "/auth/callback", "/health"];
+const PUBLIC_PATHS = ["/login", "/signup", "/verify", "/auth/callback", "/auth/forgot-password", "/auth/reset-password", "/share", "/health"];
 
 // Presence-cookie gate (Next 16 proxy convention). The session itself lives
 // in httpOnly cookies verified by the backend; this only routes navigation.

@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     access_token_minutes: int = 15
     refresh_token_days: int = 30
     verification_token_hours: int = 24
+    # Verification-resend per-user cooldown (Valkey fixed-window, fail-closed).
+    verification_resend_cooldown_seconds: int = 60
 
     @property
     def jwt_signing_key(self) -> str:
@@ -98,6 +100,15 @@ class Settings(BaseSettings):
     # live session (preferred: force re-login everywhere).
     password_reset_ttl_minutes: int = 60
     password_reset_invalidate_sessions: bool = True
+
+    # Auth abuse protection (Valkey fixed-window, fail-closed: auth paths deny
+    # with 503 when Valkey is unreachable since sessions require it anyway).
+    # Generic per-endpoint flood guard (per scope + client IP).
+    auth_rate_limit_attempts: int = 60
+    auth_rate_limit_window_seconds: int = 60
+    # Password-guessing guard (per email + IP, lockout with expiry).
+    login_max_attempts: int = 5
+    login_lockout_seconds: int = 900
 
     # CORS
     backend_cors_origins: str = "http://localhost:3000"

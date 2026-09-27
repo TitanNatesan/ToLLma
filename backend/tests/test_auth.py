@@ -17,6 +17,15 @@ def _signup(client: TestClient, email: str = "a@tollma.ai", password: str = "Pas
     return r.json()
 
 
+def _verify(client: TestClient, body: dict) -> dict:
+    """Complete email verification for a fresh signup (feature routes are gated)."""
+    token = body.get("debug_verification_token")
+    assert token
+    r = client.get("/auth/verify", params={"token": token})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_signup_creates_unverified_user(client: TestClient, db: Session) -> None:
     body = _signup(client)
     assert body["user"]["email"] == "a@tollma.ai"
@@ -118,6 +127,7 @@ def test_protected_routes_reject_anonymous(client: TestClient, provider_factory)
 
 def test_user_isolation_providers_models(client: TestClient) -> None:
     a = _signup(client, email="iso-a@tollma.ai")
+    _verify(client, a)
     pa = client.post("/api/v1/providers",
                      json={"name": "A-Key", "provider_type": "CUSTOM",
                            "credentials": {"base_url": "http://a"}}).json()
@@ -127,7 +137,7 @@ def test_user_isolation_providers_models(client: TestClient) -> None:
     assert a["user"]["id"]
 
     client.cookies.clear()
-    _signup(client, email="iso-b@tollma.ai")
+    _verify(client, _signup(client, email="iso-b@tollma.ai"))
     assert client.get("/api/v1/providers").json() == []
     assert client.get(f"/api/v1/providers/{pa['id']}").status_code == 404
     assert client.get(f"/api/v1/models/{ma['id']}").status_code == 404
@@ -145,7 +155,7 @@ def test_user_isolation_providers_models(client: TestClient) -> None:
 
 
 def test_user_isolation_conversations_messages(client: TestClient, provider_factory, model_factory) -> None:
-    _signup(client, email="conv-a@tollma.ai")
+    _verify(client, _signup(client, email="conv-a@tollma.ai"))
     p = provider_factory("PA")
     m = model_factory(p["id"])
     conv = client.post("/api/v1/conversations",
@@ -153,7 +163,7 @@ def test_user_isolation_conversations_messages(client: TestClient, provider_fact
     assert client.get("/api/v1/conversations").json()[0]["id"] == conv["id"]
 
     client.cookies.clear()
-    _signup(client, email="conv-b@tollma.ai")
+    _verify(client, _signup(client, email="conv-b@tollma.ai"))
     assert client.get("/api/v1/conversations").json() == []
     assert client.get(f"/api/v1/conversations/{conv['id']}").status_code == 404
     assert client.get(f"/api/v1/conversations/{conv['id']}/messages").status_code == 404

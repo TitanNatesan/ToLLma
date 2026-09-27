@@ -2128,3 +2128,88 @@ Frontend: `components/Sidebar/SidebarNavigation.tsx` (API Docs entry), `app/admi
 - Normalize gpt-oss `<think>` spans for public API responses (or expose `reasoning_content`).
 - Add `/v1/images/edits` adapter support when an adapter exposes an edit method.
 - Consider `GET /v1/*` rate-limit headers (`X-RateLimit-*`) for SDK friendliness.
+
+---
+
+## 2026-09-27 — V1 Phase 1: Frontend Access Recovery
+
+### Requirement Completed
+Anonymous access to forgot-password, reset-password, and public share routes (audit contract Phase 1).
+
+### Files Created
+None.
+
+### Files Modified
+- frontend/src/proxy.ts (PUBLIC_PATHS += /auth/forgot-password, /auth/reset-password, /share)
+- frontend/src/components/Shell.tsx (BARE_PATHS += same three; prefix match covers /share/{token} and ?token= query)
+
+### Decisions
+- Prefix matcher (pathname === p || startsWith(p + "/")) already covers /share/{token}; no separate entry needed.
+- Backend already public for these routes (GET /api/v1/shares/public/{token}, POST /auth/forgot-password, POST /auth/reset-password + validate); only frontend gates blocked them.
+- No Next.js API changes; route lists only, per frontend/AGENTS.md guardrail.
+
+### Verification
+- npx tsc --noEmit: clean (exit 0).
+- npx eslint src/proxy.ts src/components/Shell.tsx: clean (exit 0).
+- Routing simulation: /auth/forgot-password, /auth/reset-password?token=abc, /share, /share/abc123 → PUBLIC; /, /chat, /settings, /admin → still gated; pre-existing public paths unchanged.
+- Live E2E deferred: e2e/auth-provider.spec.ts:71-90, e2e/conversation-intelligence.spec.ts:107-137 cover this; need live stack + browsers.
+
+### Recommended Next Steps
+- Phase 2 Security Critical (draft-validate + lookup auth, rate limiting, scheduler purge, logout fallback, verify TTL).
+
+---
+
+## 2026-09-27 — V1 Phase 2: Security Critical
+
+### Requirement Completed
+Phase 2 Security Critical (audit contract items 1–7): draft-validate + repository lookup auth, auth rate limiting, login lockout, scheduler purge OR, logout refresh fallback, verify TTL from config.
+
+### Files Created
+- backend/src/tollms/core/rate_limit.py (Valkey fixed-window limiter + login lockout helpers, fail-closed 503)
+- backend/tests/test_phase2_security.py (10 permanent regression tests)
+
+### Files Modified
+Backend: api/auth/{router (rate-limit deps ×6, logout refresh fallback), service (lockout check/record/clear, logout_with_tokens, verify TTL from settings)}, api/providers/router.py (draft-validate requires get_current_user + audit log), api/repository/router.py (lookup requires get_current_user + rate limit), core/{config (4 AUTH settings), exceptions (TooManyRequestsError 429, ServiceUnavailableError 503, Retry-After header)}, services/cache/keys.py (ratelimit + login_attempts keys), services/jobs/scheduler.py (purge used OR expired), tests/test_intelligence.py (lookup test authenticates).
+Root: .env.example (4 AUTH vars documented).
+
+### Decisions
+- No migration: all new state in Valkey counters (sha256 email|ip digests, no PII in keys/logs).
+- Resend endpoint NOT created (Phase 3); limiter factory accepts any scope so Phase 3 hooks in as limit("auth:resend") with zero core changes.
+- Scheduler OR semantics per explicit contract ("used OR expired"): used rows are single-use dead weight; purging unexpired+used is safe (replay of used → rejected; replay of purged → invalid — same outcome). Corrected one test expectation that contradicted the contract.
+- Google OAuth endpoints left un-rate-limited (only the 6 listed auth paths in scope).
+
+### Verification
+- compileall clean; tests/test_phase2_security.py 10/10; test_auth.py + test_password_reset.py 24 passed; wizard/discovery/intelligence/model_repository/providers 29 passed.
+- Re-audit: auth deps present on draft-validate/lookup, audit logs carry ids/types/masked emails only, no passwords/tokens/credentials/keys in logs.
+
+### Recommended Next Steps
+- Phase 3 Email Verification System (awaiting owner approval). Open: GET /auth/reset-password/validate has no rate-limit dep (flagged as New Finding, not fixed).
+
+---
+
+## 2026-09-27 — V1 Phase 3: Email Verification System (implementation + tests green, full regression pending)
+
+### Requirement Completed
+Phase 3 core: mandatory verification gate (403 EMAIL_VERIFICATION_REQUIRED), POST /auth/resend-verification with cooldown + rate limit, verification banner (unverified/sent/cooldown/verified), /auth/me exposes email_verified, plus Phase 2 findings (reset-validate + OAuth login/callback rate limits).
+
+### Files Created
+- backend/tests/test_email_verification.py (22 nodes: gate allowed/blocked/verified/Google, resend ×4, me lifecycle, 3 burst tests)
+- frontend/src/components/ui/VerificationBanner.tsx (persistent banner, resend + countdown, 403-triggered user refetch)
+
+### Files Modified
+Backend: core/{exceptions (EMAIL_VERIFICATION_REQUIRED 403), security (require_verified_user), config (verification_resend_cooldown_seconds=60)}, api/auth/{router (resend endpoint, 6 existing + 3 new rate limits), schemas (ResendVerificationResponse), service (resend_verification, fail-closed cooldown)}, 13 feature routers (77 route Depends swaps), request_logs router + shares list (orchestrator consistency gaps).
+Frontend: components/ui/{AppShell (banner mount), index (export)}, services/api.ts (retryAfterSeconds, 403→refetch, resend client).
+Tests: conftest.py (user_factory auto-verifies), test_auth.py (+me lifecycle, 2 isolation tests verify), test_settings.py (409-before-email-change reorder), test_attachments.py (_other_client verifies).
+
+### Decisions
+- Refresh/logout/verify ungated (session maintenance, no feature access); admin/health/repository/public-share unchanged; repository reads left public (useless without providers).
+- Scheduler OR semantics upheld per contract; one test expectation corrected with citation.
+- Resend: verified → {sent: False} no email; cooldown 429 + Retry-After; limiter scope auth:resend reusable.
+
+### Verification
+- New: test_email_verification 22/22; test_auth 11, password_reset 13, phase2 10, settings 6, providers 3, wizard 3, model_repository 9 — all pass (77 nodes across runs).
+- Frontend tsc + eslint clean. Full backend suite running in background (excl. bedrock + 1 pre-existing privacy-scanner failure).
+- test_settings 409-vs-403 ordering + test_attachments cross-user 404 fixes are test-only, correct-gate-behavior confirmations.
+
+### Recommended Next Steps
+- Await full regression → Phase 3 report → Phase 4 Auth Matrix (Google set-password, has_password reset inclusion, collision review).

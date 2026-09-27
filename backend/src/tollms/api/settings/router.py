@@ -16,7 +16,7 @@ from tollms.api.settings.schemas import (
     SessionsRead,
 )
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_session_id, get_current_user
+from tollms.core.security import get_current_session_id, get_current_user, require_verified_user
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -33,7 +33,7 @@ def read_preferences(
 def write_preferences(
     data: PreferencesUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> PreferencesRead:
     return service.update_preferences(db, user, data)
 
@@ -42,7 +42,7 @@ def write_preferences(
 async def write_profile(
     data: ProfileUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> UserRead:
     updated = await service.update_profile(db, user, data)
     return auth_service.read_user(updated)
@@ -53,7 +53,7 @@ async def change_password(
     data: PasswordChange,
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> dict[str, object]:
     revoked = await service.change_password(
         db, user, data, keep_session_id=get_current_session_id(request)
@@ -75,7 +75,7 @@ async def revoke_session(
     session_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> RevokedRead:
     await service.revoke_session(db, user.id, session_id, get_current_session_id(request))
     return RevokedRead(session_id=session_id)
@@ -85,7 +85,7 @@ async def revoke_session(
 async def revoke_other_sessions(
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
 ) -> RevokeOthersRead:
     revoked = await service.revoke_other_sessions(user.id, get_current_session_id(request))
     return RevokeOthersRead(revoked=revoked)

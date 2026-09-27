@@ -72,10 +72,10 @@ def _usage_rollup_job() -> None:
 
 
 def _cleanup_job() -> None:
-    """Delete expired, unused password-reset tokens (safe: single-use + time-boxed)."""
+    """Delete used OR expired password-reset tokens (single-use + time-boxed)."""
     from datetime import datetime, timezone
 
-    from sqlalchemy import delete
+    from sqlalchemy import delete, or_
 
     from tollms.models.password_reset import PasswordResetToken
 
@@ -83,12 +83,14 @@ def _cleanup_job() -> None:
     try:
         result = db.execute(
             delete(PasswordResetToken).where(
-                PasswordResetToken.used_at.is_not(None),
-                PasswordResetToken.expires_at < datetime.now(timezone.utc),
+                or_(
+                    PasswordResetToken.used_at.is_not(None),
+                    PasswordResetToken.expires_at < datetime.now(timezone.utc),
+                )
             )
         )
         db.commit()
-        logger.info("cleanup finished: %d expired reset tokens purged", result.rowcount)
+        logger.info("cleanup finished: %d used/expired reset tokens purged", result.rowcount)
     except Exception:
         db.rollback()
         logger.exception("cleanup crashed")
