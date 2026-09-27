@@ -49,13 +49,13 @@ export default function Roadmap() {
     <section
       id="roadmap"
       aria-label="Roadmap"
-      className="relative scroll-mt-20 overflow-hidden bg-white py-16 sm:py-20"
+      className="section relative scroll-mt-20 overflow-hidden bg-white"
     >
       <div
         aria-hidden
         className="bg-grid pointer-events-none absolute inset-0 opacity-70 [mask-image:radial-gradient(48rem_26rem_at_50%_50%,black,transparent_78%)]"
       />
-      <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
+      <div className="container-x relative">
         <SectionHeading
           eyebrow="Roadmap"
           title="Where ToLLma is headed"
@@ -72,7 +72,7 @@ export default function Roadmap() {
             {COLUMNS.map((c, i) => (
               <li key={c.phase} className="relative">
                 <FadeUp delay={i * 0.08} className="h-full">
-                  <article className="relative h-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <article className="card relative h-full p-5">
                     <span
                       aria-hidden
                       className={`absolute -top-[9px] left-8 hidden h-[18px] w-[18px] rounded-full border-4 border-white ${c.dot} shadow md:block`}

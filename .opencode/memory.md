@@ -2452,3 +2452,17 @@ Venture-grade visual/motion redesign of landing/ (SaaS quality bar, principles o
 
 ### Verification
 - tsc clean, static-export build succeeds (landing/out 1.3M), zero runtime API calls, reduced-motion kill-switch, ≤20% animated, GPU-only.
+
+---
+
+## 2026-09-28 — Landing Design Audit Loop COMPLETE
+
+### Requirement Completed
+Iterative render→capture→fix loop (2 passes, 7 widths): design tokens, premium glass navbar, calm-section motion removal, card system, contrast fixes (all AA), 44px touch targets, keyboard cleanup, SMIL reduced-motion fix, overflow elimination, favicon.
+
+### Files Modified
+landing/ only (tokens in globals.css, nav, hero, all sections, icon.svg). Backend/frontend untouched.
+
+### Verification
+- Breakpoints 360–1920 all PASS (0px overflow, no errors). A11y: focus/keyboard/contrast/touch/reduced-motion verified. Lighthouse: Perf 97, A11y 100, BP ~100.
+- Remaining: JS payload diet (framer-motion removal candidate), skip-link, "Why ToLLma" 1280 wrap (copy change declined).

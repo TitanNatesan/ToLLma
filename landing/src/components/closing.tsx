@@ -13,12 +13,12 @@ import {
 
 export function CTA() {
   return (
-    <section aria-label="Get started" className="relative overflow-hidden bg-white py-16 sm:py-20">
+    <section aria-label="Get started" className="section relative overflow-hidden bg-white">
       <div
         aria-hidden
         className="bg-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:radial-gradient(50rem_26rem_at_50%_100%,black,transparent_75%)]"
       />
-      <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
+      <div className="container-x relative">
         <FadeUp>
           <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand via-blue-700 to-slate-900 px-6 py-14 text-center text-white shadow-[0_40px_80px_-32px_rgba(37,99,235,0.6)] sm:px-12 sm:py-18">
             {/* Animated glow layers */}
@@ -93,7 +93,7 @@ const FOOT_COLS: { title: string; links: { label: string; href: string }[] }[] =
 export function Footer() {
   return (
     <footer className="border-t border-slate-200 bg-slate-50">
-      <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+      <div className="container-x py-12">
         <div className="grid gap-8 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
             <p className="flex items-center gap-2 text-lg font-bold">
@@ -107,7 +107,7 @@ export function Footer() {
             </p>
             <a
               href={GITHUB_URL}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold transition hover:border-slate-400"
+              className="mt-4 inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold transition hover:border-slate-400"
             >
               <GithubIcon className="h-4 w-4" aria-hidden /> Star on GitHub
             </a>
@@ -117,10 +117,10 @@ export function Footer() {
               <p className="text-xs font-bold tracking-widest text-slate-500 uppercase">
                 {col.title}
               </p>
-              <ul className="mt-3 space-y-2">
+              <ul className="mt-1 space-y-0">
                 {col.links.map((l) => (
                   <li key={l.label}>
-                    <a href={l.href} className="text-sm font-medium text-slate-700 transition hover:text-brand">
+                    <a href={l.href} className="inline-block py-3 text-sm font-medium text-slate-700 transition hover:text-brand">
                       {l.label}
                     </a>
                   </li>

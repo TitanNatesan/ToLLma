@@ -11,6 +11,94 @@
   --color-mint-light: #d1fae5;
   --color-ink: #0f172a;
   --color-muted: #475569;
+
+  /* Contrast-safe text accents (AA on light surfaces) */
+  --color-gold-ink: #a16207;
+  --color-mint-ink: #047857;
+}
+
+/* ---------- Design tokens (single source of truth) ---------- */
+:root {
+  /* Layout */
+  --container-max: 72rem; /* = max-w-6xl; nav + hero share this exactly */
+  --container-px: 1rem;
+  --container-px-sm: 1.5rem;
+
+  /* Section rhythm */
+  --section-py: 4rem;
+  --section-py-sm: 5rem;
+  --section-gap: 2.5rem; /* heading → content */
+  --section-gap-sm: 3rem;
+
+  /* Card system */
+  --radius-card: 1rem; /* rounded-2xl */
+  --radius-chip: 0.75rem;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-card-hover: 0 16px 36px -16px rgba(15, 23, 42, 0.22);
+  --shadow-float: 0 28px 56px -28px rgba(15, 23, 42, 0.35);
+  --shadow-glow-blue: 0 32px 64px -24px rgba(37, 99, 235, 0.5);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-entrance: 0.55s;
+  --dur-hover: 0.3s;
+  --dur-spotlight: 0.35s;
+
+  /* Touch */
+  --touch-min: 44px;
+}
+
+/* Shared layout container: nav width == hero width == section width.
+   In @layer components so one-off utilities can still override tokens. */
+@layer components {
+  .container-x {
+    width: 100%;
+    margin-inline: auto;
+    max-width: var(--container-max);
+    padding-inline: var(--container-px);
+  }
+  /* Shared section rhythm. */
+  .section {
+    padding-block: var(--section-py);
+  }
+  /* Unified card system: radius / border / elevation in one place. */
+  .card {
+    border-radius: var(--radius-card);
+    border: 1px solid var(--color-slate-200);
+    background: #fff;
+    box-shadow: var(--shadow-card);
+  }
+  /* Calm hover for non-showcase sections: border + shadow only, no lift. */
+  .card-calm {
+    transition:
+      border-color var(--dur-hover) ease,
+      box-shadow var(--dur-hover) ease;
+  }
+  .card-calm:hover {
+    border-color: rgba(37, 99, 235, 0.35);
+    box-shadow: var(--shadow-card-hover);
+  }
+  /* Spotlight hover for the screenshot gallery (border glow + depth). */
+  .shot {
+    transition:
+      border-color var(--dur-spotlight) ease,
+      box-shadow var(--dur-spotlight) ease;
+  }
+  .shot:hover,
+  .shot:focus-within {
+    border-color: rgba(37, 99, 235, 0.45);
+    box-shadow:
+      0 32px 64px -28px rgba(37, 99, 235, 0.35),
+      0 2px 8px -2px rgba(15, 23, 42, 0.08);
+  }
+}
+@media (min-width: 640px) {
+  .container-x {
+    padding-inline: var(--container-px-sm);
+  }
+  .section {
+    padding-block: var(--section-py-sm);
+  }
 }
 
 html {
@@ -199,6 +287,11 @@ body {
   .tilt-card:focus-within {
     transform: none;
   }
+  .trust-badge:hover {
+    transform: none;
+  }
+  /* NOTE: hero SVG packets use SMIL <animateMotion>, which CSS cannot
+     pause — hero.tsx skips rendering them when reduced motion is set. */
   html {
     scroll-behavior: auto;
   }

@@ -19,7 +19,7 @@ function Frame({
   children: React.ReactNode;
 }) {
   return (
-    <figure className="glass-reflection overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_28px_56px_-28px_rgba(15,23,42,0.35)]">
+    <figure className="shot glass-reflection overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_28px_56px_-28px_rgba(15,23,42,0.35)]">
       {/* Mac-style chrome */}
       <div className="relative z-[2] flex items-center gap-2 border-b border-slate-200 bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-2.5">
         <span className="flex gap-1.5" aria-hidden>
@@ -30,7 +30,7 @@ function Frame({
         <span className="ml-1 hidden max-w-44 truncate rounded-md bg-white px-2 py-0.5 font-mono text-[11px] text-slate-500 ring-1 ring-slate-200 sm:block">
           {url}
         </span>
-        <span className="ml-auto font-mono text-[11px] text-slate-400">
+        <span className="ml-auto font-mono text-[11px] text-slate-500">
           {title}
         </span>
       </div>
@@ -61,7 +61,7 @@ function ChatMock() {
             <p className="mt-1.5 font-mono text-[10px] text-slate-500">llama-3.1-8b · local · 640 ms</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-400">
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-500">
           <MessagesSquare className="h-3.5 w-3.5" aria-hidden /> Ask anything…
           <span className="ml-auto rounded bg-brand px-2 py-0.5 font-bold text-white">Send</span>
         </div>
@@ -82,7 +82,7 @@ function ProvidersMock() {
       <ul className="space-y-2 text-xs">
         {rows.map((r) => (
           <li key={r.name} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2">
-            <Server className="h-3.5 w-3.5 text-slate-400" aria-hidden />
+            <Server className="h-3.5 w-3.5 text-slate-500" aria-hidden />
             <span className="font-bold">{r.name}</span>
             <span className="truncate font-mono text-[10px] text-slate-500">{r.model}</span>
             <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold ${r.ok ? "bg-mint-light text-emerald-700" : "bg-gold-light text-yellow-700"}`}>
@@ -106,7 +106,7 @@ function RepoMock() {
         ].map((f) => (
           <div key={f.n} className="rounded-xl border border-slate-200 px-3 py-2">
             <div className="flex items-center gap-2">
-              <FolderOpen className="h-3.5 w-3.5 text-gold" aria-hidden />
+              <FolderOpen className="h-3.5 w-3.5 text-yellow-700" aria-hidden />
               <span className="font-bold">{f.n}</span>
               <span className="ml-auto text-[10px] text-slate-500">{f.s}</span>
             </div>
@@ -139,7 +139,7 @@ function AnalyticsMock() {
           />
         ))}
       </div>
-      <div className="mt-2 flex justify-between font-mono text-[10px] text-slate-400">
+      <div className="mt-2 flex justify-between font-mono text-[10px] text-slate-500">
         <span>per model · per key · per day</span>
       </div>
     </Frame>
@@ -182,13 +182,13 @@ export default function Screenshots() {
     <section
       id="screenshots"
       aria-label="Product tour"
-      className="relative scroll-mt-20 overflow-hidden bg-white py-16 sm:py-20"
+      className="section relative scroll-mt-20 overflow-hidden bg-white"
     >
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(40rem_20rem_at_50%_100%,rgba(16,185,129,0.07),transparent),radial-gradient(40rem_22rem_at_50%_0%,rgba(37,99,235,0.06),transparent)]"
       />
-      <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
+      <div className="container-x relative">
         <SectionHeading
           eyebrow="Product tour"
           title="One dashboard for all of it"
@@ -197,7 +197,7 @@ export default function Screenshots() {
         {/* Layered perspective gallery: no carousels, active-card focus */}
         <div className="perspective-stage group/gallery grid gap-5 sm:grid-cols-2 lg:grid-cols-3 [&:has(:hover)_.tilt-card:not(:hover)]:opacity-90">
           {SHOTS.map((s, i) => (
-            <div key={s.label} className="tilt-card" tabIndex={0} role="group" aria-label={`${s.label} UI mockup`}>
+            <div key={s.label} className="tilt-card" role="group" aria-label={`${s.label} UI mockup`}>
               {i < 2 ? (
                 <ScaleIn delay={Math.min(i * 0.07, 0.14)}>
                   <div>

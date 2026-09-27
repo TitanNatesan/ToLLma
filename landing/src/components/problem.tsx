@@ -8,7 +8,6 @@ import {
   Check,
 } from "lucide-react";
 import { SectionHeading } from "./nav";
-import { FadeUp, ScaleIn } from "@/lib/motion";
 
 const PAINS = [
   {
@@ -50,24 +49,24 @@ export default function Problem() {
     <section
       id="problem"
       aria-label="The problem ToLLma solves"
-      className="noise-overlay scroll-mt-20 bg-slate-50 py-16 sm:py-20"
+      className="noise-overlay section scroll-mt-20 bg-slate-50"
     >
       <div
         aria-hidden
         className="bg-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:radial-gradient(50rem_28rem_at_50%_0%,black,transparent_75%)]"
       />
-      <div className="relative z-[2] mx-auto max-w-6xl px-4 sm:px-6">
+      <div className="container-x relative z-[2]">
         <SectionHeading
           eyebrow="The problem"
           title="Every new model adds a new mess"
           sub="Teams stitch AI providers directly into their apps — and pay for it in keys, costs, and rewrites."
+          motion={false}
         />
 
-        {/* Without / With comparison */}
+        {/* Without / With comparison (calm section: static, no entrances) */}
         <div className="relative grid gap-6 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
           {/* Without panel */}
-          <FadeUp className="h-full">
-            <article className="flex h-full flex-col rounded-2xl border border-red-200/70 bg-white p-5 shadow-sm sm:p-6">
+          <article className="card flex h-full flex-col border-red-200/70 p-5 sm:p-6">
               <p className="mb-4 inline-flex w-fit items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-extrabold tracking-widest text-red-700 uppercase">
                 <X className="h-3.5 w-3.5" aria-hidden /> Without ToLLma
               </p>
@@ -87,7 +86,6 @@ export default function Problem() {
                 ))}
               </ul>
             </article>
-          </FadeUp>
 
           {/* Connector */}
           <div
@@ -101,36 +99,34 @@ export default function Problem() {
           </div>
 
           {/* With panel */}
-          <ScaleIn className="h-full" delay={0.1}>
-            <article className="gradient-border flex h-full flex-col justify-center rounded-2xl p-5 shadow-[0_24px_48px_-24px_rgba(37,99,235,0.4)] sm:p-6">
-              <p className="mb-1 text-sm font-semibold tracking-wide text-gold uppercase">
-                The fix
-              </p>
-              <h3 className="text-xl font-bold text-balance sm:text-2xl">
-                ToLLma unifies everything behind one gateway.
-              </h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted">
-                One endpoint, one key system, one dashboard for spend, logs, and
-                routing — for cloud models, local models, and agents alike.
-              </p>
-              <ul className="mt-5 space-y-2.5">
-                {FIXES.map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-sm font-medium">
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-mint-light text-emerald-700">
-                      <Check className="h-3 w-3" aria-hidden />
-                    </span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <a
-                href="#features"
-                className="mt-6 inline-flex w-fit items-center rounded-lg bg-brand px-4 py-2 text-sm font-bold text-white transition hover:bg-brand-dark"
-              >
-                See how it works
-              </a>
-            </article>
-          </ScaleIn>
+          <article className="gradient-border flex h-full flex-col justify-center rounded-2xl p-5 shadow-[0_24px_48px_-24px_rgba(37,99,235,0.4)] sm:p-6">
+            <p className="mb-1 text-sm font-semibold tracking-wide text-yellow-700 uppercase">
+              The fix
+            </p>
+            <h3 className="text-xl font-bold text-balance sm:text-2xl">
+              ToLLma unifies everything behind one gateway.
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted">
+              One endpoint, one key system, one dashboard for spend, logs, and
+              routing — for cloud models, local models, and agents alike.
+            </p>
+            <ul className="mt-5 space-y-2.5">
+              {FIXES.map((f) => (
+                <li key={f} className="flex items-start gap-2 text-sm font-medium">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-mint-light text-emerald-700">
+                    <Check className="h-3 w-3" aria-hidden />
+                  </span>
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <a
+              href="#features"
+              className="mt-6 inline-flex min-h-[44px] w-fit items-center rounded-lg bg-brand px-4 text-sm font-bold text-white transition hover:bg-brand-dark"
+            >
+              See how it works
+            </a>
+          </article>
         </div>
       </div>
     </section>

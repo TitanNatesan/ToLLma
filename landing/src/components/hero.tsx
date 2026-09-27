@@ -27,7 +27,7 @@ const TRUST_BADGES = [
  * travelling slowly User → ToLLma → providers. No JS runtime, no network —
  * renders in the static export. Durations are deliberately slow (4s+).
  */
-function ArchitectureVisual() {
+function ArchitectureVisual({ reduce }: { reduce: boolean }) {
   const packet = (path: string, color: string, dur: string, begin: string) => (
     <circle r="4" fill={color} stroke="#fff" strokeWidth="1.5">
       <animateMotion dur={dur} begin={begin} repeatCount="indefinite" path={path} />
@@ -100,13 +100,18 @@ function ArchitectureVisual() {
         <path id="lane-c" d="M 345 205 C 375 205, 385 236, 414 236" fill="none" stroke="#eab308" strokeWidth="2" strokeDasharray="6 4" />
         <path id="lane-d" d="M 345 230 C 375 230, 385 326, 414 326" fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="6 4" />
 
-        {/* travelling packets (slow, subtle) */}
-        {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "4.2s", "0s")}
-        {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "4.2s", "2.1s")}
-        {packet("M 345 150 C 375 150, 385 56, 414 56", "#10b981", "4.8s", "0.4s")}
-        {packet("M 345 175 C 375 175, 385 146, 414 146", "#10b981", "4.8s", "2.6s")}
-        {packet("M 345 205 C 375 205, 385 236, 414 236", "#eab308", "4.8s", "1.5s")}
-        {packet("M 345 230 C 375 230, 385 326, 414 326", "#10b981", "4.8s", "3.4s")}
+        {/* travelling packets (slow, subtle; omitted for reduced motion —
+            SMIL <animateMotion> cannot be paused from CSS) */}
+        {!reduce && (
+          <>
+            {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "4.2s", "0s")}
+            {packet("M 146 190 C 170 190, 185 190, 215 190", "#38bdf8", "4.2s", "2.1s")}
+            {packet("M 345 150 C 375 150, 385 56, 414 56", "#10b981", "4.8s", "0.4s")}
+            {packet("M 345 175 C 375 175, 385 146, 414 146", "#10b981", "4.8s", "2.6s")}
+            {packet("M 345 205 C 375 205, 385 236, 414 236", "#eab308", "4.8s", "1.5s")}
+            {packet("M 345 230 C 375 230, 385 326, 414 326", "#10b981", "4.8s", "3.4s")}
+          </>
+        )}
       </svg>
       <div className="relative z-[2] mt-2 flex items-center justify-between rounded-lg bg-white/5 px-3 py-2 font-mono text-[11px] text-emerald-300 sm:text-xs">
         <span className="truncate">POST /v1/chat/completions → 200 OK · 412 ms</span>
@@ -144,7 +149,7 @@ export default function Hero() {
         <div className="absolute top-40 right-[8%] hidden h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl lg:block" />
       </div>
 
-      <div className="relative z-[2] mx-auto grid max-w-6xl items-center gap-10 px-4 pt-14 pb-10 sm:px-6 sm:pt-20 lg:grid-cols-[1.05fr_1fr] lg:gap-14">
+      <div className="container-x relative z-[2] grid items-center gap-10 pt-14 pb-10 sm:pt-20 lg:grid-cols-[1.05fr_1fr] lg:gap-14">
         {/* Copy column */}
         <div>
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-brand-dark">
@@ -187,7 +192,7 @@ export default function Hero() {
                   key={b}
                   className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1"
                 >
-                  <FileCode2 className="h-3 w-3 text-mint" aria-hidden /> {b}
+                  <FileCode2 className="h-3 w-3 text-emerald-700" aria-hidden /> {b}
                 </span>
               ),
             )}
@@ -204,16 +209,16 @@ export default function Hero() {
             className="absolute -inset-6 rounded-[2rem] bg-gradient-to-br from-blue-500/15 via-emerald-400/10 to-amber-300/10 blur-2xl"
           />
           <div className="relative">
-            <ArchitectureVisual />
-            {/* Floating status cards */}
-            <div className="absolute -top-4 -right-2 hidden rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur sm:block">
+            <ArchitectureVisual reduce={reduce} />
+            {/* Floating status cards (overhang only where there is room) */}
+            <div className="absolute -top-4 right-0 hidden rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur sm:block lg:-right-2">
               <p className="flex items-center gap-1.5 font-mono text-[11px] font-bold text-emerald-700">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
                 200 OK · 412 ms
               </p>
               <p className="mt-0.5 text-[10px] text-slate-500">llama-3.1-8b · local</p>
             </div>
-            <div className="absolute -bottom-4 -left-2 hidden rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur sm:block">
+            <div className="absolute -bottom-4 left-0 hidden rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur sm:block lg:-left-2">
               <p className="text-[10px] font-semibold tracking-wide text-slate-500 uppercase">
                 Spend this month
               </p>
@@ -226,7 +231,7 @@ export default function Hero() {
       </div>
 
       {/* Trust bar */}
-      <div className="relative z-[2] mx-auto max-w-6xl px-4 pb-12 sm:px-6">
+      <div className="container-x relative z-[2] pb-12">
         <ul
           aria-label="Project guarantees"
           className="flex flex-wrap items-center justify-center gap-2 sm:gap-3"

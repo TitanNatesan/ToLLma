@@ -79,13 +79,13 @@ export default function Architecture() {
     <section
       id="architecture"
       aria-label="Architecture: how a request flows"
-      className="noise-overlay scroll-mt-20 bg-slate-50 py-16 sm:py-20"
+      className="noise-overlay section scroll-mt-20 bg-slate-50"
     >
       <div
         aria-hidden
         className="bg-grid pointer-events-none absolute inset-0 opacity-50 [mask-image:radial-gradient(54rem_30rem_at_50%_10%,black,transparent_75%)]"
       />
-      <div className="relative z-[2] mx-auto max-w-6xl px-4 sm:px-6">
+      <div className="container-x relative z-[2]">
         <SectionHeading
           eyebrow="Architecture"
           title="User → ToLLma → Providers"
@@ -118,7 +118,7 @@ export default function Architecture() {
                             href={`#arch-${s.id}`}
                             onClick={() => setActive(s.id)}
                             aria-current={isActive ? "true" : undefined}
-                            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                            className={`flex min-h-[44px] items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
                               isActive
                                 ? "bg-brand text-white shadow-md shadow-blue-600/25"
                                 : "text-slate-600 hover:bg-slate-100"
@@ -168,7 +168,6 @@ export default function Architecture() {
                       else stepRefs.current.delete(s.id);
                     }}
                     aria-label={s.title}
-                    tabIndex={0}
                     className={`scroll-mt-28 rounded-2xl border bg-white p-6 shadow-sm transition sm:p-7 ${
                       active === s.id
                         ? "border-blue-300 shadow-[0_20px_44px_-20px_rgba(37,99,235,0.35)]"
