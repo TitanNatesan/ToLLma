@@ -57,6 +57,7 @@ from typing import Any
 from tollms.services.api_keys.keys import KeyContext
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import call_sync, get_manager
+from tollms.services.observability.events import emit, incr_counter
 
 logger = logging.getLogger(__name__)
 
@@ -447,6 +448,11 @@ def _evaluate(
 # --- reservations -----------------------------------------------------------
 
 
+def _count_denied(reason: str | None) -> None:
+    """Metrics-only deny counter (fail-open; enforcement is unchanged)."""
+    incr_counter("gateway.denied", {"reason": reason or "unknown"})
+
+
 def _stash_reservation(
     ctx: KeyContext,
     provider_id: Any,
@@ -465,6 +471,7 @@ def _stash_reservation(
         )
     except Exception:
         logger.warning("limits: reservation stash failed for key %s", ctx.key_id, exc_info=True)
+        emit("gateway.reservation_failed", key_id=str(ctx.key_id), stage="stash")
 
 
 def _pop_reservation(
@@ -501,6 +508,7 @@ def _flag_overbudget(ctx: KeyContext, reason: str, now: datetime) -> None:
     except Exception:
         logger.warning("limits: overbudget flag write failed for key %s", ctx.key_id, exc_info=True)
     logger.warning("limits: key %s over budget (%s); requests denied until daily reset", ctx.key_id, reason)
+    emit("gateway.overbudget", key_id=str(ctx.key_id), reason=reason)
 
 
 def _post_call_budget_check(
@@ -546,6 +554,7 @@ def check_request(
 ) -> LimitsDecision:
     """Check every limit and reserve the estimate. Never raises; fails open."""
     if _is_overbudget(ctx):
+        _count_denied("budget")
         return LimitsDecision(allowed=False, reason="budget", status_code=403)
     now = _now()
     tokens = max(0, _as_int(estimated_tokens))
@@ -559,6 +568,7 @@ def check_request(
         )
         if denial is not None:
             applied.rollback()
+            _count_denied(denial.reason)
             return denial
         _stash_reservation(ctx, provider_id, model_id, tokens, cost_micros, request_id)
         return LimitsDecision(allowed=True)

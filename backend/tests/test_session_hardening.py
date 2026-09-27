@@ -236,10 +236,13 @@ def test_login_audit_has_event_without_token_material(
     logged = caplog.text
     assert "logged in" in logged, "login audit event missing"
     assert access not in logged and refresh not in logged, "token material in logs"
-    # NOTE: the audit line tags the method as "(password)"; assert the secret
-    # value — not the method label — is absent.
+    # NOTE: the audit lines tag the login method as "(password)" /
+    # '"method": "password"'. Those are method labels, not secret material:
+    # exclude them, then assert the secret value and any password-bearing
+    # field shape are absent.
     assert PASSWORD not in logged, "password value in logs"
-    assert "password=" not in logged.lower() and '"password"' not in logged.lower()
+    scrubbed = logged.replace("method=password", "").replace('"method": "password"', "")
+    assert "password=" not in scrubbed.lower() and '"password"' not in scrubbed.lower()
 
 
 # --- logout after rotation --------------------------------------------------

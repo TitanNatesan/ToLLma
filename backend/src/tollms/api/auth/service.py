@@ -34,6 +34,7 @@ from tollms.services.email import (
     send_password_reset_email,
     send_verification_email,
 )
+from tollms.services.observability.events import emit
 
 logger = logging.getLogger(__name__)
 
@@ -314,6 +315,7 @@ async def login(
     if user is None or not user.is_active or not security.verify_password(password, user.password_hash):
         await auth_limits.record_failed_login(address, ip)
         logger.warning("login failed for %s", mask_email(address))
+        emit("auth.login_failed", method="password")
         raise AuthenticationError("invalid email or password")
     await auth_limits.clear_failed_logins(address, ip)
     user.last_login_at = datetime.now(timezone.utc)
@@ -324,6 +326,7 @@ async def login(
         refresh_jti=refresh_jti,
     )
     logger.info("user logged in: %s (password)", user.id)
+    emit("auth.login", user_id=str(user.id), method="password")
     return (
         user,
         security.create_access_token(user.id, user.email, session_id),
@@ -354,6 +357,7 @@ async def refresh(db: Session, refresh_token: str) -> tuple[User, str, str]:
         # never resurrect; treat as reuse-suspect and kill the family.
         await security.revoke_all_user_sessions(user_id)
         logger.warning("refresh reuse suspected (unknown session): user_id=%s", user_id)
+        emit("auth.refresh_reuse", user_id=str(user_id), outcome="revoked")
         raise AuthenticationError("session expired")
     if security.session_bounds_error(session) is not None:
         await security.destroy_session(sid)
@@ -370,11 +374,13 @@ async def refresh(db: Session, refresh_token: str) -> tuple[User, str, str]:
         logger.warning(
             "refresh token reuse detected: user_id=%s sessions_revoked=%d", user_id, revoked
         )
+        emit("auth.refresh_reuse", user_id=str(user_id), sessions_revoked=revoked)
         raise AuthenticationError("session expired")
     user = db.get(User, user_id)
     if user is None or user.is_deleted or not user.is_active:
         raise AuthenticationError("account unavailable")
     new_jti = await security.rotate_session_refresh(sid, session)
+    emit("auth.refresh", user_id=str(user_id))
     return (
         user,
         security.create_access_token(user.id, user.email, sid),
@@ -415,6 +421,7 @@ async def logout_with_tokens(access_token: str | None, refresh_token: str | None
             revoked += 1
         except Exception:
             logger.exception("logout session destroy failed")
+    emit("auth.logout", sessions_revoked=revoked)
     return revoked
 
 
@@ -559,13 +566,16 @@ async def handle_google_callback(
     digest = _state_digest(state)
     if stored.get("ua_hash") != _hash_user_agent(user_agent):
         logger.warning("google oauth ua mismatch: state_hash=%s", digest)
+        emit("oauth.deny", reason="ua_mismatch")
         raise ForbiddenError("oauth session mismatch, please re-initiate login")
     if not isinstance(stored.get("ip"), str) or stored.get("ip") != (ip or ""):
         logger.warning("google oauth ip mismatch: state_hash=%s", digest)
+        emit("oauth.deny", reason="ip_mismatch")
         raise ForbiddenError("oauth session mismatch, please re-initiate login")
     verifier = stored.get("code_verifier")
     if not isinstance(verifier, str) or not 43 <= len(verifier) <= 128:
         logger.warning("google oauth missing verifier: state_hash=%s", digest)
+        emit("oauth.deny", reason="verifier")
         raise AuthenticationError("invalid oauth state")
     try:
         tokens = await exchange_google_code(code, verifier)
@@ -622,6 +632,8 @@ async def handle_google_callback(
         refresh_jti=refresh_jti,
     )
     logger.info("user logged in: %s (google)", user.id)
+    emit("auth.login", user_id=str(user.id), method="google")
+    emit("oauth.callback", user_id=str(user.id), result="success")
     return (
         user,
         security.create_access_token(user.id, user.email, session_id),
@@ -739,8 +751,10 @@ async def reset_password(db: Session, token: str, password: str) -> User:
         # keep_session_id="" revokes every session: force re-login everywhere.
         revoked = await security.revoke_other_sessions(user.id, "")
         logger.info("password reset for user %s (%d sessions revoked)", user.id, revoked)
+        emit("password.reset", user_id=str(user.id), sessions_revoked=revoked)
     else:
         logger.info("password reset for user %s (sessions kept)", user.id)
+        emit("password.reset", user_id=str(user.id), sessions_revoked=0)
     return user
 
 
@@ -766,4 +780,5 @@ async def restore_account(
     # deleted — restoring access must mint new keys, never revive old ones.
     send_account_restored(user.email)
     logger.info("account deletion cancelled: user_id=%s", user.id)
+    emit("account.restored", user_id=str(user.id))
     return user

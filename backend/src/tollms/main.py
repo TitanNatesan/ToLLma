@@ -31,10 +31,12 @@ from tollms.api.search.router import router as search_router
 from tollms.api.shares.router import router as shares_router
 from tollms.core.config import get_settings
 from tollms.core.exceptions import register_handlers
+from tollms.core.security import ACCESS_COOKIE, decode_token
 from tollms.services import cache as cache_service
 from tollms.services import generation as generation_engine
 from tollms.services.jobs import scheduler as jobs_scheduler
 from tollms.services.model_repository import scheduler as repository_scheduler
+from tollms.services.observability.events import emit as emit_event
 
 
 @asynccontextmanager
@@ -78,6 +80,23 @@ async def _shutdown_generations() -> None:
         sweep_stale_running(db, reason="backend shutting down")
     finally:
         db.close()
+
+
+def _admin_actor(request: Request) -> str:
+    """User id behind an admin read, best-effort. Never raises (audit only)."""
+    try:
+        token: str | None = None
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip() or None
+        if token is None:
+            token = request.cookies.get(ACCESS_COOKIE)
+        payload = decode_token(token) if token else None
+        if payload is not None and payload.get("type") == "access":
+            return str(payload.get("sub") or "anonymous")
+    except Exception:
+        logging.getLogger(__name__).warning("admin actor decode failed", exc_info=True)
+    return "anonymous"
 
 
 def create_app() -> FastAPI:
@@ -124,6 +143,14 @@ def create_app() -> FastAPI:
                 request_id, request.method, request.url.path,
                 response.status_code, (time.monotonic() - start) * 1000,
             )
+            if request.url.path.startswith("/api/admin"):
+                emit_event(
+                    "admin.read",
+                    user_id=_admin_actor(request),
+                    method=request.method,
+                    path=request.url.path,
+                    status=response.status_code,
+                )
             return response
         except Exception:
             logger.exception("%s %s %s failed", request_id, request.method, request.url.path)

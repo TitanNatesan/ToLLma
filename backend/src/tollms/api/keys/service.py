@@ -52,6 +52,7 @@ from tollms.services.analytics import presets as preset_vocab
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_get_sync, cache_set_sync
+from tollms.services.observability.events import emit
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,7 @@ def delete_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> None:
     # in the race window (the deletion-request flow relies on this per key).
     key_engine.write_tombstone(key_hash)
     logger.info("api key deleted: %s", key_id)
+    emit("key.deleted", key_id=str(key_id), user_id=str(user_id))
 
 
 def rotate_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> tuple[ApiKey, str]:
@@ -310,6 +312,7 @@ def rotate_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> tuple[ApiK
     key_engine.write_tombstone(old_hash)
     rotated = get_key(db, key_id, user_id)
     logger.info("api key rotated: %s (rotation %d)", key_id, rotated.rotation_count)
+    emit("key.rotated", key_id=str(key_id), user_id=str(user_id))
     return rotated, raw_key
 
 

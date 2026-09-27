@@ -28,6 +28,7 @@ from tollms.core.deps import get_db
 from tollms.core.exceptions import ValidationError
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import get_manager
+from tollms.services.observability.events import emit
 
 if TYPE_CHECKING:
     from tollms.models.user import User
@@ -343,6 +344,8 @@ async def revoke_all_user_sessions(user_id: uuid.UUID) -> int:
         await manager.delete(cache_keys.session(sid))
         await manager.srem(index, sid)
         revoked += 1
+    if revoked:
+        emit("session.revoked_all", user_id=str(user_id), sessions_revoked=revoked)
     return revoked
 
 
@@ -383,6 +386,7 @@ async def enforce_session_cap(user_id: uuid.UUID, keep_session_id: str | None = 
             evicted += 1
     if evicted:
         logger.info("session cap enforced: user_id=%s evicted=%d", user_id, evicted)
+        emit("session.cap_enforced", user_id=str(user_id), evicted=evicted)
     return evicted
 
 
@@ -415,6 +419,8 @@ async def revoke_other_sessions(user_id: uuid.UUID, keep_session_id: str) -> int
         await manager.delete(cache_keys.session(sid))
         await manager.srem(cache_keys.user_sessions(user_id), sid)
         revoked += 1
+    if revoked:
+        emit("session.revoked_others", user_id=str(user_id), sessions_revoked=revoked)
     return revoked
 
 
@@ -450,6 +456,7 @@ async def destroy_session(session_id: str) -> None:
     session = await manager.get(key)
     if isinstance(session, dict) and session.get("user_id"):
         await manager.srem(cache_keys.user_sessions(str(session["user_id"])), session_id)
+        emit("session.revoked", user_id=str(session["user_id"]))
     await manager.delete(key)
 
 

@@ -160,6 +160,15 @@ def organization_settings(organization_id: object) -> str:
     return _key("org", f"settings:{organization_id}")
 
 
+# --- observability (best-effort Valkey counters; metrics only, fail-open) ---
+def metrics_counter(name: str, labels: dict[str, str] | None = None) -> str:
+    """Counter key: ``tollma:metrics:<name>[:k=v...]`` (labels sorted)."""
+    suffix = ""
+    if labels:
+        suffix = ":" + ",".join(f"{k}={v}" for k, v in sorted(labels.items()))
+    return _key("metrics", f"{name}{suffix}")
+
+
 # --- distributed locks -----------------------------------------------------
 LOCK_REPO_SYNC = _key("lock", "model_repo_sync")
 LOCK_SCHEDULER = _key("lock", "model_repo_scheduler")

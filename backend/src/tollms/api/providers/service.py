@@ -18,6 +18,7 @@ from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.locks import locked
 from tollms.services.cache.manager import cache_invalidate_sync, get_manager
 from tollms.services.gateway.factory import build_adapter
+from tollms.services.observability.events import emit
 from tollms.models.registered_model import AIModel
 from tollms.models.provider import Provider, ProviderType
 from tollms.api.providers.schemas import DiscoveredModelInfo, DiscoveryResult, ProviderCreate, ProviderUpdate
@@ -148,6 +149,7 @@ def delete_provider(db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | No
     db.commit()
     _invalidate_provider_cache(provider.id)
     logger.info("provider soft-deleted: %s", provider.id)
+    emit("provider.deleted", provider_id=str(provider_id), user_id=str(user_id))
 
 
 async def validate_provider(

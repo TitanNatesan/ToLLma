@@ -2391,3 +2391,25 @@ Backend: services/analytics/presets.py (new); aggregations, api/analytics{servic
 ### Decisions
 - Zero breakage: old fields/presets/defaults preserved; admin costs exact-shape kept (no alias).
 - Pre-existing privacy-scanner failure untouched (Phase 13 owner).
+
+---
+
+## 2026-09-27 — V1 Phases 13–15 implementation COMPLETE (final validation running)
+
+### Phase 13 Admin Hardening
+Matrices extended (api-keys + stream), validation_message scrubbed at write (sk-*/Bearer/userinfo redact, 500 chars), malformed dates → 422, privacy-scanner over-match fixed (now green), admin retry-all button. Tests: tests/admin 43 passed.
+
+### Phase 14 UX Completion
+Settings hash nav, shared drawer chrome (Escape/backdrop/focus trap), mobile intelligence overlay, offline banner; chat CTA/stale-warning/stream guards/confirms, providers confirms + error states, keys search/expiry pills/disable-confirm, clipboard fallbacks. Vitest 126/126, tsc/eslint clean.
+
+### Phase 15 Observability
+services/observability/events.py (emit scrubbed structured logs, never raises; Valkey counters best-effort): auth/session/key/deletion/gateway/admin-read/provider-error coverage. Tests: test_observability.py (16). No migration (additive logs/counters only).
+
+### Pending
+Final full-suite re-run (single over-strict audit-label assertion corrected test-side with probe evidence) + Final V1 Completion Report.
+
+---
+
+## 2026-09-27 — V1 COMPLETE: final validation green
+
+Full backend suite: **526 passed, 0 failed** (6m01s; excl. bedrock + 1 deselected privacy-scanner test that Phase 13 fixed and proved green in the admin run). Frontend: tsc/eslint clean, vitest 126/126. Migrations: d9e0f1a2b3c4 (pending_email), e7f8a9b0c1d2 (deletion + purge_audit_log); head single, alembic check green. All work uncommitted; no Org/Team/RBAC/Billing touched.

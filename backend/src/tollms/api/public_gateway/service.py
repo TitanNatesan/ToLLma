@@ -60,6 +60,7 @@ from tollms.services.gateway.limits import check_request, record_usage
 from tollms.services.gateway.model_resolution import ResolvedModel, resolve_model
 from tollms.services.gateway.unified import UnifiedRequest
 from tollms.services.model_repository.lookup import find_for_model
+from tollms.services.observability.events import emit, incr_counter
 
 logger = logging.getLogger(__name__)
 
@@ -202,23 +203,63 @@ def _ip_allowed(ctx: KeyContext, ip_text: str | None) -> bool:
     return any(_match_network(address, rule) for rule in ctx.allow_rules)
 
 
+def _deny_event(
+    *,
+    reason: str,
+    key_prefix: str | None = None,
+    endpoint: str | None = None,
+    retry_after: bool = False,
+    status_code: int | None = None,
+) -> None:
+    """One structured pre-call deny event + metrics counter (no behavior change)."""
+    emit(
+        "gateway.denied",
+        reason=reason,
+        key_prefix=key_prefix or "unknown",
+        endpoint=endpoint or "unknown",
+        retry_after=retry_after,
+        status_code=status_code,
+    )
+    incr_counter("gateway.denied", {"reason": reason})
+
+
+def _provider_error_event(
+    *, code: str, endpoint: str | None, key_prefix: str | None = None
+) -> None:
+    """One structured provider-failure event + counter (code + endpoint, no prompts)."""
+    emit(
+        "gateway.provider_error",
+        code=code,
+        endpoint=endpoint or "unknown",
+        key_prefix=key_prefix or "unknown",
+    )
+    incr_counter("gateway.provider_error", {"code": code})
+
+
 def api_key_required(request: Request, db: Session = Depends(get_db)) -> KeyContext:
     """Authenticate `Authorization: Bearer` / `x-api-key` into a KeyContext."""
     raw = parse_bearer(request.headers.get("authorization"), request.headers.get("x-api-key"))
     if not raw:
+        _deny_event(reason="auth", status_code=401)
         raise AuthenticationError("missing API key")
     ctx = authenticate(db, raw)
     if ctx is None:
+        _deny_event(reason="auth", status_code=401)
         raise AuthenticationError("invalid API key")
     if ctx.owner_is_deleted or not ctx.owner_is_active:
+        _deny_event(reason="owner", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("API key owner account is disabled")
     if ctx.owner_pending_deletion:
+        _deny_event(reason="pending", key_prefix=ctx.key_prefix, status_code=403)
         raise AccountPendingDeletionError("Account scheduled for deletion.")
     if not ctx.enabled:
+        _deny_event(reason="disabled", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("API key is disabled")
     if ctx.is_expired():
+        _deny_event(reason="expired", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("API key is expired")
     if not _ip_allowed(ctx, _request_client_meta(request).get("ip")):
+        _deny_event(reason="ip", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("request blocked by API key IP rules")
     return ctx
 
@@ -342,6 +383,8 @@ def _log_request(
         log_request(db, entry)
     except Exception:
         logger.warning("public gateway: log_request failed", exc_info=True)
+    # Metrics-only request counter per plane + status (fail-open; the DB row above is the record).
+    incr_counter("gateway.request", {"plane": "public", "status": status})
 
 
 def _record_usage(
@@ -514,6 +557,15 @@ async def execute_unified(
     try:
         prepared = _prepare(db, ctx, unified, meta)
     except _LimitsDenied as denied:
+        error = denied.result.payload.get("error", {})
+        emit(
+            "gateway.denied",
+            reason=str(error.get("message") or "rate_limited"),
+            key_prefix=ctx.key_prefix,
+            endpoint=unified.endpoint,
+            retry_after=bool(denied.result.headers),
+            status_code=denied.result.status_code,
+        )
         _log_request(
             db, ctx, meta, unified,
             status="failed",
@@ -530,6 +582,14 @@ async def execute_unified(
             error_code=_error_code(exc),
             latency_ms=(time.monotonic() - started) * 1000,
         )
+        if isinstance(exc, ForbiddenError):
+            # Model/capability policy deny from _prepare (limits denies return above).
+            message = getattr(exc, "message", "") or ""
+            reason = "model" if message == "model_not_allowed" else "capability"
+            _deny_event(
+                reason=reason, key_prefix=ctx.key_prefix,
+                endpoint=unified.endpoint, status_code=exc.status_code,
+            )
         raise
     if unified.stream and unified.endpoint in CHAT_ENDPOINTS:
         return StreamResult(iterator=_stream_chat(prepared, db))
@@ -580,6 +640,10 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
         latency_ms = (time.monotonic() - started) * 1000
         classified = classify_provider_failure(exc)
         _release_reservation(prepared)
+        _provider_error_event(
+            code=classified.code.value, endpoint=prepared.unified.endpoint,
+            key_prefix=prepared.ctx.key_prefix,
+        )
         _log_request(
             db, prepared.ctx, prepared.meta, prepared.unified,
             status="failed",
@@ -672,6 +736,10 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
         latency_ms = (time.monotonic() - started) * 1000
         classified = classify_provider_failure(exc)
         _release_reservation(prepared)
+        _provider_error_event(
+            code=classified.code.value, endpoint=unified.endpoint,
+            key_prefix=prepared.ctx.key_prefix,
+        )
         _log_request(
             db, prepared.ctx, prepared.meta, unified,
             status="failed",
@@ -999,6 +1067,10 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         classified = classify_provider_failure(exc)
         if not logged:
             _release_reservation(prepared)
+            _provider_error_event(
+                code=classified.code.value, endpoint=prepared.unified.endpoint,
+                key_prefix=prepared.ctx.key_prefix,
+            )
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="failed",

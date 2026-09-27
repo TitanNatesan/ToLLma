@@ -12,6 +12,7 @@ from tollms.models.registered_model import AIModel, normalize_endpoints
 from tollms.models.provider import Provider
 from tollms.api.models.schemas import CAPABILITY_FIELDS, ModelCreate, ModelUpdate
 from tollms.api.providers.service import get_provider
+from tollms.services.observability.events import emit
 
 logger = logging.getLogger(__name__)
 
@@ -145,3 +146,4 @@ def delete_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = N
     model.is_active = False
     db.commit()
     logger.info("model soft-deleted: %s", model.id)
+    emit("model.deleted", model_id=str(model_id), user_id=str(user_id))

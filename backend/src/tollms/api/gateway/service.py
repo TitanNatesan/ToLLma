@@ -71,6 +71,7 @@ from tollms.services import generation as generation_engine
 from tollms.services.generation import GenerationSpec
 from tollms.services.gateway.adapters.base import ChatMessage, StreamChunk
 from tollms.services.model_repository.lookup import find_for_model
+from tollms.services.observability.events import emit, incr_counter
 from tollms.api.models.service import get_model
 from tollms.api.providers.service import decrypted_credentials, get_provider
 
@@ -585,6 +586,7 @@ async def run_chat(
             "gateway chat done: conv=%s tokens=%s/%s cost=%s latency=%.0fms",
             conv_id, usage[0], usage[1], cost[2], latency_ms,
         )
+        incr_counter("gateway.request", {"plane": "ui", "status": "success"})
         return ChatResponse(
             conversation_id=conv_id, message_id=assistant.id, content=result.text,
             prompt_tokens=usage[0], completion_tokens=usage[1], total_tokens=usage[2],
@@ -599,7 +601,16 @@ async def run_chat(
         raise
     except Exception as e:
         logger.exception("gateway chat failed")
-        raise classify_provider_failure(e) from e
+        incr_counter("gateway.request", {"plane": "ui", "status": "failed"})
+        classified = classify_provider_failure(e)
+        emit(
+            "gateway.provider_error",
+            code=classified.code.value,
+            endpoint="chat",
+            plane="ui",
+        )
+        incr_counter("gateway.provider_error", {"code": classified.code.value})
+        raise classified from e
 
 
 @dataclass

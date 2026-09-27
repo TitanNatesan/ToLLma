@@ -39,6 +39,7 @@ from tollms.core.exceptions import (
 from tollms.models.message import Message, Role
 from tollms.models.user import User
 from tollms.services.email import send_account_deletion_requested
+from tollms.services.observability.events import emit
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,7 @@ async def change_password(
     db.commit()
     revoked = await security.revoke_other_sessions(user.id, keep_session_id or "")
     logger.info("password changed for user %s (%d other sessions revoked)", user.id, revoked)
+    emit("password.changed", user_id=str(user.id), sessions_revoked=revoked)
     return revoked
 
 
@@ -222,6 +224,7 @@ def set_initial_password(db: Session, user: User, data: PasswordSet) -> None:
     db.commit()
     db.refresh(user)
     logger.info("initial password set for user %s", user.id)
+    emit("password.set", user_id=str(user.id))
 
 
 # --- sessions ---------------------------------------------------------------
@@ -351,6 +354,7 @@ async def revoke_session(
         raise NotFoundError("session not found")
     await security.destroy_session(session_id)
     logger.info("session revoked for user %s: %s", user_id, session_id)
+    emit("session.revoked", user_id=str(user_id))
 
 
 async def revoke_other_sessions(user_id: uuid.UUID, current_session_id: str | None) -> int:
@@ -391,6 +395,7 @@ async def request_account_deletion(
         user.email, user.deletion_scheduled_for.astimezone(timezone.utc).isoformat()
     )
     logger.info("account deletion requested: user_id=%s", user.id)
+    emit("account.deletion_requested", user_id=str(user.id))
     return AccountDeletionStatus(
         scheduled_for=user.deletion_scheduled_for, days_remaining=DELETION_GRACE_DAYS
     )

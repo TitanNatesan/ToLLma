@@ -15,6 +15,7 @@ from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_delete_sync, cache_get_sync, cache_set_sync
 from tollms.services import search as search_engine
+from tollms.services.observability.events import emit
 from tollms.models.conversation import Conversation
 from tollms.models.message import Message, MessageStatus, Role
 from tollms.api.conversations.schemas import (
@@ -144,6 +145,7 @@ def delete_conversation(
     db.commit()
     cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
     logger.info("conversation soft-deleted: %s", conversation_id)
+    emit("conversation.deleted", conversation_id=str(conversation_id), user_id=str(user_id))
 
 
 def pin_conversation(

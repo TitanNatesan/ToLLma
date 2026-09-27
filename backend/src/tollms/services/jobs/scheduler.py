@@ -18,6 +18,7 @@ from tollms.db.session import SessionLocal
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.locks import locked_sync
+from tollms.services.observability.events import emit
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +249,7 @@ def _purge_due_accounts(db, now: datetime) -> None:
             db.commit()
             send_account_purged(email)
             logger.info("account purged: user_id=%s counts=%s", user_id, counts)
+            emit("account.purged", user_id=str(user_id), result="ok")
         except Exception as exc:
             db.rollback()
             try:
@@ -264,6 +266,7 @@ def _purge_due_accounts(db, now: datetime) -> None:
             except Exception:
                 db.rollback()
             logger.exception("account purge failed: user_id=%s", user_id)
+            emit("account.purged", user_id=str(user_id), result="failed")
 
 
 def _deletion_job() -> None:

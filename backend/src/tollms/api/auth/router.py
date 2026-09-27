@@ -30,6 +30,7 @@ from tollms.core.config import get_settings
 from tollms.core.deps import get_db
 from tollms.core.security import ACCESS_COOKIE, REFRESH_COOKIE, SESSION_COOKIE, get_current_user
 from tollms.models.user import User
+from tollms.services.observability.events import emit
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,7 @@ async def google_login(
 ) -> RedirectResponse:
     url, _ = await service.google_login_url(**security.client_meta(request))
     logger.info("google oauth login initiated")
+    emit("oauth.initiate", provider="google")
     return RedirectResponse(url)
 
 
@@ -144,6 +146,7 @@ async def google_callback(
             except Exception:
                 logger.warning("google oauth denial state cleanup failed", exc_info=True)
         logger.info("google oauth denied by user: error=%s", error or "unknown")
+        emit("oauth.deny", reason="user_denied", provider="google")
         frontend = get_settings().frontend_url.rstrip("/")
         return RedirectResponse(f"{frontend}/login?oauth_error=cancelled")
     if not code or not state:
