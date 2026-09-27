@@ -107,7 +107,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
         # Export downloads read Content-Disposition to name the file.
-        expose_headers=["Content-Disposition"],
+        expose_headers=["Content-Disposition", "X-Export-Total-Count", "X-Export-Truncated"],
         max_age=86400,
     )
     register_handlers(app)

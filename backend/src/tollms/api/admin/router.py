@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from tollms.api.analytics.service import RangeQuery, resolve_range
 from tollms.api.admin import schemas
 from tollms.core.deps import get_db
+from tollms.core.exceptions import ValidationError
 from tollms.core.security import platform_admin_required
 from tollms.services.admin import AdminWindow
 from tollms.services.admin import api_keys as api_keys_service
@@ -47,7 +48,10 @@ def _window(
         try:
             return date.fromisoformat(value)
         except ValueError:
-            return None
+            # Fail closed: an unparseable bound must not silently fall back
+            # to the preset window. Unknown *presets* still fall back per
+            # `presets.normalize` — only malformed dates are rejected here.
+            raise ValidationError(f"invalid date: {value!r}; expected YYYY-MM-DD") from None
 
     resolved = resolve_range(
         RangeQuery(preset=preset, timezone=timezone, start=_date(start), end=_date(end))
@@ -82,7 +86,11 @@ def api_keys(
     db: Session = Depends(get_db),
     _admin=Depends(platform_admin_required),
 ) -> schemas.AdminApiKeys:
-    """Key inventory, creation trend and top/spend/error/savings rankings."""
+    """Key inventory, creation trend and top/spend/error/savings rankings.
+
+    Usage rows reflect gateway traffic (`api_request_logs`), not chat
+    traffic (`messages`) — the chat-analytics totals are a separate source.
+    """
     return api_keys_service.api_keys(db, window, limit=limit)
 
 

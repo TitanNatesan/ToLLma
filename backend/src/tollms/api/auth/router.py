@@ -114,17 +114,42 @@ async def login(
 
 @router.get("/google/login")
 async def google_login(
+    request: Request,
     _: None = Depends(rate_limit.limit("auth:google-login")),
 ) -> RedirectResponse:
-    url, _ = await service.google_login_url()
+    url, _ = await service.google_login_url(**security.client_meta(request))
     logger.info("google oauth login initiated")
     return RedirectResponse(url)
 
 
 @router.get("/google/callback")
-async def google_callback(request: Request, code: str = Query(...), state: str = Query(...),
-                          db: Session = Depends(get_db),
-                          _: None = Depends(rate_limit.limit("auth:google-callback"))) -> RedirectResponse:
+async def google_callback(
+    request: Request,
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit.limit("auth:google-callback")),
+) -> RedirectResponse:
+    if error is not None:
+        # User denied at Google (e.g. ?error=access_denied): audit + exact
+        # frontend contract. Never 422 for denials. Consume state single-use
+        # when present, but never fail the denial path on it.
+        from tollms.services.cache import keys as cache_keys
+        from tollms.services.cache.manager import get_manager
+
+        if state:
+            try:
+                await get_manager().delete(cache_keys.oauth_state(state))
+            except Exception:
+                logger.warning("google oauth denial state cleanup failed", exc_info=True)
+        logger.info("google oauth denied by user: error=%s", error or "unknown")
+        frontend = get_settings().frontend_url.rstrip("/")
+        return RedirectResponse(f"{frontend}/login?oauth_error=cancelled")
+    if not code or not state:
+        from tollms.core.exceptions import ValidationError
+
+        raise ValidationError("missing oauth code or state")
     user, access, refresh, _ = await service.handle_google_callback(
         db, code, state, **security.client_meta(request)
     )

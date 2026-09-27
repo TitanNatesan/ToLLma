@@ -63,6 +63,9 @@ class AnalyticsSummary(BaseModel):
     failed_requests: int
     estimated_requests: int
     projected_month_spend: Decimal
+    # Alias of projected_month_spend: linear run-rate extrapolation, not a
+    # prediction (assumes the window daily spend continues unchanged).
+    run_rate_projection: Decimal = Decimal(0)
     insights: list[Insight]
 
 

@@ -128,6 +128,17 @@ def share_lookup(token: str) -> str:
 
 
 
+# --- api keys ---------------------------------------------------------------
+
+def key_tombstone(key_hash: str) -> str:
+    """Revocation marker for a deleted/rotated key hash (``{"revoked_at": ts}``).
+
+    Checked before the compiled-context cache so a dead hash can never be
+    resurrected by a stale context entry.
+    """
+    return _key("keytomb", key_hash)
+
+
 # --- future SaaS surface (reserved; no writers yet) ------------------------
 def gateway_response(request_hash: str) -> str:
     return _key("gateway", f"response:{request_hash}")

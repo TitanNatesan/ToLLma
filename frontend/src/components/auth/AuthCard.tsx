@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -28,6 +28,32 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
+  const [oauthNotice, setOauthNotice] = useState<string | null>(null);
+
+  // OAuth denial UX (Phase 9): backend redirects denials to
+  // /login?oauth_error=cancelled. Show friendly static copy once, then
+  // consume the param so refresh doesn't persist it. Never render the raw
+  // param value. Read via window.location to avoid a Suspense boundary.
+  // Effect-to-state sync is intentional here: it keeps server prerender and
+  // client hydration identical (both render null first), then reveals the
+  // notice client-side only.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get("oauth_error");
+    if (!oauthError) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOauthNotice(
+      oauthError === "cancelled"
+        ? "Google sign-in was cancelled. Try again or use email login."
+        : "Google sign-in didn't complete. Try again or use email login.",
+    );
+    params.delete("oauth_error");
+    const rest = params.toString();
+    router.replace(
+      rest ? `${window.location.pathname}?${rest}` : window.location.pathname,
+    );
+  }, [router]);
 
   // Signup form state
   const [signupFullName, setSignupFullName] = useState("");
@@ -141,6 +167,15 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
             </div>
 
             {/* Login Form */}
+            {oauthNotice && (
+              <div
+                className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-300"
+                data-testid="oauth-cancelled-notice"
+                role="status"
+              >
+                {oauthNotice}
+              </div>
+            )}
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-zinc-300">Email</label>

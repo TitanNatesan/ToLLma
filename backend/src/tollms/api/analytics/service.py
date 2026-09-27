@@ -4,6 +4,11 @@ Every number the dashboard shows is computed here from `messages` (the fact
 table) scoped to one user. No raw request history crosses the API boundary.
 Date-range presets resolve in the caller's timezone; buckets are returned as
 local wall-clock instants so the UI never re-derives them.
+
+Freshness: payloads are Valkey-cached for 60s and invalidated when new
+generations/messages land, so user analytics read fresh within seconds.
+Platform/key analytics (gateway traffic) keep the same 60s TTL without
+write-through invalidation; admin aggregates are always live.
 """
 
 import calendar
@@ -47,6 +52,8 @@ from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
 from tollms.services import exporters
 from tollms.services import request_logs as request_log_engine
+from tollms.services.analytics import presets as preset_vocab
+from tollms.services.analytics.costs import projected_run_rate
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_get_sync, cache_set_sync
@@ -136,7 +143,7 @@ def resolve_range(q: RangeQuery, *, now: datetime | None = None) -> AnalyticsRan
     def midnight(day: date) -> datetime:
         return datetime.combine(day, time.min, tzinfo=zone).astimezone(timezone.utc)
 
-    preset = q.preset if q.preset in PRESETS else "this_month"
+    preset = preset_vocab.normalize(q.preset, family="chat")
     if preset == "today":
         start, end = midnight(today), now
     elif preset == "yesterday":
@@ -432,10 +439,13 @@ def get_summary(db: Session, user_id: uuid.UUID, q: RangeQuery) -> AnalyticsSumm
         providers = _breakdown_rows(db, user_id, rng, "provider")
         models = _breakdown_rows(db, user_id, rng, "model")
         heatmap = get_heatmap(db, user_id, q)
-        days = max(1, (rng.end - rng.start).total_seconds() / 86400)
         zone = _zone(rng.timezone)
         month_days = calendar.monthrange(*datetime.now(zone).date().timetuple()[:2])[1]
-        projection = (spend / Decimal(str(days))) * month_days if spend else Decimal(0)
+        projection = (
+            projected_run_rate(spend, rng.start, rng.end, month_days=month_days, quantum=Decimal("0.0001"))
+            if spend
+            else Decimal(0)
+        )
         return AnalyticsSummary(
             range=rng,
             total_spend=KpiValue(value=spend, previous=Decimal(str(prev[1])), change_pct=_change_pct(spend, prev[1])),
@@ -448,7 +458,8 @@ def get_summary(db: Session, user_id: uuid.UUID, q: RangeQuery) -> AnalyticsSumm
             avg_tokens_per_request=round(total_tokens / requests, 1) if requests else 0.0,
             avg_response_ms=_f(cur[8]), avg_ttfb_ms=_f(cur[9]),
             streaming_sessions=int(cur[15]), failed_requests=int(cur[13]), estimated_requests=int(cur[14]),
-            projected_month_spend=projection.quantize(Decimal("0.0001")),
+            projected_month_spend=projection,
+            run_rate_projection=projection,
             insights=_insights(rng, cur, prev, providers, models, heatmap),
         )
 
@@ -677,8 +688,8 @@ def get_conversations(db: Session, user_id: uuid.UUID, q: RangeQuery) -> Analyti
 
 def export(
     db: Session, user_id: uuid.UUID, q: RangeQuery, dataset: str, export_format: str
-) -> tuple[bytes | str, str, str]:
-    """(content, filename, media_type) for one dataset (csv | xlsx | json)."""
+) -> tuple[bytes | str, str, str, int]:
+    """(content, filename, media_type, row_count) for one dataset (csv | xlsx | json)."""
     rng = resolve_range(q)
     stamp = rng.start.strftime("%Y%m%d")
 
@@ -740,20 +751,21 @@ def export(
             content,
             f"tollma-{dataset}-{stamp}.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            len(rows),
         )
 
     if export_format == "json":
         content = json.dumps(
             {"dataset": dataset, "range": rng.model_dump(mode="json"), "rows": rows}, indent=2
         )
-        return content, f"tollma-{dataset}-{stamp}.json", "application/json"
+        return content, f"tollma-{dataset}-{stamp}.json", "application/json", len(rows)
 
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
     for row in rows:
         writer.writerow(row)
-    return buffer.getvalue(), f"tollma-{dataset}-{stamp}.csv", "text/csv"
+    return buffer.getvalue(), f"tollma-{dataset}-{stamp}.csv", "text/csv", len(rows)
 
 
 def render_export(
@@ -779,8 +791,8 @@ def render_export(
             raise ValidationError(f"invalid date: {value}") from exc
 
     query = RangeQuery(preset=range_key, timezone=tz or "UTC", start=_parse(start), end=_parse(end))
-    content, filename, media_type = export(db, user.id, query, dataset, export_format)
-    request_log_engine.record_export(db, user.id, f"analytics:{dataset}", export_format, 0)
+    content, filename, media_type, row_count = export(db, user.id, query, dataset, export_format)
+    request_log_engine.record_export(db, user.id, f"analytics:{dataset}", export_format, row_count)
     db.commit()
     return content, media_type, filename
 

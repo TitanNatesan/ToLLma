@@ -260,7 +260,7 @@ def test_branch_copies_messages_and_records_lineage(
     assert branch["branch_name"] == "Try another answer"
 
     copied = list_messages(db, uuid.UUID(branch["conversation_id"]))
-    assert [message.content for message in copied] == ["first version"]
+    assert [message.content for message in copied] == ["first version", "first answer"]
 
     tree = client.get(f"/api/v1/conversations/{branch['conversation_id']}/branches").json()
     assert tree["parent"]["conversation_id"] == str(conversation.id)

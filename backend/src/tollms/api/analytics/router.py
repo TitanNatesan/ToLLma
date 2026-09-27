@@ -120,7 +120,7 @@ def export(
     db: Session = Depends(get_db),
     user: User = Depends(require_active_user),
 ) -> Response:
-    content, filename, media_type = service.export(db, user.id, q, dataset, format)
+    content, filename, media_type, _row_count = service.export(db, user.id, q, dataset, format)
     return Response(
         content=content,
         media_type=media_type,

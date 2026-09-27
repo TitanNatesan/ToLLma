@@ -290,7 +290,7 @@ def list_messages(
     stmt = (
         select(Message)
         .where(Message.conversation_id == conversation_id, Message.is_deleted.is_(False))
-        .order_by(Message.created_at)
+        .order_by(Message.created_at, Message.id)
     )
     return list(db.scalars(stmt))
 

@@ -2,6 +2,7 @@
 JWT pairs, Valkey sessions, logout. PostgreSQL owns users; Valkey owns
 sessions and one-time tokens."""
 
+import base64
 import hashlib
 import logging
 import secrets
@@ -18,6 +19,7 @@ from tollms.core.config import get_settings
 from tollms.core.exceptions import (
     AuthenticationError,
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     TooManyRequestsError,
     ValidationError,
@@ -426,34 +428,103 @@ def _google_config() -> tuple[str, str, str]:
     return settings.google_client_id, settings.google_client_secret, settings.google_redirect_uri
 
 
-async def google_login_url() -> tuple[str, str]:
-    """Authorization URL + state (state lives in Valkey for 10 minutes)."""
+_MAX_OAUTH_NAME_LEN = 255
+_MAX_OAUTH_SUB_LEN = 255
+_MAX_OAUTH_AVATAR_LEN = 2048
+
+
+def _hash_user_agent(user_agent: str | None) -> str:
+    """SHA-256 of the UA for state binding. Hash only — never the raw UA."""
+    return hashlib.sha256((user_agent or "").encode("utf-8")).hexdigest()
+
+
+def _state_digest(state: str) -> str:
+    """Short non-reversible id for audit logs (never the raw state)."""
+    return hashlib.sha256(state.encode("utf-8")).hexdigest()[:16]
+
+
+def _generate_code_verifier() -> str:
+    """PKCE verifier: 86 chars, inside the RFC 7636 43-128 window."""
+    return secrets.token_urlsafe(64)
+
+
+def _code_challenge(verifier: str) -> str:
+    """S256 challenge for the authorization URL (Google-compliant)."""
+    digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _sanitize_oauth_name(value: object) -> str | None:
+    """Display name: stripped, truncated to 255, never crashes."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text[:_MAX_OAUTH_NAME_LEN]
+
+
+def _sanitize_oauth_avatar(value: object) -> str | None:
+    """Avatar URL: https-only + max 2048. Violations are omitted, never crash."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > _MAX_OAUTH_AVATAR_LEN:
+        return None
+    if not text.startswith("https://"):
+        return None
+    return text
+
+
+async def google_login_url(
+    user_agent: str | None = None, ip: str | None = None
+) -> tuple[str, str]:
+    """Authorization URL + state (state lives in Valkey for 10 minutes).
+
+    The state record binds the flow: separate nonce, UA hash, IP,
+    creation time and the PKCE verifier. Fail-closed: the callback
+    re-checks UA/IP equality and consumes the record single-use.
+    """
     client_id, _, redirect_uri = _google_config()
     state = secrets.token_urlsafe(24)
-    await get_manager().set(cache_keys.oauth_state(state), {"created": True}, ttl=_OAUTH_STATE_TTL)
+    nonce = secrets.token_urlsafe(24)
+    verifier = _generate_code_verifier()
+    challenge = _code_challenge(verifier)
+    record = {
+        "nonce": nonce,
+        "ua_hash": _hash_user_agent(user_agent),
+        "ip": ip or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "code_verifier": verifier,
+    }
+    await get_manager().set(cache_keys.oauth_state(state), record, ttl=_OAUTH_STATE_TTL)
     url = (
         "https://accounts.google.com/o/oauth2/v2/auth"
         f"?client_id={client_id}&redirect_uri={redirect_uri}"
         "&response_type=code&scope=openid%20email%20profile&access_type=online"
         f"&state={state}"
+        f"&code_challenge={challenge}&code_challenge_method=S256"
     )
     return url, state
 
 
-async def exchange_google_code(code: str) -> dict:
+async def exchange_google_code(code: str, code_verifier: str | None = None) -> dict:
     """Code -> Google tokens. Split for test monkeypatching."""
     _, secret, redirect_uri = _google_config()
     settings = get_settings()
+    data = {
+        "code": code,
+        "client_id": settings.google_client_id,
+        "client_secret": secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }
+    if code_verifier:
+        data["code_verifier"] = code_verifier
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(
             "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": settings.google_client_id,
-                "client_secret": secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
+            data=data,
         )
     if response.status_code != 200:
         logger.warning("google token exchange failed: %s", response.status_code)
@@ -480,21 +551,43 @@ async def handle_google_callback(
     and open a session. Returns (user, access, refresh, session_id)."""
     manager = get_manager()
     state_key = cache_keys.oauth_state(state)
-    if await manager.get(state_key) is None:
+    stored = await manager.get(state_key)
+    if not isinstance(stored, dict):
         raise AuthenticationError("invalid oauth state")
+    # Single-use: consume before any further check so replays always fail.
     await manager.delete(state_key)
-    tokens = await exchange_google_code(code)
+    digest = _state_digest(state)
+    if stored.get("ua_hash") != _hash_user_agent(user_agent):
+        logger.warning("google oauth ua mismatch: state_hash=%s", digest)
+        raise ForbiddenError("oauth session mismatch, please re-initiate login")
+    if not isinstance(stored.get("ip"), str) or stored.get("ip") != (ip or ""):
+        logger.warning("google oauth ip mismatch: state_hash=%s", digest)
+        raise ForbiddenError("oauth session mismatch, please re-initiate login")
+    verifier = stored.get("code_verifier")
+    if not isinstance(verifier, str) or not 43 <= len(verifier) <= 128:
+        logger.warning("google oauth missing verifier: state_hash=%s", digest)
+        raise AuthenticationError("invalid oauth state")
+    try:
+        tokens = await exchange_google_code(code, verifier)
+    except TypeError:
+        # Legacy single-arg monkeypatch in older tests: retry without verifier.
+        tokens = await exchange_google_code(code)  # type: ignore[call-arg]
     profile = await fetch_google_userinfo(str(tokens.get("access_token", "")))
-    google_id = str(profile.get("sub", ""))
-    email = normalize_email(str(profile.get("email", "")))
-    if not google_id or not email:
+    raw_sub = profile.get("sub", "")
+    google_id = raw_sub.strip() if isinstance(raw_sub, str) else ""
+    raw_email = profile.get("email", "")
+    email = normalize_email(raw_email) if isinstance(raw_email, str) else ""
+    if not google_id or len(google_id) > _MAX_OAUTH_SUB_LEN or not email:
         raise AuthenticationError("google login failed")
+    email_verified = bool(profile.get("email_verified", False))
+    full_name = _sanitize_oauth_name(profile.get("name"))
+    avatar_url = _sanitize_oauth_avatar(profile.get("picture"))
     user = db.scalar(
         select(User).where(User.google_id == google_id, User.is_deleted.is_(False))
     )
     if user is None:
         user = get_by_email(db, email)
-        if user is not None and profile.get("email_verified"):
+        if user is not None and email_verified:
             link_google_identity(user, google_id)  # Google proved the address
             if user.provider == "local":
                 user.email_verified = True
@@ -504,9 +597,9 @@ async def handle_google_callback(
             user = User(
                 email=email,
                 password_hash=None,
-                full_name=str(profile.get("name") or "") or None,
-                email_verified=bool(profile.get("email_verified", True)),
-                avatar_url=str(profile.get("picture") or "") or None,
+                full_name=full_name,
+                email_verified=email_verified,
+                avatar_url=avatar_url,
             )
             set_google_identity(user, google_id)
             db.add(user)

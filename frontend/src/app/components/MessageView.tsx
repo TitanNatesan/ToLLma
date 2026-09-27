@@ -42,6 +42,7 @@ import { splitThinkBlocks } from "./thinkBlocks";
 import type { ReasoningStatus } from "./reasoning";
 import type { ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { Button, Textarea } from "@/components/ui/primitives";
 import { fmtCost, stripTrailingZeros } from "@/lib/utils";
@@ -66,10 +67,17 @@ function extractText(node: React.ReactNode): string {
 }
 
 function copyText(text: string) {
-  void navigator.clipboard
-    .writeText(text)
-    .then(() => toast.success("Copied!"))
-    .catch(() => {});
+  void (async () => {
+    try {
+      const ok = await copyTextToClipboard(text);
+      if (!ok) throw new Error("copy unavailable");
+      toast.success("Copied!");
+    } catch {
+      toast.error("Could not copy to clipboard", {
+        description: "Select the text manually to copy it.",
+      });
+    }
+  })();
 }
 
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {

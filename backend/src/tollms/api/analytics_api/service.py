@@ -19,15 +19,22 @@ Documented query counts per endpoint (grouped SQL only, no N+1):
 * ``GET /api-keys/{id}/network`` — 6: ownership (+ IP rules), IP history,
   locations, devices, clients.
 * ``GET /api-keys/{id}/insights`` — 3: ownership, totals, dimensions.
+* ``GET /platform/export`` — uncached: totals (one round-trip), dimension
+  grouping sets, trailing costs, most-expensive request (+ timeseries points
+  only for the ``timeseries`` dataset).
+* ``GET /api-keys/{id}/export`` — ownership + the same dataset queries,
+  key-scoped.
 """
 
 import hashlib
+import csv
+import io
 import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +50,7 @@ from tollms.services.analytics import network as network_engine
 from tollms.services.analytics import providers as providers_engine
 from tollms.services.analytics import timeseries as timeseries_engine
 from tollms.services.analytics import tokens as tokens_engine
+from tollms.services import exporters
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_get_sync, cache_set_sync
@@ -289,3 +297,146 @@ def api_key_insights(db: Session, user: User, key_id: uuid.UUID, query: Analytic
         }
 
     return _cached(user.id, "api-key-insights", window, {"key_id": str(key_id)}, load)
+
+
+# --- export ------------------------------------------------------------------
+
+ExportDataset = Literal["summary", "timeseries", "models", "providers", "endpoints"]
+ExportFormat = Literal["csv", "json", "xlsx"]
+EXPORT_DATASETS = ("summary", "timeseries", "models", "providers", "endpoints")
+
+
+def _export_rows(
+    db: Session, window: AnalyticsWindow, *, key_id: uuid.UUID | None, dataset: str
+) -> tuple[str, list[str], list[dict[str, Any]]]:
+    """(dataset, columns, JSON-safe rows) for one scope (platform or one key)."""
+    if dataset == "timeseries":
+        points = timeseries_engine.series(db, window, key_id=key_id)["points"]
+        rows = [
+            {
+                "bucket": point["bucket"].isoformat(),
+                "requests": point["requests"],
+                "success": point["success"],
+                "failed": point["failed"],
+                "cancelled": point["cancelled"],
+                "cost": str(point["cost"]),
+                "tokens": point["tokens"],
+            }
+            for point in points
+        ]
+        return dataset, ["bucket", "requests", "success", "failed", "cancelled", "cost", "tokens"], rows
+    sections = _aggregate(db, window, key_id=key_id)
+    if dataset == "models":
+        rows = [
+            {
+                "model": row["model"],
+                "provider": row["provider"],
+                "requests": row["requests"],
+                "spend": str(row["spend"]),
+                "tokens": row["tokens"],
+                "avg_latency_ms": row["avg_latency_ms"],
+                "success_rate": row["success_rate"],
+            }
+            for row in sections["models"]
+        ]
+        return dataset, ["model", "provider", "requests", "spend", "tokens", "avg_latency_ms", "success_rate"], rows
+    if dataset == "providers":
+        rows = [
+            {
+                "provider": row["provider"],
+                "requests": row["requests"],
+                "spend": str(row["spend"]),
+                "tokens": row["tokens"],
+                "avg_latency_ms": row["avg_latency_ms"],
+                "error_rate": row["error_rate"],
+            }
+            for row in sections["providers"]
+        ]
+        return dataset, ["provider", "requests", "spend", "tokens", "avg_latency_ms", "error_rate"], rows
+    if dataset == "endpoints":
+        rows = [
+            {
+                "endpoint": row["endpoint"],
+                "requests": row["requests"],
+                "spend": str(row["spend"]),
+                "share": row["share"],
+            }
+            for row in sections["endpoints"]
+        ]
+        return dataset, ["endpoint", "requests", "spend", "share"], rows
+    dataset = "summary"
+    cost = sections["cost"] or {}
+    rows = [{
+        "range_start": window.start.isoformat(),
+        "range_end": window.end.isoformat(),
+        "timezone": window.timezone,
+        "requests": sections["requests"]["total"],
+        "success": sections["requests"]["success"],
+        "failed": sections["requests"]["failed"],
+        "cancelled": sections["requests"]["cancelled"],
+        "spend": str(cost.get("total", 0)),
+        "projected_month": str(cost.get("projected_month", 0)),
+        "run_rate_projection": str(cost.get("run_rate_projection", 0)),
+        "tokens": sections["tokens"]["total"],
+        "prompt_tokens": sections["tokens"]["prompt"],
+        "completion_tokens": sections["tokens"]["completion"],
+        "avg_latency_ms": sections["performance"]["avg_latency_ms"],
+    }]
+    return dataset, list(rows[0].keys()), rows
+
+
+def _render_export(
+    dataset: str, columns: list[str], rows: list[dict[str, Any]], stamp: str, export_format: str
+) -> tuple[bytes | str, str, str]:
+    """(content, filename, media_type) via the shared renderers (csv | xlsx | json)."""
+    if export_format == "xlsx":
+        content = exporters.analytics_xlsx(
+            [(dataset, columns, [[row.get(column) for column in columns] for row in rows])]
+        )
+        return (
+            content,
+            f"tollma-gateway-{dataset}-{stamp}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    if export_format == "json":
+        return (
+            json.dumps({"dataset": dataset, "rows": rows}, indent=2),
+            f"tollma-gateway-{dataset}-{stamp}.json",
+            "application/json",
+        )
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return buffer.getvalue(), f"tollma-gateway-{dataset}-{stamp}.csv", "text/csv"
+
+
+def export_platform(
+    db: Session, user: User, query: AnalyticsQuery, dataset: str, export_format: str
+) -> tuple[bytes | str, str, str, int]:
+    """Platform export (uncached; mirrors ``/api/v1/analytics/export`` params)."""
+    window = resolve_window(query)
+    name, columns, rows = _export_rows(db, window, key_id=None, dataset=dataset)
+    content, filename, media_type = _render_export(
+        name, columns, rows, window.start.strftime("%Y%m%d"), export_format
+    )
+    return content, filename, media_type, len(rows)
+
+
+def export_api_key(
+    db: Session,
+    user: User,
+    key_id: uuid.UUID,
+    query: AnalyticsQuery,
+    dataset: str,
+    export_format: str,
+) -> tuple[bytes | str, str, str, int]:
+    """Per-key export (uncached, key-scoped; mirrors ``/api/v1/analytics/export``)."""
+    window = resolve_window(query)
+    apikeys_engine.require_owned_key(db, key_id, user.id)
+    name, columns, rows = _export_rows(db, window, key_id=key_id, dataset=dataset)
+    content, filename, media_type = _render_export(
+        name, columns, rows, window.start.strftime("%Y%m%d"), export_format
+    )
+    return content, filename, media_type, len(rows)

@@ -91,6 +91,7 @@ export function RegisterModelDrawer({
       subtitle={info.model_id}
       width={460}
       testId="register-drawer"
+      label={`Register ${info.name}`}
     >
       <div className="flex flex-col gap-4 text-xs">
         {/* Step indicator */}

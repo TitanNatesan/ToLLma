@@ -137,6 +137,9 @@ class Settings(BaseSettings):
     # Attachment storage (local filesystem; served only through owned endpoints)
     storage_dir: str = "storage/uploads"
     max_upload_mb: int = 25
+    # Orphan sweep: hard-delete staged/empty (zero-message) conversations older
+    # than this many days. Messaged rows are never touched.
+    orphan_sweep_days: int = 7
 
     # Logging
     log_level: str = "INFO"

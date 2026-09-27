@@ -14,7 +14,7 @@ function fmtDay(iso: string): string {
 
 /**
  * Budget Burn Rate: daily spend pace from the existing cost timeline plus a
- * projected depletion date against the key's budget cap. Read-only.
+ * run-rate depletion date against the key's budget cap. Read-only.
  */
 export function BudgetBurnRate({
   maxBudget,
@@ -51,7 +51,7 @@ export function BudgetBurnRate({
   return (
     <SectionFrame
       title="Budget burn rate"
-      description="Daily pace and projected depletion from range spend."
+      description="Daily pace and run-rate depletion from range spend."
       testId="key-budget-burn"
     >
       {loading ? (
@@ -102,7 +102,7 @@ export function BudgetBurnRate({
             </span>{" "}
             at this pace.
           </p>
-          <p className="text-[10px] text-zinc-400">Range spend through {fmtDayRange(timeseries)}.</p>
+          <p className="text-[10px] text-zinc-400">Run-rate, not a prediction. Range spend through {fmtDayRange(timeseries)}.</p>
         </div>
       )}
     </SectionFrame>

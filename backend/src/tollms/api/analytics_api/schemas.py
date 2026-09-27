@@ -64,6 +64,9 @@ class CostSection(BaseModel):
     last_7d: Decimal = Decimal(0)
     last_30d: Decimal = Decimal(0)
     projected_month: Decimal = Decimal(0)
+    # Alias of projected_month: linear run-rate extrapolation, not a
+    # prediction (assumes the window daily spend continues unchanged).
+    run_rate_projection: Decimal = Decimal(0)
     cost_per_request: Decimal = Decimal(0)
     cost_per_token: Decimal = Decimal(0)
     most_expensive_request: MostExpensiveRequest | None = None

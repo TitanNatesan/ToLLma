@@ -286,20 +286,71 @@ def from_responses(payload: Any) -> UnifiedRequest:
 
 # --- media -------------------------------------------------------------------
 
+# Provider-agnostic allow-lists for public media options. Anything outside
+# these sets is rejected with a 422 ValidationError naming the field — never
+# clamped silently, so callers see exactly what the gateway will bill.
+_IMAGE_SIZES = frozenset({"256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"})
+_IMAGE_QUALITIES = frozenset({"low", "medium", "high", "auto"})
+_IMAGE_N_MIN = 1
+_IMAGE_N_MAX = 10
+_VIDEO_SIZES = frozenset({"1280x720", "720x1280", "1920x1080"})
+_VIDEO_SECONDS = frozenset({4, 8, 12})
+
+
+def _image_size(value: Any) -> str:
+    size = str(value or "1024x1024")
+    if size not in _IMAGE_SIZES:
+        raise ValidationError(f"size must be one of {sorted(_IMAGE_SIZES)}")
+    return size
+
+
+def _image_quality(value: Any) -> str:
+    quality = str(value or "low")
+    if quality not in _IMAGE_QUALITIES:
+        raise ValidationError(f"quality must be one of {sorted(_IMAGE_QUALITIES)}")
+    return quality
+
+
+def _image_count(value: Any) -> int:
+    n = _optional_int({"n": value}, "n")
+    if n is None:
+        return 1
+    if n < _IMAGE_N_MIN or n > _IMAGE_N_MAX:
+        raise ValidationError(f"n must be between {_IMAGE_N_MIN} and {_IMAGE_N_MAX}")
+    return n
+
+
+def _video_size(value: Any) -> str:
+    size = str(value or "1280x720")
+    if size not in _VIDEO_SIZES:
+        raise ValidationError(f"size must be one of {sorted(_VIDEO_SIZES)}")
+    return size
+
+
+def _video_seconds(value: Any) -> str:
+    if value is None:
+        return "4"
+    if isinstance(value, bool):
+        raise ValidationError(f"seconds must be one of {sorted(_VIDEO_SECONDS)}")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"seconds must be one of {sorted(_VIDEO_SECONDS)}") from None
+    if int(number) != number or int(number) not in _VIDEO_SECONDS:
+        raise ValidationError(f"seconds must be one of {sorted(_VIDEO_SECONDS)}")
+    return str(int(number))
+
 
 def from_images(payload: Any, *, edits: bool) -> UnifiedRequest:
     """POST /v1/images/generations (.edits) body -> UnifiedRequest."""
     body = _body(payload)
     model = _required_str(body, "model")
     prompt = _required_str(body, "prompt")
-    size = body.get("size") or "1024x1024"
-    quality = body.get("quality") or "low"
-    n = _optional_int(body, "n")
-    if n is None:
-        n = 1
-    if n < 1:
-        raise ValidationError("n must be at least 1")
-    options: dict[str, Any] = {"size": str(size), "quality": str(quality), "n": n}
+    options: dict[str, Any] = {
+        "size": _image_size(body.get("size")),
+        "quality": _image_quality(body.get("quality")),
+        "n": _image_count(body.get("n")),
+    }
     if edits:
         image = body.get("image")
         if not isinstance(image, str) or not image.strip():
@@ -323,8 +374,8 @@ def from_videos(payload: Any) -> UnifiedRequest:
     if seconds is None:
         seconds = body.get("duration")
     options: dict[str, Any] = {
-        "size": str(body.get("size") or "1280x720"),
-        "seconds": str(seconds if seconds is not None else 4),
+        "size": _video_size(body.get("size")),
+        "seconds": _video_seconds(seconds),
     }
     return UnifiedRequest(
         endpoint="videos",

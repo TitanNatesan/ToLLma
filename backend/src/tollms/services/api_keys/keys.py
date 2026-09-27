@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from tollms.models.api_key import ApiKey, ApiKeyModelPermission, IpRuleType
+from tollms.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ KEY_PREFIX = "tma_sk_live_"
 KEY_BYTES = 24  # 48 hex chars of entropy after the prefix
 # Cache compiled contexts briefly: revocation/rotation invalidate explicitly.
 CONTEXT_TTL_SECONDS = 30
+# Tombstones outlive the context cache so a deleted/rotated hash can never be
+# resurrected by a stale (or race-re-cached) context entry.
+TOMBSTONE_TTL_SECONDS = CONTEXT_TTL_SECONDS + 60
 _CONTEXT_CACHE_SECTION = "apikey"
 
 
@@ -88,6 +92,13 @@ class KeyContext:
     model_permissions: tuple[ModelPermission, ...] = field(default_factory=tuple)
     allow_rules: tuple[str, ...] = field(default_factory=tuple)
     deny_rules: tuple[str, ...] = field(default_factory=tuple)
+    # Owner-status verdict, snapshotted at compile time and cached with the
+    # context (no extra PG hit per request). Key mutations and the
+    # deletion/purge flow invalidate contexts, so a verdict can lag at most
+    # CONTEXT_TTL_SECONDS after an owner-status change.
+    owner_is_active: bool = True
+    owner_is_deleted: bool = False
+    owner_pending_deletion: bool = False
 
     @property
     def restricted_models(self) -> bool:
@@ -142,7 +153,66 @@ def invalidate_context(key_hash: str) -> None:
     cache_delete_sync(_cache_key(key_hash))
 
 
-def compile_context(key: ApiKey) -> KeyContext:
+def _tombstone_key(key_hash: str) -> str:
+    from tollms.services.cache import keys as cache_keys
+
+    return cache_keys.key_tombstone(key_hash)
+
+
+def write_tombstone(key_hash: str) -> None:
+    """Mark a deleted/rotated hash as revoked (``{"revoked_at": ts}``).
+
+    Fail-open by design: the DB soft-delete (or hash replacement) plus the
+    context invalidation already ran, so a lost tombstone only narrows — never
+    removes — the race protection. Log and proceed; never raise, never log
+    key material.
+    """
+    from tollms.services.cache.manager import cache_set_sync
+
+    try:
+        written = cache_set_sync(
+            _tombstone_key(key_hash),
+            {"revoked_at": datetime.now(timezone.utc).isoformat()},
+            ttl=TOMBSTONE_TTL_SECONDS,
+        )
+    except Exception:
+        logger.warning("api key tombstone write failed", exc_info=True)
+    else:
+        if not written:
+            logger.warning("api key tombstone write failed")
+
+
+def _is_tombstoned(key_hash: str) -> bool:
+    """True when a revocation marker exists for this hash.
+
+    Documented fail-closed choice: ``cache_get_sync`` returns None both when
+    the tombstone is genuinely absent and when Valkey is unreachable/disabled
+    — and that ambiguity is safe, because the compiled-context cache shares
+    the same Valkey path. When Valkey is down, the context lookup below also
+    bypasses straight to PostgreSQL, which stays authoritative (soft-deleted
+    keys are filtered, rotated hashes no longer match), so a dead key can
+    never authenticate. A present tombstone always wins (401) whenever Valkey
+    is readable, closing the invalidate-then-recache race.
+    """
+    from tollms.services.cache.manager import cache_get_sync
+
+    try:
+        return cache_get_sync(_tombstone_key(key_hash)) is not None
+    except Exception:
+        logger.warning("api key tombstone read failed", exc_info=True)
+        return False
+
+
+def compile_context(key: ApiKey, owner: User | None = None) -> KeyContext:
+    """Compile everything the gateway needs for one key.
+
+    `owner` is the key's owner row. authenticate() always passes it and treats
+    a missing owner as unknown; None here only serves direct callers that
+    cannot load it, and keeps the permissive historical verdict for them.
+    The owner-status verdict is snapshotted into the context so the cached
+    entry carries it with no extra PG hit per request.
+    """
+    pending = owner.deletion_scheduled_for is not None if owner is not None else False
     policy = key.policy
     return KeyContext(
         key_id=key.id,
@@ -176,6 +246,9 @@ def compile_context(key: ApiKey) -> KeyContext:
         ),
         allow_rules=tuple(r.cidr for r in key.ip_rules if r.type == IpRuleType.ALLOW),
         deny_rules=tuple(r.cidr for r in key.ip_rules if r.type == IpRuleType.DENY),
+        owner_is_active=owner.is_active if owner is not None else True,
+        owner_is_deleted=owner.is_deleted if owner is not None else False,
+        owner_pending_deletion=pending,
     )
 
 
@@ -212,6 +285,9 @@ def _context_to_cache(ctx: KeyContext) -> dict:
         ],
         "allow_rules": list(ctx.allow_rules),
         "deny_rules": list(ctx.deny_rules),
+        "owner_is_active": ctx.owner_is_active,
+        "owner_is_deleted": ctx.owner_is_deleted,
+        "owner_pending_deletion": ctx.owner_pending_deletion,
     }
 
 
@@ -255,20 +331,32 @@ def _context_from_cache(data: dict) -> KeyContext:
         ),
         allow_rules=tuple(data.get("allow_rules") or ()),
         deny_rules=tuple(data.get("deny_rules") or ()),
+        # .get defaults keep entries cached by older releases decodable.
+        owner_is_active=bool(data.get("owner_is_active", True)),
+        owner_is_deleted=bool(data.get("owner_is_deleted", False)),
+        owner_pending_deletion=bool(data.get("owner_pending_deletion", False)),
     )
 
 
 def authenticate(db: Session, raw_key: str) -> KeyContext | None:
     """Resolve a raw key to its context. O(1): hash lookup + short Valkey cache.
 
-    Returns None for unknown keys. Disabled/expired keys return their context so
-    callers can distinguish 401 (unknown) from 403 (revoked/expired).
+    Returns None for unknown keys — including revoked (tombstoned) hashes and
+    keys whose owner row is gone (purged owners have no key rows, so this is
+    the 401 path as before). Disabled/expired keys, and keys whose owner is
+    inactive, deleted, or pending deletion, return their context so callers
+    can distinguish 401 (unknown) from 403 (revoked/expired/owner-blocked).
     """
     if not raw_key:
         return None
     key_hash = hash_key(raw_key)
 
     from tollms.services.cache.manager import cache_get_sync, cache_set_sync
+
+    # Tombstone first: a deleted/rotated hash stays dead even when a stale
+    # compiled context is still cached (or gets re-cached in the race window).
+    if _is_tombstoned(key_hash):
+        return None
 
     cached = cache_get_sync(_cache_key(key_hash))
     if isinstance(cached, dict):
@@ -288,7 +376,12 @@ def authenticate(db: Session, raw_key: str) -> KeyContext | None:
     )
     if key is None:
         return None
-    ctx = compile_context(key)
+    owner = db.get(User, key.user_id)
+    if owner is None:
+        # Defensive: FK CASCADE deletes keys with a purged owner, so a missing
+        # owner means the row vanished out of band — 401 unknown either way.
+        return None
+    ctx = compile_context(key, owner)
     try:
         cache_set_sync(_cache_key(key_hash), _context_to_cache(ctx), ttl=CONTEXT_TTL_SECONDS)
     except Exception:

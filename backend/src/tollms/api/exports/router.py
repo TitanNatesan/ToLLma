@@ -21,13 +21,17 @@ def export_conversations(
     db: Session = Depends(get_db),
     user: User = Depends(require_active_user),
 ) -> Response:
-    content, media_type, filename, _ = service.render_conversations(
+    content, media_type, filename, _item_count, total_count, truncated = service.render_conversations(
         db, user.id, data.conversation_ids, data.all, data.format
     )
     return Response(
         content=content,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Export-Total-Count": str(total_count),
+            "X-Export-Truncated": "true" if truncated else "false",
+        },
     )
 
 
@@ -38,13 +42,17 @@ def export_conversation(
     db: Session = Depends(get_db),
     user: User = Depends(require_active_user),
 ) -> Response:
-    content, media_type, filename, _ = service.render_conversations(
+    content, media_type, filename, _item_count, total_count, truncated = service.render_conversations(
         db, user.id, [conversation_id], False, format
     )
     return Response(
         content=content,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Export-Total-Count": str(total_count),
+            "X-Export-Truncated": "true" if truncated else "false",
+        },
     )
 
 

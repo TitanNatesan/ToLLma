@@ -655,6 +655,9 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
   const handleEdit = useCallback(
     (messageId: string, content: string) => {
+      // Message actions are disabled while a generation streams (the
+      // workspace also stops passing these handlers when streaming).
+      if (useChatStore.getState().streaming) return;
       const onSuccess = (result: Awaited<ReturnType<typeof editMessage>>) => {
         const convId = result.message.conversation_id ?? activeId;
         if (result.regeneration_started && result.regenerating_message_id && convId) {
@@ -680,6 +683,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
   const handleRegenerate = useCallback(
     (messageId: string) => {
+      if (useChatStore.getState().streaming) return;
       const onSuccess = (started: Awaited<ReturnType<typeof regenerateMessage>>) => {
         attachRegeneration(started.conversation_id, started.message_id, started.generation_id);
       };
@@ -697,7 +701,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
   const handleBranch = useCallback(
     (messageId: string) => {
-      if (!activeId) return;
+      if (!activeId || useChatStore.getState().streaming) return;
       branchMutation.mutate(
         { conversationId: activeId, messageId },
         {
@@ -797,9 +801,11 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
               isStreaming={isStreaming}
               sources={sourcesByMessage.get(m.id)}
               onActivateGeneration={handleActivateGeneration}
-              onBranch={!isOpt ? handleBranch : undefined}
-              onEdit={!isOpt && m.role === "user" ? handleEdit : undefined}
-              onRegenerate={!isOpt && m.role === "assistant" ? handleRegenerate : undefined}
+              // Editing, regenerating, or branching mid-stream would race the
+              // live generation: hide the actions until it settles.
+              onBranch={!isOpt && !streaming ? handleBranch : undefined}
+              onEdit={!isOpt && m.role === "user" && !streaming ? handleEdit : undefined}
+              onRegenerate={!isOpt && m.role === "assistant" && !streaming ? handleRegenerate : undefined}
             />
           );
         })}

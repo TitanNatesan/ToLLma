@@ -8,12 +8,14 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { useConversationMutations, useConversations } from "@/hooks/useChat";
 import { useChatStore } from "@/store/chat";
 import { toastApiError } from "@/lib/errors";
+import { ConfirmDialog } from "@/app/api-keys/components/ConfirmDialog";
 import type { Conversation } from "@/types";
 import { cn } from "@/lib/utils";
 
 function ConvItem({
   conv,
   active,
+  deleteDisabled,
   onSelect,
   onRename,
   onPin,
@@ -21,6 +23,7 @@ function ConvItem({
 }: {
   conv: Conversation;
   active: boolean;
+  deleteDisabled?: boolean;
   onSelect: () => void;
   onRename: (title: string) => void;
   onPin: () => void;
@@ -101,8 +104,9 @@ function ConvItem({
         </button>
         <button
           onClick={onDelete}
-          className="rounded p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30"
-          title="Delete"
+          disabled={deleteDisabled}
+          className="rounded p-1 text-red-500 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/30"
+          title={deleteDisabled ? "Stop generation before deleting" : "Delete"}
           data-testid={`delete-button-${conv.id}`}
         >
           <Trash2 className="size-3" />
@@ -116,9 +120,11 @@ function ConvItem({
 export function SidebarConversations() {
   const router = useRouter();
   const { activeConversationId, sidebarSearch, setConversation, setSearch } = useChatStore();
+  const streaming = useChatStore((s) => s.streaming);
   const { data: convs = [] } = useConversations(sidebarSearch);
   const mutations = useConversationMutations();
   const searchRef = useRef<HTMLInputElement>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
 
   // New chat is a draft: no database row until the first message is sent.
   // The store is cleared synchronously so a send fired immediately after the
@@ -135,6 +141,19 @@ export function SidebarConversations() {
     },
     [router, setConversation],
   );
+
+  // Deleting mid-stream would race the live generation: the confirm path
+  // re-checks, and the buttons are disabled while streaming.
+  async function confirmDelete() {
+    if (!deleteTarget || useChatStore.getState().streaming) return;
+    const id = deleteTarget.id;
+    await mutations.remove.mutateAsync(id);
+    setDeleteTarget(null);
+    if (activeConversationId === id) {
+      setConversation(null);
+      router.replace("/");
+    }
+  }
 
   // Ctrl+Shift+F / "Search Conversations" command.
   useEffect(() => {
@@ -197,18 +216,13 @@ export function SidebarConversations() {
                     key={c.id}
                     conv={c}
                     active={activeConversationId === c.id}
+                    deleteDisabled={streaming}
                     onSelect={() => select(c.id)}
                     onRename={(t) => mutations.rename.mutate({ id: c.id, title: t })}
                     onPin={() =>
                       mutations.pin.mutate({ id: c.id, pinned: !c.is_pinned })
                     }
-                    onDelete={() => {
-                      if (activeConversationId === c.id) {
-                        setConversation(null);
-                        router.replace("/");
-                      }
-                      mutations.remove.mutate(c.id);
-                    }}
+                    onDelete={() => setDeleteTarget(c)}
                   />
                 ))}
               </div>
@@ -231,18 +245,13 @@ export function SidebarConversations() {
                     key={c.id}
                     conv={c}
                     active={activeConversationId === c.id}
+                    deleteDisabled={streaming}
                     onSelect={() => select(c.id)}
                     onRename={(t) => mutations.rename.mutate({ id: c.id, title: t })}
                     onPin={() =>
                       mutations.pin.mutate({ id: c.id, pinned: !c.is_pinned })
                     }
-                    onDelete={() => {
-                      if (activeConversationId === c.id) {
-                        setConversation(null);
-                        router.replace("/");
-                      }
-                      mutations.remove.mutate(c.id);
-                    }}
+                    onDelete={() => setDeleteTarget(c)}
                   />
                 ))}
               </AnimatePresence>
@@ -256,6 +265,16 @@ export function SidebarConversations() {
           </p>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        destructive
+        title={`Delete “${deleteTarget?.title ?? ""}”?`}
+        description="This permanently removes the conversation and all of its messages. This action cannot be undone."
+        confirmLabel="Delete conversation"
+        onConfirm={confirmDelete}
+        onClose={() => setDeleteTarget(null)}
+      />
     </section>
   );
 }

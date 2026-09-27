@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from tollms.core.exceptions import NotFoundError
 from tollms.models.api_key import ApiKey, ApiRequestLog
+from tollms.services.analytics import presets as preset_vocab
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,7 @@ def _zone(name: str) -> ZoneInfo:
 
 
 def _resolve_range(preset: str, timezone_name: str, now: datetime | None = None) -> _Range:
-    """Local preset resolver (mirrors the analytics presets without importing api/)."""
+    """Local preset resolver (shared vocabulary; unknown presets -> this_month)."""
     zone = _zone(timezone_name)
     now = now or datetime.now(timezone.utc)
     today = now.astimezone(zone).date()
@@ -326,7 +327,7 @@ def _resolve_range(preset: str, timezone_name: str, now: datetime | None = None)
     def midnight(day) -> datetime:
         return datetime.combine(day, time.min, tzinfo=zone).astimezone(timezone.utc)
 
-    preset = preset if preset in _PRESETS else "this_month"
+    preset = preset_vocab.normalize(preset, family="gateway_keys")
     if preset == "today":
         start, end = midnight(today), now
     elif preset == "last_7d":

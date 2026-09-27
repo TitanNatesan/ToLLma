@@ -146,6 +146,27 @@ def regenerate_share(db: Session, user_id: uuid.UUID | None, share_id: uuid.UUID
     return _read(share)
 
 
+def _bump_view_count(db: Session, token: str) -> int | None:
+    """Best-effort view counter for one public read. Active shares only;
+    returns the new count, or None when the link is gone/inactive/expired.
+    Never raises: counter failures must not block the read."""
+    try:
+        share = db.execute(
+            select(ConversationShare).where(ConversationShare.share_token == token)
+        ).scalar_one_or_none()
+        if share is None or not share.is_public:
+            return None
+        if share.expires_at is not None and share.expires_at <= datetime.now(timezone.utc):
+            return None
+        share.view_count += 1
+        db.commit()
+        return int(share.view_count)
+    except Exception:
+        db.rollback()
+        logger.warning("share view-count bump failed", exc_info=True)
+        return None
+
+
 def _load_public(db: Session, token: str) -> PublicShareRead:
     share = db.execute(
         select(ConversationShare).where(
@@ -204,19 +225,26 @@ def _load_public(db: Session, token: str) -> PublicShareRead:
 
 
 def public_share(db: Session, token: str) -> PublicShareRead:
-    """Unauthenticated read-only lookup, cached briefly (revocation must stick)."""
+    """Unauthenticated read-only lookup, cached briefly (revocation must stick).
+
+    The view counter moves on EVERY read, outside the cache-hit path: the
+    cached payload is still served (TTL untouched) while the counter update
+    is best-effort and never blocks the response. A cached entry whose link
+    has since been revoked/expired fails closed with 404.
+    """
     key = cache_keys.share_lookup(token)
     cached = cache_get_sync(key)
-    if cached:
-        return PublicShareRead.model_validate(cached)
+    views = _bump_view_count(db, token)
+    if cached is not None:
+        if views is None:
+            cache_delete_sync(key)
+            raise NotFoundError("share link not found")
+        payload = PublicShareRead.model_validate(cached)
+        payload.view_count = views
+        return payload
 
     payload = _load_public(db, token)
-    share = db.execute(
-        select(ConversationShare).where(ConversationShare.share_token == token)
-    ).scalar_one_or_none()
-    if share is not None:
-        share.view_count += 1
-        db.commit()
-        payload.view_count = share.view_count
+    if views is not None:
+        payload.view_count = views
     cache_set_sync(key, payload.model_dump(mode="json"), ttl=cache_constants.SHARE)
     return payload

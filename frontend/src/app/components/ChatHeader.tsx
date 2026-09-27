@@ -32,7 +32,8 @@ import {
 import { useConversation, useConversationMutations, useUsage } from "@/hooks/useChat";
 import { useBranchTree } from "@/hooks/useIntelligence";
 import { ShareDialog } from "@/components/ui/ShareDialog";
-import { exportConversation } from "@/services/api";
+import { ConfirmDialog } from "@/app/api-keys/components/ConfirmDialog";
+import { exportConversation, formatExportTruncationNotice } from "@/services/api";
 import { toastApiError } from "@/lib/errors";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useChatStore } from "@/store/chat";
@@ -61,6 +62,8 @@ export function ChatHeader() {
   const [renaming, setRenaming] = useState(false);
   const [titleInput, setTitleInput] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const streaming = useChatStore((s) => s.streaming);
   const { data: branchTree } = useBranchTree(activeConversationId);
 
   const activeProvider = providers.find((p) => p.id === providerId);
@@ -86,21 +89,31 @@ export function ChatHeader() {
       return;
     }
     try {
-      await exportConversation(activeConversationId, format);
+      const result = await exportConversation(activeConversationId, format);
       toast.success(`Exported conversation as ${format.toUpperCase()}`);
+      const notice = formatExportTruncationNotice(result);
+      if (notice) {
+        toast.warning(<span data-testid="export-truncated-notice">{notice}</span>);
+      }
     } catch (error) {
       toastApiError(error, { title: "Export failed" });
     }
   }
 
   function handleDelete() {
-    if (activeConversationId) {
-      mutations.remove.mutate(activeConversationId);
-      setConversation(null);
-      // The deleted id no longer resolves; `/` mints a fresh conversation.
-      router.replace("/");
-      toast.success("Conversation deleted");
+    if (activeConversationId && !useChatStore.getState().streaming) {
+      setDeleteOpen(true);
     }
+  }
+
+  async function confirmDelete() {
+    if (!activeConversationId) return;
+    await mutations.remove.mutateAsync(activeConversationId);
+    setDeleteOpen(false);
+    setConversation(null);
+    // The deleted id no longer resolves; `/` mints a fresh conversation.
+    router.replace("/");
+    toast.success("Conversation deleted");
   }
 
   const costFormatted = fmtCost(usage?.total_cost);
@@ -242,6 +255,9 @@ export function ChatHeader() {
               {activeConversationId && (
                 <DropdownMenuItem
                   onClick={handleDelete}
+                  disabled={streaming}
+                  title={streaming ? "Stop generation before deleting" : undefined}
+                  data-testid="delete-chat"
                   className="gap-2 text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
                 >
                   <Trash2 className="size-3.5" />
@@ -270,6 +286,16 @@ export function ChatHeader() {
       </div>
 
       <ShareDialog conversationId={activeConversationId} onOpenChange={setShareOpen} open={shareOpen} />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        destructive
+        title={`Delete “${title}”?`}
+        description="This permanently removes the conversation and all of its messages. This action cannot be undone."
+        confirmLabel="Delete conversation"
+        onConfirm={confirmDelete}
+        onClose={() => setDeleteOpen(false)}
+      />
     </header>
   );
 }

@@ -393,7 +393,11 @@ class AdminApiKeyGrowthPoint(BaseModel):
 
 
 class AdminApiKeys(BaseModel):
-    """Frozen API-key section for `/api/admin/api-keys` and the dashboard."""
+    """Frozen API-key section for `/api/admin/api-keys` and the dashboard.
+
+    Usage rows come from gateway traffic (`api_request_logs`); chat-traffic
+    totals (`messages`) are a separate source and may differ.
+    """
 
     range: AdminRange
     total: int = 0

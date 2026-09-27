@@ -7,7 +7,7 @@ policy bounds, ownership 404s and analytics aggregation.
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from tollms.models.api_key import ApiKey, ApiRequestLog
+from tollms.models.user import User
 from tollms.services.api_keys import keys as key_engine
 
 # The keys router is wired into `tollms.main` by the orchestrator; until then
@@ -287,3 +288,207 @@ def test_analytics_aggregates_request_logs(client: TestClient, db, user_factory)
     assert data["top_models"][0]["model"] == "claude"  # spend-descending
     assert data["top_endpoints"][0]["endpoint"] == "/v1/chat/completions"
     assert {row["country"] for row in data["top_countries"]} == {"US", "DE"}
+
+
+# --- Phase 8: ownership & key security -----------------------------------------
+
+PENDING_CODE = "ACCOUNT_PENDING_DELETION"
+PENDING_MESSAGE = "Account scheduled for deletion."
+
+
+def _gateway(client: TestClient, raw: str, path: str = "/v1/models"):
+    """Cheapest authenticated gateway probe: auth runs before any provider I/O."""
+    return client.get(path, headers={"Authorization": f"Bearer {raw}"})
+
+
+def _owner_row(db, user_id: str) -> User:
+    db.expire_all()
+    row = db.get(User, uuid.UUID(user_id))
+    assert row is not None
+    return row
+
+
+def test_owner_soft_deleted_key_gateway_forbidden(client: TestClient, db, user_factory) -> None:
+    user = user_factory()
+    created = _create(client, name="Owner gone")
+    raw = created["raw_key"]
+    assert key_engine.authenticate(db, raw) is not None  # warm the context cache
+
+    row = _owner_row(db, user["id"])
+    row.is_deleted = True
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    key_engine.invalidate_context(key_engine.hash_key(raw))
+
+    ctx = key_engine.authenticate(db, raw)
+    assert ctx is not None and ctx.owner_is_deleted is True
+    response = _gateway(client, raw)
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_owner_inactive_key_gateway_forbidden(client: TestClient, db, user_factory) -> None:
+    user = user_factory()
+    created = _create(client, name="Owner inactive")
+    raw = created["raw_key"]
+    assert key_engine.authenticate(db, raw) is not None
+
+    row = _owner_row(db, user["id"])
+    row.is_active = False
+    db.commit()
+    key_engine.invalidate_context(key_engine.hash_key(raw))
+
+    ctx = key_engine.authenticate(db, raw)
+    assert ctx is not None and ctx.owner_is_active is False
+    response = _gateway(client, raw)
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_owner_pending_deletion_key_gateway_blocked(client: TestClient, db, user_factory) -> None:
+    user = user_factory()
+    created = _create(client, name="Owner pending")
+    raw = created["raw_key"]
+    assert key_engine.authenticate(db, raw) is not None
+
+    now = datetime.now(timezone.utc)
+    row = _owner_row(db, user["id"])
+    row.deletion_requested_at = now
+    row.deletion_scheduled_for = now + timedelta(days=15)
+    row.deletion_notice_stage = 1
+    db.commit()
+    key_engine.invalidate_context(key_engine.hash_key(raw))
+
+    ctx = key_engine.authenticate(db, raw)
+    assert ctx is not None and ctx.owner_pending_deletion is True
+    response = _gateway(client, raw)
+    assert response.status_code == 403, response.text
+    payload = response.json()["error"]
+    assert payload["code"] == PENDING_CODE
+    assert payload["message"] == PENDING_MESSAGE
+
+
+def test_owner_purged_key_gateway_unauthenticated(client: TestClient, db, user_factory) -> None:
+    user = user_factory()
+    created = _create(client, name="Owner purged")
+    raw, key_hash = created["raw_key"], key_engine.hash_key(created["raw_key"])
+    assert key_engine.authenticate(db, raw) is not None
+
+    db.delete(_owner_row(db, user["id"]))  # hard purge: FK CASCADE removes the key rows
+    db.commit()
+    key_engine.invalidate_context(key_hash)
+
+    assert db.scalar(select(ApiKey).where(ApiKey.key_hash == key_hash)) is None
+    assert key_engine.authenticate(db, raw) is None
+    response = _gateway(client, raw)
+    assert response.status_code == 401, response.text
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+def test_rotated_hash_tombstone_beats_recached_context(
+    client: TestClient, db, user_factory
+) -> None:
+    """A stale context re-cached in the invalidate race window must stay dead."""
+    from tollms.services.cache.manager import cache_get_sync, cache_set_sync
+
+    user_factory()
+    created = _create(client, name="Race")
+    old_raw, key_id = created["raw_key"], created["key"]["id"]
+    old_hash = key_engine.hash_key(old_raw)
+    assert key_engine.authenticate(db, old_raw) is not None
+    stale = cache_get_sync(key_engine._cache_key(old_hash))  # noqa: SLF001
+    assert isinstance(stale, dict)
+
+    rotated = client.post(f"/api/v1/keys/{key_id}/rotate")
+    assert rotated.status_code == 200, rotated.text
+    new_raw = rotated.json()["raw_key"]
+
+    # Simulate the race: the pre-rotation context reappears after invalidation.
+    assert cache_set_sync(key_engine._cache_key(old_hash), stale, ttl=30) is True  # noqa: SLF001
+    assert key_engine.authenticate(db, old_raw) is None
+    assert key_engine.authenticate(db, old_raw) is None
+    response = _gateway(client, old_raw)
+    assert response.status_code == 401, response.text
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+    # The replacement hash is unaffected.
+    assert key_engine.authenticate(db, new_raw) is not None
+
+
+def test_deleted_key_gateway_unauthenticated(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    created = _create(client, name="Doomed")
+    raw, key_id = created["raw_key"], created["key"]["id"]
+    assert key_engine.authenticate(db, raw) is not None
+
+    assert client.delete(f"/api/v1/keys/{key_id}").status_code == 204
+    assert key_engine.authenticate(db, raw) is None
+    assert key_engine.authenticate(db, raw) is None
+    response = _gateway(client, raw)
+    assert response.status_code == 401, response.text
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+def test_allow_deny_overlap_rejected(client: TestClient, user_factory) -> None:
+    user_factory()
+    overlapped = client.post(
+        "/api/v1/keys",
+        json={
+            "name": "Overlap",
+            "ip_rules": [
+                {"type": "allow", "cidr": "1.2.3.4"},
+                {"type": "deny", "cidr": "1.2.3.4/32"},
+            ],
+        },
+    )
+    assert overlapped.status_code == 422, overlapped.text
+    assert overlapped.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    created = _create(client, name="Rules", ip_rules=[{"type": "allow", "cidr": "9.9.9.9"}])
+    replaced = client.put(
+        f"/api/v1/keys/{created['key']['id']}/ip-rules",
+        json=[{"type": "allow", "cidr": "5.6.7.8"}, {"type": "deny", "cidr": "5.6.7.8"}],
+    )
+    assert replaced.status_code == 422, replaced.text
+    assert replaced.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_past_expiry_rejected_and_null_clears(client: TestClient, user_factory) -> None:
+    user_factory()
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+
+    assert client.post("/api/v1/keys", json={"name": "Past", "expires_at": past}).status_code == 422
+
+    created = _create(client, name="Expiring", expires_at=future)
+    key_id = created["key"]["id"]
+
+    assert client.patch(f"/api/v1/keys/{key_id}", json={"expires_at": past}).status_code == 422
+    cleared = client.patch(f"/api/v1/keys/{key_id}", json={"expires_at": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["expires_at"] is None
+
+    past_policy = client.put(f"/api/v1/keys/{key_id}/policy", json={"expires_at": past})
+    assert past_policy.status_code == 422, past_policy.text
+    assert past_policy.json()["error"]["code"] == "VALIDATION_ERROR"
+    nulled = client.put(f"/api/v1/keys/{key_id}/policy", json={})
+    assert nulled.status_code == 200, nulled.text
+    assert nulled.json()["policy"]["expires_at"] is None
+
+
+def test_negative_budget_rejected_and_nan_guards(client: TestClient, user_factory) -> None:
+    from tollms.api.keys import service as key_service
+    from tollms.core.exceptions import ValidationError
+
+    user_factory()
+    negative = client.post(
+        "/api/v1/keys", json={"name": "Neg", "policy": {"max_budget_usd": "-1"}}
+    )
+    assert negative.status_code == 422, negative.text
+    assert negative.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    # Service-level guards for direct callers (NaN never survives JSON anyway).
+    for value in (float("nan"), Decimal("NaN"), Decimal("-1"), -1, -0.5):
+        with pytest.raises(ValidationError):
+            key_service._reject_bad_number(value, field="policy.max_budget_usd")  # noqa: SLF001
+    assert key_service._reject_bad_number(None, field="policy.max_budget_usd") is None  # noqa: SLF001
+    assert key_service._reject_bad_number(Decimal("0"), field="policy.max_budget_usd") is None  # noqa: SLF001

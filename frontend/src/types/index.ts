@@ -412,6 +412,8 @@ export interface AnalyticsSummary {
   failed_requests: number;
   estimated_requests: number;
   projected_month_spend: string;
+  /** Run-rate projection alias (same value); prefer with fallback to projected_month_spend. */
+  run_rate_projection?: string;
   insights: AnalyticsInsight[];
 }
 

@@ -49,7 +49,7 @@ import {
   useAnalyticsRefresh,
   browserTimezone,
 } from "@/hooks/useAnalytics";
-import { downloadAnalyticsExport } from "@/services/api";
+import { downloadAnalyticsExport, formatExportTruncationNotice } from "@/services/api";
 import { useAnalyticsWidgets } from "@/hooks/useIntelligence";
 import { AnalyticsWidgetsPanel } from "./components/AnalyticsWidgetsPanel";
 import { fmtCompactTokens, fmtTokens } from "@/lib/utils";
@@ -144,8 +144,12 @@ export default function AnalyticsPage() {
   async function onExport(format: "csv" | "json" | "xlsx") {
     setExporting(true);
     try {
-      await downloadAnalyticsExport(params, dataset, format);
+      const result = await downloadAnalyticsExport(params, dataset, format);
       toast.success(`Exported ${dataset} as ${format.toUpperCase()}`);
+      const notice = formatExportTruncationNotice(result);
+      if (notice) {
+        toast.warning(<span data-testid="export-truncated-notice">{notice}</span>);
+      }
     } catch (error) {
       toast.error("Export failed", { description: error instanceof Error ? error.message : undefined });
     } finally {
@@ -371,9 +375,9 @@ export default function AnalyticsPage() {
                 testId="kpi-streaming"
               />
               <KpiCard
-                label="Projected month spend"
-                value={fmtMoney(kpi.projected_month_spend)}
-                sub="Based on selected-period run rate"
+                label="Run-rate projection"
+                value={fmtMoney(kpi.run_rate_projection ?? kpi.projected_month_spend)}
+                sub="Run-rate, not a prediction · based on selected-period pace"
                 icon={<TrendingUp className="size-4" />}
                 testId="kpi-projection"
               />

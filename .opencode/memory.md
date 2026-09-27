@@ -2316,3 +2316,78 @@ Frontend: Shell.tsx (hard gate), AppShell, api.ts, types, settings page.
 ### Verification
 - New: test_account_deletion 11/11. Full backend: **439 passed, 0 failed** (2m44s). Frontend tsc/eslint clean, vitest 126/126.
 - Phase 8 NOT started (approval required).
+
+---
+
+## 2026-09-27 — V1 Phase 8: Ownership & Key Security COMPLETE
+
+### Requirement Completed
+Owner-status in key auth (missing→401, deleted/inactive→403, pending→403 ACCOUNT_PENDING_DELETION, verdict cached), tombstones (write on delete/rotate, checked pre-cache, TTL+60s), validation 422s (allow∩deny overlap, past expiry, NaN/negative), deletion-request verified on delete_key path.
+
+### Files Modified
+Backend: services/api_keys/keys.py, services/cache/keys.py, api/keys/service.py, api/public_gateway/service.py. Tests: keys/test_api_keys.py (+9).
+
+### Verification
+- Related: **106 passed**. No source bugs found.
+
+## 2026-09-27 — V1 Phase 9: OAuth Hardening COMPLETE
+
+### Requirement Completed
+State binding (nonce + UA/IP strict + single-use delete-first), PKCE S256 end-to-end, denial → 307 /login?oauth_error=cancelled (never 422), email_verified defaults False, field truncation/validation, denial UX notice.
+
+### Files Modified
+Backend: api/auth/{service, router}. Frontend: components/auth/AuthCard.tsx. Tests: test_auth.py (+10).
+
+### Verification
+- Related: **55 passed**. Frontend tsc/eslint clean.
+
+---
+
+## 2026-09-27 — V1 Phase 10: Data Integrity COMPLETE
+
+### Requirement Completed
+Branch cutoff inclusion + ordered copies (attachments/versions/runs, no client_key), share view-count every read, export truncation headers + ids-win + actual item_count, cache invalidation on message mutations, orphan sweeper (7d, daily).
+
+### Files Modified
+Backend: messages/service, conversations/service, shares/service, exports/{service,router}, analytics/{service,router}, core/config, jobs/scheduler, main.py (CORS expose X-Export-*). Frontend: services/api.ts (header aliases), ChatHeader + analytics export notices. Tests: test_data_integrity.py (11), test_message_history (updated).
+
+### Verification
+- Related: **43 passed**. Header contract aligned (backend X-Export-* + CORS; frontend reads both names).
+
+## 2026-09-27 — V1 Phase 11: Gateway Hardening implementation COMPLETE (tests pending)
+
+### Requirement Completed (pending QA)
+Overbudget flag + audit, per-request reservations, 4 chat capability gates, media allow-list 422s, streaming close-path exactly-one-row + TIMEOUT taxonomy. Wire shapes unchanged.
+
+### Files Modified
+Backend: gateway/limits.py, public_gateway/service.py, translators.py, core/exceptions.py.
+
+### Verification
+- Related existing: **106 passed**. Permanent hardening tests backgrounded.
+
+---
+
+## 2026-09-27 — V1 Phase 11: Gateway Hardening COMPLETE
+
+### Requirement Completed
+Overbudget flag + audit, per-request reservations (request_id, legacy default), 4 chat capability gates (tools/vision/reasoning/stream), media allow-list 422s, streaming exactly-one-row closes + TIMEOUT taxonomy. Wire shapes unchanged.
+
+### Files Modified
+Backend: gateway/limits.py, public_gateway/service.py, translators.py, core/exceptions.py. Tests: public_gateway/test_hardening.py (17).
+
+### Verification
+- Related: **123 passed** incl. sdk_compat wire shapes unmodified.
+
+---
+
+## 2026-09-27 — V1 Phase 12: Analytics Consistency implementation COMPLETE (tests backgrounded)
+
+### Requirement Completed (pending QA)
+Canonical preset vocabulary (superset aliases, per-family defaults preserved), single projected_run_rate() helper + alias, platform/key export parity, keys 60s cache, admin mixed-facts docstring, frontend run-rate copy + alias-tolerant fields.
+
+### Files Created/Modified
+Backend: services/analytics/presets.py (new); aggregations, api/analytics{service,schemas}, costs, analytics_api{schemas,service,router (+2 export routes)}, keys/service (normalize + cache), gateway/api_logs, admin/{costs,router,schemas docstrings}. Frontend: 3 types + analytics/admin/keys copy. Tests: pending (backgrounded).
+
+### Decisions
+- Zero breakage: old fields/presets/defaults preserved; admin costs exact-shape kept (no alias).
+- Pre-existing privacy-scanner failure untouched (Phase 13 owner).

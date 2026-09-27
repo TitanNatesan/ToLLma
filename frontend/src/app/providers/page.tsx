@@ -7,13 +7,17 @@ import {
   Button,
   Card,
   CardContent,
+  ErrorState,
   GhostButton,
+  LoadingState,
   SearchInput,
   Select,
   StatusBadge,
   Switch,
   Tooltip,
 } from "@/components/ui";
+import { ConfirmDialog } from "@/app/api-keys/components/ConfirmDialog";
+import { parseApiError } from "@/lib/errors";
 import { fmtPrice } from "@/lib/utils";
 import {
   useModelMutations,
@@ -75,8 +79,10 @@ const MATCH_BADGE: Record<string, string> = {
 };
 
 export default function ProvidersPage() {
-  const { data: providers = [] } = useProviders();
-  const { data: allModels = [] } = useModels();
+  const providersQuery = useProviders();
+  const modelsQuery = useModels();
+  const providers = providersQuery.data ?? [];
+  const allModels = modelsQuery.data ?? [];
   const pm = useProviderMutations();
   const mm = useModelMutations();
 
@@ -103,6 +109,8 @@ export default function ProvidersPage() {
   const [registerInfo, setRegisterInfo] = useState<DiscoveredModelInfo | null>(null);
   const [registerStep, setRegisterStep] = useState(0);
   const [lastRegisteredId, setLastRegisteredId] = useState<string | null>(null);
+  const [deleteProviderTarget, setDeleteProviderTarget] = useState<Provider | null>(null);
+  const [deleteModelTarget, setDeleteModelTarget] = useState<AIModel | null>(null);
 
   // Determine active provider: either from store or first available provider
   const activeId =
@@ -180,6 +188,21 @@ export default function ProvidersPage() {
     }
   }
 
+  async function confirmDeleteProvider() {
+    if (!deleteProviderTarget) return;
+    await pm.remove.mutateAsync(deleteProviderTarget.id);
+    if (selectedProviderId === deleteProviderTarget.id) setSelectedProviderId(null);
+    setDeleteProviderTarget(null);
+    toast.success("Provider deleted");
+  }
+
+  async function confirmDeleteModel() {
+    if (!deleteModelTarget) return;
+    await mm.remove.mutateAsync(deleteModelTarget.id);
+    setDeleteModelTarget(null);
+    toast.success("Model deleted");
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden">
       {/* Three-Panel Workspace: Center (Details) & Right (Models) */}
@@ -187,7 +210,16 @@ export default function ProvidersPage() {
         className="flex min-w-0 flex-1 overflow-hidden divide-x divide-zinc-200 dark:divide-zinc-800"
         aria-label="Provider details"
       >
-        {!selected ? (
+        {providersQuery.isPending ? (
+          <LoadingState message="Loading providers…" className="flex-1 py-16" />
+        ) : providersQuery.error ? (
+          <ErrorState
+            title="Could not load providers"
+            message={parseApiError(providersQuery.error).message}
+            onRetry={() => void providersQuery.refetch()}
+            className="flex-1"
+          />
+        ) : !selected ? (
           <div className="relative flex flex-1 items-center justify-center p-8">
             {!leftSidebarOpen && (
               <div className="absolute top-4 left-4">
@@ -280,11 +312,9 @@ export default function ProvidersPage() {
                       size="sm"
                       variant="ghost"
                       className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                      onClick={() => {
-                        pm.remove.mutate(selected.id);
-                        setSelectedProviderId(null);
-                        toast.success("Provider deleted");
-                      }}
+                      onClick={() => setDeleteProviderTarget(selected)}
+                      data-testid={`provider-delete-${selected.id}`}
+                      title="Delete provider"
                     >
                       <Trash2 className="size-3.5" />
                     </Button>
@@ -421,6 +451,15 @@ export default function ProvidersPage() {
             </div>
 
             {/* Right side: Available (unregistered) + Registered panels */}
+            {modelsQuery.error && !modelsQuery.isPending ? (
+              <div className="flex flex-1 items-center justify-center bg-zinc-50/30 p-4 dark:bg-zinc-950/30">
+                <ErrorState
+                  title="Could not load models"
+                  message={parseApiError(modelsQuery.error).message}
+                  onRetry={() => void modelsQuery.refetch()}
+                />
+              </div>
+            ) : (
             <div className="flex flex-1 flex-col overflow-y-auto bg-zinc-50/30 dark:bg-zinc-950/30 min-h-[300px] xl:flex-row xl:overflow-hidden">
               {/* LEFT: Available Models */}
               <div className="flex flex-1 flex-col border-b border-zinc-200 p-4 dark:border-zinc-800 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r">
@@ -687,7 +726,7 @@ export default function ProvidersPage() {
                         <GhostButton
                           size="sm"
                           className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                          onClick={() => mm.remove.mutate(m.id)}
+                          onClick={() => setDeleteModelTarget(m)}
                           data-testid={`model-delete-${m.id}`}
                           title="Delete Model"
                         >
@@ -705,6 +744,7 @@ export default function ProvidersPage() {
                 </div>
               </div>
             </div>
+            )}
           </>
         )}
       </section>
@@ -758,6 +798,33 @@ export default function ProvidersPage() {
         }}
         />
       )}
+
+      <ConfirmDialog
+        open={!!deleteProviderTarget}
+        destructive
+        title={`Delete “${deleteProviderTarget?.name ?? ""}”?`}
+        description={
+          <>
+            This permanently removes the provider
+            {selectedModels.length > 0 && deleteProviderTarget?.id === selected?.id
+              ? ` and its ${selectedModels.length} registered model${selectedModels.length === 1 ? "" : "s"}`
+              : ""}
+            . Chats using these models will need a new model. This action cannot be undone.
+          </>
+        }
+        confirmLabel="Delete provider"
+        onConfirm={confirmDeleteProvider}
+        onClose={() => setDeleteProviderTarget(null)}
+      />
+      <ConfirmDialog
+        open={!!deleteModelTarget}
+        destructive
+        title={`Delete “${deleteModelTarget?.name ?? ""}”?`}
+        description="This permanently unregisters the model. Chats using it will need a new model. This action cannot be undone."
+        confirmLabel="Delete model"
+        onConfirm={confirmDeleteModel}
+        onClose={() => setDeleteModelTarget(null)}
+      />
     </div>
   );
 }

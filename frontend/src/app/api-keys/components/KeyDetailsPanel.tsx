@@ -1,13 +1,11 @@
 "use client";
 
 import { memo, useState } from "react";
-import { AnimatePresence } from "framer-motion";
 import { Activity, KeyRound, Network, Pencil } from "lucide-react";
 import { Badge, Button, DetailPanel } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { KeyAnalytics } from "./KeyAnalytics";
 import { NetworkPanel } from "./NetworkPanel";
-import { DrawerBackdrop, useEscapeClose } from "./KeyEditDrawer";
 import { ApiKeyStatusPill, apiKeyStatus, fmtDateTime } from "./StatusPill";
 import type { ApiKey } from "@/types/apiKeys";
 
@@ -48,31 +46,18 @@ interface KeyDetailsPanelProps {
 /**
  * Read-only key console: identity summary plus Analytics and Network tabs.
  * All editing moved to KeyEditDrawer — this panel renders no inputs.
+ * Chrome (backdrop, Escape, focus trap) comes from the shared DetailPanel.
  */
 export function KeyDetailsPanel({ apiKey, open, onClose, onEdit }: KeyDetailsPanelProps) {
-  useEscapeClose(open && !!apiKey, onClose);
+  if (!apiKey) return null;
   return (
-    <>
-      <AnimatePresence>
-        {open && apiKey && (
-          <DrawerBackdrop
-            key="details-backdrop"
-            onClose={onClose}
-            zIndex={30}
-            testId="key-details-backdrop"
-          />
-        )}
-      </AnimatePresence>
-      {apiKey && (
-        <KeyDetailsContent
-          key={apiKey.id}
-          apiKey={apiKey}
-          open={open}
-          onClose={onClose}
-          onEdit={onEdit}
-        />
-      )}
-    </>
+    <KeyDetailsContent
+      key={apiKey.id}
+      apiKey={apiKey}
+      open={open}
+      onClose={onClose}
+      onEdit={onEdit}
+    />
   );
 }
 
@@ -116,6 +101,8 @@ const KeyDetailsContent = memo(function KeyDetailsContent({
         ) : undefined
       }
       testId="key-details-panel"
+      backdropTestId="key-details-backdrop"
+      label={`Details for ${apiKey.name}`}
     >
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">

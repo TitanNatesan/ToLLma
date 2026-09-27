@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -16,14 +17,39 @@ from tollms.api.messages.schemas import (
     MessageVersionRead,
 )
 from tollms.core.exceptions import NotFoundError, ValidationError
+from tollms.models.attachment import Attachment
 from tollms.models.conversation import Conversation
 from tollms.models.message import Message, MessageStatus, Role
 from tollms.models.message_history import GenerationRun, MessageVersion
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
 from tollms.services import search as search_engine
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.manager import cache_delete_sync, cache_invalidate_sync
 
 logger = logging.getLogger(__name__)
+
+
+def _invalidate_conversation_caches(conversation_id: uuid.UUID, user_id: uuid.UUID | None) -> None:
+    """Drop usage/aggregate/search caches after a message mutation.
+
+    usage_totals is keyed per (conversation, user) and deleted exactly;
+    analytics + search-results use the existing pattern namespaces.
+    Best-effort: cache failures never fail the mutation.
+    """
+    try:
+        cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
+    except Exception:
+        logger.warning("usage_totals invalidation failed: %s", conversation_id, exc_info=True)
+    if user_id is None:
+        return
+    try:
+        cache_invalidate_sync(
+            cache_keys.analytics_pattern(user_id),
+            cache_keys.search_pattern(user_id),
+        )
+    except Exception:
+        logger.warning("aggregate cache invalidation failed: %s", conversation_id, exc_info=True)
 
 
 def _versions(db: Session, message_id: uuid.UUID) -> list[MessageVersion]:
@@ -140,6 +166,7 @@ def edit_message(
 
     search_engine.index_message(db, message)
     db.commit()
+    _invalidate_conversation_caches(message.conversation_id, user_id)
 
     following = db.execute(
         select(Message)
@@ -172,6 +199,10 @@ async def regenerate_message(
     session_factory=None,
     session_id: str | None = None,
 ):
+    # Fail-closed ownership check + drop stale aggregates up front; the
+    # generation engine re-invalidates on completion for the final totals.
+    message = get_message(db, message_id, user_id)
+    _invalidate_conversation_caches(message.conversation_id, user_id)
     return await start_regeneration(
         db,
         message_id,
@@ -216,6 +247,7 @@ def activate_generation(
     db.refresh(message)
     search_engine.index_message(db, message)
     db.commit()
+    _invalidate_conversation_caches(message.conversation_id, user_id)
     return message, run
 
 
@@ -225,10 +257,12 @@ def delete_message(db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None
     from tollms.models.search_index import ConversationSearchEntry
 
     message = get_message(db, message_id, user_id)
+    conversation_id = message.conversation_id
     message.is_deleted = True
     db.execute(sql_delete(ConversationSearchEntry).where(ConversationSearchEntry.message_id == message.id))
     db.commit()
     search_engine._invalidate(message.user_id)
+    _invalidate_conversation_caches(conversation_id, user_id)
 
 
 def create_branch(
@@ -258,37 +292,127 @@ def create_branch(
     db.add(branch)
     db.flush()
 
-    copied = [
-        message
-        for message in list_messages(db, source.id, user_id)
-        if message.created_at <= cutoff.created_at and message.id != cutoff.id
-    ]
-    for message in copied:
-        db.add(
-            Message(
-                user_id=message.user_id,
-                conversation_id=branch.id,
-                role=message.role,
-                content=message.content,
-                provider_id=message.provider_id,
-                model_id=message.model_id,
-                status=message.status,
-                started_at=message.started_at,
-                completed_at=message.completed_at,
-                thinking_ms=message.thinking_ms,
-                prompt_tokens=message.prompt_tokens,
-                completion_tokens=message.completion_tokens,
-                total_tokens=message.total_tokens,
-                input_cost=message.input_cost,
-                output_cost=message.output_cost,
-                total_cost=message.total_cost,
-                latency_ms=message.latency_ms,
-            )
+    # Copy policy: fork every non-deleted source message up to AND including
+    # the cutoff, ordered deterministically by (created_at, id). Attachments
+    # are re-linked to the new message ids and share the same storage_path
+    # bytes (no byte duplication). message_versions + generation_runs are
+    # copied with their original version/generation numbers. New rows get
+    # fresh ids/timestamps; client_key is never copied (unique per user).
+    ordered = sorted(
+        list_messages(db, source.id, user_id),
+        key=lambda m: (m.created_at, m.id),
+    )
+    position = next((i for i, m in enumerate(ordered) if m.id == cutoff.id), None)
+    if position is None:
+        raise ValidationError("message does not belong to this conversation")
+    copied = ordered[: position + 1]
+
+    old_ids = [message.id for message in copied]
+    attachments_by_message: dict[uuid.UUID, list[Attachment]] = {}
+    for row in db.execute(
+        select(Attachment)
+        .where(Attachment.message_id.in_(old_ids), Attachment.is_deleted.is_(False))
+        .order_by(Attachment.created_at, Attachment.id)
+    ).scalars():
+        if row.message_id is not None:
+            attachments_by_message.setdefault(row.message_id, []).append(row)
+    versions_by_message: dict[uuid.UUID, list[MessageVersion]] = {}
+    for row in db.execute(
+        select(MessageVersion)
+        .where(MessageVersion.message_id.in_(old_ids))
+        .order_by(MessageVersion.version_number.asc())
+    ).scalars():
+        versions_by_message.setdefault(row.message_id, []).append(row)
+    runs_by_message: dict[uuid.UUID, list[GenerationRun]] = {}
+    for row in db.execute(
+        select(GenerationRun)
+        .where(GenerationRun.message_id.in_(old_ids))
+        .order_by(GenerationRun.generation_number.asc())
+    ).scalars():
+        runs_by_message.setdefault(row.message_id, []).append(row)
+
+    id_map: dict[uuid.UUID, uuid.UUID] = {}
+    for position, message in enumerate(copied):
+        # Explicit created_at: one transaction shares a single now(), so ties
+        # would fall back to UUID order and scramble history. Source time plus
+        # a monotonic microsecond offset keeps fidelity and the resolved order.
+        fresh = Message(
+            user_id=message.user_id,
+            conversation_id=branch.id,
+            created_at=message.created_at + timedelta(microseconds=position),
+            role=message.role,
+            content=message.content,
+            provider_id=message.provider_id,
+            model_id=message.model_id,
+            status=message.status,
+            started_at=message.started_at,
+            completed_at=message.completed_at,
+            thinking_ms=message.thinking_ms,
+            prompt_tokens=message.prompt_tokens,
+            completion_tokens=message.completion_tokens,
+            total_tokens=message.total_tokens,
+            input_cost=message.input_cost,
+            output_cost=message.output_cost,
+            total_cost=message.total_cost,
+            latency_ms=message.latency_ms,
         )
+        db.add(fresh)
+        db.flush()
+        id_map[message.id] = fresh.id
+    for old_id, rows in attachments_by_message.items():
+        for position, row in enumerate(rows):
+            db.add(
+                Attachment(
+                    user_id=row.user_id,
+                    conversation_id=branch.id,
+                    message_id=id_map[old_id],
+                    # Same tie-break as messages: explicit timestamp keeps the
+                    # per-message attachment order stable on read.
+                    created_at=row.created_at + timedelta(microseconds=position),
+                    filename=row.filename,
+                    mime_type=row.mime_type,
+                    kind=row.kind,
+                    file_size=row.file_size,
+                    storage_path=row.storage_path,
+                    extracted_text=row.extracted_text,
+                )
+            )
+    for old_id, rows in versions_by_message.items():
+        for row in rows:
+            db.add(
+                MessageVersion(
+                    message_id=id_map[old_id],
+                    user_id=row.user_id,
+                    version_number=row.version_number,
+                    content=row.content,
+                    edited_by=row.edited_by,
+                )
+            )
+    for old_id, rows in runs_by_message.items():
+        for row in rows:
+            db.add(
+                GenerationRun(
+                    message_id=id_map[old_id],
+                    user_id=row.user_id,
+                    generation_number=row.generation_number,
+                    provider_id=row.provider_id,
+                    model_id=row.model_id,
+                    content=row.content,
+                    status=row.status,
+                    is_active=row.is_active,
+                    prompt_tokens=row.prompt_tokens,
+                    completion_tokens=row.completion_tokens,
+                    total_tokens=row.total_tokens,
+                    total_cost=row.total_cost,
+                    latency_ms=row.latency_ms,
+                    error=row.error,
+                )
+            )
     db.commit()
     db.refresh(branch)
     search_engine.index_conversation(db, branch)
     db.commit()
+    _invalidate_conversation_caches(source.id, user_id)
     logger.info("branch created: %s from %s at message %s", branch.id, source.id, cutoff.id)
     return branch
 

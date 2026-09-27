@@ -97,11 +97,31 @@ def trailing_costs(db: Session, window: Any, *, key_id: Any = None) -> dict[str,
     return {"today": _t(row[0]), "last_7d": _t(row[1]), "last_30d": _t(row[2])}
 
 
+def projected_run_rate(
+    total: Decimal,
+    start: Any,
+    end: Any,
+    *,
+    month_days: int | None = None,
+    quantum: Decimal = _MONEY,
+) -> Decimal:
+    """Run-rate extrapolation: window spend per day x days in the month.
+
+    This is a straight linear run-rate, not a prediction — it assumes the
+    window's daily spend continues unchanged and carries no seasonality,
+    trend or confidence interval. Callers pass their own ``month_days`` and
+    ``quantum`` so each surface keeps its historical month basis and
+    rounding (gateway 6dp, chat/admin 4dp).
+    """
+    days = max((end - start).total_seconds() / 86400, 1.0)
+    if month_days is None:
+        month_days = calendar.monthrange(end.year, end.month)[1]
+    return (total / Decimal(str(days)) * month_days).quantize(quantum)
+
+
 def projected_month_cost(total: Decimal, window: Any) -> Decimal:
     """Linear month projection: window spend per day x days in the month."""
-    days = max((window.end - window.start).total_seconds() / 86400, 1.0)
-    month_days = calendar.monthrange(window.end.year, window.end.month)[1]
-    return (total / Decimal(str(days)) * month_days).quantize(_MONEY)
+    return projected_run_rate(total, window.start, window.end)
 
 
 def cost_payload(
@@ -113,13 +133,19 @@ def cost_payload(
     requests_total: int,
     expensive: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Cost section matching the frozen platform/detail contract (0-safe)."""
+    """Cost section matching the frozen platform/detail contract (0-safe).
+
+    ``run_rate_projection`` aliases ``projected_month``: a linear run-rate,
+    not a prediction (see :func:`projected_run_rate`).
+    """
+    projected = projected_month_cost(total, window)
     return {
         "total": total,
         "today": trailing["today"],
         "last_7d": trailing["last_7d"],
         "last_30d": trailing["last_30d"],
-        "projected_month": projected_month_cost(total, window),
+        "projected_month": projected,
+        "run_rate_projection": projected,
         "cost_per_request": (total / requests_total).quantize(_RATE) if requests_total else Decimal(0),
         "cost_per_token": (total / tokens_total).quantize(_RATE) if tokens_total else Decimal(0),
         "most_expensive_request": expensive,

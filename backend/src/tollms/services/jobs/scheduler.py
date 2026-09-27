@@ -285,6 +285,79 @@ def _deletion_job() -> None:
             db.close()
 
 
+def _orphan_sweep_job() -> None:
+    """Hard-delete staged/empty conversations older than orphan_sweep_days.
+
+    Only zero-message rows (no live messages at all); messaged rows are never
+    touched, and soft-deleted rows are left to the account-deletion ledger
+    (Phase 7 owns purge/ledger semantics — this job writes no PurgeAuditLog
+    rows). Counts go to the ops log as the audit trail.
+    """
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from tollms.core.config import get_settings
+    from tollms.models.attachment import Attachment
+    from tollms.models.conversation import Conversation
+    from tollms.models.message import Message
+    from tollms.services.gateway.attachments import delete_bytes
+
+    with locked_sync(cache_keys.LOCK_SCHEDULER, cache_ttl.LOCK_SCHEDULER * 1000) as acquired:
+        if not acquired:
+            logger.warning("orphan sweep skipped: lock held")
+            return
+        db = SessionLocal()
+        try:
+            days = get_settings().orphan_sweep_days
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            messaged = select(Message.conversation_id).where(Message.is_deleted.is_(False))
+            orphans = db.scalars(
+                select(Conversation).where(
+                    Conversation.is_deleted.is_(False),
+                    Conversation.created_at < cutoff,
+                    Conversation.id.notin_(messaged),
+                )
+            ).all()
+            orphan_ids = [row.id for row in orphans]
+            paths = (
+                [
+                    row[0]
+                    for row in db.execute(
+                        select(Attachment.storage_path).where(
+                            Attachment.conversation_id.in_(orphan_ids or [None])
+                        )
+                    ).all()
+                ]
+                if orphan_ids
+                else []
+            )
+            for row in orphans:
+                db.delete(row)
+            db.commit()
+            removed_bytes = 0
+            for relpath in paths:
+                try:
+                    delete_bytes(relpath)
+                    removed_bytes += 1
+                except Exception:
+                    logger.warning("orphan sweep: byte delete failed", exc_info=True)
+            logger.info(
+                "orphan sweep finished: conversations=%d attachments=%d bytes_removed=%d older_than_days=%d",
+                len(orphan_ids),
+                len(paths),
+                removed_bytes,
+                days,
+            )
+        except Exception:
+            db.rollback()
+            logger.exception("orphan sweep crashed")
+        finally:
+            db.close()
+
+
 def start() -> None:
     """Start the operations scheduler. Idempotent; skipped under pytest."""
     global _scheduler
@@ -295,9 +368,10 @@ def start() -> None:
     sched.add_job(_usage_rollup_job, "interval", hours=1, id="usage-rollup", replace_existing=True)
     sched.add_job(_cleanup_job, "interval", days=1, id="ops-cleanup", replace_existing=True)
     sched.add_job(_deletion_job, "interval", days=1, id="account-deletion", replace_existing=True)
+    sched.add_job(_orphan_sweep_job, "interval", days=1, id="orphan-sweep", replace_existing=True)
     sched.start()
     _scheduler = sched
-    logger.info("operations scheduler started (health 5m, rollup 1h, cleanup 1d, deletion 1d)")
+    logger.info("operations scheduler started (health 5m, rollup 1h, cleanup 1d, deletion 1d, orphan-sweep 1d)")
 
 
 def shutdown() -> None:

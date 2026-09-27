@@ -7,6 +7,7 @@ import { useGlobalShortcuts } from "@/hooks/useShortcuts";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { VerificationBanner } from "./VerificationBanner";
+import { OfflineBanner } from "./OfflineBanner";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { open: cmdOpen, setOpen: setCmdOpen } = useCommandPalette();
@@ -40,6 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Main Workspace: page content */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <OfflineBanner />
         <VerificationBanner />
         {children}
       </div>

@@ -1,7 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { memo, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -12,9 +11,17 @@ import {
   Network,
   ShieldCheck,
   SlidersHorizontal,
-  X,
 } from "lucide-react";
-import { Button, Input, Separator, Switch, Textarea } from "@/components/ui";
+import {
+  Button,
+  DetailPanel,
+  DrawerBackdrop,
+  Input,
+  Separator,
+  Switch,
+  Textarea,
+  useEscapeClose,
+} from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { useModels } from "@/hooks/useRegistry";
 import {
@@ -39,53 +46,11 @@ import type {
 } from "@/types/apiKeys";
 
 // ---------------------------------------------------------------------------
-// Shared drawer chrome (also used by the analytics drawer in KeyDetailsPanel)
+// Shared drawer chrome lives in @/components/ui (DetailPanel). The aliases
+// below preserve the historic import path used by sibling drawers.
 // ---------------------------------------------------------------------------
 
-/** Close the drawer on Escape. No-op while closed. */
-export function useEscapeClose(open: boolean, onClose: () => void) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-}
-
-/**
- * Dimmed backdrop shared by both key drawers: fixed full-viewport,
- * 8px blur over rgba(0,0,0,.35), fade transition, click-to-close.
- */
-export function DrawerBackdrop({
-  onClose,
-  zIndex = 30,
-  testId = "drawer-backdrop",
-}: {
-  onClose: () => void;
-  zIndex?: number;
-  testId?: string;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      onClick={onClose}
-      aria-hidden="true"
-      data-testid={testId}
-      className="fixed inset-0"
-      style={{
-        zIndex,
-        backgroundColor: "rgba(0,0,0,.35)",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
-      }}
-    />
-  );
-}
+export { DrawerBackdrop, useEscapeClose };
 
 // ---------------------------------------------------------------------------
 // Expiration helpers (parity with KeyForm presets; edit drawer owns its copy)
@@ -150,31 +115,15 @@ export interface KeyEditDrawerProps {
  * each through its own endpoint (metadata PATCH, policy/IP/models PUT).
  */
 export function KeyEditDrawer({ apiKey, open, onClose, onSaved }: KeyEditDrawerProps) {
-  useEscapeClose(open && !!apiKey, onClose);
-  const show = open && !!apiKey;
+  if (!apiKey) return null;
   return (
-    <>
-      <AnimatePresence>
-        {show && (
-          <DrawerBackdrop
-            key="edit-backdrop"
-            onClose={onClose}
-            zIndex={45}
-            testId="key-edit-backdrop"
-          />
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {show && (
-          <KeyEditContent
-            key={apiKey.id}
-            apiKey={apiKey}
-            onClose={onClose}
-            onSaved={onSaved}
-          />
-        )}
-      </AnimatePresence>
-    </>
+    <KeyEditContent
+      key={apiKey.id}
+      apiKey={apiKey}
+      open={open}
+      onClose={onClose}
+      onSaved={onSaved}
+    />
   );
 }
 
@@ -183,10 +132,12 @@ const permKey = (providerId: string | null | undefined, modelId: string | null |
 
 const KeyEditContent = memo(function KeyEditContent({
   apiKey,
+  open,
   onClose,
   onSaved,
 }: {
   apiKey: ApiKey;
+  open: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -335,41 +286,41 @@ const KeyEditContent = memo(function KeyEditContent({
   }
 
   return (
-    <motion.aside
-      initial={{ x: "100%", opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: "100%", opacity: 0 }}
-      transition={{ type: "spring", damping: 25, stiffness: 300 }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Edit ${apiKey.name}`}
-          data-testid="key-edit-drawer"
-          className="fixed inset-y-0 right-0 z-50 flex w-[min(94vw,560px)] flex-col border-l border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
-        >
-          <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-            <div className="flex min-w-0 items-center gap-2">
-              <KeyRound className="size-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Edit {apiKey.name}
-                </h2>
-                <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                  {apiKey.masked}
-                </p>
-              </div>
-              <ApiKeyStatusPill status={status} />
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close edit drawer"
-              className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-
-          <div className="flex-1 space-y-5 overflow-y-auto p-4">
+    <DetailPanel
+      open={open}
+      onClose={onClose}
+      title={
+        <span className="flex items-center gap-2">
+          <KeyRound className="size-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
+          Edit {apiKey.name}
+        </span>
+      }
+      subtitle={<span className="font-mono">{apiKey.masked}</span>}
+      actions={<ApiKeyStatusPill status={status} />}
+      width="min(94vw,560px)"
+      testId="key-edit-drawer"
+      backdropTestId="key-edit-backdrop"
+      zIndex={50}
+      label={`Edit ${apiKey.name}`}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={reset} disabled={saving || !isDirty}>
+            Reset
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => void save()}
+            disabled={saving || !isDirty || parsedIp.invalid.length > 0}
+            data-testid="key-edit-save"
+            className={cn(!isDirty && "opacity-70")}
+          >
+            {saving && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+            Save changes
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-5">
             <Section
               icon={KeyRound}
               title="General"
@@ -552,23 +503,7 @@ const KeyEditContent = memo(function KeyEditContent({
                 {error}
               </p>
             )}
-          </div>
-
-          <div className="flex justify-end gap-2 border-t border-zinc-200 bg-white/95 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/95">
-            <Button variant="outline" size="sm" onClick={reset} disabled={saving || !isDirty}>
-              Reset
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => void save()}
-              disabled={saving || !isDirty || parsedIp.invalid.length > 0}
-              data-testid="key-edit-save"
-              className={cn(!isDirty && "opacity-70")}
-            >
-              {saving && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
-              Save changes
-            </Button>
-          </div>
-        </motion.aside>
+      </div>
+    </DetailPanel>
   );
 });

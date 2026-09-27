@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from tollms.core.exceptions import ValidationError
 from tollms.models.api_key import ApiRequestLog
 from tollms.services.analytics import AnalyticsWindow
+from tollms.services.analytics import presets as preset_vocab
 from tollms.services.analytics.costs import cost_columns, cost_from_row
 from tollms.services.analytics.latency import latency_columns, performance_from_row
 from tollms.services.analytics.tokens import token_columns, tokens_from_row
@@ -81,7 +82,9 @@ def resolve_window(
 ) -> AnalyticsWindow:
     """Resolve a preset (or custom bounds) into UTC instants + comparison window.
 
-    Unknown presets fall back to :data:`DEFAULT_PRESET`. ``custom`` requires
+    Legacy aliases from the other analytics surfaces are accepted via the
+    shared preset vocabulary (``services/analytics/presets``); unknown
+    presets fall back to :data:`DEFAULT_PRESET`. ``custom`` requires
     both bounds and ``end`` is inclusive (the window ends at the following
     local midnight).
     """
@@ -92,7 +95,7 @@ def resolve_window(
     def midnight(day: date) -> datetime:
         return datetime.combine(day, time.min, tzinfo=zone).astimezone(timezone.utc)
 
-    resolved = preset if preset in PRESETS else DEFAULT_PRESET
+    resolved = preset_vocab.normalize(preset, family="gateway")
     if resolved == "24h":
         start_at, end_at = moment - timedelta(hours=24), moment
     elif resolved == "7d":

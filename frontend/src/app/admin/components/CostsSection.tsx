@@ -55,9 +55,9 @@ export function CostsSection({ data }: { data: AdminCosts }) {
           testId="admin-costs-total"
         />
         <KpiCard
-          label="Projected month"
-          value={fmtMoney(data.projected_month_cost)}
-          sub="Based on the current run rate"
+          label="Run-rate projection"
+          value={fmtMoney(data.run_rate_projection ?? data.projected_month_cost)}
+          sub="Run-rate, not a prediction · based on the current pace"
           icon={<TrendingUp className="size-4" />}
           testId="admin-costs-projected"
         />

@@ -16,6 +16,7 @@ Three independent layers:
 
 import ast
 import io
+import re
 import tokenize
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -61,7 +62,11 @@ ADMIN_ENDPOINTS = (
     "/api/admin/media",
     "/api/admin/errors",
     "/api/admin/health",
+    "/api/admin/api-keys",
 )
+# SSE telemetry: not a JSON object, so it is scanned from its first streamed
+# frame (see `_first_sse_frame_text`) rather than from a buffered response.
+STREAM_PATH = "/api/admin/health/stream"
 
 WINDOW = {"preset": "last_7d", "timezone": "UTC", "limit": 50}
 
@@ -78,6 +83,24 @@ CONTENT_MARKERS = (
 
 
 # --- layer 1: static scan ----------------------------------------------------
+
+
+# The API-key inventory identifiers (`api_keys` module/engine/service names,
+# `apikeys` engine alias, `ApiKey(s)` model/schema names) are aggregate
+# plumbing, not secret reads — strip them before the `api_key` substring
+# check so a bare singular `api_key` (an actual credential read) still trips
+# the scanner while the inventory modules stop false-positive matching.
+_API_KEY_INVENTORY_RE = re.compile(r"api_keys|apikeys|ApiKeys?|API_KEYS?")
+
+
+def _scan_text(relative: str, scanned: str) -> list[str]:
+    """Banned-substring offenders for one masked module source."""
+    offenders: list[str] = []
+    for banned in BANNED_SUBSTRINGS:
+        haystack = _API_KEY_INVENTORY_RE.sub(" ", scanned) if banned == "api_key" else scanned
+        if banned in haystack:
+            offenders.append(f"{relative}: contains {banned!r}")
+    return offenders
 
 
 def _masked_source(source: str) -> str:
@@ -129,14 +152,43 @@ def test_admin_modules_never_touch_private_content_or_credentials() -> None:
     for directory in ADMIN_DIRS:
         for path in sorted(directory.rglob("*.py")):
             scanned = _masked_source(path.read_text(encoding="utf-8"))
-            for banned in BANNED_SUBSTRINGS:
-                if banned in scanned:
-                    offenders.append(f"{path.relative_to(BACKEND_ROOT)}: contains {banned!r}")
+            offenders.extend(_scan_text(str(path.relative_to(BACKEND_ROOT)), scanned))
 
     assert not offenders, (
         "admin modules must never read message content, prompts, responses, "
         "attachment bytes/storage paths or provider credentials:\n" + "\n".join(offenders)
     )
+
+
+def test_scanner_allows_inventory_identifiers() -> None:
+    """Negative control: the `api_keys` inventory plumbing is not a violation."""
+    snippet = _masked_source(
+        "from tollms.services.admin import api_keys as api_keys_service\n"
+        "from tollms.services.analytics import apikeys as apikeys_engine\n"
+        "from tollms.api.admin.schemas import AdminApiKeys, AdminApiKeyUsageRow\n"
+        "def api_keys(db, window):\n"
+        "    rows = apikeys_engine.key_breakdown(db, window)\n"
+        "    model = ApiKey(name='x')\n"
+        "    return api_keys_service.api_keys(db, window)\n"
+    )
+    assert _scan_text("synthetic_inventory.py", snippet) == []
+
+
+def test_scanner_still_flags_true_violations() -> None:
+    """Positive control: real content/credential reads still trip the scanner."""
+    snippet = _masked_source(
+        "text = Message.content\n"
+        "title = conversation.title\n"
+        "raw = decrypt(provider.credentials_encrypted)\n"
+        "key = creds['api_key']\n"
+        "blob = row.storage_path\n"
+    )
+    offenders = _scan_text("synthetic_offender.py", snippet)
+    flagged = {o.rsplit("contains", 1)[-1].strip() for o in offenders}
+    for banned in ("'Message.content'", "'conversation.title'", "'decrypt'", "'api_key'", "'storage_path'"):
+        assert banned in flagged, f"scanner missed {banned}: {offenders}"
+    # `credentials` is covered through the decrypt line's attribute access.
+    assert "'credentials'" in flagged, f"scanner missed 'credentials': {offenders}"
 
 
 # --- seeding -----------------------------------------------------------------
@@ -193,6 +245,72 @@ def _seed_markers(client: TestClient, db: Session, user_factory, provider_factor
 # --- layer 2 + 3: runtime response scan --------------------------------------
 
 
+def _first_sse_frame_text(client: TestClient) -> str:
+    """First streamed frame of the admin health stream as raw SSE text.
+
+    `TestClient` buffers a response until the app returns, which an
+    open-ended SSE stream never does, so this drives the real ASGI interface
+    through the TestClient portal and disconnects after the first frame.
+    """
+    import asyncio
+    from typing import Any
+
+    from tollms.main import app
+
+    cookie = "; ".join(f"{name}={value}" for name, value in client.cookies.items())
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": STREAM_PATH,
+        "raw_path": STREAM_PATH.encode("latin-1"),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"cookie", cookie.encode("latin-1")),
+        ],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    events: list[dict[str, Any]] = []
+    queue: asyncio.Queue = asyncio.Queue()
+    queue.put_nowait({"type": "http.request", "body": b"", "more_body": False})
+
+    async def receive() -> dict[str, Any]:
+        return await queue.get()
+
+    async def send(message: dict[str, Any]) -> None:
+        events.append(message)
+        if message["type"] == "http.response.body" and message.get("body"):
+            queue.put_nowait({"type": "http.disconnect"})
+
+    async def run() -> None:
+        await app(scope, receive, send)
+
+    assert client.portal is not None
+    client.portal.call(run)
+    start = next(e for e in events if e["type"] == "http.response.start")
+    assert start["status"] == 200, f"{STREAM_PATH}: {start['status']}"
+    return b"".join(
+        e.get("body", b"") for e in events if e["type"] == "http.response.body"
+    ).decode()
+
+
+def _first_sse_payload(client: TestClient) -> dict:
+    """First streamed frame parsed as JSON (`data: {...}`)."""
+    import json
+
+    text = _first_sse_frame_text(client)
+    frames = [frame for frame in text.split("\n\n") if frame]
+    assert frames and frames[0].startswith("data: "), f"{STREAM_PATH}: no SSE frame streamed"
+    payload = json.loads(frames[0][len("data: "):])
+    assert isinstance(payload, dict)
+    return payload
+
+
 def test_admin_responses_never_leak_content_or_credentials(
     client: TestClient, db: Session, user_factory, provider_factory, model_factory
 ) -> None:
@@ -203,6 +321,12 @@ def test_admin_responses_never_leak_content_or_credentials(
         assert r.status_code == 200, f"{path}: {r.status_code}: {r.text}"
         for marker in (*CONTENT_MARKERS, CREDENTIAL_MARKER):
             assert marker not in r.text, f"{path} leaked private data marker {marker!r}"
+
+    # The stream is live server/process telemetry, never content — scan its
+    # first frame the same way.
+    text = _first_sse_frame_text(client)
+    for marker in (*CONTENT_MARKERS, CREDENTIAL_MARKER):
+        assert marker not in text, f"{STREAM_PATH} leaked private data marker {marker!r}"
 
 
 def _walk_keys(value, prefix: str = ""):
@@ -229,5 +353,10 @@ def test_admin_responses_have_no_content_shaped_keys(
             leaf = dotted.rsplit(".", 1)[-1].split("[", 1)[0]
             if leaf in BANNED_KEYS:
                 offenders.append(f"{path}: {dotted}")
+
+    for dotted in _walk_keys(_first_sse_payload(client)):
+        leaf = dotted.rsplit(".", 1)[-1].split("[", 1)[0]
+        if leaf in BANNED_KEYS:
+            offenders.append(f"{STREAM_PATH}: {dotted}")
 
     assert not offenders, "admin responses must be aggregate-only:\n" + "\n".join(offenders)

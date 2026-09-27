@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from tollms.core.deps import get_db
 from tollms.core.exceptions import (
     ApplicationException,
+    AccountPendingDeletionError,
     AuthenticationError,
     ErrorCode,
     ForbiddenError,
@@ -209,6 +210,10 @@ def api_key_required(request: Request, db: Session = Depends(get_db)) -> KeyCont
     ctx = authenticate(db, raw)
     if ctx is None:
         raise AuthenticationError("invalid API key")
+    if ctx.owner_is_deleted or not ctx.owner_is_active:
+        raise ForbiddenError("API key owner account is disabled")
+    if ctx.owner_pending_deletion:
+        raise AccountPendingDeletionError("Account scheduled for deletion.")
     if not ctx.enabled:
         raise ForbiddenError("API key is disabled")
     if ctx.is_expired():
@@ -340,7 +345,13 @@ def _log_request(
 
 
 def _record_usage(
-    ctx: KeyContext, provider: Provider, model: AIModel, *, tokens: int, cost: Decimal
+    ctx: KeyContext,
+    provider: Provider,
+    model: AIModel,
+    *,
+    tokens: int,
+    cost: Decimal,
+    request_id: str | None = None,
 ) -> None:
     try:
         record_usage(
@@ -349,9 +360,18 @@ def _record_usage(
             cost=cost,
             provider_id=provider.id,
             model_id=model.id,
+            request_id=request_id,
         )
     except Exception:
         logger.warning("public gateway: record_usage failed", exc_info=True)
+
+
+def _release_reservation(prepared: "_Prepared") -> None:
+    """Refund the pre-flight reservation when a call ends with no billable usage."""
+    _record_usage(
+        prepared.ctx, prepared.provider, prepared.model,
+        tokens=0, cost=Decimal(0), request_id=prepared.meta.request_id,
+    )
 
 
 # --- request preparation -----------------------------------------------------------
@@ -391,6 +411,54 @@ def _require_capability(model, endpoint: str) -> None:
         raise ForbiddenError(f"model_not_allowed: {model.model_id} lacks {flag} for {endpoint}")
 
 
+# Reasoning request markers that mean "thinking off" (adapters omit thinking
+# fields for these, so they must not trip the supports_reasoning gate).
+_REASONING_OFF_LEVELS = frozenset({"none", "default"})
+
+
+def _reasoning_requested(unified: UnifiedRequest) -> bool:
+    """True when the client asked for reasoning output on this chat call."""
+    level = unified.reasoning_level or (unified.raw or {}).get("reasoning_level")
+    if isinstance(level, str) and level.strip() and level.strip().lower() not in _REASONING_OFF_LEVELS:
+        return True
+    raw = unified.raw or {}
+    for key in ("reasoning_effort", "reasoning", "thinking", "effort"):
+        value = raw.get(key)
+        if value:
+            return True
+    return False
+
+
+def _require_chat_capabilities(model, unified: UnifiedRequest) -> None:
+    """Gate chat features on model flags. Same 403 shape as the media gate.
+
+    Defaults keep existing callers working: text and streaming are assumed
+    unless the model opts out; tools/vision/reasoning are assumed absent
+    unless the model declares them.
+    """
+    if not getattr(model, "supports_text", True):
+        raise ForbiddenError(
+            f"model_not_allowed: {model.model_id} lacks supports_text for {unified.endpoint}"
+        )
+    if unified.tools and not getattr(model, "supports_tool_calling", False):
+        raise ForbiddenError(
+            f"model_not_allowed: {model.model_id} lacks supports_tool_calling for {unified.endpoint}"
+        )
+    if any(part.kind == "image" for message in unified.messages for part in message.media):
+        if not getattr(model, "supports_vision", False):
+            raise ForbiddenError(
+                f"model_not_allowed: {model.model_id} lacks supports_vision for {unified.endpoint}"
+            )
+    if _reasoning_requested(unified) and not getattr(model, "supports_reasoning", False):
+        raise ForbiddenError(
+            f"model_not_allowed: {model.model_id} lacks supports_reasoning for {unified.endpoint}"
+        )
+    if unified.stream and not getattr(model, "supports_streaming", True):
+        raise ForbiddenError(
+            f"model_not_allowed: {model.model_id} lacks supports_streaming for {unified.endpoint}"
+        )
+
+
 def _prepare(
     db: Session, ctx: KeyContext, unified: UnifiedRequest, meta: ClientMeta
 ) -> _Prepared:
@@ -400,12 +468,15 @@ def _prepare(
     if not ctx.model_allowed(provider.id, model.id):
         raise ForbiddenError("model_not_allowed")
     _require_capability(model, unified.endpoint)
+    if unified.endpoint in CHAT_ENDPOINTS:
+        _require_chat_capabilities(model, unified)
     decision = check_request(
         ctx,
         provider_id=provider.id,
         model_id=model.id,
         estimated_tokens=_prompt_tokens(unified),
         estimated_cost=_estimated_cost(db, provider, model, unified),
+        request_id=meta.request_id,
     )
     if not decision.allowed:
         raise _LimitsDenied(_denied_result(decision))
@@ -478,6 +549,7 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
         _record_usage(
             prepared.ctx, prepared.provider, prepared.model,
             tokens=total, cost=breakdown.total_cost,
+            request_id=prepared.meta.request_id,
         )
         _log_request(
             db, prepared.ctx, prepared.meta, prepared.unified,
@@ -507,6 +579,7 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
     except Exception as exc:
         latency_ms = (time.monotonic() - started) * 1000
         classified = classify_provider_failure(exc)
+        _release_reservation(prepared)
         _log_request(
             db, prepared.ctx, prepared.meta, prepared.unified,
             status="failed",
@@ -569,6 +642,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
         _record_usage(
             prepared.ctx, prepared.provider, prepared.model,
             tokens=0, cost=cost,
+            request_id=prepared.meta.request_id,
         )
         latency_ms = (time.monotonic() - started) * 1000
         _log_request(
@@ -597,6 +671,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
     except Exception as exc:
         latency_ms = (time.monotonic() - started) * 1000
         classified = classify_provider_failure(exc)
+        _release_reservation(prepared)
         _log_request(
             db, prepared.ctx, prepared.meta, unified,
             status="failed",
@@ -873,6 +948,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         _record_usage(
             prepared.ctx, prepared.provider, prepared.model,
             tokens=total, cost=breakdown.total_cost,
+            request_id=prepared.meta.request_id,
         )
         latency_ms = (time.monotonic() - prepared.started) * 1000
         _log_request(
@@ -895,6 +971,21 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             yield frame
     except asyncio.CancelledError:
         if not logged:
+            _release_reservation(prepared)
+            _log_request(
+                db, prepared.ctx, prepared.meta, prepared.unified,
+                status="cancelled",
+                provider_label=prepared.provider_label,
+                model_label=prepared.model_label,
+                latency_ms=(time.monotonic() - prepared.started) * 1000,
+                is_streaming=True,
+            )
+        raise
+    except GeneratorExit:
+        # Client went away while suspended on yield (aclose without cancel):
+        # no frames may be emitted here, but the terminal row still applies.
+        if not logged:
+            _release_reservation(prepared)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="cancelled",
@@ -907,6 +998,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
     except Exception as exc:
         classified = classify_provider_failure(exc)
         if not logged:
+            _release_reservation(prepared)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="failed",

@@ -11,23 +11,23 @@ import { cn } from "@/lib/utils";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarNavigation } from "./SidebarNavigation";
 import { SidebarAdmin, ADMIN_SECTION_IDS, type AdminSectionId } from "./SidebarAdmin";
+import { SidebarSettings, SETTINGS_SECTION_IDS, type SettingsSectionId } from "./SidebarSettings";
 import { SidebarConversations } from "./SidebarConversations";
 import { SidebarProviders } from "./SidebarProviders";
 import { SidebarAnalytics } from "./SidebarAnalytics";
-import { SidebarSettings } from "./SidebarSettings";
 import { SidebarFooter } from "./SidebarFooter";
 
-/** Admin sidebar highlight follows the URL hash (fragment navigation fires hashchange). */
-function subscribeAdminHash(callback: () => void) {
+/** Hash fragment follows for section navigators (fragment navigation fires hashchange). */
+function subscribeSectionHash(callback: () => void) {
   window.addEventListener("hashchange", callback);
   return () => window.removeEventListener("hashchange", callback);
 }
 
-function getAdminHash(): string {
+function getSectionHash(): string {
   return window.location.hash.slice(1);
 }
 
-function getAdminHashServer(): string {
+function getSectionHashServer(): string {
   return "";
 }
 
@@ -35,6 +35,12 @@ function adminSectionFromHash(hash: string): AdminSectionId {
   return (ADMIN_SECTION_IDS as readonly string[]).includes(hash)
     ? (hash as AdminSectionId)
     : "overview";
+}
+
+function settingsSectionFromHash(hash: string): SettingsSectionId {
+  return (SETTINGS_SECTION_IDS as readonly string[]).includes(hash)
+    ? (hash as SettingsSectionId)
+    : "profile";
 }
 
 /**
@@ -53,8 +59,10 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const user = useAuthStore((s) => s.user);
   const isPlatformAdmin = user?.platform_role === "platform_admin";
   const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
-  const adminHash = useSyncExternalStore(subscribeAdminHash, getAdminHash, getAdminHashServer);
+  const adminHash = useSyncExternalStore(subscribeSectionHash, getSectionHash, getSectionHashServer);
   const adminActiveId = adminSectionFromHash(adminHash);
+  const settingsHash = useSyncExternalStore(subscribeSectionHash, getSectionHash, getSectionHashServer);
+  const settingsActiveId = settingsSectionFromHash(settingsHash);
 
   // Navigation links stay hidden until the profile gear toggles them open.
   // navPath records which route the menu was opened on; navigating away
@@ -131,7 +139,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
         ) : isAnalyticsPage ? (
           <SidebarAnalytics />
         ) : isSettingsPage ? (
-          <SidebarSettings />
+          <SidebarSettings activeId={settingsActiveId} />
         ) : (
           <SidebarConversations />
         )}

@@ -209,8 +209,16 @@ def classify_provider_failure(exc: BaseException) -> ApplicationException:
         return ModelNotFoundError(str(exc))
     if status == 429 or "rate limit" in text or "too many requests" in text:
         return RateLimitedError(str(exc))
-    if isinstance(exc, TimeoutError) or "timeout" in text or "timed out" in text:
-        return ProviderTimeoutError(str(exc))
+    # Transport timeouts do not always carry "timeout" in their message
+    # (e.g. httpx.TimeoutException raised with an empty message), so match the
+    # exception class name too. asyncio.TimeoutError is already a TimeoutError.
+    if (
+        isinstance(exc, TimeoutError)
+        or "timeout" in text
+        or "timed out" in text
+        or "timeout" in type(exc).__name__.lower()
+    ):
+        return ProviderTimeoutError(str(exc) or type(exc).__name__)
     if status is not None and 500 <= int(status) < 600:
         return ModelUnavailableError(str(exc))
     return ProviderError(str(exc))

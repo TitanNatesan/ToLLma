@@ -66,7 +66,7 @@ export function MetricGrid({ summary }: { summary: ApiKeyAnalyticsSummary }) {
       { label: "Today", value: fmtCost(cost.today) },
       { label: "Last 7d", value: fmtCost(cost.last_7d) },
       { label: "Last 30d", value: fmtCost(cost.last_30d) },
-      { label: "Projected month", value: fmtCost(cost.projected_month) },
+      { label: "Run-rate projection", value: fmtCost(cost.run_rate_projection ?? cost.projected_month), hint: "Run-rate, not a prediction" },
       { label: "Per request", value: fmtCost(cost.cost_per_request) },
       { label: "Per token", value: fmtUnitCost(cost.cost_per_token) },
       { label: "Most expensive", value: expensiveValue, hint: expensiveHint },

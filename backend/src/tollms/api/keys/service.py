@@ -5,10 +5,18 @@ stay in the reusable engine (`services.api_keys.keys`). Raw keys are returned
 to the caller exactly once and never persisted. Every mutation drops the
 engine's compiled-context cache entry so the gateway cannot serve stale
 permissions.
+
+Freshness: per-key analytics are Valkey-cached for 60s (same scheme as the
+platform/key analytics API — endpoint + user + key + minute-floored range
+end), so recently logged gateway traffic can lag the dashboard by up to a
+minute. CRUD responses are never cached.
 """
 
 import ipaddress
+import hashlib
+import json
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -35,10 +43,15 @@ from tollms.models.api_key import (
     ApiKeyModelPermission,
     ApiKeyPolicy,
     ApiRequestLog,
+    IpRuleType,
 )
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
 from tollms.services.api_keys import keys as key_engine
+from tollms.services.analytics import presets as preset_vocab
+from tollms.services.cache import constants as cache_ttl
+from tollms.services.cache import keys as cache_keys
+from tollms.services.cache.manager import cache_get_sync, cache_set_sync
 
 logger = logging.getLogger(__name__)
 
@@ -98,14 +111,72 @@ def normalize_cidr(value: str) -> str:
 def _validated_ip_rules(items: list[IpRuleIn]) -> list[dict]:
     rules: list[dict] = []
     seen: set[tuple] = set()
+    allow_cidrs: set[str] = set()
+    deny_cidrs: set[str] = set()
     for item in items:
         cidr = normalize_cidr(item.cidr)
         scope = (item.type, cidr)
         if scope in seen:
             raise ValidationError(f"duplicate IP rule: {item.type.value} {cidr}")
         seen.add(scope)
+        if item.type == IpRuleType.ALLOW:
+            allow_cidrs.add(cidr)
+        else:
+            deny_cidrs.add(cidr)
         rules.append({"type": item.type, "cidr": cidr})
+    overlap = allow_cidrs & deny_cidrs
+    if overlap:
+        raise ValidationError(
+            f"CIDR {sorted(overlap)[0]} cannot appear in both allow and deny rules: "
+            "deny rules always win, so the allow entry would never take effect"
+        )
     return rules
+
+
+def _reject_bad_number(value: object, *, field: str) -> None:
+    """422 on NaN or negative budgets/limits. Pydantic already enforces this
+    over HTTP; this guards direct service callers (fail-closed, same code)."""
+    if value is None:
+        return
+    if isinstance(value, float) and math.isnan(value):
+        raise ValidationError(f"{field} must be a valid number")
+    if isinstance(value, Decimal) and value.is_nan():
+        raise ValidationError(f"{field} must be a valid number")
+    if value < 0:  # type: ignore[operator]
+        raise ValidationError(f"{field} must be >= 0")
+
+
+_POLICY_NUMERIC_FIELDS = (
+    "max_budget_usd",
+    "budget_reset_days",
+    "rpm",
+    "rph",
+    "rpd",
+    "tpm",
+    "tpd",
+    "daily_spend_limit",
+    "monthly_spend_limit",
+)
+
+
+def _ensure_future_expires(value: datetime | None, *, field: str) -> None:
+    """422 when an expiry is already in the past. Rejected on create AND on
+    update (deliberate choice over warn-or-allow: a past expiry is almost
+    always a caller bug, and explicit null remains the way to clear it)."""
+    if value is None:
+        return
+    moment = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if moment <= datetime.now(timezone.utc):
+        raise ValidationError(f"{field} must be in the future")
+
+
+def _validated_policy(data: PolicyIn) -> dict:
+    """Numeric + expiry guards for a full policy payload (create and upsert)."""
+    values = data.model_dump()
+    for field in _POLICY_NUMERIC_FIELDS:
+        _reject_bad_number(values.get(field), field=f"policy.{field}")
+    _ensure_future_expires(values.get("expires_at"), field="policy.expires_at")
+    return values
 
 
 def _validated_model_permissions(
@@ -114,6 +185,9 @@ def _validated_model_permissions(
     """Validate scopes exist, belong to the caller, and are unique per key."""
     seen: set[tuple] = set()
     for item in items:
+        _reject_bad_number(item.max_budget, field="model_permissions.max_budget")
+        _reject_bad_number(item.rpm, field="model_permissions.rpm")
+        _reject_bad_number(item.tpm, field="model_permissions.tpm")
         scope = (item.provider_id, item.model_id)
         if scope in seen:
             raise ValidationError("duplicate model permission scope")
@@ -168,6 +242,7 @@ def create_key(db: Session, data: ApiKeyCreate, user_id: uuid.UUID) -> tuple[Api
     """Create a key; returns (row, raw_key) with the raw value shown exactly once."""
     ip_rules = _validated_ip_rules(data.ip_rules)
     permissions = _validated_model_permissions(db, data.model_permissions, user_id)
+    _ensure_future_expires(data.expires_at, field="expires_at")
     raw_key, key_prefix, key_hash = key_engine.generate_key()
     api_key = ApiKey(
         user_id=user_id,
@@ -178,7 +253,7 @@ def create_key(db: Session, data: ApiKeyCreate, user_id: uuid.UUID) -> tuple[Api
         expires_at=data.expires_at,
     )
     if data.policy is not None:
-        api_key.policy = ApiKeyPolicy(**data.policy.model_dump())
+        api_key.policy = ApiKeyPolicy(**_validated_policy(data.policy))
     api_key.ip_rules = [ApiKeyIpRule(**rule) for rule in ip_rules]
     api_key.model_permissions = [ApiKeyModelPermission(**perm) for perm in permissions]
     db.add(api_key)
@@ -199,6 +274,7 @@ def update_key(db: Session, key_id: uuid.UUID, data: ApiKeyUpdate, user_id: uuid
     if fields.get("enabled") is not None:
         key.enabled = fields["enabled"]
     if "expires_at" in fields:
+        _ensure_future_expires(fields["expires_at"], field="expires_at")
         key.expires_at = fields["expires_at"]
     db.commit()
     key_engine.invalidate_context(key_hash)
@@ -214,6 +290,9 @@ def delete_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> None:
     key.deleted_by = user_id
     db.commit()
     key_engine.invalidate_context(key_hash)
+    # Tombstone second: the hash stays dead even if a context was re-cached
+    # in the race window (the deletion-request flow relies on this per key).
+    key_engine.write_tombstone(key_hash)
     logger.info("api key deleted: %s", key_id)
 
 
@@ -227,6 +306,8 @@ def rotate_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> tuple[ApiK
     key.rotation_count += 1
     db.commit()
     key_engine.invalidate_context(old_hash)
+    # The previous hash must never authenticate again, even via a stale cache.
+    key_engine.write_tombstone(old_hash)
     rotated = get_key(db, key_id, user_id)
     logger.info("api key rotated: %s (rotation %d)", key_id, rotated.rotation_count)
     return rotated, raw_key
@@ -236,7 +317,7 @@ def put_policy(db: Session, key_id: uuid.UUID, data: PolicyIn, user_id: uuid.UUI
     """Full-replace upsert: absent fields become NULL (unlimited)."""
     key = get_key(db, key_id, user_id)
     key_hash = key.key_hash
-    values = data.model_dump()
+    values = _validated_policy(data)
     if key.policy is None:
         key.policy = ApiKeyPolicy(**values)
     else:
@@ -282,8 +363,14 @@ def put_model_permissions(
 
 
 def _preset_window(preset: str, now: datetime | None = None) -> tuple[datetime, datetime, str]:
-    """(start, end, bucket granularity) for a supported preset; UTC walls."""
+    """(start, end, bucket granularity) for a supported preset; UTC walls.
+
+    Legacy aliases from the other analytics surfaces are accepted via the
+    shared preset vocabulary; unknown presets (and ``custom``, which takes
+    no date bounds here) still raise (HTTP 422).
+    """
     now = now or datetime.now(timezone.utc)
+    preset = preset_vocab.normalize(preset, family="keys")
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if preset == "today":
         return midnight, now, "hour"
@@ -378,12 +465,50 @@ def _top_countries(db: Session, scope: tuple) -> list[AnalyticsCountryRow]:
     return [AnalyticsCountryRow(country=str(row[0]), requests=int(row[1])) for row in rows]
 
 
+def _analytics_digest(preset: str, end: datetime, key_id: uuid.UUID) -> str:
+    """Stable cache identity: endpoint + canonical preset + minute-floored
+    range end (preset windows end at ``now``) + key."""
+    parts = [
+        "key-analytics",
+        preset,
+        end.replace(second=0, microsecond=0).isoformat(),
+        json.dumps({"key_id": str(key_id)}, sort_keys=True),
+    ]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
 def get_analytics(
     db: Session, key_id: uuid.UUID, user_id: uuid.UUID, preset: str = DEFAULT_PRESET
 ) -> KeyAnalytics:
-    """Grouped per-key roll-up; every query is scoped to the key's owner."""
+    """Grouped per-key roll-up; every query is scoped to the key's owner.
+
+    Valkey-cached for 60s (best-effort: failures fall through to PostgreSQL).
+    """
     key = get_key(db, key_id, user_id)
     start, end, granularity = _preset_window(preset)
+    canonical = preset_vocab.normalize(preset, family="keys")
+    cache_key = cache_keys.analytics(user_id, _analytics_digest(canonical, end, key_id))
+    hit = cache_get_sync(cache_key)
+    if isinstance(hit, dict):
+        try:
+            return KeyAnalytics(**hit)
+        except Exception:  # noqa: BLE001 - corrupt entry rebuilds below
+            logger.warning("keys analytics: corrupt cache entry for key %s", key_id)
+    result = _build_analytics(db, key, user_id, start, end, granularity, canonical)
+    cache_set_sync(cache_key, result.model_dump(mode="json"), ttl=cache_ttl.ANALYTICS)
+    return result
+
+
+def _build_analytics(
+    db: Session,
+    key,  # ApiKey row (ownership already checked)
+    user_id: uuid.UUID,
+    start: datetime,
+    end: datetime,
+    granularity: str,
+    preset: str,
+) -> KeyAnalytics:
+    """Grouped per-key roll-up; every query is scoped to the key's owner."""
     scope = _log_scope(key, user_id, start, end)
 
     requests, tokens, cost, avg_latency, p95_latency, errors = db.execute(

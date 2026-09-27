@@ -23,10 +23,18 @@ no expiry. Daily/monthly spend keys are date-based and reset naturally (UTC).
 Reservations: ``check_request`` INCRs token and cost counters by the estimate;
 ``record_usage`` replaces the estimate with the actual values via an INCRBY
 delta (clamped at zero), so a request that ends cheaper refunds the difference.
-The frozen interface carries no request id, so the estimate is kept under a
-short-lived reservation key scoped to ``(key, provider, model)``; concurrent
-in-flight requests for the same scope reconcile against the latest snapshot
-(best effort).
+Each request carries its own reservation key scoped to
+``(key, provider, model, request_id)`` so concurrent in-flight requests for the
+same scope reconcile independently; callers that pass no ``request_id`` fall
+back to the legacy ``(key, provider, model)`` slot (backward compatible).
+
+Post-call budget enforcement: ``record_usage`` reconciliation can only move
+counters, never deny — but when actuals land over any configured cap (estimate
+was under, actuals pushed over, or concurrent reservations combined over), the
+key is flagged ``tollma:apilim:{key_id}:overbudget`` (Valkey-only, TTL to the
+next UTC daily reset) and an audit line is logged (key id + reason, never
+secrets). ``check_request`` denies with HTTP 403 while the flag is set, before
+issuing any new reservation.
 
 Fail-open / fail-closed policy (deliberate):
 * A Valkey outage must never block all public API traffic, so rate windows — and
@@ -127,8 +135,18 @@ def _model_spend_key(ctx: KeyContext, provider_id: Any, model_id: Any, now: date
     )
 
 
-def _reservation_key(ctx: KeyContext, provider_id: Any, model_id: Any) -> str:
+def _reservation_key(
+    ctx: KeyContext, provider_id: Any, model_id: Any, request_id: str | None = None
+) -> str:
+    """Per-request reservation slot; ``request_id=None`` keeps the legacy key."""
+    if request_id:
+        return cache_keys._key(_SECTION, f"{ctx.key_id}:reserve:{provider_id}:{model_id}:{request_id}")  # noqa: SLF001
     return cache_keys._key(_SECTION, f"{ctx.key_id}:reserve:{provider_id}:{model_id}")  # noqa: SLF001
+
+
+def _overbudget_key(ctx: KeyContext) -> str:
+    """Post-call budget trip flag for one key (Valkey-only, no migration)."""
+    return cache_keys._key(_SECTION, f"{ctx.key_id}:overbudget")  # noqa: SLF001
 
 
 def _retry_after(epoch: int, window: int) -> int:
@@ -430,12 +448,17 @@ def _evaluate(
 
 
 def _stash_reservation(
-    ctx: KeyContext, provider_id: Any, model_id: Any, tokens: int, cost_micros: int
+    ctx: KeyContext,
+    provider_id: Any,
+    model_id: Any,
+    tokens: int,
+    cost_micros: int,
+    request_id: str | None = None,
 ) -> None:
     try:
         _cache_call(
             lambda: get_manager().set(
-                _reservation_key(ctx, provider_id, model_id),
+                _reservation_key(ctx, provider_id, model_id, request_id),
                 {"tokens": tokens, "cost_micros": cost_micros},
                 ttl=_RESERVATION_TTL,
             )
@@ -444,13 +467,69 @@ def _stash_reservation(
         logger.warning("limits: reservation stash failed for key %s", ctx.key_id, exc_info=True)
 
 
-def _pop_reservation(ctx: KeyContext, provider_id: Any, model_id: Any) -> tuple[int, int]:
-    key = _reservation_key(ctx, provider_id, model_id)
+def _pop_reservation(
+    ctx: KeyContext, provider_id: Any, model_id: Any, request_id: str | None = None
+) -> tuple[int, int]:
+    key = _reservation_key(ctx, provider_id, model_id, request_id)
     data = _cache_call(lambda: get_manager().get(key))
     _cache_call(lambda: get_manager().delete(key))
     if isinstance(data, dict):
         return _as_int(data.get("tokens")), _as_int(data.get("cost_micros"))
     return 0, 0
+
+
+# --- post-call budget enforcement -------------------------------------------
+
+
+def _is_overbudget(ctx: KeyContext) -> bool:
+    """True while the trip flag is set. Unreadable cache fails open (None)."""
+    try:
+        return bool(_cache_call(lambda: get_manager().get(_overbudget_key(ctx))))
+    except Exception:
+        logger.warning("limits: overbudget flag read failed for key %s", ctx.key_id, exc_info=True)
+        return False
+
+
+def _flag_overbudget(ctx: KeyContext, reason: str, now: datetime) -> None:
+    """Trip the overbudget flag until the next UTC daily reset (no secrets logged)."""
+    try:
+        _cache_call(
+            lambda: get_manager().set(
+                _overbudget_key(ctx), {"reason": reason}, ttl=_seconds_until_utc_day_end(now)
+            )
+        )
+    except Exception:
+        logger.warning("limits: overbudget flag write failed for key %s", ctx.key_id, exc_info=True)
+    logger.warning("limits: key %s over budget (%s); requests denied until daily reset", ctx.key_id, reason)
+
+
+def _post_call_budget_check(
+    ctx: KeyContext,
+    now: datetime,
+    provider_id: Any,
+    model_id: Any,
+    override: Any,
+) -> None:
+    """Flag the key when reconciled spend sits over any configured cap."""
+    policy = ctx.policy
+    candidates: list[tuple[str, str, Decimal | None]] = [
+        ("budget", _spend_key(ctx, now), policy.max_budget_usd),
+        ("daily_spend", _daily_spend_key(ctx, now), policy.daily_spend_limit),
+        ("monthly_spend", _monthly_spend_key(ctx, now), policy.monthly_spend_limit),
+    ]
+    if override is not None and override.max_budget is not None:
+        candidates.append(
+            ("model_budget", _model_spend_key(ctx, provider_id, model_id, now), override.max_budget)
+        )
+    for reason, key, limit in candidates:
+        if limit is None:
+            continue
+        current = _read_counter(key)
+        if current is None:
+            continue  # unreadable counter: nothing to enforce against (fail open)
+        if current > _to_micros(limit):
+            _flag_overbudget(ctx, reason, now)
+            return
 
 
 # --- public API -------------------------------------------------------------
@@ -463,8 +542,11 @@ def check_request(
     model_id: uuid.UUID | str | None,
     estimated_tokens: int,
     estimated_cost: Decimal,
+    request_id: str | None = None,
 ) -> LimitsDecision:
     """Check every limit and reserve the estimate. Never raises; fails open."""
+    if _is_overbudget(ctx):
+        return LimitsDecision(allowed=False, reason="budget", status_code=403)
     now = _now()
     tokens = max(0, _as_int(estimated_tokens))
     cost_micros = _to_micros(estimated_cost)
@@ -478,7 +560,7 @@ def check_request(
         if denial is not None:
             applied.rollback()
             return denial
-        _stash_reservation(ctx, provider_id, model_id, tokens, cost_micros)
+        _stash_reservation(ctx, provider_id, model_id, tokens, cost_micros, request_id)
         return LimitsDecision(allowed=True)
     except Exception:
         logger.warning("limits: check failed for key %s; failing open", ctx.key_id, exc_info=True)
@@ -507,6 +589,7 @@ def record_usage(
     cost: Decimal,
     provider_id: uuid.UUID | str | None,
     model_id: uuid.UUID | str | None,
+    request_id: str | None = None,
 ) -> None:
     """Reconcile the reservation with actual usage. Never raises."""
     now = _now()
@@ -515,7 +598,7 @@ def record_usage(
     provider = _as_uuid(provider_id)
     model = _as_uuid(model_id)
     try:
-        reserved_tokens, reserved_micros = _pop_reservation(ctx, provider_id, model_id)
+        reserved_tokens, reserved_micros = _pop_reservation(ctx, provider_id, model_id, request_id)
         delta_tokens = actual_tokens - reserved_tokens
         delta_micros = actual_micros - reserved_micros
         policy = ctx.policy
@@ -541,6 +624,7 @@ def record_usage(
                 _apply_delta(_monthly_spend_key(ctx, now), delta_micros, _MONTHLY_TTL)
             if override is not None and override.max_budget is not None:
                 _apply_delta(_model_spend_key(ctx, provider_id, model_id, now), delta_micros, period_ttl)
+        _post_call_budget_check(ctx, now, provider_id, model_id, override)
     except Exception:
         logger.warning("limits: usage reconciliation failed for key %s", ctx.key_id, exc_info=True)
 

@@ -3,7 +3,7 @@
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tollms.api.conversations.service import list_messages
@@ -38,18 +38,26 @@ def _names(db: Session, conversations: list[Conversation]) -> dict[uuid.UUID, tu
 
 def load_conversations(
     db: Session, user_id: uuid.UUID | None, conversation_ids: list[uuid.UUID], export_all: bool
-) -> list[Conversation]:
-    stmt = select(Conversation).where(Conversation.is_deleted.is_(False))
-    stmt = stmt.where(Conversation.user_id == user_id if user_id is not None else Conversation.user_id.is_(None))
-    if not export_all:
-        stmt = stmt.where(Conversation.id.in_(conversation_ids))
-    stmt = stmt.order_by(Conversation.created_at.asc()).limit(MAX_EXPORT_CONVERSATIONS)
-    conversations = list(db.execute(stmt).scalars())
+) -> tuple[list[Conversation], int, bool]:
+    """Load the export scope. Returns (rows, total_count, truncated).
+
+    Scope rule: explicit conversation_ids always win, even when export_all
+    is also true (never silently ignored); export_all alone dumps the whole
+    account. Rows are capped at MAX_EXPORT_CONVERSATIONS; truncated is true
+    when total_count exceeds the returned rows.
+    """
+    base = select(Conversation).where(Conversation.is_deleted.is_(False))
+    base = base.where(Conversation.user_id == user_id if user_id is not None else Conversation.user_id.is_(None))
+    use_ids = bool(conversation_ids)
+    if use_ids:
+        base = base.where(Conversation.id.in_(conversation_ids))
+    total_count = int(db.execute(select(func.count()).select_from(base.subquery())).scalar_one() or 0)
+    conversations = list(db.execute(base.order_by(Conversation.created_at.asc()).limit(MAX_EXPORT_CONVERSATIONS)).scalars())
     if not conversations:
         raise NotFoundError("no conversations found to export")
-    if not export_all and len(conversations) != len(set(conversation_ids)):
+    if use_ids and len(conversations) != len(set(conversation_ids)):
         raise NotFoundError("some conversations were not found")
-    return conversations
+    return conversations, total_count, total_count > len(conversations)
 
 
 def render_conversations(
@@ -58,12 +66,12 @@ def render_conversations(
     conversation_ids: list[uuid.UUID],
     export_all: bool,
     export_format: str,
-) -> tuple[bytes, str, str, int]:
-    """Returns (content, media_type, filename, item_count)."""
+) -> tuple[bytes, str, str, int, int, bool]:
+    """Returns (content, media_type, filename, item_count, total_count, truncated)."""
     if export_format not in ("md", "json", "pdf"):
         raise ValidationError(f"unsupported export format: {export_format}")
 
-    conversations = load_conversations(db, user_id, conversation_ids, export_all)
+    conversations, total_count, truncated = load_conversations(db, user_id, conversation_ids, export_all)
     names = _names(db, conversations)
     bundles = [
         (conversation, list_messages(db, conversation.id, user_id), *names[conversation.id])
@@ -106,7 +114,7 @@ def render_conversations(
         detail=f"{sum(len(b[1]) for b in bundles)} messages",
     )
     db.commit()
-    return content, media, filename, len(conversations)
+    return content, media, filename, len(conversations), total_count, truncated
 
 
 def export_history(db: Session, user_id: uuid.UUID | None, limit: int = 20) -> list[ExportEventRead]:

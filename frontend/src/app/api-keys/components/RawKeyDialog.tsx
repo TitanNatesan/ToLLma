@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ClipboardList, Copy, KeyRound, ShieldAlert } from "lucide-react";
+import { toast } from "sonner";
 import {
   Button,
   Checkbox,
@@ -11,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 interface RawKeyDialogProps {
   open: boolean;
@@ -40,12 +42,16 @@ export function RawKeyDialog({ open, rawKey, keyName, reason, onClose }: RawKeyD
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(rawKey);
+      const ok = await copyTextToClipboard(rawKey);
+      if (!ok) throw new Error("copy unavailable");
       setCopied(true);
       if (copyTimer.current) clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       setCopied(false);
+      toast.error("Could not copy the key", {
+        description: "Select the key text manually to copy it.",
+      });
     }
   }
 

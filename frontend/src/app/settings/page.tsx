@@ -1,6 +1,11 @@
 "use client";
 
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { PageHeader } from "@/components/ui";
+import {
+  SETTINGS_SECTION_IDS,
+  type SettingsSectionId,
+} from "@/components/Sidebar/SidebarSettings";
 import { SettingsCard } from "./components/SettingsCard";
 import { AppearanceSection } from "./components/AppearanceSection";
 import { ChatPreferencesSection } from "./components/ChatPreferencesSection";
@@ -12,9 +17,19 @@ import { ProvidersSection } from "./components/ProvidersSection";
 
 /** Settings: profile, appearance (accent system), chat prefs, password, sessions. */
 export default function SettingsPage() {
+  // The URL hash is the single source of truth for the highlighted section.
+  // Deep links (`/settings#appearance`) and sidebar clicks both drive it.
+  const activeId = useHashSection();
+
+  // Deep links and hash changes scroll the card into view inside the
+  // scrollable main container (scroll-margin on the cards clears the header).
+  useEffect(() => {
+    document.getElementById(activeId)?.scrollIntoView({ block: "start" });
+  }, [activeId]);
+
   return (
     <main
-      className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
+      className="flex min-w-0 flex-1 flex-col overflow-y-auto scroll-smooth bg-white px-4 py-4 dark:bg-zinc-950"
       data-testid="settings-page"
     >
       <PageHeader title="Settings" subtitle="Account, appearance, chat behavior and sessions." />
@@ -86,4 +101,19 @@ export default function SettingsPage() {
         </div>
     </main>
   );
+}
+
+/** Active settings section from the URL hash (`/settings#appearance`), default profile. */
+function useHashSection(): SettingsSectionId {
+  const subscribe = useCallback((onChange: () => void) => {
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  const getSnapshot = useCallback((): SettingsSectionId => {
+    const hash = window.location.hash.slice(1);
+    return (SETTINGS_SECTION_IDS as readonly string[]).includes(hash)
+      ? (hash as SettingsSectionId)
+      : "profile";
+  }, []);
+  return useSyncExternalStore(subscribe, getSnapshot, () => "profile" as SettingsSectionId);
 }

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button, Dialog, DialogContent, DialogTitle } from "@/components/ui/primitives";
 import { useIntelligenceMutations, useShares } from "@/hooks/useIntelligence";
 import { toastApiError } from "@/lib/errors";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 export interface ShareDialogProps {
@@ -38,10 +39,17 @@ export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogP
 
   async function copyLink() {
     if (!shareUrl) return;
-    await navigator.clipboard.writeText(shareUrl);
-    setCopied(true);
-    toast.success("Share link copied");
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      const ok = await copyTextToClipboard(shareUrl);
+      if (!ok) throw new Error("copy unavailable");
+      setCopied(true);
+      toast.success("Share link copied");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Could not copy the link", {
+        description: "Select the link text manually to copy it.",
+      });
+    }
   }
 
   return (

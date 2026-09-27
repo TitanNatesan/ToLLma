@@ -222,6 +222,8 @@ export interface AdminCosts {
   previous_cost: string;
   change_pct: number | null;
   projected_month_cost: string;
+  /** Run-rate projection alias (same value); prefer with fallback to projected_month_cost. */
+  run_rate_projection?: string;
   input_cost: string;
   output_cost: string;
   cache_cost: string;

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -22,6 +23,30 @@ from tollms.models.provider import Provider, ProviderType
 from tollms.api.providers.schemas import DiscoveredModelInfo, DiscoveryResult, ProviderCreate, ProviderUpdate
 
 logger = logging.getLogger(__name__)
+
+VALIDATION_MESSAGE_MAX_LENGTH = 500
+
+_SK_RE = re.compile(r"sk-[A-Za-z0-9_-]{8,}")
+_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/=]+", re.IGNORECASE)
+_API_KEY_VALUE_RE = re.compile(r"(api[_-]?key\s*[:=]\s*['\"]?)[^\s'\";,]+", re.IGNORECASE)
+_URL_USERINFO_RE = re.compile(r"(https?://)[^/\s:@]+:[^/\s@]+@")
+
+
+def sanitize_validation_message(message: str | None) -> str | None:
+    """Scrub secret material from a validation message before persisting.
+
+    Probe errors can echo credentials (rejected keys, bearer tokens, URLs
+    carrying userinfo), and the message is surfaced on the admin providers
+    endpoint — so redact key-like tokens and URL userinfo, then truncate.
+    Only the text is rewritten; the valid/invalid status is untouched.
+    """
+    if not message:
+        return message
+    scrubbed = _SK_RE.sub("[redacted]", message)
+    scrubbed = _BEARER_RE.sub("Bearer [redacted]", scrubbed)
+    scrubbed = _API_KEY_VALUE_RE.sub(r"\1[redacted]", scrubbed)
+    scrubbed = _URL_USERINFO_RE.sub(r"\1[redacted]@", scrubbed)
+    return scrubbed[:VALIDATION_MESSAGE_MAX_LENGTH]
 
 
 def masked_credentials(provider: Provider) -> dict[str, str]:
@@ -150,6 +175,9 @@ async def validate_provider(
     except Exception as e:
         logger.exception("provider %s validation crashed", provider.id)
         valid, message, latency = False, f"validation failed: {e}", 0
+    # Probe errors may echo secrets; scrub before persisting, caching,
+    # returning or logging so the admin `validation_message` never stores them.
+    message = sanitize_validation_message(message) or ""
     checked_at = datetime.now(timezone.utc)
     provider.validation_status = "valid" if valid else "invalid"
     provider.validation_message = message

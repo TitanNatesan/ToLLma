@@ -71,6 +71,7 @@ export function ModelDetailDrawer({
       subtitle={model.model_id}
       width={420}
       testId="model-detail-drawer"
+      label={`Details for ${model.name}`}
       actions={
         <div className="flex items-center gap-1">
           {onEdit && (

@@ -229,6 +229,8 @@ export interface AnalyticsCost {
   last_7d: Numeric;
   last_30d: Numeric;
   projected_month: Numeric;
+  /** Run-rate projection alias (same value); prefer with fallback to projected_month. */
+  run_rate_projection?: Numeric;
   cost_per_request: Numeric;
   cost_per_token: Numeric;
   most_expensive_request: Numeric | AnalyticsExpensiveRequest | null;

@@ -9,7 +9,6 @@ Engines return plain mappings (validated by the router's ``AdminCosts``
 response model); this package never imports from ``tollms.api``.
 """
 
-import calendar
 import logging
 from decimal import Decimal
 from typing import Any
@@ -24,6 +23,7 @@ from tollms.services.admin import models as models_service
 from tollms.services.admin import providers as providers_service
 from tollms.services.admin import users as users_service
 from tollms.services.admin.usage import bucket_expr, scope_conditions, window_range
+from tollms.services.analytics.costs import projected_run_rate
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +97,11 @@ def costs(db: Session, window: AdminWindow, *, limit: int = 10) -> dict[str, Any
     requests = int(requests or 0)
     total_cost = Decimal(str(total_cost or 0))
     previous_cost = Decimal(str(previous or 0))
-    days = max((window.end - window.start).total_seconds() / 86400, 1.0)
-    month_days = calendar.monthrange(window.end.year, window.end.month)[1]
-    projected = (total_cost / Decimal(str(days)) * month_days).quantize(_QUANTUM)
+    # Shared run-rate helper (same math, 4dp site rounding). No
+    # ``run_rate_projection`` alias key here: the admin contract test asserts
+    # the exact top-level key set, so the alias lives only on the user and
+    # gateway analytics surfaces.
+    projected = projected_run_rate(total_cost, window.start, window.end, quantum=_QUANTUM)
     return {
         "range": window_range(window),
         "total_cost": total_cost,

@@ -634,12 +634,127 @@ export const getAnalyticsConversations = (params: AnalyticsRangeParams) =>
 export const getAnalyticsWidgets = (params: AnalyticsRangeParams) =>
   get<AnalyticsWidgets>(`/api/v1/analytics/widgets?${analyticsQuery(params)}`);
 
+/** Phase 10: truncation metadata on export responses. All fields optional —
+ * older backends omit them (undefined → no notice, no crash). Blob exports
+ * carry them via `X-Total-Count` / `X-Truncated` / `X-Exported-Count`
+ * response headers; JSON bodies may also embed `total_count`/`truncated`. */
+export interface ExportResult {
+  total_count?: number;
+  truncated?: boolean;
+  exported_count?: number;
+}
+
+function parseCountHeader(value: string | null): number | undefined {
+  if (value === null || value.trim() === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
+
+function parseTruncatedHeader(value: string | null): boolean | undefined {
+  if (value === null) return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === "true" || v === "1") return true;
+  if (v === "false" || v === "0") return false;
+  return undefined;
+}
+
+/** Header channel for blob downloads (case-insensitive via Headers.get).
+ * Backend emits `X-Export-Total-Count` / `X-Export-Truncated`; the shorter
+ * aliases are accepted as fallback. */
+function truncationFromHeaders(res: Response): ExportResult {
+  const result: ExportResult = {};
+  const total = parseCountHeader(
+    res.headers.get("x-export-total-count") ?? res.headers.get("x-total-count"),
+  );
+  if (total !== undefined) result.total_count = total;
+  const truncated = parseTruncatedHeader(
+    res.headers.get("x-export-truncated") ?? res.headers.get("x-truncated"),
+  );
+  if (truncated !== undefined) result.truncated = truncated;
+  const exported = parseCountHeader(
+    res.headers.get("x-exported-count") ?? res.headers.get("x-exported"),
+  );
+  if (exported !== undefined) result.exported_count = exported;
+  return result;
+}
+
+/**
+ * JSON-body fallback: when the export itself is JSON, the backend may embed
+ * truncation metadata (or a raw array whose length is the exported count).
+ * Never throws; unknown shapes yield no metadata.
+ */
+async function truncationFromJsonBody(blob: Blob, known: ExportResult): Promise<ExportResult> {
+  let data: unknown;
+  try {
+    data = JSON.parse(await blob.text());
+  } catch {
+    return known;
+  }
+  const out: ExportResult = { ...known };
+  if (Array.isArray(data)) {
+    out.exported_count ??= data.length;
+    return out;
+  }
+  if (typeof data !== "object" || data === null) return out;
+  const rec = data as Record<string, unknown>;
+  if (out.total_count === undefined && typeof rec.total_count === "number") {
+    out.total_count = Math.floor(rec.total_count);
+  }
+  if (out.truncated === undefined && typeof rec.truncated === "boolean") {
+    out.truncated = rec.truncated;
+  }
+  if (out.exported_count === undefined) {
+    const direct =
+      typeof rec.exported_count === "number"
+        ? rec.exported_count
+        : typeof rec.count === "number"
+          ? rec.count
+          : undefined;
+    if (direct !== undefined) {
+      out.exported_count = Math.floor(direct);
+    } else {
+      for (const key of ["rows", "items", "data", "conversations"]) {
+        if (Array.isArray(rec[key])) {
+          out.exported_count = (rec[key] as unknown[]).length;
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+async function exportResultFromResponse(res: Response, blob: Blob): Promise<ExportResult> {
+  const fromHeaders = truncationFromHeaders(res);
+  if (fromHeaders.truncated !== undefined && fromHeaders.total_count !== undefined) return fromHeaders;
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("json")) return fromHeaders;
+  return truncationFromJsonBody(blob, fromHeaders);
+}
+
+/**
+ * Truncation notice text, or null when no notice applies (truncated is
+ * falsy/absent). Counts degrade gracefully when the backend omits them.
+ */
+export function formatExportTruncationNotice(result: ExportResult | null | undefined): string | null {
+  if (result?.truncated !== true) return null;
+  const total = typeof result.total_count === "number" ? result.total_count : undefined;
+  const exported = typeof result.exported_count === "number" ? result.exported_count : undefined;
+  if (total !== undefined && exported !== undefined) {
+    return `Exported ${exported} of ${total} rows (truncated) — only the first ${exported} were included`;
+  }
+  if (total !== undefined) {
+    return `Exported subset of ${total} rows (truncated) — only the first rows were included`;
+  }
+  return "Export truncated — only the first rows were included";
+}
+
 /** Server-rendered export (CSV today, PDF-ready): fetch as a blob and download. */
 export async function downloadAnalyticsExport(
   params: AnalyticsRangeParams,
   dataset: AnalyticsDataset,
   format: "csv" | "json" | "xlsx",
-): Promise<void> {
+): Promise<ExportResult> {
   const url = `${apiBase()}/api/v1/analytics/export?${analyticsQuery(params, { dataset, format })}`;
   const headers: Record<string, string> = {};
   const token = getAccessToken();
@@ -657,6 +772,7 @@ export async function downloadAnalyticsExport(
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(href);
+  return exportResultFromResponse(res, blob);
 }
 
 
@@ -674,7 +790,7 @@ export const searchConversations = (
   return get<SearchResponse>(`/api/v1/search?${q.toString()}`);
 };
 
-async function downloadFile(path: string, fallbackName: string): Promise<void> {
+async function downloadFile(path: string, fallbackName: string): Promise<ExportResult> {
   const headers: Record<string, string> = {};
   const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -700,6 +816,7 @@ async function downloadFile(path: string, fallbackName: string): Promise<void> {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(href);
+  return exportResultFromResponse(res, blob);
 }
 
 export const exportConversation = (conversationId: string, format: "md" | "json" | "pdf") =>
@@ -709,7 +826,7 @@ export async function exportConversations(payload: {
   conversation_ids?: string[];
   all?: boolean;
   format: "md" | "json" | "pdf";
-}): Promise<void> {
+}): Promise<ExportResult> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -740,6 +857,7 @@ export async function exportConversations(payload: {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(href);
+  return exportResultFromResponse(res, blob);
 }
 
 export const getMessageHistory = (messageId: string) =>

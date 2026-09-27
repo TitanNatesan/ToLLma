@@ -328,3 +328,247 @@ def test_google_callback_unverified_collision_rejected(
     )
     assert cb.status_code == 401, cb.text
     assert "already registered" in cb.json()["error"]["message"]
+
+
+# --- OAuth hardening (Phase 9) -------------------------------------------------
+
+
+def _hardening_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_client_id", "test-id")
+    monkeypatch.setattr(settings, "google_client_secret", "test-secret")
+    monkeypatch.setattr(settings, "google_redirect_uri", "http://localhost:8000/auth/google/callback")
+
+
+def _login_state(client: TestClient, headers: dict | None = None) -> str:
+    from urllib.parse import parse_qs, urlparse
+
+    login = client.get("/auth/google/login", headers=headers or {}, follow_redirects=False)
+    assert login.status_code in (302, 307), login.text
+    return parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+
+
+def test_google_oauth_state_replay_rejected(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hardening_config(monkeypatch)
+
+    async def _tokens(code: str) -> dict:
+        assert code == "auth-code"
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        assert token == "google-at"
+        return {"sub": "g-replay-1", "email": "replay@example.com",
+                "email_verified": True, "name": "Replay",
+                "picture": "https://example.com/a.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    state = _login_state(client)
+    first = client.get("/auth/google/callback",
+                       params={"code": "auth-code", "state": state}, follow_redirects=False)
+    assert first.status_code in (302, 307), first.text
+
+    second = client.get("/auth/google/callback",
+                        params={"code": "auth-code", "state": state}, follow_redirects=False)
+    assert second.status_code == 401, second.text
+
+
+def test_google_oauth_ua_mismatch_forbidden(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hardening_config(monkeypatch)
+
+    async def _tokens(code: str) -> dict:
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        return {"sub": "g-ua-1", "email": "ua@example.com",
+                "email_verified": True, "name": "UA",
+                "picture": "https://example.com/a.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    login_headers = {"user-agent": "UA-A", "x-forwarded-for": "10.9.9.9"}
+    state = _login_state(client, headers=login_headers)
+    cb = client.get("/auth/google/callback", params={"code": "auth-code", "state": state},
+                    headers={"user-agent": "UA-B", "x-forwarded-for": "10.9.9.9"},
+                    follow_redirects=False)
+    assert cb.status_code == 403, cb.text
+
+
+def test_google_oauth_ip_mismatch_forbidden(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hardening_config(monkeypatch)
+
+    async def _tokens(code: str) -> dict:
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        return {"sub": "g-ip-1", "email": "ip@example.com",
+                "email_verified": True, "name": "IP",
+                "picture": "https://example.com/a.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    state = _login_state(client, headers={"user-agent": "Same-Agent",
+                                          "x-forwarded-for": "10.0.0.1"})
+    cb = client.get("/auth/google/callback", params={"code": "auth-code", "state": state},
+                    headers={"user-agent": "Same-Agent", "x-forwarded-for": "10.0.0.2"},
+                    follow_redirects=False)
+    assert cb.status_code == 403, cb.text
+
+
+def test_google_login_pkce_challenge_and_verifier_forwarded(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    import hashlib
+    from urllib.parse import parse_qs, urlparse
+
+    _hardening_config(monkeypatch)
+    captured: dict = {}
+
+    async def _tokens(code: str, verifier: str | None = None) -> dict:
+        assert code == "auth-code"
+        captured["verifier"] = verifier
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        assert token == "google-at"
+        return {"sub": "g-pkce-1", "email": "pkce@example.com",
+                "email_verified": True, "name": "PKCE",
+                "picture": "https://example.com/a.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    login = client.get("/auth/google/login", follow_redirects=False)
+    assert login.status_code in (302, 307), login.text
+    query = parse_qs(urlparse(login.headers["location"]).query)
+    assert query.get("code_challenge"), login.headers["location"]
+    assert query.get("code_challenge_method") == ["S256"]
+    challenge = query["code_challenge"][0]
+    state = query["state"][0]
+
+    cb = client.get("/auth/google/callback",
+                    params={"code": "auth-code", "state": state}, follow_redirects=False)
+    assert cb.status_code in (302, 307), cb.text
+
+    verifier = captured.get("verifier")
+    assert isinstance(verifier, str) and 43 <= len(verifier) <= 128
+    expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode(
+        "ascii").rstrip("=")
+    assert challenge == expected
+
+
+def test_google_callback_denied_redirects_to_login(client: TestClient) -> None:
+    denied = client.get("/auth/google/callback", params={"error": "access_denied"},
+                        follow_redirects=False)
+    assert denied.status_code == 307, denied.text
+    assert denied.headers["location"].endswith("/login?oauth_error=cancelled")
+
+
+def test_google_callback_missing_params_rejected(client: TestClient) -> None:
+    r = client.get("/auth/google/callback", follow_redirects=False)
+    assert r.status_code == 422, r.text
+
+
+def test_google_oauth_missing_verified_claim_defaults_false(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hardening_config(monkeypatch)
+
+    async def _tokens(code: str) -> dict:
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        # No email_verified key at all.
+        return {"sub": "g-no-vkey-1", "email": "novkey@example.com",
+                "name": "No Key", "picture": "https://example.com/a.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    state = _login_state(client)
+    cb = client.get("/auth/google/callback",
+                    params={"code": "auth-code", "state": state}, follow_redirects=False)
+    assert cb.status_code in (302, 307), cb.text
+    me = client.get("/auth/me").json()
+    assert me["email"] == "novkey@example.com"
+    assert me["email_verified"] is False
+
+
+def test_google_oauth_long_name_truncated(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hardening_config(monkeypatch)
+
+    async def _tokens(code: str) -> dict:
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        return {"sub": "g-longname-1", "email": "longname@example.com",
+                "email_verified": True, "name": "N" * 300,
+                "picture": "https://example.com/a.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    state = _login_state(client)
+    cb = client.get("/auth/google/callback",
+                    params={"code": "auth-code", "state": state}, follow_redirects=False)
+    assert cb.status_code in (302, 307), cb.text
+    me = client.get("/auth/me").json()
+    assert me["full_name"] == "N" * 255
+
+
+def test_google_oauth_http_avatar_omitted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hardening_config(monkeypatch)
+
+    async def _tokens(code: str) -> dict:
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        return {"sub": "g-httpav-1", "email": "httpav@example.com",
+                "email_verified": True, "name": "Av",
+                "picture": "http://example.com/avatar.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    state = _login_state(client)
+    cb = client.get("/auth/google/callback",
+                    params={"code": "auth-code", "state": state}, follow_redirects=False)
+    assert cb.status_code in (302, 307), cb.text
+    me = client.get("/auth/me").json()
+    assert me["avatar_url"] is None
+
+
+def test_google_oauth_empty_sub_rejected(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hardening_config(monkeypatch)
+
+    async def _tokens(code: str) -> dict:
+        return {"access_token": "google-at"}
+
+    async def _profile(token: str) -> dict:
+        return {"sub": "", "email": "emptysub@example.com",
+                "email_verified": True, "name": "Empty",
+                "picture": "https://example.com/a.png"}
+
+    monkeypatch.setattr(auth_service, "exchange_google_code", _tokens)
+    monkeypatch.setattr(auth_service, "fetch_google_userinfo", _profile)
+
+    state = _login_state(client)
+    cb = client.get("/auth/google/callback",
+                    params={"code": "auth-code", "state": state}, follow_redirects=False)
+    assert cb.status_code == 401, cb.text

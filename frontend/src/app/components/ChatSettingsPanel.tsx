@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useRef, useState, type ComponentType } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useConversation, useUsage } from "@/hooks/useChat";
 import { useChatStore } from "@/store/chat";
@@ -119,6 +119,16 @@ export function IntelligencePanel() {
   // Resizing state (mirrors the conversation sidebar handle)
   const [isResizing, setIsResizing] = useState(false);
 
+  // Below md the panel becomes an overlay drawer (it overlays content).
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
   useEffect(() => {
     if (!isResizing) return;
     const handleMouseMove = (e: MouseEvent) => {
@@ -137,17 +147,31 @@ export function IntelligencePanel() {
     };
   }, [isResizing, setRightSidebarWidth]);
 
-  return (
-    <>
-      <motion.aside
-        animate={{ width: rightSidebarOpen ? width : 0 }}
-        transition={{ duration: isResizing ? 0 : 0.25, ease: "easeInOut" }}
-        className="relative flex shrink-0 flex-col overflow-hidden border-l border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
-        aria-label="Intelligence panel"
-        data-testid="right-sidebar"
-        style={{ width: rightSidebarOpen ? width : 0 }}
-      >
-        <div className="flex h-full flex-col overflow-hidden" style={{ width }}>
+  // Close-on-navigate: switching conversations dismisses the mobile overlay
+  // (tracked via ref so the initial mount never closes the panel).
+  const prevConversationRef = useRef(activeConversationId);
+  useEffect(() => {
+    if (prevConversationRef.current !== activeConversationId) {
+      prevConversationRef.current = activeConversationId;
+      if (isMobile) setRightSidebar(false);
+    }
+  }, [activeConversationId, isMobile, setRightSidebar]);
+
+  // Escape dismisses the mobile overlay.
+  useEffect(() => {
+    if (!isMobile || !rightSidebarOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setRightSidebar(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isMobile, rightSidebarOpen, setRightSidebar]);
+
+  const panelInner = (
+    <div
+      className="flex h-full flex-col overflow-hidden"
+      style={isMobile ? { width: "100%" } : { width }}
+    >
           {/* Panel Header */}
           <div className="flex items-center justify-between border-b border-zinc-200 px-3.5 py-3 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/70">
             <div className="flex items-center gap-1.5">
@@ -428,6 +452,57 @@ export function IntelligencePanel() {
             )}
           </div>
         </div>
+  );
+
+  // Below md the panel renders as an overlay drawer (backdrop + slide-in) so
+  // the composer keeps the full viewport width instead of being squeezed.
+  if (isMobile) {
+    return (
+      <>
+        <AnimatePresence>
+          {rightSidebarOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-40 bg-black/40 md:hidden"
+              onClick={() => setRightSidebar(false)}
+              aria-hidden="true"
+              data-testid="intelligence-backdrop"
+            />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {rightSidebarOpen && (
+            <motion.aside
+              initial={{ x: "100%", opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: "100%", opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="fixed inset-y-0 right-0 z-50 flex w-[min(92vw,380px)] flex-col overflow-hidden border-l border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 md:hidden"
+              aria-label="Intelligence panel"
+              data-testid="right-sidebar"
+            >
+              {panelInner}
+            </motion.aside>
+          )}
+        </AnimatePresence>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <motion.aside
+        animate={{ width: rightSidebarOpen ? width : 0 }}
+        transition={{ duration: isResizing ? 0 : 0.25, ease: "easeInOut" }}
+        className="relative flex shrink-0 flex-col overflow-hidden border-l border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
+        aria-label="Intelligence panel"
+        data-testid="right-sidebar"
+        style={{ width: rightSidebarOpen ? width : 0 }}
+      >
+        {panelInner}
 
         {/* Resizer Handle */}
         <div

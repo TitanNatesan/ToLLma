@@ -7,7 +7,7 @@ All endpoints are session-authenticated. ``/platform`` requires
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from tollms.api.analytics_api import schemas, service
@@ -35,6 +35,23 @@ def platform(
     user: User = Depends(platform_admin_required),
 ) -> schemas.PlatformAnalytics:
     return service.platform(db, user, query)
+
+
+@router.get("/platform/export")
+def platform_export(
+    query: service.AnalyticsQuery = Depends(analytics_query),
+    dataset: service.ExportDataset = Query(default="summary"),
+    format: service.ExportFormat = Query(default="csv"),
+    db: Session = Depends(get_db),
+    user: User = Depends(platform_admin_required),
+) -> Response:
+    """Platform export (uncached CSV/XLSX/JSON; same dataset contract as the user analytics export)."""
+    content, filename, media_type, _row_count = service.export_platform(db, user, query, dataset, format)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/api-keys", response_model=schemas.ApiKeyListResponse)
@@ -85,3 +102,21 @@ def api_key_insights(
     user: User = Depends(require_active_user),
 ) -> schemas.InsightsResponse:
     return service.api_key_insights(db, user, key_id, query)
+
+
+@router.get("/api-keys/{key_id}/export")
+def api_key_export(
+    key_id: uuid.UUID,
+    query: service.AnalyticsQuery = Depends(analytics_query),
+    dataset: service.ExportDataset = Query(default="summary"),
+    format: service.ExportFormat = Query(default="csv"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_active_user),
+) -> Response:
+    """Per-key export (uncached, key-scoped CSV/XLSX/JSON; mirrors the user analytics export)."""
+    content, filename, media_type, _row_count = service.export_api_key(db, user, key_id, query, dataset, format)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

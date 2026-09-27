@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge, ErrorState, PageHeader } from "@/components/ui";
+import { Badge, Button, ErrorState, PageHeader } from "@/components/ui";
 import { ADMIN_SECTIONS, ADMIN_SECTION_IDS, type AdminSectionId } from "@/components/Sidebar/SidebarAdmin";
 import { useAuthStore } from "@/store/auth";
 import { cn } from "@/lib/utils";
@@ -205,6 +205,17 @@ export default function AdminPage() {
   const forbidden = !isAdmin || queries.some((query) => isForbiddenError(query.error));
   const refreshing = queries.some((query) => query.isFetching);
 
+  // Bulk retry surfaces only when multiple sections fail at once; per-section
+  // retry in SectionBody stays the recovery path for a single failure.
+  const failedQueries = queries.filter(
+    (query) => query.isError && !isForbiddenError(query.error),
+  );
+  const failedCount = failedQueries.length;
+  const showRetryAll = !forbidden && failedCount >= 2;
+  const retryAllFailed = () => {
+    void Promise.allSettled(failedQueries.map((query) => query.refetch()));
+  };
+
   // The URL hash is the single source of truth for which section renders.
   // Deep links (`/admin#tokens`) and sidebar clicks both drive it.
   const activeId = useHashSection();
@@ -218,14 +229,26 @@ export default function AdminPage() {
       subtitle="Aggregated platform telemetry — usage, spend, tokens, media and health. Message content is never exposed."
       badges={isAdmin ? <Badge variant="warning">Admin</Badge> : undefined}
       actions={
-        <RangePicker
-          preset={preset}
-          onPreset={setPreset}
-          range={dashboard.data?.range}
-          onRefresh={refresh}
-          refreshing={refreshing}
-          disabled={!isAdmin}
-        />
+        <>
+          {showRetryAll && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={retryAllFailed}
+              data-testid="admin-retry-all"
+            >
+              Retry all failed ({failedCount})
+            </Button>
+          )}
+          <RangePicker
+            preset={preset}
+            onPreset={setPreset}
+            range={dashboard.data?.range}
+            onRefresh={refresh}
+            refreshing={refreshing}
+            disabled={!isAdmin}
+          />
+        </>
       }
       className="sticky top-0 z-20"
     />

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useChatStore } from "@/store/chat";
 import { useSettingsStore } from "@/store/settings";
@@ -27,6 +28,7 @@ import {
   Eye,
   Image as ImageIcon,
   Mic,
+  Plus,
   Search,
   Square,
   Wrench,
@@ -93,8 +95,9 @@ function UnifiedModelSelector({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { providerId, modelId, setProvider, setModel } = useChatStore();
+  const { providerId, modelId, setProvider, setModel, setAddProviderOpen } = useChatStore();
   const [search, setSearch] = useState("");
+  const router = useRouter();
 
   const activeProvider = providers.find((p) => p.id === providerId);
   const activeModel = models.find((m) => m.id === modelId);
@@ -125,6 +128,17 @@ function UnifiedModelSelector({
     .filter((g) => g.models.length > 0 || (q && g.provider.name.toLowerCase().includes(q)));
 
   const totalMatchingModels = groups.reduce((acc, g) => acc + g.models.length, 0);
+  // No active models at all (not just no search hit): the registry is empty
+  // or everything is disabled — point at provider setup instead of a dead end.
+  const registryEmpty = activeModels.length === 0;
+
+  function handleAddProvider() {
+    // The wizard modal lives on the providers page: navigate there first,
+    // then open it (same pattern as the command palette's Add Provider).
+    onOpenChange(false);
+    router.push("/providers");
+    setAddProviderOpen(true);
+  }
 
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
@@ -177,9 +191,38 @@ function UnifiedModelSelector({
         {/* Scrollable list with min-height and max-height */}
         <div className="min-h-[220px] max-h-[380px] overflow-y-auto p-1.5">
           {totalMatchingModels === 0 ? (
-            <div className="flex h-[200px] flex-col items-center justify-center gap-1 text-xs text-zinc-400">
+            <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-zinc-400">
               <Bot className="size-5 opacity-40" />
-              <span>No models found</span>
+              {q ? (
+                <>
+                  <span>No models match &ldquo;{search.trim()}&rdquo;</span>
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="font-medium text-tollma-600 underline underline-offset-2 hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300"
+                  >
+                    Clear search
+                  </button>
+                </>
+              ) : registryEmpty ? (
+                <>
+                  <span className="font-medium text-zinc-500 dark:text-zinc-300">No models available</span>
+                  <span className="text-[11px]">
+                    Add a provider to register your first model.
+                  </span>
+                  <Button
+                    size="sm"
+                    onClick={handleAddProvider}
+                    data-testid="model-selector-add-provider"
+                    className="mt-1 gap-1 text-[11px]"
+                  >
+                    <Plus className="size-3.5" />
+                    Add provider
+                  </Button>
+                </>
+              ) : (
+                <span>No models found</span>
+              )}
             </div>
           ) : (
             groups.map(({ provider, models: pModels }) => (
@@ -261,8 +304,8 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
     setModel,
     activeConversationId,
   } = useChatStore();
-  const { data: providers = [] } = useProviders();
-  const { data: models = [] } = useModels();
+  const { data: providers = [], isPending: providersPending } = useProviders();
+  const { data: models = [] , isPending: modelsPending } = useModels();
   const { caps } = useModelCapabilities(models, modelId);
   const kinds = uploadKinds(caps);
   const enterBehavior = useSettingsStore((s) => s.enterBehavior);
@@ -276,6 +319,33 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
   const uploading = attachments.some((a) => a.status === "uploading");
+  const router = useRouter();
+
+  // Stale persisted selection: the store survives provider/model deletions,
+  // so validate saved ids against the registry once it loads. Clear the dead
+  // reference and surface a one-time notice linking to provider setup.
+  const staleNoticed = useRef(false);
+  useEffect(() => {
+    if (staleNoticed.current || providersPending || modelsPending) return;
+    const store = useChatStore.getState();
+    if (store.providerId && !providers.some((p) => p.id === store.providerId)) {
+      staleNoticed.current = true;
+      store.setProvider(null);
+      toast.warning("Saved provider is no longer available", {
+        description: "It was removed or is not registered. Pick another model to continue.",
+        action: { label: "Open providers", onClick: () => router.push("/providers") },
+      });
+      return;
+    }
+    if (store.modelId && !models.some((m) => m.id === store.modelId)) {
+      staleNoticed.current = true;
+      store.setModel(null);
+      toast.warning("Saved model is no longer available", {
+        description: "It was removed or unregistered. Pick another model to continue.",
+        action: { label: "Open providers", onClick: () => router.push("/providers") },
+      });
+    }
+  }, [providersPending, modelsPending, providers, models, router]);
 
   // Model change: reset reasoning to the user's preferred level when the new
   // model offers it, and drop attachments its capabilities no longer support.
