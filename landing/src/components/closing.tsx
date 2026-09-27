@@ -118,7 +118,7 @@ export function Footer() {
           {IS_PLACEHOLDER_LINKS && (
             <p>
               Link placeholder: outbound URLs point to{" "}
-              <span className="font-mono">github.com/TOLLMA/tollma</span> until
+              <span className="font-mono">github.com/TitanNatesan/tollma</span> until
               the public repo exists.
             </p>
           )}

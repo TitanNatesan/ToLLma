@@ -33,7 +33,7 @@ Relative file links checked by resolution against the working tree. All resolve 
 - `docs/ARCHITECTURE.md` → `SECURITY.md`, `FEATURES.md`, `ROADMAP.md` (same-directory) — all resolve to `docs/`.
 - `docs/FAQ.md` → `ROADMAP.md` (2 occurrences, link text reads `docs/ROADMAP.md`) — resolves to `docs/ROADMAP.md`; text is misleading but the target exists.
 - `landing/README.md` — contains no markdown links; code-span references to `src/lib/site.ts` and `landing/out/` resolve.
-- Bare URLs found: `https://github.com/ORG/REPO/...` (README badges, explicitly marked placeholder — see open issues), `https://github.com/TOLLMA/tollma...` (landing README placeholder table), localhost URLs, `http://backend:8000` (README Docker section). No markdown anchor-only links (`](#...)`) were found in the audited set.
+- Bare URLs found: `https://github.com/ORG/REPO/...` (README badges, explicitly marked placeholder — see open issues), `https://github.com/TitanNatesan/tollma...` (landing README placeholder table), localhost URLs, `http://backend:8000` (README Docker section). No markdown anchor-only links (`](#...)`) were found in the audited set.
 
 Broken / stale references:
 
@@ -88,7 +88,7 @@ No promised-but-missing V1 feature was found in the spot check. No implemented-b
 
 ## Open issues
 
-1. Real org/repo placeholders: README `ORG/REPO` badges, `landing/src/lib/site.ts` `TOLLMA/tollma` URLs, `NOTICE` `github.com/tollma` line, `.github/SECURITY.md` maintainer-contact placeholder, `FUNDING.yml` unconfigured skeleton. All are explicitly marked as placeholders in comments or UI copy, but none resolve to a real repository.
+1. Real org/repo placeholders: README `ORG/REPO` badges, `landing/src/lib/site.ts` `TOLLMA/tollma` URLs, `NOTICE` `github.com/TitanNatesan` line, `.github/SECURITY.md` maintainer-contact placeholder, `FUNDING.yml` unconfigured skeleton. All are explicitly marked as placeholders in comments or UI copy, but none resolve to a real repository.
 2. Badge-to-workflow mismatch: README CI badge (`ci.yml`) has no corresponding workflow file; Pages badge (`pages.yml`) does not match the actual `deploy-pages.yml` filename. Fixing requires choosing real filenames alongside the real org/repo.
 3. Untested workflow: `deploy-pages.yml` was reviewed statically only. No build, artifact upload, or Pages deployment was executed or observed in this audit. `BASE_PATH` handling for org-site or custom-domain cases is documented but not exercised.
 4. Missing `.nojekyll`: `landing/out/` ships `_next/` assets without a `.nojekyll` marker, and the workflow does not add one.

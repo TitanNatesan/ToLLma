@@ -70,17 +70,17 @@ env:
 ## Link placeholders (important)
 
 The public home of ToLLma does not exist yet, so **every outbound link
-is a placeholder** under `https://github.com/TOLLMA/tollma`, defined
+is a placeholder** under `https://github.com/TitanNatesan/tollma`, defined
 once in `src/lib/site.ts`:
 
 | Constant | Placeholder |
 |---|---|
-| `GITHUB_URL` | `https://github.com/TOLLMA/tollma` |
-| `DOCS_URL` | `https://github.com/TOLLMA/tollma#readme` |
-| `ROADMAP_URL` | `https://github.com/TOLLMA/tollma#roadmap` |
-| `COMMUNITY_URL` | `https://github.com/TOLLMA/tollma/discussions` |
-| `LICENSE_URL` | `https://github.com/TOLLMA/tollma/blob/main/LICENSE` |
-| `GET_STARTED_URL` | `https://github.com/TOLLMA/tollma#quickstart` |
+| `GITHUB_URL` | `https://github.com/TitanNatesan/tollma` |
+| `DOCS_URL` | `https://github.com/TitanNatesan/tollma#readme` |
+| `ROADMAP_URL` | `https://github.com/TitanNatesan/tollma#roadmap` |
+| `COMMUNITY_URL` | `https://github.com/TitanNatesan/tollma/discussions` |
+| `LICENSE_URL` | `https://github.com/TitanNatesan/tollma/blob/main/LICENSE` |
+| `GET_STARTED_URL` | `https://github.com/TitanNatesan/tollma#quickstart` |
 
 The footer states this explicitly. When the real org/repo exists, update
 `src/lib/site.ts` only — no component changes needed.
