@@ -19,7 +19,15 @@ function Frame({
   children: React.ReactNode;
 }) {
   return (
-    <figure className="shot glass-reflection overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_28px_56px_-28px_rgba(15,23,42,0.35)]">
+    <figure className="shot glass-reflection group/shot relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_28px_56px_-28px_rgba(15,23,42,0.35)]">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-[1] opacity-0 transition duration-300 group-hover/shot:opacity-100"
+        style={{
+          background:
+            "radial-gradient(28rem 14rem at 50% 0%, rgba(37,99,235,0.10), transparent 70%)",
+        }}
+      />
       {/* Mac-style chrome */}
       <div className="relative z-[2] flex items-center gap-2 border-b border-slate-200 bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-2.5">
         <span className="flex gap-1.5" aria-hidden>

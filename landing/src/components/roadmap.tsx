@@ -62,21 +62,42 @@ export default function Roadmap() {
           sub="No dates, no hype — just the order we're building in. Priorities shift with community feedback."
         />
 
-        {/* Connected timeline: gradient progress line + nodes */}
-        <div className="relative">
+        {/* Connected timeline: gradient progress line + nodes.
+            Line center (top-3 + 1px) aligns with node centers
+            (article top + dot offset + 9px). Dots sit on the line on md+. */}
+        <div className="relative pt-3">
           <div
             aria-hidden
-            className="absolute top-5 right-8 left-8 hidden h-0.5 rounded-full bg-gradient-to-r from-emerald-400 via-brand to-gold md:block"
+            className="absolute top-3 right-[41px] left-[41px] hidden h-0.5 rounded-full bg-slate-200 md:block"
+          />
+          <div
+            aria-hidden
+            className="animate-roadmap-flow absolute top-3 right-[41px] left-[41px] hidden h-0.5 rounded-full bg-gradient-to-r from-emerald-400 via-brand to-gold md:block"
           />
           <ol className="grid gap-4 md:grid-cols-3 md:gap-6">
-            {COLUMNS.map((c, i) => (
+            {COLUMNS.map((c, i) => {
+              const isActive = c.phase === "Now";
+              return (
               <li key={c.phase} className="relative">
                 <FadeUp delay={i * 0.08} className="h-full">
-                  <article className="card relative h-full p-5">
+                  <article
+                    aria-current={isActive ? "true" : undefined}
+                    className={`card relative h-full p-5 ${
+                      isActive
+                        ? "border-emerald-200 shadow-[0_16px_36px_-16px_rgba(16,185,129,0.4)] ring-2 ring-emerald-500/25"
+                        : ""
+                    }`}
+                  >
                     <span
                       aria-hidden
-                      className={`absolute -top-[9px] left-8 hidden h-[18px] w-[18px] rounded-full border-4 border-white ${c.dot} shadow md:block`}
-                    />
+                      className={`absolute -top-2 left-8 hidden h-[18px] w-[18px] rounded-full border-4 border-white ${c.dot} shadow md:block ${
+                        isActive ? "ring-4 ring-emerald-500/20" : ""
+                      }`}
+                    >
+                      {isActive && (
+                        <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/60 motion-reduce:animate-none" />
+                      )}
+                    </span>
                     <span className={`mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-extrabold tracking-widest uppercase ${c.color}`}>
                       <c.icon className="h-3.5 w-3.5" aria-hidden /> {c.phase}
                     </span>
@@ -94,7 +115,8 @@ export default function Roadmap() {
                   </article>
                 </FadeUp>
               </li>
-            ))}
+              );
+            })}
           </ol>
         </div>
       </div>

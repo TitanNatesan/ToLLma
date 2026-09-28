@@ -9,9 +9,19 @@ import {
   Server,
   Workflow,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { SectionHeading } from "./nav";
 
-const FEATURED = [
+interface FeatureCard {
+  icon: LucideIcon;
+  title: string;
+  body: string;
+  detail?: string;
+  /** True when Roadmap lists this under Next rather than Now. */
+  roadmap?: boolean;
+}
+
+const FEATURED: FeatureCard[] = [
   {
     icon: Layers,
     title: "One OpenAI-compatible endpoint",
@@ -29,10 +39,11 @@ const FEATURED = [
     title: "Agent hosting & tools",
     body: "Run agents behind the same gateway with tool calls, RAG, and conversation state.",
     detail: "Agents get the same keys, budgets, and logs as plain completions — tools and retrieval included.",
+    roadmap: true,
   },
 ];
 
-const SECONDARY = [
+const SECONDARY: FeatureCard[] = [
   {
     icon: KeyRound,
     title: "Keys & access control",
@@ -52,6 +63,7 @@ const SECONDARY = [
     icon: BookOpenText,
     title: "Knowledge repository",
     body: "Ingest documents once and serve grounded answers to any connected model or agent.",
+    roadmap: true,
   },
   {
     icon: Gauge,
@@ -89,10 +101,19 @@ export default function Features() {
           {FEATURED.map((f, i) => (
             <article
               key={f.title}
-              className={`gradient-border flex h-full flex-col rounded-2xl p-6 shadow-sm ${
+              className={`gradient-border relative flex h-full flex-col rounded-2xl p-6 shadow-sm ${
                 i === 0 ? "lg:-rotate-[0.5deg]" : i === 2 ? "lg:rotate-[0.5deg]" : ""
               }`}
             >
+              {f.roadmap && (
+                <a
+                  href="#roadmap"
+                  title="Listed under Next on the roadmap"
+                  className="absolute top-4 right-4 rounded-full bg-gold-light px-2.5 py-1 text-[10px] font-extrabold tracking-widest text-yellow-700 uppercase ring-1 ring-yellow-200 transition hover:bg-yellow-100"
+                >
+                  On the roadmap
+                </a>
+              )}
               <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand text-white shadow-md shadow-blue-600/25">
                 <f.icon className="h-5 w-5" aria-hidden />
               </span>
@@ -114,8 +135,17 @@ export default function Features() {
           {SECONDARY.map((f) => (
             <article
               key={f.title}
-              className="card card-calm group h-full p-5"
+              className="card card-calm group relative h-full p-5"
             >
+              {f.roadmap && (
+                <a
+                  href="#roadmap"
+                  title="Listed under Next on the roadmap"
+                  className="absolute top-4 right-4 rounded-full bg-gold-light px-2.5 py-1 text-[10px] font-extrabold tracking-widest text-yellow-700 uppercase ring-1 ring-yellow-200 transition hover:bg-yellow-100"
+                >
+                  On the roadmap
+                </a>
+              )}
               <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-brand-light text-brand transition group-hover:bg-brand group-hover:text-white">
                 <f.icon className="h-5 w-5" aria-hidden />
               </span>

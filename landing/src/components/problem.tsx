@@ -66,7 +66,15 @@ export default function Problem() {
         {/* Without / With comparison (calm section: static, no entrances) */}
         <div className="relative grid gap-6 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
           {/* Without panel */}
-          <article className="card flex h-full flex-col border-red-200/70 p-5 sm:p-6">
+          <article className="card group relative flex h-full flex-col overflow-hidden border-red-200/70 p-5 sm:p-6">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 opacity-0 transition duration-300 group-hover:opacity-100"
+                style={{
+                  background:
+                    "radial-gradient(26rem 14rem at 50% 0%, rgba(220,38,38,0.06), transparent 70%)",
+                }}
+              />
               <p className="mb-4 inline-flex w-fit items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-extrabold tracking-widest text-red-700 uppercase">
                 <X className="h-3.5 w-3.5" aria-hidden /> Without ToLLma
               </p>
@@ -93,13 +101,23 @@ export default function Problem() {
             className="relative mx-auto flex w-12 items-center justify-center lg:w-16 lg:flex-col"
           >
             <span className="absolute h-px w-full bg-gradient-to-r from-red-300 via-brand to-emerald-400 lg:h-full lg:w-px lg:bg-gradient-to-b" />
+            <span className="absolute top-1/2 left-0 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-red-300 shadow lg:top-0 lg:left-1/2 lg:-translate-x-1/2 lg:translate-y-0" />
+            <span className="absolute top-1/2 right-0 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-emerald-400 shadow lg:top-auto lg:right-auto lg:bottom-0 lg:left-1/2 lg:-translate-x-1/2 lg:translate-y-0" />
             <span className="relative z-[1] flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-extrabold text-brand shadow-md">
               VS
             </span>
           </div>
 
           {/* With panel */}
-          <article className="gradient-border flex h-full flex-col justify-center rounded-2xl p-5 shadow-[0_24px_48px_-24px_rgba(37,99,235,0.4)] sm:p-6">
+          <article className="gradient-border group relative flex h-full flex-col justify-center overflow-hidden rounded-2xl p-5 shadow-[0_24px_48px_-24px_rgba(37,99,235,0.4)] transition duration-300 hover:shadow-[0_32px_56px_-24px_rgba(37,99,235,0.5)] sm:p-6">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 opacity-0 transition duration-300 group-hover:opacity-100"
+              style={{
+                background:
+                  "radial-gradient(26rem 14rem at 50% 0%, rgba(37,99,235,0.09), transparent 70%)",
+              }}
+            />
             <p className="mb-1 text-sm font-semibold tracking-wide text-yellow-700 uppercase">
               The fix
             </p>

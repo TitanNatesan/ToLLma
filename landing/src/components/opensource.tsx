@@ -26,37 +26,17 @@ export default function OpenSource() {
           motion={false}
         />
 
-        {/* Large license badge + star CTA (calm section: static) */}
-        <div className="mx-auto mb-6 max-w-3xl">
-          <div className="gradient-border-dark flex flex-col items-center gap-4 rounded-2xl px-6 py-7 text-center shadow-[0_0_64px_-16px_rgba(37,99,235,0.6)] sm:flex-row sm:gap-6 sm:text-left">
-            <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-gold to-amber-600 shadow-lg">
-              <Scale className="h-8 w-8 text-slate-950" aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-xl font-extrabold tracking-tight sm:text-2xl">
-                Apache 2.0 — use it commercially, forever.
-              </p>
-              <p className="mt-1 text-sm leading-relaxed text-slate-300">
-                Patent grant included.{" "}
-                <a href={LICENSE_URL} className="font-semibold text-blue-300 underline-offset-2 hover:underline">
-                  Read the license
-                </a>
-                .
-              </p>
-            </div>
-            <a
-              href={GITHUB_URL}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-gold px-5 py-3 text-sm font-bold text-slate-950 shadow-lg transition hover:brightness-110"
-            >
-              <Star className="h-4 w-4" aria-hidden /> Star on GitHub
-            </a>
-          </div>
-        </div>
-
+        {/* License + community cards share one grid: identical tracks,
+            same widths/spacing. Featured license card leads via type/color
+            (gradient border, gold tile, stronger title, gold CTA) — not size. */}
         <div className="grid gap-4 sm:grid-cols-3">
-          <article className="h-full rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
-            <Scale className="mb-3 h-6 w-6 text-gold" aria-hidden />
-            <h3 className="font-bold">Apache 2.0 licensed</h3>
+          <article className="gradient-border-dark h-full rounded-2xl p-5 shadow-[0_0_48px_-16px_rgba(37,99,235,0.55)] ring-1 ring-white/10">
+            <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-gold to-amber-600 shadow">
+              <Scale className="h-5 w-5 text-slate-950" aria-hidden />
+            </span>
+            <h3 className="text-lg font-extrabold tracking-tight text-white">
+              Apache 2.0 — use it commercially, forever.
+            </h3>
             <p className="mt-1.5 text-sm leading-relaxed text-slate-300">
               Use ToLLma commercially, modify it, embed it. Patent grant
               included.{" "}
@@ -65,6 +45,12 @@ export default function OpenSource() {
               </a>
               .
             </p>
+            <a
+              href={GITHUB_URL}
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-bold text-slate-950 shadow transition hover:brightness-110"
+            >
+              <Star className="h-4 w-4" aria-hidden /> Star on GitHub
+            </a>
           </article>
           <article className="h-full rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
             <GithubIcon className="mb-3 h-6 w-6 text-blue-300" aria-hidden />

@@ -2466,3 +2466,30 @@ landing/ only (tokens in globals.css, nav, hero, all sections, icon.svg). Backen
 ### Verification
 - Breakpoints 360–1920 all PASS (0px overflow, no errors). A11y: focus/keyboard/contrast/touch/reduced-motion verified. Lighthouse: Perf 97, A11y 100, BP ~100.
 - Remaining: JS payload diet (framer-motion removal candidate), skip-link, "Why ToLLma" 1280 wrap (copy change declined).
+
+---
+
+## 2026-09-28 — Landing Refinement Batch 1+2 COMPLETE (validation running)
+
+### Batch 1 (research/assets)
+- DESIGN_REPORT.md, COMPETITORS.md + landing/data/competitors.ts (10 cols, cited), IA.md (keep order; features-vs-roadmap trust flag), assets: none (CSS/SVG-only recommendation), logo system (Confluence Gate: logo/icon/mono + favicon + RATIONALE).
+
+### Batch 2 (implementation)
+- Navbar (glass, groups, CTA hierarchy, active-section, logo drop-in, container == hero).
+- Hero (trust chips, CTA restraint, node presence, depth; copy unchanged).
+- Motion/tokens (stagger/section-transition/scroll-parallax, budget doc; exports unchanged).
+- OSS card grid parity; roadmap line/node alignment + flow animation + NOW highlight.
+- Sections: 10-product matrix render + claim corrections (Open WebUI license note, LiteLLM logging Yes), roadmap ribbons on agent/KB cards, license dedup, spotlight polish.
+- Each agent: tsc + static build green. Final validation (12 breakpoints, Lighthouse, a11y, claims) backgrounded.
+
+---
+
+## 2026-09-28 — Landing Refinement Mission COMPLETE (QA Board approved)
+
+### Batches
+- Research: DESIGN_REPORT, COMPETITORS.md + competitors.ts (10 products, cited), IA keep-order, assets none, logo system (Confluence Gate + favicon).
+- Implementation: navbar rebuild, hero depth, motion/parallax tokens, OSS grid parity, roadmap alignment, 10-product matrix + claim corrections (Open WebUI license note, LiteLLM logging Yes), roadmap ribbons, dedup.
+- QA Board verdict: REWORK → 1 medium (footer Boxes→logo.svg, applied + rebuilt + verified 200s in markup and server log); 3 minors deferred (roadmap-flow paint property, dead .packet CSS, H1-800 vs 700).
+
+### Verification
+- tsc + static build green; screenshots 390–1920 + reduced-motion; Lighthouse 97/100/~100; hero blank-instant-capture proven to be animation-timing artifact (settled capture renders fully).

@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Boxes } from "lucide-react";
+import { ArrowRight, BookOpen } from "lucide-react";
 import { GithubIcon } from "./icons";
 import { FadeUp } from "@/lib/motion";
 import {
@@ -35,7 +35,7 @@ export function CTA() {
               className="bg-grid-dark pointer-events-none absolute inset-0 opacity-60"
             />
             <p className="relative text-xs font-bold tracking-[0.2em] text-blue-200 uppercase">
-              Self-host in minutes · Apache 2.0
+              Self-host in minutes
             </p>
             <h2 className="relative mx-auto mt-3 max-w-2xl text-3xl font-extrabold tracking-tight text-balance sm:text-5xl sm:leading-[1.08]">
               Put one gateway in front of all your AI.
@@ -97,9 +97,7 @@ export function Footer() {
         <div className="grid gap-8 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div>
             <p className="flex items-center gap-2 text-lg font-bold">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white">
-                <Boxes className="h-5 w-5" aria-hidden />
-              </span>
+              <img src="/brand/logo.svg" alt="ToLLma" className="h-8 w-8 rounded-lg" />
               ToLLma
             </p>
             <p className="mt-2 max-w-xs text-sm text-muted">

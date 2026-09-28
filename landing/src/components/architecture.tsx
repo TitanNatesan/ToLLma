@@ -155,10 +155,10 @@ export default function Architecture() {
             </FadeUp>
           </div>
 
-          {/* Scrolling steps */}
-          <ol className="space-y-4">
+          {/* Scrolling steps, linked by a gradient journey line */}
+          <ol className="space-y-0">
             {STEPS.map((s, i) => (
-              <li key={s.id}>
+              <li key={s.id} className="relative pb-3 last:pb-0">
                 <FadeUp delay={Math.min(i * 0.03, 0.12)}>
                   <article
                     id={`arch-${s.id}`}
@@ -168,12 +168,21 @@ export default function Architecture() {
                       else stepRefs.current.delete(s.id);
                     }}
                     aria-label={s.title}
-                    className={`scroll-mt-28 rounded-2xl border bg-white p-6 shadow-sm transition sm:p-7 ${
+                    className={`group relative scroll-mt-28 overflow-hidden rounded-2xl border bg-white p-6 shadow-sm transition duration-300 hover:shadow-[0_20px_44px_-20px_rgba(37,99,235,0.35)] sm:p-7 ${
                       active === s.id
                         ? "border-blue-300 shadow-[0_20px_44px_-20px_rgba(37,99,235,0.35)]"
                         : "border-slate-200"
                     }`}
                   >
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 opacity-0 transition duration-300 group-hover:opacity-100"
+                      style={{
+                        background:
+                          "radial-gradient(24rem 12rem at 50% 0%, rgba(37,99,235,0.08), transparent 70%)",
+                      }}
+                    />
+                    <div className="relative">
                     <p className="text-xs font-bold tracking-widest text-brand uppercase">
                       {s.lens}
                     </p>
@@ -191,8 +200,14 @@ export default function Architecture() {
                         </li>
                       ))}
                     </ul>
+                    </div>
                   </article>
                 </FadeUp>
+                {i < STEPS.length - 1 && (
+                  <div aria-hidden className="flex justify-center pt-3">
+                    <span className="h-4 w-px bg-gradient-to-b from-brand/40 via-mint/40 to-gold/40" />
+                  </div>
+                )}
               </li>
             ))}
           </ol>

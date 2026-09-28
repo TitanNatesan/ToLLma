@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="tollmaIconTitle">
+  <title id="tollmaIconTitle">ToLLma — gateway mark</title>
+  <!-- converging gateway lanes: many inputs routed inward -->
+  <path d="M17 52 C17 36 19.5 25 27.5 16" fill="none" stroke="#1D4ED8" stroke-width="9" stroke-linecap="round"/>
+  <path d="M47 52 C47 36 44.5 25 36.5 16" fill="none" stroke="#2563EB" stroke-width="9" stroke-linecap="round"/>
+  <!-- orchestrated exit route: single governed output -->
+  <rect x="29.75" y="13.5" width="4.5" height="13" rx="2.25" fill="#10B981"/>
+  <circle cx="32" cy="9.5" r="4.75" fill="#10B981"/>
+  <!-- intelligence core: policy / orchestration point -->
+  <path d="M32 27.5 L40.5 36 L32 44.5 L23.5 36 Z" fill="#EAB308"/>
+  <path d="M32 32.2 L35.8 36 L32 39.8 L28.2 36 Z" fill="#0F172A"/>
+</svg>
