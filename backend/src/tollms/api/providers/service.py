@@ -1,7 +1,9 @@
 """Provider registry: CRUD + credential encryption/masking + validation + discovery."""
 
+import inspect
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -12,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tollms.core.crypto import decrypt, encrypt, mask
-from tollms.core.exceptions import NotFoundError, ValidationError
+from tollms.core.exceptions import ApplicationException, ErrorCode, NotFoundError, ValidationError
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.locks import locked
@@ -193,6 +195,107 @@ async def validate_provider(
         )
     logger.info("provider %s validation: valid=%s (%s)", provider.id, valid, message)
     return valid, message, latency
+
+
+# Failure-triggered revalidation: minimum interval per provider between
+# revalidation probes (Valkey throttle). Stops a burst of gateway failures
+# from hammering the provider with validate calls.
+REVALIDATION_COOLDOWN_SECONDS = 300
+
+# Only these failure codes suggest the stored validation state is stale and
+# worth re-probing. Every other code (rate limits, not-found, user errors)
+# never triggers a revalidation.
+_REVALIDATION_CODES = frozenset(
+    {ErrorCode.INVALID_CREDENTIALS, ErrorCode.TIMEOUT, ErrorCode.MODEL_UNAVAILABLE}
+)
+
+
+async def request_revalidation(
+    db: Session,
+    provider_id: uuid.UUID,
+    reason: ErrorCode | str | ApplicationException | None,
+    *,
+    probe=None,
+) -> bool:
+    """Best-effort revalidation after a classified gateway failure. Never raises.
+
+    Triggers ONLY for INVALID_CREDENTIALS, TIMEOUT and MODEL_UNAVAILABLE —
+    codes that suggest the stored validation state is stale. All other codes
+    (and success paths — callers never invoke this on success) return False
+    without probing.
+
+    Throttled per provider via Valkey (`REVALIDATION_COOLDOWN_SECONDS`
+    minimum interval); a throttled call returns False without probing.
+
+    `probe` is an injectable ``async (db, provider_id)`` callable (tests pass
+    a fake). When None (production default): under PYTEST_CURRENT_TEST it only
+    emits an event + log (zero network); otherwise it clears the validation
+    result cache and calls `validate_provider` for a fresh probe.
+
+    Returns True when a probe was requested (or pytest short-circuited).
+    """
+    code: ErrorCode | None = None
+    if isinstance(reason, ErrorCode):
+        code = reason
+    elif isinstance(reason, ApplicationException):
+        code = reason.code if isinstance(reason.code, ErrorCode) else None
+    elif isinstance(reason, str):
+        try:
+            code = ErrorCode(reason)
+        except ValueError:
+            code = None
+    elif reason is not None:
+        maybe = getattr(reason, "code", None)
+        if isinstance(maybe, ErrorCode):
+            code = maybe
+    if code not in _REVALIDATION_CODES:
+        return False
+    manager = get_manager()
+    throttle_key = cache_keys.provider_revalidation(provider_id)
+    try:
+        seen = await manager.get(throttle_key)
+    except Exception:
+        logger.warning("provider %s revalidation throttle read failed", provider_id, exc_info=True)
+        seen = None
+    if seen is not None:
+        logger.info("provider %s revalidation throttled (%s)", provider_id, code.value)
+        return False
+    try:
+        await manager.set(
+            throttle_key,
+            {"at": datetime.now(timezone.utc).isoformat()},
+            ttl=REVALIDATION_COOLDOWN_SECONDS,
+        )
+    except Exception:
+        logger.warning("provider %s revalidation throttle write failed", provider_id, exc_info=True)
+    if probe is not None:
+        try:
+            result = probe(db, provider_id)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.exception("provider %s revalidation probe failed", provider_id)
+            return False
+        emit("provider.revalidation", provider_id=str(provider_id), code=code.value)
+        logger.info("provider %s revalidation probed (%s)", provider_id, code.value)
+        return True
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        emit("provider.revalidation", provider_id=str(provider_id), code=code.value)
+        logger.info("provider %s revalidation skipped under pytest (%s)", provider_id, code.value)
+        return True
+    try:
+        # Force a fresh probe past the validate_provider result cache.
+        await manager.delete(cache_keys.provider_validation(provider_id))
+    except Exception:
+        logger.warning("provider %s revalidation cache clear failed", provider_id, exc_info=True)
+    try:
+        await validate_provider(db, provider_id)
+    except Exception:
+        logger.exception("provider %s revalidation failed", provider_id)
+        return False
+    emit("provider.revalidation", provider_id=str(provider_id), code=code.value)
+    logger.info("provider %s revalidation finished (%s)", provider_id, code.value)
+    return True
 
 
 async def discover_provider_models(

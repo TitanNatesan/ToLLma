@@ -73,7 +73,7 @@ from tollms.services.gateway.adapters.base import ChatMessage, StreamChunk
 from tollms.services.model_repository.lookup import find_for_model
 from tollms.services.observability.events import emit, incr_counter
 from tollms.api.models.service import get_model
-from tollms.api.providers.service import decrypted_credentials, get_provider
+from tollms.api.providers.service import decrypted_credentials, get_provider, request_revalidation
 
 logger = logging.getLogger(__name__)
 
@@ -610,6 +610,12 @@ async def run_chat(
             plane="ui",
         )
         incr_counter("gateway.provider_error", {"code": classified.code.value})
+        # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
+        # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
+        try:
+            await request_revalidation(db, provider.id, classified.code)
+        except Exception:
+            logger.warning("provider revalidation failed", exc_info=True)
         raise classified from e
 
 

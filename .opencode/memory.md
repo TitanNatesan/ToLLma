@@ -2493,3 +2493,13 @@ landing/ only (tokens in globals.css, nav, hero, all sections, icon.svg). Backen
 
 ### Verification
 - tsc + static build green; screenshots 390–1920 + reduced-motion; Lighthouse 97/100/~100; hero blank-instant-capture proven to be animation-timing artifact (settled capture renders fully).
+
+---
+
+## 2026-09-28 — Ops Hardening: orphan removal, daily health + failure validation, email safety COMPLETE
+
+### Scheduler
+Removed _orphan_sweep_job + registration + orphan_sweep_days + its test (explicit maintenance = DELETE conversation API). provider-health 5m → 24h via JOB_DEFS (usage-rollup 1h, ops-cleanup 1d, account-deletion 1d unchanged). Failure-triggered request_revalidation (INVALID_CREDENTIALS/TIMEOUT/MODEL_UNAVAILABLE only, 300s throttle, pytest short-circuit, hooked at 4 gateway failure sites).
+
+### Email
+Central route_email (kind-tagged wrappers, signatures kept for monkeypatch compat): pytest → suppression log + original-recipient outbox capture (zero network); local → sandbox reroute (parsed smtp_from); non-local → preserved. Masked logging. docs/OPERATIONS.md new; ARCHITECTURE.md updated. Tests: test_email_routing.py (5). No new env vars.

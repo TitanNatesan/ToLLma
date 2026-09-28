@@ -70,7 +70,7 @@ flowchart LR
 - `UnifiedRequest` is the single internal shape; OpenAI Chat/Responses, Anthropic Messages, images, and video translators all target it.
 - The provider family picks the adapter family; the model's `primary_endpoint` picks the adapter. Endpoint strings are canonical wire paths; the legacy `endpoint_type` enum is mirrored for older readers.
 - Media generation rides the same generation lifecycle (cancel, persist, recover, regenerate in place).
-- Background jobs (APScheduler): provider health checks, usage rollups, cleanup, account purges, orphan sweeps.
+- Background jobs (APScheduler): daily provider health validation plus failure-triggered re-validation (throttled), usage rollups, cleanup, account purges.
 
 ## Repository Architecture
 

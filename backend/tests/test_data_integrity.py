@@ -1,17 +1,16 @@
 """Data integrity (Phase 10): branch cutoff/ordering/copies, share view-count,
-export headers/truncation/scope, usage-cache invalidation, orphan sweep."""
+export headers/truncation/scope, usage-cache invalidation."""
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from tollms.api.conversations.schemas import ConversationCreate
 from tollms.api.conversations.service import add_message, create_conversation, list_messages
 from tollms.models.attachment import Attachment
-from tollms.models.conversation import Conversation
 from tollms.models.message import Message, MessageStatus, Role
 from tollms.models.message_history import GenerationRun, MessageVersion
 from tollms.models.request_log import ExportEvent
@@ -326,57 +325,19 @@ def test_usage_cache_invalidated_on_branch(db: Session, client, user_factory, pr
     assert client.get(f"/api/v1/conversations/{conv.id}/usage").status_code == 200
 
 
-# --- orphan sweep ---------------------------------------------------------------
+# --- scheduler job definitions ------------------------------------------------
 
 
-def test_orphan_sweep_removes_only_old_empty(db: Session, client, user_factory, provider_factory, model_factory,
-                                             monkeypatch, tmp_path, caplog):
-    import logging
+def test_scheduler_job_defs() -> None:
+    from tollms.services.jobs import scheduler as scheduler_mod
 
-    from tollms.core.config import get_settings
-    from tollms.services.cache import client as cache_client
-    from tollms.services.gateway import attachments as attachment_engine
-    from tollms.services.jobs import scheduler as scheduler
-
-    assert _run(cache_client.connect()) is True
-    assert scheduler._scheduler is None  # sweep runs standalone; schedulers never started
-
-    provider, model = _setup(client, user_factory, provider_factory, model_factory)
-    user_id = _uid(client)
-    days = get_settings().orphan_sweep_days
-    old = datetime.now(timezone.utc) - timedelta(days=days + 1)
-
-    monkeypatch.setattr(get_settings(), "storage_dir", str(tmp_path / "uploads"))
-
-    old_empty = _conv(db, user_id, provider, model, "Old empty")
-    young_empty = _conv(db, user_id, provider, model, "Young empty")
-    old_messaged = _conv(db, user_id, provider, model, "Old messaged")
-    old_empty_id, young_empty_id, old_messaged_id = old_empty.id, young_empty.id, old_messaged.id
-    add_message(db, old_messaged_id, Role.USER, "kept", user_id=user_id)
-    for cid in (old_empty_id, old_messaged_id):
-        row = db.get(Conversation, cid)
-        row.created_at = old
-    db.commit()
-
-    # Old empty owns one staged file: the sweep must cascade the row + bytes.
-    relpath = attachment_engine.save_bytes(user_id, str(old_empty_id), "staged.txt", b"orphan bytes")
-    db.add(Attachment(user_id=user_id, conversation_id=old_empty_id, message_id=None,
-                      filename="staged.txt", mime_type="text/plain", kind="document",
-                      file_size=12, storage_path=relpath))
-    db.commit()
-    assert (tmp_path / "uploads" / relpath).exists()
-
-    maker = sessionmaker(bind=db.get_bind())
-    monkeypatch.setattr(scheduler, "SessionLocal", maker)
-    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-
-    with caplog.at_level(logging.INFO):
-        scheduler._orphan_sweep_job()
-
-    db.expire_all()
-    assert db.get(Conversation, old_empty_id) is None
-    assert db.execute(select(Attachment).where(Attachment.conversation_id == old_empty_id)).scalars().all() == []
-    assert not (tmp_path / "uploads" / relpath).exists()
-    assert db.get(Conversation, young_empty_id) is not None
-    assert db.get(Conversation, old_messaged_id) is not None
-    assert "orphan sweep finished" in caplog.text
+    by_id = {job["id"]: job for job in scheduler_mod.JOB_DEFS}
+    assert {"provider-health", "usage-rollup", "ops-cleanup", "account-deletion"} <= set(by_id)
+    assert "orphan-sweep" not in by_id
+    assert not any("orphan" in job_id for job_id in by_id)
+    health = by_id["provider-health"]
+    assert health.get("hours") == 24
+    assert "minutes" not in health
+    for job in scheduler_mod.JOB_DEFS:
+        assert callable(job["func"])
+        assert job.get("trigger", "interval") == "interval"

@@ -34,6 +34,11 @@ def provider_refresh_lock(provider_id: object) -> str:
     return _key("lock", f"provider_refresh:{provider_id}")
 
 
+def provider_revalidation(provider_id: object) -> str:
+    """Failure-triggered revalidation throttle marker per provider."""
+    return _key("provider_revalidation", str(provider_id))
+
+
 # --- registered models / gateway metadata ----------------------------------
 def model(model_id: object) -> str:
     return _key("model", str(model_id))

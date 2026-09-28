@@ -2,6 +2,7 @@
 
 from tollms.services.email.service import (
     outbox,
+    route_email,
     send_account_deletion_reminder,
     send_account_deletion_requested,
     send_account_purged,
@@ -14,6 +15,7 @@ from tollms.services.email.service import (
 
 __all__ = [
     "outbox",
+    "route_email",
     "send_account_deletion_reminder",
     "send_account_deletion_requested",
     "send_account_purged",

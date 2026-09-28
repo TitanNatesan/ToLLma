@@ -36,7 +36,7 @@ from tollms.core.exceptions import (
     classify_provider_failure,
 )
 from tollms.core.security import client_meta as _request_client_meta
-from tollms.api.providers.service import decrypted_credentials
+from tollms.api.providers.service import decrypted_credentials, request_revalidation
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
 from tollms.services.api_keys.keys import KeyContext, authenticate, parse_bearer
@@ -652,6 +652,12 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             error_code=classified.code.value,
             latency_ms=latency_ms,
         )
+        # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
+        # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
+        try:
+            await request_revalidation(db, prepared.provider.id, classified.code)
+        except Exception:
+            logger.warning("provider revalidation failed", exc_info=True)
         raise classified from exc
 
 
@@ -748,6 +754,12 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             error_code=classified.code.value,
             latency_ms=latency_ms,
         )
+        # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
+        # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
+        try:
+            await request_revalidation(db, prepared.provider.id, classified.code)
+        except Exception:
+            logger.warning("provider revalidation failed", exc_info=True)
         raise classified from exc
 
 
@@ -1081,6 +1093,12 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 is_streaming=True,
             )
             logged = True
+        # Failure-triggered revalidation: prepared.provider is always set here
+        # (resolved in _prepare before any I/O). Throttled; never raises.
+        try:
+            await request_revalidation(db, prepared.provider.id, classified.code)
+        except Exception:
+            logger.warning("provider revalidation failed", exc_info=True)
         logger.warning(
             "public gateway stream failed: key=%s model=%s error=%s",
             prepared.ctx.key_prefix, prepared.model_label, classified.message,

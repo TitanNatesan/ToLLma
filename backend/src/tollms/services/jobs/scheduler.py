@@ -1,9 +1,10 @@
 """Periodic operations scheduler (APScheduler).
 
-One engine, one scheduler: provider health checks (5 min), usage rollups
-(hourly) and expired-token cleanup (daily). Model repository sync keeps its
-own scheduler. Each job is lock-guarded, per-item exception-safe and skipped
-under pytest — a failed job never takes down the process or other jobs.
+One engine, one scheduler: provider health checks (24h), usage rollups
+(hourly), expired-token cleanup (daily) and account-deletion processing
+(daily). Model repository sync keeps its own scheduler. Each job is
+lock-guarded, per-item exception-safe and skipped under pytest — a failed
+job never takes down the process or other jobs.
 """
 
 import asyncio
@@ -288,77 +289,40 @@ def _deletion_job() -> None:
             db.close()
 
 
-def _orphan_sweep_job() -> None:
-    """Hard-delete staged/empty conversations older than orphan_sweep_days.
+# NOTE: No orphan sweep. Explicit maintenance only: DELETE
+# /api/v1/conversations/{id} (existing API). Hidden empty conversations stay
+# hidden via the message_count filter (frontend behavior, untouched).
 
-    Only zero-message rows (no live messages at all); messaged rows are never
-    touched, and soft-deleted rows are left to the account-deletion ledger
-    (Phase 7 owns purge/ledger semantics — this job writes no PurgeAuditLog
-    rows). Counts go to the ops log as the audit trail.
-    """
-    if os.getenv("PYTEST_CURRENT_TEST"):
-        return
-    from datetime import datetime, timezone
+# --- job definitions ---------------------------------------------------------
+# Module-level table consumed by start() so tests can assert the schedule
+# without starting the scheduler under pytest.
 
-    from sqlalchemy import select
-
-    from tollms.core.config import get_settings
-    from tollms.models.attachment import Attachment
-    from tollms.models.conversation import Conversation
-    from tollms.models.message import Message
-    from tollms.services.gateway.attachments import delete_bytes
-
-    with locked_sync(cache_keys.LOCK_SCHEDULER, cache_ttl.LOCK_SCHEDULER * 1000) as acquired:
-        if not acquired:
-            logger.warning("orphan sweep skipped: lock held")
-            return
-        db = SessionLocal()
-        try:
-            days = get_settings().orphan_sweep_days
-            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            messaged = select(Message.conversation_id).where(Message.is_deleted.is_(False))
-            orphans = db.scalars(
-                select(Conversation).where(
-                    Conversation.is_deleted.is_(False),
-                    Conversation.created_at < cutoff,
-                    Conversation.id.notin_(messaged),
-                )
-            ).all()
-            orphan_ids = [row.id for row in orphans]
-            paths = (
-                [
-                    row[0]
-                    for row in db.execute(
-                        select(Attachment.storage_path).where(
-                            Attachment.conversation_id.in_(orphan_ids or [None])
-                        )
-                    ).all()
-                ]
-                if orphan_ids
-                else []
-            )
-            for row in orphans:
-                db.delete(row)
-            db.commit()
-            removed_bytes = 0
-            for relpath in paths:
-                try:
-                    delete_bytes(relpath)
-                    removed_bytes += 1
-                except Exception:
-                    logger.warning("orphan sweep: byte delete failed", exc_info=True)
-            logger.info(
-                "orphan sweep finished: conversations=%d attachments=%d bytes_removed=%d older_than_days=%d",
-                len(orphan_ids),
-                len(paths),
-                removed_bytes,
-                days,
-            )
-        except Exception:
-            db.rollback()
-            logger.exception("orphan sweep crashed")
-        finally:
-            db.close()
+JOB_DEFS: tuple[dict, ...] = (
+    {
+        "id": "provider-health",
+        "func": _provider_health_job,
+        "trigger": "interval",
+        "hours": 24,
+    },
+    {
+        "id": "usage-rollup",
+        "func": _usage_rollup_job,
+        "trigger": "interval",
+        "hours": 1,
+    },
+    {
+        "id": "ops-cleanup",
+        "func": _cleanup_job,
+        "trigger": "interval",
+        "days": 1,
+    },
+    {
+        "id": "account-deletion",
+        "func": _deletion_job,
+        "trigger": "interval",
+        "days": 1,
+    },
+)
 
 
 def start() -> None:
@@ -367,14 +331,15 @@ def start() -> None:
     if _scheduler is not None or os.getenv("PYTEST_CURRENT_TEST"):
         return
     sched = BackgroundScheduler(timezone="UTC")
-    sched.add_job(_provider_health_job, "interval", minutes=5, id="provider-health", replace_existing=True)
-    sched.add_job(_usage_rollup_job, "interval", hours=1, id="usage-rollup", replace_existing=True)
-    sched.add_job(_cleanup_job, "interval", days=1, id="ops-cleanup", replace_existing=True)
-    sched.add_job(_deletion_job, "interval", days=1, id="account-deletion", replace_existing=True)
-    sched.add_job(_orphan_sweep_job, "interval", days=1, id="orphan-sweep", replace_existing=True)
+    for job in JOB_DEFS:
+        func = job["func"]
+        job_id = job["id"]
+        trigger = job.get("trigger", "interval")
+        options = {k: v for k, v in job.items() if k not in ("func", "id", "trigger")}
+        sched.add_job(func, trigger, id=job_id, replace_existing=True, **options)
     sched.start()
     _scheduler = sched
-    logger.info("operations scheduler started (health 5m, rollup 1h, cleanup 1d, deletion 1d, orphan-sweep 1d)")
+    logger.info("operations scheduler started (health 24h, rollup 1h, cleanup 1d, deletion 1d)")
 
 
 def shutdown() -> None:
