@@ -2503,3 +2503,20 @@ Removed _orphan_sweep_job + registration + orphan_sweep_days + its test (explici
 
 ### Email
 Central route_email (kind-tagged wrappers, signatures kept for monkeypatch compat): pytest → suppression log + original-recipient outbox capture (zero network); local → sandbox reroute (parsed smtp_from); non-local → preserved. Masked logging. docs/OPERATIONS.md new; ARCHITECTURE.md updated. Tests: test_email_routing.py (5). No new env vars.
+
+---
+
+## 2026-09-28 — Organizations & Teams: discovery → FINAL v1 → design artifacts
+
+### Requirement
+Full interactive discovery for multi-tenant orgs/teams (28-section spec), then 8 architecture artifacts. No code/migrations/app changes.
+
+### Decisions (owner, selected)
+Single root/org (transferable); multi-org + multi-team (union, allow-only, no roles); flat teams (own nothing); first-class permission sets (system immutable clone-only); Active-context model; admin-issued org keys (one key = one org, budget from pools, hard-stop per leg); org budget = allocated + unallocated; personal creds never visible; conversations ALWAYS user-owned (mid-conversation key/provider switching rationale); per-request usage-event ledger (immutable, server-derived org_id, adjustments as rows); visibility modes (metadata_only default / full + read-audit); author-only edit + author sharing (org cannot revoke); platform admins metadata-only, content-never; break-glass audited recovery; 7d invites + queue + auto-expire; suspension revokes immediately, permission-shrink future-only; team analytics = member aggregation deduped; no org rate limits; context-switch future-only; exports split org/user; forks user-owned.
+
+### Files
+- `docs/requirements/organizations-and-teams.md` — FINAL v1 (36 sections, zero open questions).
+- `docs/org-teams-design/01-domain-model.md` … `08-implementation-phase-plan.md` — domain, ownership matrix, permission matrix, state machines, events, ERD, API surface, phased plan (A governance → B metering → C visibility → D analytics/UX).
+
+### Verification
+Spec consistency greps clean (no stale team-tag/rate-ceiling remnants; 36 headers; PENDING/TODO zero). No code touched; no tests run (artifacts only).
