@@ -21,6 +21,8 @@ from tollms.api.public_gateway.router import router as public_gateway_router
 from tollms.services.admin import activity as admin_activity
 from tollms.api.health.router import router as health_router
 from tollms.api.models.router import router as models_router
+from tollms.api.notifications.router import router as notifications_router
+from tollms.api.orgs.router import router as orgs_router
 from tollms.api.providers.router import router as providers_router
 from tollms.api.repository.router import router as repository_router
 from tollms.api.settings.router import router as settings_router
@@ -176,6 +178,8 @@ def create_app() -> FastAPI:
     app.include_router(request_logs_router)
     app.include_router(admin_router)
     app.include_router(keys_router)
+    app.include_router(orgs_router)
+    app.include_router(notifications_router)
     app.include_router(public_gateway_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app

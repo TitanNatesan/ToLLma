@@ -2520,3 +2520,70 @@ Single root/org (transferable); multi-org + multi-team (union, allow-only, no ro
 
 ### Verification
 Spec consistency greps clean (no stale team-tag/rate-ceiling remnants; 36 headers; PENDING/TODO zero). No code touched; no tests run (artifacts only).
+
+---
+
+## 2026-09-28 — Organizations & Teams Phase A COMPLETE (creation, discovery, sets, invites, approvals, notifications, UI)
+
+### Backend
+New `api/orgs/` (service/router/schemas) + `api/notifications/`: org CRUD w/ slug + XSS-safe validation, system (Owner/Approver/Member, immutable clone-only) + custom sets, escalation hard rule (grant ⊆ granter, 404-oracle), invites (existing/new-user) + join requests + approve/reject + accept/reject/cancel, members list/remove/leave, root protection, audit log, search discovery, notifications + unread. Cross-org reads 404 everywhere. Invitation tokens single-use, email-matched, 7d expiry (lazy transitions); token exposed only on recipient queue. Emails via route_email (pytest-suppressed, local-sandboxed).
+New `models/organization.py` (8 tables) + migration `a1b2c3d4e5f7` (head, alembic check green). 22 routes in OpenAPI.
+
+### Frontend
+`services/orgs.ts` (+`apiRequest` export), `types/orgs.ts`, `store/org.ts` (persisted active context + reconcile), `/organizations` (list, switcher, inbox, notifications), `/organizations/[id]` (Overview/Members/Invitations/Requests/Sets/Audit/Settings), `/organizations/invites` (email-link landing), 4 page-local modals, notif bell in SidebarHeader, Organizations nav entry. tsc + eslint clean. `next build` fails on pre-existing `/auth/reset-password` prerender (proven identical on pristine tree).
+
+### Verification
+pytest `tests/test_organizations.py` 15/15; full suite 551 passed, 0 failed (9m10s). Playwright `e2e/organizations.spec.ts` 12/12 (10 scenarios + isolation + root protection). Self-review: fixed set-rename uniqueness, system-delete 422, test-user mismatches, invite-assertion flaw.
+
+---
+
+## 2026-09-28 — Email delivery fix (stale SMTP_FROM in running container)
+
+### Symptom
+ENVIRONMENT=local, no mail arriving at natesantitan3@gmail.com. Logs showed sandbox=n***@tollma.ai (default) despite `.env` containing SMTP_FROM=natesantitan3@gmail.com.
+
+### Root cause
+Compose `env_file` is read once at container creation. The backend container was created before `.env` was updated, and `docker compose restart` does not re-read env — so the live process still held the default SMTP_FROM and the local sandbox (working as spec'd) rerouted mail to the black-hole no-reply@tollma.ai.
+
+### Fix
+`docker compose up -d backend` (recreate, not restart). Verified: container env now SMTP_FROM=natesantitan3@gmail.com; live resend delivered (`email sent to=n***@gmail.com`).
+
+### Rule
+After any `.env` change, run `docker compose up -d [service]` — never bare `restart` — or the change silently does not apply.
+
+---
+
+## 2026-09-28 — Org Management UX Refactor (Change Order B) COMPLETE
+
+### Backend
+52-code grouped permission catalog (Organization/Members/Teams/PermissionSets/Providers/Keys/Budgets/Analytics/Audit) replaces 10 flat codes. Enforcement remapped (Members.Read/Invite/Remove, PermissionSets.*/Assign, Organization.Settings, Audit.Read, Members.Approve/Update). New GET /api/v1/orgs/permissions/catalog. Migration `b2c3d4e5f6a8` expands legacy grants (Owner→full 52, Approver→canonical, custom mapped). ensure_system_sets updated.
+
+### Frontend
+Nested sidebar org nav (12 sections, Phase-B placeholders disabled w/ soon badge, aria-current, keyboard-operable links); section-driven dashboard (zero horizontal tabs); grouped permission builder w/ per-group counts (server catalog + fallback); card settings (Privacy/Sharing/Metadata/Danger-Zone-disabled); ConfirmDialog/AssignSetsDialog/TextPromptDialog replace all 5 window.confirm/prompt (zero remain); notification bell retained. tsc + eslint clean.
+
+### Verification
+pytest orgs 15/15; full suite 550 passed + 1 flaky test_generations timing failure (passes solo, unrelated). E2E orgs 13/13 (incl. new sidebar-navigation scenario). Screenshots: sidebar/builder/settings/mobile verified. `next build` pre-existing failure unchanged.
+
+### Noted (pre-existing, not caused here)
+Backend pytest `_flush_cache` wipes the shared dev Valkey (tollma:*), killing live dev sessions — re-login after any test run. Test expirations of setup storageState also observed; per-run setup refresh covers it.
+
+---
+
+## 2026-09-29 — Organization Invitation & Join Flow Validation COMPLETE (10/10 UI)
+
+### Resend feature (was missing, now implemented)
+POST /api/v1/orgs/{id}/invitations/{iid}/resend: pending-only, fresh token (old 404s), 7d expiry reset, invite.resent audit, recipient re-notified + re-emailed. UI Resend button. Backend 16/16 (incl. 5 resend negatives).
+
+### Validation (e2e/org-validation.spec.ts, isolated contexts @1920x1080, real UI)
+prep + scenarios 1-7 + negatives: 10/10 PASS. Agents: root/existing/decliner/new-user/decline/requester/rejecter/resend identities; auditor via read-only DB + audit endpoint + screenshots (/tmp/org-validation/ 13 shots).
+
+### Root causes fixed en route
+1. @test.local rejected by email-validator (reserved TLD) → @test.tollma.ai.
+2. mkIdentity login race → waitForURL settle + hard identity assert.
+3. Stale cross-run invites indistinguishable → org_slug added to InvitationRead + inbox/landing UI; slug-scoped test filters.
+4. Sidebar treated /invites as org id → excluded (real app bug fix).
+5. Exec-context cache write dropped → mint_verify.py writes via sync redis client.
+6. Gmail SMTP ~24s latency → EMAIL_TIMEOUT 90s for email-bound steps.
+
+### Regressions
+Backend orgs+auth 39/39; E2E organizations+navigation 14/14; full suite 550 + 1 unrelated flake (test_generations timing, passes solo). No native dialogs remain. `next build` pre-existing failure unchanged.

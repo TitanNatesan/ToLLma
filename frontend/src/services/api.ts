@@ -70,6 +70,11 @@ export class ApiError extends Error {
   }
 }
 
+/** Shared low-level request helper (auth headers, refresh-and-retry, envelope errors). */
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return req<T>(path, init);
+}
+
 async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) {

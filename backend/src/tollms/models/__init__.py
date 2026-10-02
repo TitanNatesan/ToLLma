@@ -13,6 +13,20 @@ from tollms.models.conversation import Conversation  # noqa: F401
 from tollms.models.message import Message, Role  # noqa: F401
 from tollms.models.message_history import GenerationRun, MessageVersion  # noqa: F401
 from tollms.models.model_repository import RepositoryModel, RepositorySource, SyncRun  # noqa: F401
+from tollms.models.organization import (  # noqa: F401
+    AuditLog,
+    Invitation,
+    InvitationKind,
+    InvitationStatus,
+    Membership,
+    MembershipPermissionSet,
+    MembershipState,
+    Notification,
+    Organization,
+    OrgStatus,
+    PermissionSet,
+    PermissionSetPermission,
+)
 from tollms.models.password_reset import PasswordResetToken  # noqa: F401
 from tollms.models.provider import Provider, ProviderType  # noqa: F401
 from tollms.models.purge_audit import PurgeAuditLog  # noqa: F401

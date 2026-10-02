@@ -2,13 +2,18 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Command as CmdIcon, Moon, PanelLeftClose, Search, Sun } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Bell, Command as CmdIcon, Moon, PanelLeftClose, Search, Sun } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui/primitives";
 import { useChatStore } from "@/store/chat";
+import { useUnreadCount } from "@/hooks/useOrgs";
 
 /** Top row of the sidebar: collapse, logo, command palette + theme utilities. */
 export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?: () => void }) {
   const setLeftSidebar = useChatStore((s) => s.setLeftSidebar);
+  const router = useRouter();
+  const unread = useUnreadCount();
+  const unreadCount = unread.data?.unread ?? 0;
   const [isDark, setIsDark] = useState<boolean>(() => {
     if (typeof document === "undefined") return true;
     return document.documentElement.classList.contains("dark");
@@ -60,6 +65,23 @@ export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?:
         aria-label="Open command palette"
       >
         <Search className="size-3.5" />
+      </button>
+      <button
+        onClick={() => router.push("/organizations?view=inbox")}
+        className="relative flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        title="Notifications"
+        data-testid="sidebar-notifications-btn"
+        aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
+      >
+        <Bell className="size-3.5" />
+        {unreadCount > 0 && (
+          <span
+            data-testid="sidebar-notifications-badge"
+            className="absolute -right-0.5 -top-0.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold text-white"
+          >
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
       </button>
       <button
         onClick={toggleTheme}

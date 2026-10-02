@@ -16,6 +16,7 @@ import { SidebarConversations } from "./SidebarConversations";
 import { SidebarProviders } from "./SidebarProviders";
 import { SidebarAnalytics } from "./SidebarAnalytics";
 import { SidebarFooter } from "./SidebarFooter";
+import { SidebarOrgNav, SidebarOrgSwitcher } from "./SidebarOrgNav";
 
 /** Hash fragment follows for section navigators (fragment navigation fires hashchange). */
 function subscribeSectionHash(callback: () => void) {
@@ -74,6 +75,9 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const isProvidersPage = pathname === "/providers" || pathname.startsWith("/providers/");
   const isAnalyticsPage = pathname === "/analytics" || pathname.startsWith("/analytics/");
   const isSettingsPage = pathname === "/settings" || pathname.startsWith("/settings/");
+  const isOrgsPage = pathname === "/organizations" || pathname.startsWith("/organizations/");
+  const orgSegment = pathname.split("/")[2] ?? "";
+  const isOrgDetailPage = /^\/organizations\/[^/]+$/.test(pathname) && orgSegment !== "invites";
 
   // Resizing state
   const [isResizing, setIsResizing] = useState(false);
@@ -102,13 +106,15 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const currentWidth = leftSidebarOpen ? sidebarWidth : 0;
   const ariaLabel = isAdminPage
     ? "Admin navigation"
-    : isProvidersPage
-      ? "Provider list"
-      : isAnalyticsPage
-        ? "Analytics"
-        : isSettingsPage
-          ? "Settings"
-          : "Conversations";
+    : isOrgDetailPage
+      ? "Organization sections"
+      : isProvidersPage
+        ? "Provider list"
+        : isAnalyticsPage
+          ? "Analytics"
+          : isSettingsPage
+            ? "Settings"
+            : "Conversations";
 
   // Below md the sidebar becomes an off-canvas overlay so page content keeps
   // the full viewport width (analytics/settings need it).
@@ -134,6 +140,13 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
           isPlatformAdmin ? (
             <SidebarAdmin activeId={adminActiveId} />
           ) : null
+        ) : isOrgDetailPage ? (
+          <SidebarOrgNav orgId={orgSegment} />
+        ) : isOrgsPage ? (
+          <>
+            <SidebarOrgSwitcher />
+            <SidebarConversations />
+          </>
         ) : isProvidersPage ? (
           <SidebarProviders />
         ) : isAnalyticsPage ? (

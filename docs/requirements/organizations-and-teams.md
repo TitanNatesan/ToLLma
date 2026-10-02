@@ -267,3 +267,23 @@ Which context each resource lives in, and which contexts may reference it. (Owne
 | 2026-09-28 | Others-delete | Root/manage_settings may delete org-visible content; usage events + audit survive | Owner directive |
 | 2026-09-28 | Author delete | Free conversation delete; never touches usage events/audit; enforcement post-toggle-only; team analytics deduped; invites auto-Expire; personal providers invisible/masked; ledger append-only forever | Owner directive |
 | 2026-09-28 | Rate limits | No org-level rate limits; budgets govern, per-key limits persist | Owner directive |
+
+---
+
+## Change Order B — 2026-09-28 (Organization Management UX Refactor)
+
+Owner-directed, supersedes conflicting FINAL v1 details (spec deviation logged, not silently changed):
+
+- Permission catalog replaced: 10 flat codes → 52 granular codes in 9 groups
+  (Organization 7, Members 7, Teams 7, PermissionSets 5, Providers 8, Keys 7,
+  Budgets 4, Analytics 5, Audit 2). Ownership matrix §31 and permission model §7
+  otherwise unchanged (allow-only, union, escalation invariant, clone-only system sets).
+- Enforcement points remapped (Members.Read/Invite/Remove, PermissionSets.*,
+  Organization.Settings, Audit.Read, Members.Approve/Update for approvals).
+- Enterprise sidebar navigation replaces horizontal org tabs; Teams/Providers/Keys/
+  Budgets/Analytics render as disabled Phase-B placeholders (no redesign later).
+- Settings redesigned as cards (Privacy, Sharing, Metadata, Danger Zone with
+  Phase-B-disabled actions). All window.confirm/prompt/alert replaced with
+  Dialog-based components. Toast + audit coverage unchanged.
+- Migration `b2c3d4e5f6a8` expands legacy grants (Owner reset to full 52-code
+  canonical; Approver reset; custom sets mapped).
