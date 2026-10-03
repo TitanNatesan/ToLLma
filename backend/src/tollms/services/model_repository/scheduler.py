@@ -1,4 +1,4 @@
-"""24h background sync scheduling (APScheduler)."""
+"""Model-catalog sync: fetch on every backend start, then every 6 hours (APScheduler)."""
 
 import logging
 import os
@@ -32,36 +32,26 @@ def _sync_job() -> None:
 
 
 def start() -> None:
-    """Start the 24h sync scheduler. Idempotent; skipped under pytest."""
+    """Start the sync scheduler: one run at startup, then every 6h. Idempotent; skipped under pytest."""
     global _scheduler
     if _scheduler is not None or os.getenv("PYTEST_CURRENT_TEST"):
         return
     from datetime import datetime, timezone
-    from tollms.models.model_repository import RepositoryModel
-
-    next_run = None
-    db = SessionLocal()
-    try:
-        if db.query(RepositoryModel).count() == 0:
-            next_run = datetime.now(timezone.utc)
-    except Exception:
-        pass
-    finally:
-        db.close()
 
     sched = BackgroundScheduler(timezone="UTC")
-    kwargs = {"next_run_time": next_run} if next_run else {}
+    # Always sync once at startup (catches catalog drift while offline),
+    # then refresh every 6 hours. Overlapping runs are lock-guarded.
     sched.add_job(
         _sync_job,
         "interval",
-        hours=24,
+        hours=6,
         id="model-repository-sync",
         replace_existing=True,
-        **kwargs,
+        next_run_time=datetime.now(timezone.utc),
     )
     sched.start()
     _scheduler = sched
-    logger.info("model repository scheduler started (every 24h)")
+    logger.info("model repository scheduler started (startup + every 6h)")
 
 
 def shutdown() -> None:

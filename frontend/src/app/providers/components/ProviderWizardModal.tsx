@@ -66,6 +66,10 @@ interface ProviderWizardModalProps {
   onClose: () => void;
   editingProvider?: Provider | null;
   onSaved?: (provider: Provider, discoveryMessage?: string) => void;
+  /** Prefill the gateway family when launched from the provider catalog. */
+  initialType?: ProviderType | null;
+  /** Prefill the connection name when launched from the provider catalog. */
+  initialName?: string | null;
 }
 
 const PROVIDER_METAS: Record<
@@ -361,6 +365,8 @@ export function ProviderWizardModal({
   onClose,
   editingProvider,
   onSaved,
+  initialType,
+  initialName,
 }: ProviderWizardModalProps) {
   const { data: providers = [] } = useProviders();
   const pm = useProviderMutations();
@@ -374,9 +380,9 @@ export function ProviderWizardModal({
     const d = loadDraft();
     return d?.step && d.step <= 2 ? d.step : 1;
   });
-  const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (loadDraft()?.name ?? "")));
+  const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (initialName ?? loadDraft()?.name ?? "")));
   const [type, setType] = useState<ProviderType>(() =>
-    isEditing ? (editingProvider?.provider_type ?? "OPENAI") : (loadDraft()?.type ?? "OPENAI"),
+    isEditing ? (editingProvider?.provider_type ?? "OPENAI") : (initialType ?? loadDraft()?.type ?? "OPENAI"),
   );
   const [description, setDescription] = useState(() => (isEditing ? "" : (loadDraft()?.description ?? "")));
   const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing ? {} : (loadDraft()?.creds ?? {})));

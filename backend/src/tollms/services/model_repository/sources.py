@@ -6,6 +6,7 @@ so new upstream fields survive without schema changes.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
+MODELS_DEV_URL = "https://models.dev/api.json"
 _FETCH_TIMEOUT = 60.0
 _FETCH_ATTEMPTS = 2
 
@@ -369,3 +371,168 @@ class OpenRouterSourceAdapter:
             caps=caps,
             raw=dict(info),
         )
+
+
+class ModelsDevSourceAdapter:
+    """Adapter for the models.dev community catalog (api.json).
+
+    Shape: {provider_id: {name, models: {model_id: {...}}}}. Costs are USD
+    per 1M tokens and are converted to per-token to match the other sources.
+    Provider/model ids intentionally reuse the shared ``{provider}/{model}``
+    key space so entries merge with LiteLLM/OpenRouter rows canonically.
+    """
+
+    name = "modelsdev"
+
+    def fetch(self) -> dict[str, Any]:
+        return _fetch_with_retry(MODELS_DEV_URL)
+
+    def normalize(self, data: dict[str, Any]) -> list[NormalizedModel]:
+        out: list[NormalizedModel] = []
+        if not isinstance(data, dict):
+            return out
+        for provider_id, provider in data.items():
+            if not isinstance(provider, dict):
+                continue
+            models = provider.get("models")
+            if not isinstance(models, dict):
+                continue
+            for model_id, info in models.items():
+                if not isinstance(info, dict):
+                    continue
+                try:
+                    model = self._normalize_one(str(provider_id), str(model_id), info)
+                except Exception:
+                    logger.warning("modelsdev: skipping unparseable entry %r/%r", provider_id, model_id)
+                    continue
+                if model is not None:
+                    out.append(model)
+        return out
+
+    def _normalize_one(self, provider_id: str, model_id: str, info: dict[str, Any]) -> NormalizedModel | None:
+        model_id = model_id.strip()
+        if not model_id:
+            return None
+        # Alias-resolved canonical slug keeps vertex/bedrock twins unified.
+        slug = normalize_modelsdev_slug(provider_id)
+        key, _, provider_model_id = _split_key(f"{slug}/{model_id}", slug or "unknown")
+        provider = slug
+        # Full provider/model identity (matches litellm/openrouter convention):
+        # bare model ids collide across providers in source attribution.
+        full_id = f"{provider_id.strip()}/{model_id}"
+        modalities = info.get("modalities") or {}
+        in_modalities = [str(m).lower() for m in (modalities.get("input") or []) if isinstance(m, str)]
+        out_modalities = [str(m).lower() for m in (modalities.get("output") or []) if isinstance(m, str)]
+        endpoints = derive_endpoints(supported=None, in_modalities=in_modalities, out_modalities=out_modalities)
+        primary = endpoints[0] if endpoints else "chat_completions"
+        cost = info.get("cost") or {}
+
+        def per_token(value: Any) -> Decimal | None:
+            amount = _cost(value)
+            return amount / Decimal(1_000_000) if amount is not None else None
+
+        limit = info.get("limit") or {}
+        caps = {
+            "supports_text_input": "text" in in_modalities or not in_modalities,
+            "supports_text_output": "text" in out_modalities or not out_modalities,
+            "supports_chat": bool({"chat_completions", "responses"} & set(endpoints)),
+            "supports_vision_input": "image" in in_modalities,
+            "supports_image_output": "image" in out_modalities,
+            "supports_audio_input": "audio" in in_modalities,
+            "supports_audio_output": "audio" in out_modalities,
+            "supports_video_input": "video" in in_modalities,
+            "supports_video_output": "video" in out_modalities,
+            "supports_reasoning": bool(info.get("reasoning")),
+            "supports_tool_calling": bool(info.get("tool_call")),
+            "supports_structured_output": False,
+            "supports_streaming": True,
+            "supports_embeddings": primary == "embeddings",
+            "supports_prompt_caching": per_token(cost.get("cache_read")) is not None,
+            **endpoint_capabilities(
+                endpoints,
+                image_output="image" in out_modalities,
+                video_output="video" in out_modalities,
+            ),
+        }
+        knowledge = info.get("knowledge")
+        return NormalizedModel(
+            source=self.name,
+            model_key=key,
+            canonical_name=full_id,
+            display_name=str(info.get("name") or model_id),
+            provider=provider,
+            provider_model_id=provider_model_id,
+            description=None,
+            release_date=_parse_date(info.get("release_date")),
+            endpoint_type="embeddings" if primary == "embeddings" else "chat_completions",
+            primary_endpoint=primary,
+            supported_endpoints=endpoints,
+            context_window=_int(limit.get("context")),
+            max_input_tokens=_int(limit.get("context")),
+            max_output_tokens=_int(limit.get("output")),
+            pricing={
+                "input_cost": per_token(cost.get("input")),
+                "output_cost": per_token(cost.get("output")),
+                "cache_read_cost": per_token(cost.get("cache_read")),
+                "cache_write_cost": per_token(cost.get("cache_write")),
+                "image_input_cost": None,
+                "audio_input_cost": None,
+            },
+            caps=caps,
+            raw={"provider": provider_id, "knowledge": knowledge, "open_weights": info.get("open_weights")},
+        )
+
+
+def _parse_date(value: Any) -> date | None:
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
+# models.dev provider ids that alias a canonical entry (same upstream data).
+MODELSDEV_PROVIDER_ALIASES = {
+    "bedrock": "amazon-bedrock",
+}
+
+# models.dev logo convention: https://models.dev/logos/<slug>.svg
+MODELSDEV_LOGO_URL = "https://models.dev/logos/{slug}.svg"
+
+
+def normalize_modelsdev_slug(raw: Any) -> str:
+    """Stable canonical slug: lowercase, separator-unified, alias-resolved."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(raw or "").strip().lower()).strip("-")
+    return MODELSDEV_PROVIDER_ALIASES.get(slug, slug) or "unknown"
+
+
+def normalize_modelsdev_providers(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Provider-level catalog entries from a models.dev payload. Never raises
+    on malformed entries; duplicates collapse onto the canonical slug."""
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(data, dict):
+        return []
+    for provider_id, provider in data.items():
+        if not isinstance(provider, dict):
+            continue
+        slug = normalize_modelsdev_slug(provider.get("id") or provider_id)
+        if slug in ("unknown", ""):
+            continue
+        models = provider.get("models")
+        entry = out.setdefault(slug, {
+            "slug": slug,
+            "name": str(provider.get("name") or slug),
+            "api_base_url": provider.get("api") if isinstance(provider.get("api"), str) else None,
+            "doc_url": provider.get("doc") if isinstance(provider.get("doc"), str) else None,
+            "npm_package": provider.get("npm") if isinstance(provider.get("npm"), str) else None,
+            "env_vars": [e for e in (provider.get("env") or []) if isinstance(e, str)][:12],
+            "model_count": 0,
+        })
+        if isinstance(models, dict):
+            entry["model_count"] += sum(1 for m in models.values() if isinstance(m, dict))
+        # Prefer the longest display name (most descriptive) across aliases.
+        name = str(provider.get("name") or "")
+        if len(name) > len(entry["name"]):
+            entry["name"] = name
+    return list(out.values())

@@ -85,8 +85,9 @@ flowchart LR
 ```
 
 - Canonical keys (`{provider}/{model}`, lowercase, separator-unified) dedupe across sources; `openrouter/` prefixes recurse.
-- Sync is idempotent, per-record fault-isolated, lock-guarded, on a 24h schedule; raw payloads preserved per row.
+- Sync is idempotent, per-record fault-isolated, lock-guarded, on a **startup + 6h** schedule; raw payloads preserved per row.
 - Repository is global (unowned); registered models link via `repository_model_key` + snapshot and may override pricing/caps.
+- **Provider catalog** (`provider_catalog`, sync-owned): every models.dev provider upserted by stable slug with logo/doc/api/npm metadata, gateway-family mapping, and capability flags; vanished providers deactivate (never delete); repository rows link via `catalog_slug`. Catalog metadata never holds credentials and never overrides ToLLma operational state (adapters, credential schemas, enabled flags).
 
 ## Jobs Architecture
 
@@ -95,7 +96,7 @@ flowchart LR
     SCHED[APScheduler] --> HEALTH[Provider health 5m]
     SCHED --> ROLL[Usage rollups 1h]
     SCHED --> CLEAN[Cleanup 1d]
-    SCHED --> REPO[Repository sync 24h]
+    SCHED --> REPO[Repository sync startup+6h]
     SCHED --> DEL[Account purge + orphan sweep]
 ```
 

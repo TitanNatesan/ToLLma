@@ -53,7 +53,7 @@ never tokens or URLs, which live in the bodies that are never logged.
 | Usage rollup | Hourly | Rebuilds usage aggregates for yesterday + today (idempotent upsert) |
 | Ops cleanup | Daily | Deletes used or expired password-reset tokens |
 | Account deletion | Daily | Sends 7-day / 1-day grace reminders (notice stages 1→2→3), then hard-purges due accounts per-user (failure rolls back that user, writes a failed audit row, continues) |
-| Repository sync | 24h | Idempotent model-catalog sync, per-record fault-isolated, lock-guarded |
+| Repository sync | Startup + 6h | Idempotent model/provider-catalog sync (LiteLLM + OpenRouter + models.dev), per-record fault-isolated, lock-guarded |
 
 All jobs are lock-guarded, per-item exception-safe, and skipped under pytest —
 a failed job never takes down the process or other jobs. Purge outcomes are

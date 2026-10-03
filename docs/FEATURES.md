@@ -25,10 +25,18 @@ Per-provider registered models with pricing (per-1M), context limits, capability
 
 ## Repository
 
-Global model-intelligence catalog synced from LiteLLM + OpenRouter (canonical-key dedupe, 24h scheduled sync + manual trigger, history, stats, search/filter). Source of truth for pricing, capabilities, limits, and media rate cards.
+Global model-intelligence catalog synced from LiteLLM + OpenRouter + models.dev (canonical-key dedupe, startup + 6h scheduled sync + manual trigger, history, stats, search/filter). Source of truth for pricing, capabilities, limits, and media rate cards.
 
 - Key endpoints: `GET /api/v1/model-repository/models`, `/stats`, `/sync-history`, `POST /sync`.
 - Limits: sync is lock-guarded (concurrent run → 422); per-record failures never abort a run.
+
+## Provider catalog
+
+Global models.dev-sourced provider catalog (`provider_catalog`, sync-owned): every upstream provider discoverable by stable slug with logo/doc/api metadata, gateway-support distinction, and capability flags. Catalog entries never hold credentials and never imply gateway support — connections are configured separately as personal/org providers through the existing wizard.
+
+- Key endpoints: `GET /api/v1/catalog/providers`, `/providers/{slug}`, `/stats`.
+- Source precedence for model rows: LiteLLM > OpenRouter > models.dev; ToLLma operational metadata (adapters, credential schemas, enabled flags) is never overwritten.
+- Adding gateway support for a new provider = implement an adapter in `services/gateway/adapters/`, register it in `factory.py`, and add the models.dev id → family mapping in `GATEWAY_FAMILIES` (`services/model_repository/sync.py`).
 
 ## Gateway
 

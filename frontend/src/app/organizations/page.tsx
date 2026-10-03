@@ -29,7 +29,7 @@ function OrganizationsInner() {
   const router = useRouter();
   const params = useSearchParams();
   const [view, setView] = useState<"orgs" | "inbox">(params.get("view") === "inbox" ? "inbox" : "orgs");
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(params.get("create") === "1");
   const [joinOpen, setJoinOpen] = useState(false);
   const orgs = useOrgs();
   const invites = useMyInvitations();

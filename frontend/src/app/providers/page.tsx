@@ -36,7 +36,8 @@ import {
   providerTypeLabel,
   resolveWireEndpoint,
 } from "./fields";
-import type { AIModel, DiscoveredModelInfo, Provider } from "@/types";
+import type { AIModel, DiscoveredModelInfo, Provider, ProviderType } from "@/types";
+import { CatalogBrowserDialog } from "./components/CatalogBrowser";
 import {
   CheckCircle2,
   Cpu,
@@ -91,6 +92,10 @@ export default function ProvidersPage() {
     setSelectedProviderId,
     addProviderOpen,
     setAddProviderOpen,
+    catalogOpen,
+    setCatalogOpen,
+    catalogPrefill,
+    setCatalogPrefill,
     leftSidebarOpen,
     setLeftSidebar,
   } = useChatStore();
@@ -783,19 +788,37 @@ export default function ProvidersPage() {
       {/* Provider Wizard Modal (Add / Edit) */}
       {addProviderOpen && (
         <ProviderWizardModal
-          key={editingProvider?.id ?? "new"}
+          key={editingProvider?.id ?? catalogPrefill?.family ?? "new"}
           open={addProviderOpen}
         onClose={() => {
           setAddProviderOpen(false);
           setEditingProvider(null);
+          setCatalogPrefill(null);
         }}
         editingProvider={editingProvider}
+        initialType={(catalogPrefill?.family ?? null) as ProviderType | null}
+        initialName={catalogPrefill?.name ?? null}
         onSaved={(p, discMsg) => {
           setSelectedProviderId(p.id);
           if (discMsg) {
             setDiscoverMsg((s) => ({ ...s, [p.id]: discMsg }));
           }
         }}
+        />
+      )}
+
+      {/* Models.dev provider catalog browser */}
+      {catalogOpen && (
+        <CatalogBrowserDialog
+          open={catalogOpen}
+          onClose={() => setCatalogOpen(false)}
+          onConfigure={(p, family) => {
+            if (!family) return;
+            setCatalogOpen(false);
+            setEditingProvider(null);
+            setCatalogPrefill({ family, name: p.name });
+            setAddProviderOpen(true);
+          }}
         />
       )}
 

@@ -4,6 +4,7 @@ import type { ComponentType, MouseEvent } from "react";
 import {
   Activity,
   AlertTriangle,
+  BookOpen,
   Coins,
   Gauge,
   Hash,
@@ -34,6 +35,7 @@ export const ADMIN_SECTIONS = [
   { id: "costs", label: "Costs", icon: Coins },
   { id: "tokens", label: "Tokens", icon: Hash },
   { id: "providers", label: "Providers", icon: Server },
+  { id: "catalog", label: "Catalog", icon: BookOpen },
   { id: "models", label: "Models", icon: Layers },
   { id: "users", label: "Users", icon: Users },
   { id: "api-keys", label: "API Keys", icon: KeyRound },

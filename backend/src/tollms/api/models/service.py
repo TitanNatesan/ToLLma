@@ -27,10 +27,13 @@ def get_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = None
     model = db.get(AIModel, model_id)
     if model is None or model.is_deleted:
         raise NotFoundError(f"model {model_id} not found")
-    if user_id is not None:
-        owner = db.scalar(select(Provider.user_id).where(Provider.id == model.provider_id))
-        if owner != user_id:
-            raise NotFoundError(f"model {model_id} not found")
+    owner = db.scalar(
+        select(Provider).where(Provider.id == model.provider_id)
+    )
+    if owner is None or owner.is_deleted or not owner.is_active:
+        raise NotFoundError(f"model {model_id} not found")
+    if user_id is not None and owner.user_id is not None and owner.user_id != user_id:
+        raise NotFoundError(f"model {model_id} not found")
     return model
 
 
@@ -43,7 +46,16 @@ def list_models(
     active_only: bool = False,
     user_id: uuid.UUID | None = None,
 ) -> list[AIModel]:
-    stmt = select(AIModel).where(AIModel.is_deleted.is_(False))
+    # Operational scope: only models whose provider connection is live.
+    # The global repository catalog (model_repository) intentionally retains
+    # metadata; this query serves usable connections, so deleted/inactive
+    # providers contribute nothing here (mirrors list_public_models).
+    stmt = (
+        select(AIModel)
+        .join(Provider, AIModel.provider_id == Provider.id)
+        .where(AIModel.is_deleted.is_(False))
+        .where(Provider.is_deleted.is_(False), Provider.is_active.is_(True))
+    )
     if user_id is not None:
         stmt = stmt.where(
             AIModel.provider_id.in_(select(Provider.id).where(Provider.user_id == user_id))

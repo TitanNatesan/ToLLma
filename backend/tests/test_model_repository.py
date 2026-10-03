@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tollms.api.repository import service
@@ -66,7 +67,7 @@ OPENROUTER_SAMPLE = {
 
 
 def test_sync_creates_and_dedupes(db: Session) -> None:
-    run = service.run_sync(db, litellm_data=LITELLM_SAMPLE, openrouter_data=OPENROUTER_SAMPLE)
+    run = service.run_sync(db, litellm_data=LITELLM_SAMPLE, openrouter_data=OPENROUTER_SAMPLE, modelsdev_data=MODELSDEV_SAMPLE)
     assert run.status == "done"
     assert run.models_created == 3  # sonnet-4 merged, gpt-4o, grok-4
     assert run.models_updated == 0
@@ -87,11 +88,11 @@ def test_sync_creates_and_dedupes(db: Session) -> None:
 
 
 def test_sync_updates_and_deactivates(db: Session) -> None:
-    service.run_sync(db, litellm_data=LITELLM_SAMPLE, openrouter_data=OPENROUTER_SAMPLE)
+    service.run_sync(db, litellm_data=LITELLM_SAMPLE, openrouter_data=OPENROUTER_SAMPLE, modelsdev_data=MODELSDEV_SAMPLE)
     changed = dict(LITELLM_SAMPLE)
     changed["anthropic/claude-sonnet-4"] = {**changed["anthropic/claude-sonnet-4"], "input_cost_per_token": 9e-06}
     del changed["openai/gpt-4o"]
-    run = service.run_sync(db, litellm_data=changed, openrouter_data={"data": []})
+    run = service.run_sync(db, litellm_data=changed, openrouter_data={"data": []}, modelsdev_data={})
     assert run.models_updated >= 1
     assert run.models_deactivated == 2  # gpt-4o + grok-4 vanished
 
@@ -109,7 +110,7 @@ def test_source_failure_never_raises(db: Session, monkeypatch: pytest.MonkeyPatc
         "tollms.services.model_repository.sync.LiteLLMSourceAdapter.fetch",
         lambda self: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    run = service.run_sync(db, openrouter_data={"data": []})
+    run = service.run_sync(db, openrouter_data={"data": []}, modelsdev_data={})
     assert run.status == "done"
     assert run.errors_count == 1
     assert any("litellm" in e for e in run.error_details)
@@ -117,7 +118,7 @@ def test_source_failure_never_raises(db: Session, monkeypatch: pytest.MonkeyPatc
 
 def test_search_filter_pagination_and_stats(client: TestClient, db: Session, user_factory) -> None:
     user_factory()
-    service.run_sync(db, litellm_data=LITELLM_SAMPLE, openrouter_data=OPENROUTER_SAMPLE)
+    service.run_sync(db, litellm_data=LITELLM_SAMPLE, openrouter_data=OPENROUTER_SAMPLE, modelsdev_data=MODELSDEV_SAMPLE)
 
     r = client.get("/api/v1/model-repository/stats")
     assert r.status_code == 200, r.text
@@ -189,7 +190,7 @@ MEDIA_SAMPLE = {
 
 
 def test_sync_derives_media_capabilities_and_seeds_rate_card(db: Session) -> None:
-    run = service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []})
+    run = service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []}, modelsdev_data={})
     assert run.status == "done" and run.errors_count == 0
 
     image = service.list_entries(db, search="gpt-image-1", active_only=True)[0][0]
@@ -214,7 +215,7 @@ def test_repository_api_exposes_capabilities_and_media_prices(
     client: TestClient, db: Session, user_factory
 ) -> None:
     user_factory()
-    service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []})
+    service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []}, modelsdev_data={})
     entry_id = client.get("/api/v1/model-repository/models", params={"search": "gpt-image-1"}).json()[
         "items"
     ][0]["id"]
@@ -230,7 +231,7 @@ def test_repository_api_exposes_capabilities_and_media_prices(
 def test_suggest_payload_carries_caching_and_media_rates(db: Session) -> None:
     from tollms.services.model_repository import lookup
 
-    service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []})
+    service.run_sync(db, litellm_data=MEDIA_SAMPLE, openrouter_data={"data": []}, modelsdev_data={})
     image_entry = service.list_entries(db, search="gpt-image-1", active_only=True)[0][0]
     suggested = lookup.suggest_payload(image_entry)
     assert suggested["supports_image_generation"] is True
@@ -242,3 +243,65 @@ def test_suggest_payload_carries_caching_and_media_rates(db: Session) -> None:
     responses = lookup.suggest_payload(responses_entry)
     assert responses["metadata"]["supports_prompt_caching"] is True
     assert responses["metadata"]["supports_responses"] is True
+
+
+MODELSDEV_SAMPLE = {
+    "openai": {
+        "id": "openai",
+        "name": "OpenAI",
+        "models": {
+            "gpt-4o": {
+                "name": "GPT-4o",
+                "attachment": True,
+                "reasoning": False,
+                "tool_call": True,
+                "temperature": True,
+                "knowledge": "2023-10",
+                "release_date": "2024-05-13",
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+                "open_weights": False,
+                "cost": {"input": 2.5, "output": 10.0, "cache_read": 1.25},
+                "limit": {"context": 128000, "output": 16384},
+            },
+            "broken": "not-a-dict",
+        },
+    },
+    "junk-provider": "not-a-dict",
+}
+
+
+def test_modelsdev_normalizes_and_converts_per_million_pricing(db: Session) -> None:
+    from tollms.services.model_repository.sources import ModelsDevSourceAdapter
+
+    models = ModelsDevSourceAdapter().normalize(MODELSDEV_SAMPLE)
+    assert len(models) == 1
+    (m,) = models
+    assert m.model_key == "openai/gpt-4o"
+    assert m.provider == "openai"
+    # $2.50/1M input -> per-token.
+    assert m.pricing["input_cost"] == Decimal("2.5") / Decimal(1_000_000)
+    assert m.pricing["output_cost"] == Decimal("10") / Decimal(1_000_000)
+    assert m.context_window == 128000
+    assert m.max_output_tokens == 16384
+    assert m.caps["supports_vision_input"] is True
+    assert m.caps["supports_tool_calling"] is True
+    assert m.release_date is not None and m.release_date.year == 2024
+
+
+def test_sync_merges_all_three_sources(db: Session) -> None:
+    run = service.run_sync(
+        db,
+        litellm_data=LITELLM_SAMPLE,
+        openrouter_data=OPENROUTER_SAMPLE,
+        modelsdev_data=MODELSDEV_SAMPLE,
+    )
+    assert run.status == "done"
+    assert run.errors_count == 0
+    # gpt-4o appears in litellm + modelsdev (merged, not duplicated).
+    from tollms.models.model_repository import RepositoryModel, RepositorySource
+
+    rows = db.scalars(select(RepositoryModel)).all()
+    keys = [m.model_key for m in rows]
+    assert keys.count("openai/gpt-4o") == 1
+    sources = {s.source_name for s in db.scalars(select(RepositorySource)).all()}
+    assert {"litellm", "openrouter", "modelsdev"} <= sources

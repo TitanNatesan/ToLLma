@@ -16,18 +16,15 @@
           "execution": 60000
         }
       },
-      "playwright": {
+      "agent-browser": {
         "type": "local",
-        "command": ["npx", "-y", "@playwright/mcp"],
-        "timeout": {
-          "catalog": 60000,
-          "execution": 60000
-        }
+        "command": ["agent-browser", "mcp"]
       },
       "sequential-thinking": {
         "type": "local",
         "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
         "timeout": {
+          "startup": 120000,
           "catalog": 60000,
           "execution": 60000
         }

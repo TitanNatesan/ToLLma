@@ -70,6 +70,7 @@ def test_draft_validate_and_lookup_authed_not_401(
         db,
         litellm_data={"openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"}},
         openrouter_data={"data": []},
+        modelsdev_data={},
     )
     dv = client.post(
         "/api/v1/providers/draft-validate",

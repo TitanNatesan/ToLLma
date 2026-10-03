@@ -30,6 +30,7 @@ def test_separator_variants_merge_into_one_record(db: Session) -> None:
         db,
         litellm_data={"anthropic.claude-x": {"litellm_provider": "anthropic", "mode": "chat"}},
         openrouter_data={"data": [{"id": "anthropic/claude-x", "name": "Claude X"}]},
+        modelsdev_data={},
     )
     rows, total = list_entries(db, active_only=False)
     assert total == 1
@@ -41,6 +42,7 @@ def test_source_rows_rebuilt_with_payloads(db: Session) -> None:
         db,
         litellm_data={"openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"}},
         openrouter_data={"data": []},
+        modelsdev_data={},
     )
     entry = list_entries(db, active_only=False)[0][0]
     rows = list(db.scalars(select(RepositorySource)))
@@ -48,7 +50,7 @@ def test_source_rows_rebuilt_with_payloads(db: Session) -> None:
     assert rows[0].model_repository_id == entry.id
     assert rows[0].source_name == "litellm"
     assert rows[0].source_url is not None
-    run_sync(db, litellm_data={"openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"}}, openrouter_data={"data": []})
+    run_sync(db, litellm_data={"openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"}}, openrouter_data={"data": []}, modelsdev_data={})
     assert len(list(db.scalars(select(RepositorySource)))) == 1  # rewritten, not duplicated
 
 
@@ -67,6 +69,7 @@ def test_lookup_and_suggest(client: TestClient, db: Session, user_factory) -> No
             }
         },
         openrouter_data={"data": []},
+        modelsdev_data={},
     )
     assert lookup(db, "openai/gpt-4o") is not None
     assert lookup(db, "openai.gpt-4o") is not None  # canonical variant
@@ -105,6 +108,7 @@ def _repo_priced_chat(db: Session, provider_factory, model_factory):
             }
         },
         openrouter_data={"data": []},
+        modelsdev_data={},
     )
     p = provider_factory("MockRepo", ptype="OPENAI", creds={"api_key": "k"})
     m = model_factory(p["id"], model_id="mock-model", input_price="0", output_price="0")
@@ -152,6 +156,7 @@ def test_model_create_snapshots_repository(client: TestClient, db: Session, prov
         db,
         litellm_data={"openai/gpt-4o": {"input_cost_per_token": 2.5e-06, "litellm_provider": "openai", "mode": "chat"}},
         openrouter_data={"data": []},
+        modelsdev_data={},
     )
     p = provider_factory("Snap")
     r = client.post(

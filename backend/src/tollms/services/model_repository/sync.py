@@ -12,16 +12,21 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from tollms.models.model_repository import RepositoryModel, RepositorySource, SyncRun
+from tollms.models.provider import ProviderType
+from tollms.models.provider_catalog import ProviderCatalog
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_invalidate_sync
 from tollms.services.cost_estimator import official_media_prices
 from tollms.services.model_repository.canonical import canonicalize
 from tollms.services.model_repository.sources import (
     LITELLM_URL,
+    MODELS_DEV_URL,
     OPENROUTER_URL,
     LiteLLMSourceAdapter,
+    ModelsDevSourceAdapter,
     NormalizedModel,
     OpenRouterSourceAdapter,
+    normalize_modelsdev_providers,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,12 +88,16 @@ _ERROR_DETAILS_CAP = 20
 def merge_records(groups: dict[str, list[NormalizedModel]]) -> dict[str, dict[str, Any]]:
     """Merge per-source records into one dict per canonical key.
 
-    Source priority: LiteLLM first, then OpenRouter. Scalars take the first
-    non-null value; capabilities OR-merge; raw payloads are kept per source.
+    Source priority: LiteLLM first, then OpenRouter, then models.dev.
+    Scalars take the first non-null value; capabilities OR-merge; raw payloads
+    are kept per source. ToLLma operational metadata (gateway support, adapter
+    choice, credentials) lives outside these rows and is never overwritten.
     """
     merged: dict[str, dict[str, Any]] = {}
     for key, records in groups.items():
-        ordered = sorted(records, key=lambda r: 0 if r.source == "litellm" else 1)
+        ordered = sorted(
+            records, key=lambda r: {"litellm": 0, "openrouter": 1, "modelsdev": 2}.get(r.source, 3)
+        )
         first = ordered[0]
         row: dict[str, Any] = {
             "model_key": key,
@@ -155,6 +164,7 @@ def run_sync(
     *,
     litellm_data: dict[str, Any] | None = None,
     openrouter_data: dict[str, Any] | None = None,
+    modelsdev_data: dict[str, Any] | None = None,
 ) -> SyncRun:
     """Execute one sync. Pass payloads directly in tests to stay offline.
 
@@ -176,6 +186,7 @@ def run_sync(
     errors: list[str] = []
     litellm = LiteLLMSourceAdapter()
     openrouter = OpenRouterSourceAdapter()
+    modelsdev = ModelsDevSourceAdapter()
     try:
         payload = litellm_data if litellm_data is not None else litellm.fetch()
         for record in litellm.normalize(payload):
@@ -190,6 +201,14 @@ def run_sync(
     except Exception as e:
         logger.exception("model repository: openrouter sync failed")
         errors.append(f"openrouter: {e}")
+    try:
+        modelsdev_payload = modelsdev_data if modelsdev_data is not None else modelsdev.fetch()
+        for record in modelsdev.normalize(modelsdev_payload):
+            groups.setdefault(canonicalize(record.model_key), []).append(record)
+    except Exception as e:
+        logger.exception("model repository: modelsdev sync failed")
+        errors.append(f"modelsdev: {e}")
+        modelsdev_payload = None
 
     now = datetime.now(timezone.utc)
     created = updated = deactivated = 0
@@ -221,6 +240,26 @@ def run_sync(
                 deactivated += 1
         db.flush()  # ids for source rows below
         _rewrite_source_rows(db, groups, stored)
+        # Provider catalog: link repository rows to their catalog provider,
+        # then upsert catalog definitions (credential-free, global scope).
+        try:
+            for key, records in groups.items():
+                model = stored.get(key)
+                if model is None:
+                    continue
+                slugs = sorted({r.provider for r in records if r.source == "modelsdev" and r.provider})
+                want = slugs[0] if slugs else None
+                if model.catalog_slug != want:
+                    model.catalog_slug = want
+            db.flush()
+            if modelsdev_payload is not None:
+                catalog = sync_provider_catalog(
+                    db, normalize_modelsdev_providers(modelsdev_payload), groups
+                )
+                logger.info("provider catalog sync: %s", catalog)
+        except Exception as e:
+            logger.exception("model repository: provider catalog sync failed")
+            errors.append(f"catalog: {e}")
         run.status = "done"
     except Exception as e:
         logger.exception("model repository: sync store phase failed")
@@ -242,7 +281,107 @@ def run_sync(
     return run
 
 
-SOURCE_URLS = {"litellm": LITELLM_URL, "openrouter": OPENROUTER_URL}
+SOURCE_URLS = {"litellm": LITELLM_URL, "openrouter": OPENROUTER_URL, "modelsdev": MODELS_DEV_URL}
+
+# models.dev provider id -> ToLLma gateway family. This maps OUR adapter
+# implementations, not their catalog: every unmapped provider stays
+# catalog-only and can never be configured as a gateway connection.
+GATEWAY_FAMILIES: dict[str, str] = {
+    "openai": ProviderType.OPENAI.value,
+    "anthropic": ProviderType.ANTHROPIC_MESSAGES.value,
+    "google": ProviderType.GEMINI.value,
+    "google-vertex": ProviderType.VERTEX_AI.value,
+    "amazon-bedrock": ProviderType.BEDROCK_CONVERSE.value,
+}
+
+MODELSDEV_LOGO_URL = "https://models.dev/logos/{slug}.svg"
+
+
+def sync_provider_catalog(
+    db: Session, providers: list[dict[str, Any]], groups: dict[str, list[NormalizedModel]]
+) -> dict[str, int]:
+    """Upsert models.dev provider catalog rows. Idempotent; never deletes:
+    providers absent from the source are marked inactive. Never touches user
+    Provider connections, credentials, or ToLLma operational metadata."""
+    seen: set[str] = set()
+    created = updated = 0
+    for entry in providers:
+        slug = str(entry.get("slug") or "").strip()
+        if not slug:
+            continue
+        seen.add(slug)
+        family = GATEWAY_FAMILIES.get(slug)
+        row = db.execute(
+            select(ProviderCatalog).where(
+                ProviderCatalog.source == "modelsdev",
+                ProviderCatalog.source_id == slug,
+                ProviderCatalog.is_deleted.is_(False),
+            )
+        ).scalars().first()
+        # Aggregate capability signals from this provider's normalized models.
+        chat = streaming = False
+        for records in groups.values():
+            for record in records:
+                if record.source == "modelsdev" and record.provider == slug:
+                    chat = chat or bool(record.caps.get("supports_chat"))
+                    streaming = streaming or bool(record.caps.get("supports_streaming"))
+        values = {
+            "name": str(entry.get("name") or slug)[:120],
+            "display_name": str(entry.get("name") or slug)[:120],
+            "logo_url": MODELSDEV_LOGO_URL.format(slug=slug),
+            "doc_url": entry.get("doc_url"),
+            "api_base_url": entry.get("api_base_url"),
+            "npm_package": entry.get("npm_package"),
+            "env_vars": entry.get("env_vars") or [],
+            "gateway_family": family,
+            "gateway_supported": family is not None,
+            "capabilities": {
+                "catalog_available": True,
+                "gateway_supported": family is not None,
+                "credentials_supported": family is not None,
+                "model_discovery_supported": family is not None,
+                "chat_supported": chat,
+                "streaming_supported": streaming,
+            },
+            "is_active": True,
+        }
+        if row is None:
+            db.add(ProviderCatalog(slug=slug, source="modelsdev", source_id=slug, **values))
+            created += 1
+        else:
+            changed = False
+            for field, value in values.items():
+                if getattr(row, field) != value:
+                    setattr(row, field, value)
+                    changed = True
+            updated += int(changed)
+    deactivated = 0
+    for row in db.execute(
+        select(ProviderCatalog).where(
+            ProviderCatalog.source == "modelsdev",
+            ProviderCatalog.is_deleted.is_(False),
+            ProviderCatalog.is_active.is_(True),
+        )
+    ).scalars().all():
+        if row.slug not in seen:
+            row.is_active = False
+            deactivated += 1
+    # Refresh per-provider model counts from the just-merged repository rows.
+    # Explicit flush: this session runs with autoflush=False, so the counts
+    # query below would otherwise miss the catalog_slug linkages above.
+    db.flush()
+    counts: dict[str, int] = {}
+    for model in db.execute(
+        select(RepositoryModel).where(
+            RepositoryModel.is_deleted.is_(False), RepositoryModel.catalog_slug.is_not(None)
+        )
+    ).scalars().all():
+        counts[model.catalog_slug or ""] = counts.get(model.catalog_slug or "", 0) + 1
+    for row in db.execute(select(ProviderCatalog).where(ProviderCatalog.is_deleted.is_(False))).scalars().all():
+        want = counts.get(row.slug, 0)
+        if row.model_count != want:
+            row.model_count = want
+    return {"created": created, "updated": updated, "deactivated": deactivated}
 
 
 def _rewrite_source_rows(

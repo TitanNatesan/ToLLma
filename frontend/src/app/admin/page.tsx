@@ -32,6 +32,7 @@ import {
 import type { AdminPreset, AdminQueryParams } from "@/types/admin";
 import { ApiKeysSection } from "./components/ApiKeysSection";
 import { CacheSection } from "./components/CacheSection";
+import { CatalogSection } from "./components/CatalogSection";
 import { CostsSection } from "./components/CostsSection";
 import { ErrorsSection } from "./components/ErrorsSection";
 import { fmtDateTime } from "./components/format";
@@ -294,6 +295,9 @@ export default function AdminPage() {
         return health;
       case "api-keys":
         return apiKeys;
+      case "catalog":
+        // Self-loading section (global catalog scope, no time range).
+        return { isPending: false, isError: false, error: null, refetch: () => {} };
     }
   }
 
@@ -309,6 +313,8 @@ export default function AdminPage() {
         return tokens.data ? <TokensSection data={tokens.data} /> : null;
       case "providers":
         return providers.data ? <ProvidersSection data={providers.data} /> : null;
+      case "catalog":
+        return <CatalogSection />;
       case "models":
         return models.data ? (
           <ModelsSection

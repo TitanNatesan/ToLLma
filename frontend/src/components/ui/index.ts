@@ -17,6 +17,7 @@ export * from "./ShortcutsOverlay";
 export * from "./ModelSelector";
 export * from "./ProviderSelector";
 export * from "./Logo";
+export * from "./ProviderLogo";
 export * from "./AppShell";
 export * from "./DeletionWarningScreen";
 export * from "./VerificationBanner";

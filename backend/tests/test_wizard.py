@@ -50,6 +50,7 @@ def test_mapping_priorities(db: Session) -> None:
             "openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"},
         },
         openrouter_data={"data": [{"id": "meta/gpt-oss-20b", "name": "GPT OSS"}]},
+        modelsdev_data={},
     )
     assert detect_providers_from_url("https://api.groq.com/openai/v1") == ("groq",)
     assert detect_providers_from_url("http://localhost:11434/v1") == ("ollama",)
@@ -80,6 +81,7 @@ def test_register_is_atomic_with_match_stats(client: TestClient, db: Session, us
         db,
         litellm_data={"openai/gpt-4o": {"input_cost_per_token": 2.5e-06, "litellm_provider": "openai", "mode": "chat"}},
         openrouter_data={"data": []},
+        modelsdev_data={},
     )
     payload = {
         "name": "WizProv",

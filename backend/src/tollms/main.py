@@ -13,6 +13,7 @@ from tollms.api.analytics.router import router as analytics_router
 from tollms.api.analytics_api.router import router as analytics_api_router
 from tollms.api.attachments.router import router as attachments_router
 from tollms.api.auth.router import router as auth_router
+from tollms.api.catalog.router import router as catalog_router
 from tollms.api.conversations.router import router as conversations_router
 from tollms.api.gateway.router import router as gateway_router
 from tollms.api.admin.router import router as admin_router
@@ -163,6 +164,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(catalog_router)
     app.include_router(providers_router)
     app.include_router(models_router)
     app.include_router(repository_router)

@@ -29,6 +29,7 @@ from tollms.models.organization import (  # noqa: F401
 )
 from tollms.models.password_reset import PasswordResetToken  # noqa: F401
 from tollms.models.provider import Provider, ProviderType  # noqa: F401
+from tollms.models.provider_catalog import ProviderCatalog  # noqa: F401
 from tollms.models.purge_audit import PurgeAuditLog  # noqa: F401
 from tollms.models.registered_model import AIModel, EndpointType  # noqa: F401
 from tollms.models.request_log import ExportEvent, RequestLog, RequestStatus  # noqa: F401

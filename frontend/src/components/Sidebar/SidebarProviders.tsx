@@ -1,10 +1,12 @@
 "use client";
 
-import { Cpu, Plus } from "lucide-react";
+import { BookOpen, Cpu, Plus } from "lucide-react";
 import { Badge, Button, Select } from "@/components/ui/primitives";
+import { ProviderLogo } from "@/components/ui/ProviderLogo";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { logoForProviderType } from "@/services/catalog";
 import { useChatStore } from "@/store/chat";
 import { PROVIDER_TYPES, providerTypeLabel } from "@/app/providers/fields";
 import type { ProviderType } from "@/types";
@@ -20,6 +22,7 @@ export function SidebarProviders() {
     setProviderTypeFilter,
     setSelectedProviderId,
     setAddProviderOpen,
+    setCatalogOpen,
   } = useChatStore();
 
   const { data: providers = [], isLoading: providersLoading } = useProviders();
@@ -46,6 +49,18 @@ export function SidebarProviders() {
             {providers.length}
           </Badge>
         </div>
+        <div className="flex gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setCatalogOpen(true)}
+          data-testid="browse-catalog"
+          className="h-7 gap-1 px-2 text-xs"
+          title="Browse the Models.dev provider catalog"
+        >
+          <BookOpen className="size-3" aria-hidden />
+          <span>Catalog</span>
+        </Button>
         <Button
           size="sm"
           onClick={() => setAddProviderOpen(true)}
@@ -55,6 +70,7 @@ export function SidebarProviders() {
           <Plus className="size-3" />
           <span>Add</span>
         </Button>
+        </div>
       </div>
 
       {/* Search & Provider Type Dropdown */}
@@ -107,8 +123,9 @@ export function SidebarProviders() {
               )}
             >
               <div className="flex items-center justify-between gap-1.5">
-                <span className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                  {p.name}
+                <span className="flex min-w-0 items-center gap-1.5 font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                  <ProviderLogo logoUrl={logoForProviderType(p.provider_type)} name={p.name} size="sm" />
+                  <span className="truncate">{p.name}</span>
                 </span>
                 <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
                   {providerTypeLabel(p.provider_type)}

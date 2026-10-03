@@ -25,6 +25,7 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     __table_args__ = (
         UniqueConstraint("model_key", name="uq_model_repository_key"),
         Index("ix_model_repository_provider", "provider"),
+        Index("ix_model_repository_catalog", "catalog_slug"),
         Index("ix_model_repository_active", "is_active"),
         Index("ix_model_repository_created", "created_at"),
     )
@@ -35,6 +36,9 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     family: Mapped[str | None] = mapped_column(String(128), nullable=True)
     provider: Mapped[str] = mapped_column(String(128), nullable=False)
     provider_model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    catalog_slug: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Link to provider_catalog.slug for models.dev-sourced rows (NULL for
+    # litellm/openrouter-only rows). Set at sync time, never user-edited.
     vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     endpoint_type: Mapped[str] = mapped_column(String(64), default="chat_completions", nullable=False)
     # Endpoint-aware metadata (wire paths): the primary endpoint plus every

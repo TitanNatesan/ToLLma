@@ -2603,3 +2603,92 @@ Governance stale-reads (section-change invalidation, focus refetch, staleTime 0)
 
 ### Env notes
 Headless-fullscreen (no X); @test.tollma.ai identities (validator rejects .local); Gmail SMTP ~25s dominates suite wall-clock (~4-6 min); pytest Valkey flush kills dev sessions (re-login after runs).
+
+---
+
+## 2026-10-03 — Models.dev provider catalog integration COMPLETE
+
+### What
+Provider catalog layer (catalog/discovery) separated from gateway connections: new `provider_catalog` table (slug/name/logo/doc/api/npm/env, gateway family + support flags, capabilities, model counts, active state) synced from models.dev (226 providers, 8,284 linked models); `model_repository.catalog_slug` link; `ModelsDevSourceAdapter` (per-1M→per-token pricing, alias resolution, defensive parsing); sync schedule startup + every 6h; catalog API (`/api/v1/catalog/providers|/{slug}|/stats`); catalog browser UI (search, gateway filter, pagination, logos w/ fallback chain, Configure→wizard prefill for supported only); connection cards show family logos; admin Catalog section; migration c3d4e5f6a7b9 (head, check green).
+
+### Decisions
+Logo = stored remote URL (spec preference), frontend fallback chain (remote → icon, never broken image). Gateway mapping covers OUR 5 adapter families only; 221 providers catalog-only and cannot be configured (Configure disabled + wizard guards). Source precedence litellm > openrouter > modelsdev; operational metadata untouched by construction. No org-owned catalog rows (global scope).
+
+### Bugs found fixed
+source_model_id collision across providers (bare model ids) → full provider/model identity; autoflush=False blindness in counts → explicit flush; Valkey-bridge startup deadlock (lock held across sleep → first call_sync per process silently died + 600s-TTL leaked locks) → poll outside lock + single-starter + 5s window. Latter explains ALL previously "flaky" sync lock failures.
+
+### Verification
+Backend 561/561 (incl. 6 new catalog + 2 modelsdev tests); live 3-source sync done/0 errors; catalog E2E 6/6; providers/discovery/wizard/navigation green (navigation flaky timing, passes on retry, untouched path); tsc + eslint clean; screenshots verified.
+
+---
+
+## 2026-10-03 — Org sidebar + deleted-provider model filtering COMPLETE
+
+### Root cause
+`list_models` (UI endpoint) filtered AIModel.is_deleted but never joined Provider lifecycle, so soft-deleted/inactive providers' models stayed selectable; key-creation assignment already rejected them (split-brain listing vs enforcement). Public gateway already filtered correctly.
+
+### Backend
+list_models: inner-join Provider requiring live+active; get_model: provider lifecycle check. No schema change. Tests: test_provider_lifecycle.py (7: deletion/inactive/multi-provider/catalog-preservation/isolation/duplicates).
+
+### Frontend
+SidebarWorkspaces (Personal + all memberships + active highlight + empty state + New org via ?create=1) on /organizations* + /api-keys; chat keeps conversations; providers/settings/admin panels untouched. ModelPermissionsEditor grouped by canonical family with ProviderLogo + connection label; identity stays (provider_id, model.id). ?create=1 deep-link support.
+
+### Verification
+Backend 568/568; E2E org-sidebar-key-models 5/5; gateway/discovery/keys/caching suites green; tsc + eslint clean; screenshots verified; zero console errors. Org providers/keys don't exist in schema (Phase A) — isolation holds vacuously, documented as limitation.
+
+## 2026-10-03 — MCP servers reworked: agent-browser replaces Playwright, two skills installed
+
+### Requirement Completed
+Configure three MCP servers for the ToLLms project (sequential-thinking, agent-browser, graphify), replace the Playwright MCP server with agent-browser, and install the `find-skills` and `shadcn` agent skills.
+
+### Files Modified
+- `.opencode/opencode.json` — removed the `playwright` MCP server; added `agent-browser` (`["agent-browser", "mcp"]`, core tool profile, default timeouts); kept `graphify` and `sequential-thinking`; added `startup: 120000` to sequential-thinking because its npx cold start exceeded the 30s default.
+- `.agents/skills/find-skills/SKILL.md`, `.agents/skills/shadcn/SKILL.md`, `skills-lock.json` — created by `npx skills add … -a opencode -y` (project-level, copied not symlinked).
+
+### Files Created / Installed
+- Global npm package `agent-browser@0.38.2` (`/home/ond/.nvm/versions/node/v24.20.0/bin/agent-browser`).
+- Chrome for Testing 154.0.8037.92 at `~/.agent-browser/browsers/chrome-154.0.8037.92` (`agent-browser install`).
+
+### Decisions
+- Used the global `agent-browser` binary rather than `npx agent-browser` — it is already on the same PATH as `npx`, avoids per-start resolution cost.
+- Left the MCP tool profile at the default `core` (navigation, snapshot, interaction, waits, read, screenshots, eval, tabs) to keep MCP context small; `--tools all` is available if full CLI parity is needed.
+- Set no timeout override on agent-browser so V2 defaults apply (catalog 30s, execution 12h) — browser work regularly exceeds a 60s execution cap.
+- Skills installed to `.agents/skills/` (the CLI's OpenCode/universal target) rather than `.opencode/skills/`; OpenCode V2 discovers `.agents/skills` as a project compatibility source, so no extra `skills` config entry was needed.
+- Playwright removed from the MCP config only. The project's Playwright e2e suite (`frontend`, `@playwright/test@^1.63.0`, 32 specs) is untouched.
+
+### Verification
+- `opencode mcp list` → `agent-browser`, `graphify`, `sequential-thinking` all `connected`; no playwright entry remains in any OpenCode config.
+- Live browser smoke test through the MCP tools: `agent_browser_open("https://example.com")` → `browserLaunched: true, engine: chrome`, title `Example Domain`; `agent_browser_snapshot` returned refs (`e1` = "Learn more"); `agent_browser_close` → ok. No missing shared-library errors on Linux.
+- OpenCode discovered both skills (`find-skills`, `shadcn`) from `.agents/skills/` without a config entry.
+
+### Recommended Next Steps
+- Decide whether to commit `.agents/skills/` + `skills-lock.json` (shared, lockfile-reproducible) or add them to `.gitignore` — they are currently untracked and not ignored.
+- Run `agent-browser install --with-deps` if a future Chrome launch reports shared-library errors.
+
+---
+
+## 2026-10-03 — Multi-user org invitation & permission validation (agent-browser, PASS with documented BLOCKED scope)
+
+### Requirement
+Full org lifecycle across 7 identities via real browser UI: root signup → org → 4 permission sets → 6 invites (3 existing + 3 new) → ignore/reject/accept → permission matrix → resend/security negatives → 2 removals → post-removal verification → cross-org isolation.
+
+### Implementation Summary
+Validation-only mission; no application code changed. 3 parallel scout subagents (backend/frontend/email-infra) established: Phase A implemented; Phase B (org keys/providers/usage ledger) and public invite landing absent. 7 isolated agent-browser sessions drove every lifecycle step through the UI. Email-stand-ins (documented): Gmail sandbox receipt logged server-side; verification/invite secrets minted via app's own `issue_verification`/DB reads (read-only), all state transitions in-browser.
+
+### Files Changed
+None (validation only; no defects requiring fixes).
+
+### Testing Performed
+- Root UI signup → verify → org "ToLLma E2E Organization 1791046993" created, root membership active.
+- 4 sets via UI builder: Member Manager (Members.Invite/Approve/Read), Provider Manager (Providers.Create/Read), Analytics Viewer (Analytics.ViewUsage/ViewCost), Key Manager (Keys.Create/Read) — DB-verified codes.
+- 6 invites with recorded set mapping; all pending + 7d TTL; 6× "email sent" in backend logs (sandboxed).
+- Existing: ignore (pending, inbox+notification, org 404s with zero leakage), reject (rejected, 0 memberships), accept (ACTIVE + Analytics Viewer; members/invitations sections return empty, audit/settings denied with messages).
+- New users: UI signup → verify → inbox accept (ACTIVE + 2 sets; sees 3 members, Invite allowed, no suspend/remove/assign buttons, settings/audit denied) / reject (rejected, account intact, no membership) / ignore (no account row, invite pending).
+- Security: wrong-account token → "Invitation not found"; accepted-token reuse → "not found", membership stays 1; invalid token → "not found"; duplicate invite → inline "pending invitation already exists", still 1 row; resend → token rotated + fresh expiry, still 1 row.
+- Removals (ex-accept, new-accept) via UI confirm dialog: memberships removed+soft-deleted; users lose org list + dashboard (404, no data); personal login/keys/chat intact; invitation history + audit trail (org.created, 4× set.created, 6× invited, 2× rejected, 2× accepted, resend, 2× removed) preserved.
+- Cross-org: second org created; root sees both, removed users see neither.
+- Backend logs: no 5xx/tracebacks from test flows (one pre-run SMTP fail + one expected 422 on deliberately unstored verify probe).
+- BLOCKED by architecture (not defects): org-specific keys/spend generation/revocation/preservation (no org_id on keys/providers, no usage_events table); public new-user invite landing (authenticated-only /organizations/invites?token=); 7-day expiry browser test (no time travel); Analytics Viewer positive UI check (Phase-D placeholder); Google OAuth (unconfigured in env).
+
+### Architecture Notes
+404-oracle authz confirmed end-to-end (require_active_user → _member_org → _require_perm); escalation invariant untouched (root-only grants here); single-step invite→ACTIVE (no PendingApproval state — matches code, deviates from 04-state-machines doc); invitation tokens never in org listings (mine-only/DB); resend invalidates old token.

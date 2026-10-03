@@ -31,6 +31,8 @@ interface ChatState {
   /** Backend-owned generation the UI is currently subscribed to (if any). */
   activeGeneration: ActiveGenerationRef | null;
   addProviderOpen: boolean;
+  catalogOpen: boolean;
+  catalogPrefill: { family: string; name: string } | null;
   providerSearch: string;
   providerTypeFilter: string;
   selectedProviderId: string | null;
@@ -51,7 +53,10 @@ interface ChatState {
   removeOptimistic: (id: string) => void;
   clearOptimistic: () => void;
   setActiveGeneration: (gen: ActiveGenerationRef | null) => void;
-  setAddProviderOpen: (open: boolean) => void;  setProviderSearch: (s: string) => void;
+  setAddProviderOpen: (open: boolean) => void;
+  setCatalogOpen: (open: boolean) => void;
+  setCatalogPrefill: (prefill: { family: string; name: string } | null) => void;
+  setProviderSearch: (s: string) => void;
   setProviderTypeFilter: (t: string) => void;
   setSelectedProviderId: (id: string | null) => void;
 }
@@ -72,6 +77,8 @@ export const useChatStore = create<ChatState>()(
       optimisticMessages: [],
       activeGeneration: null,
       addProviderOpen: false,
+      catalogOpen: false,
+      catalogPrefill: null,
       providerSearch: "",
       providerTypeFilter: "ALL",
       selectedProviderId: null,
@@ -107,6 +114,8 @@ export const useChatStore = create<ChatState>()(
       clearOptimistic: () => set({ optimisticMessages: [] }),
       setActiveGeneration: (activeGeneration) => set({ activeGeneration }),
       setAddProviderOpen: (addProviderOpen) => set({ addProviderOpen }),
+      setCatalogOpen: (catalogOpen) => set({ catalogOpen }),
+      setCatalogPrefill: (catalogPrefill) => set({ catalogPrefill }),
       setProviderSearch: (providerSearch) => set({ providerSearch }),
       setProviderTypeFilter: (providerTypeFilter) => set({ providerTypeFilter }),
       setSelectedProviderId: (selectedProviderId) => set({ selectedProviderId }),

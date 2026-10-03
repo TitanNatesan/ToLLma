@@ -235,29 +235,39 @@ def get_manager() -> CacheManager:
 
 _bridge_lock = threading.RLock()
 _bridge_loop: asyncio.AbstractEventLoop | None = None
+_bridge_starting = False
 
 
 def _bridge() -> asyncio.AbstractEventLoop | None:
-    global _bridge_loop
+    global _bridge_loop, _bridge_starting
     with _bridge_lock:
         if _bridge_loop is not None and _bridge_loop.is_running():
             return _bridge_loop
+        if not _bridge_starting:
+            _bridge_starting = True
 
-        def _run() -> None:
-            global _bridge_loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            with _bridge_lock:
-                _bridge_loop = loop
-            loop.run_forever()
+            def _run() -> None:
+                global _bridge_loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                with _bridge_lock:
+                    _bridge_loop = loop
+                loop.run_forever()
 
-        thread = threading.Thread(target=_run, name="cache-bridge", daemon=True)
-        thread.start()
-        for _ in range(100):
-            with _bridge_lock:
-                if _bridge_loop is not None and _bridge_loop.is_running():
+            threading.Thread(target=_run, name="cache-bridge", daemon=True).start()
+    # Poll WITHOUT holding the lock: _run() needs it to publish the loop.
+    # Holding it across the sleep deadlocks startup (the child blocks until
+    # we time out) and every first call_sync in a process silently no-ops.
+    # Thread scheduling under load can exceed 1s; allow up to ~5s.
+    for _ in range(100):
+        with _bridge_lock:
+            if _bridge_loop is not None:
+                if _bridge_loop.is_running():
                     return _bridge_loop
-            time.sleep(0.01)
+                # Dead loop: allow a fresh bridge on the next call.
+                _bridge_loop = None
+                _bridge_starting = False
+        time.sleep(0.05)
     return None
 
 
