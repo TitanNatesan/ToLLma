@@ -2587,3 +2587,19 @@ prep + scenarios 1-7 + negatives: 10/10 PASS. Agents: root/existing/decliner/new
 
 ### Regressions
 Backend orgs+auth 39/39; E2E organizations+navigation 14/14; full suite 550 + 1 unrelated flake (test_generations timing, passes solo). No native dialogs remain. `next build` pre-existing failure unchanged.
+
+---
+
+## 2026-10-03 — Full Platform QA (orgs/users/permissions/admin, chat excluded) PASS
+
+### Verdict
+11/11 UI suite + 553/553 backend (0 failed). Report: docs/qa-platform-report.md.
+
+### Implemented to meet the brief
+Suspend/resume (Members.Suspend gate, 409 root, audit+notify); resend invitation (pending-only, token rotation, audit+notify+re-email); org_slug on InvitationRead + inbox/landing UI.
+
+### App defects fixed
+Governance stale-reads (section-change invalidation, focus refetch, staleTime 0); assign-dialog grant wipe (loading state + disabled submit + picked count); sidebar /invites misroute; nested-label testids.
+
+### Env notes
+Headless-fullscreen (no X); @test.tollma.ai identities (validator rejects .local); Gmail SMTP ~25s dominates suite wall-clock (~4-6 min); pytest Valkey flush kills dev sessions (re-login after runs).

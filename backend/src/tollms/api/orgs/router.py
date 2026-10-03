@@ -72,6 +72,18 @@ def list_members(org_id: uuid.UUID, db: Session = Depends(get_db), user: User = 
     return service.list_members(db, user.id, org_id)
 
 
+@router.post("/{org_id}/members/{target_user_id}/suspend", response_model=MemberRead)
+def suspend_member(org_id: uuid.UUID, target_user_id: uuid.UUID, db: Session = Depends(get_db),
+                   user: User = Depends(require_active_user)):
+    return service.suspend_member(db, user.id, org_id, target_user_id)
+
+
+@router.post("/{org_id}/members/{target_user_id}/resume", response_model=MemberRead)
+def resume_member(org_id: uuid.UUID, target_user_id: uuid.UUID, db: Session = Depends(get_db),
+                  user: User = Depends(require_active_user)):
+    return service.resume_member(db, user.id, org_id, target_user_id)
+
+
 @router.delete("/{org_id}/members/{target_user_id}", status_code=204)
 def remove_member(org_id: uuid.UUID, target_user_id: uuid.UUID, db: Session = Depends(get_db),
                   user: User = Depends(require_active_user)):

@@ -74,11 +74,12 @@ export function ConfirmDialog({ open, title, description, confirmLabel, destruct
 }
 
 /** Assign permission sets to a member via checkboxes (no ID pasting). */
-export function AssignSetsDialog({ open, email, sets, assigned, onClose, onAssign, testId }: {
+export function AssignSetsDialog({ open, email, sets, assigned, loading, onClose, onAssign, testId }: {
   open: boolean;
   email: string;
   sets: PermissionSet[];
   assigned: string[];
+  loading?: boolean;
   onClose: () => void;
   onAssign: (setIds: string[]) => Promise<void>;
   testId?: string;
@@ -114,21 +115,22 @@ export function AssignSetsDialog({ open, email, sets, assigned, onClose, onAssig
         <DialogTitle className="text-sm font-semibold">Assign permission sets</DialogTitle>
         <DialogDescription>{email} — grants can never exceed your own permissions.</DialogDescription>
         <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-          {sets.map((s) => (
-            <label key={s.id} className="flex cursor-pointer items-center gap-2 text-xs">
+          {loading && <p className="text-xs text-zinc-500" data-testid="org-assign-loading">Loading permission sets…</p>}
+          {!loading && sets.map((s) => (
+            <label key={s.id} data-testid={`org-assign-opt-${s.id}`} className="flex cursor-pointer items-center gap-2 text-xs">
               <Checkbox checked={picked.includes(s.id)} onChange={() => toggle(s.id)} />
               <span className="font-medium">{s.name}</span>
               {s.is_system && <span className="text-zinc-400">(system)</span>}
               <span className="ml-auto font-mono text-[10px] text-zinc-400">{s.permissions.length}</span>
             </label>
           ))}
-          {sets.length === 0 && <p className="text-xs text-zinc-500">No sets available.</p>}
+          {!loading && sets.length === 0 && <p className="text-xs text-zinc-500">No sets available.</p>}
         </div>
         <div className="mt-3"><ErrorNote error={error} /></div>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button size="sm" onClick={() => void submit()} disabled={busy} data-testid="org-assign-submit">
-            {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}Save grants
+          <Button size="sm" onClick={() => void submit()} disabled={busy || loading} data-testid="org-assign-submit">
+            {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}Save grants ({picked.length})
           </Button>
         </div>
       </DialogContent>
@@ -136,7 +138,7 @@ export function AssignSetsDialog({ open, email, sets, assigned, onClose, onAssig
   );
 }
 
-/** Single text-input prompt dialog (replaces window.prompt). */
+/** Single text-input prompt dialog (native-dialog replacement). */
 export function TextPromptDialog({ open, title, description, placeholder, initial, confirmLabel, onClose, onSubmit, testId }: {
   open: boolean;
   title: string;

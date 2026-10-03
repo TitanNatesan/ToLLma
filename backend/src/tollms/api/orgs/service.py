@@ -891,6 +891,41 @@ def reject_request(db: Session, approver_id: uuid.UUID, org_id: uuid.UUID, invit
     db.commit()
 
 
+def suspend_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, target_user_id: uuid.UUID) -> MemberRead:
+    """Suspend: org access denied immediately, login/personal assets survive.
+    Effective permissions evaluate to empty (only ACTIVE memberships count)."""
+    org, mem = _member_org(db, org_id, actor_id)
+    _require_perm(db, org, mem, actor_id, "Members.Suspend")
+    target = _live_membership(db, org_id, target_user_id)
+    if target is None:
+        raise NotFoundError("member not found")
+    if target.is_root:
+        raise ConflictError("cannot suspend the root")
+    target.state = MembershipState.SUSPENDED.value
+    _audit(db, org_id, actor_id, "member.suspended", user_id=str(target_user_id))
+    _notify(db, target_user_id, "member.suspended", f"Your membership in {org.name} was suspended",
+            org_id=org_id)
+    db.commit()
+    logger.info("member suspended: org_id=%s user_id=%s", org_id, target_user_id)
+    return read_member(db, org, target)
+
+
+def resume_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, target_user_id: uuid.UUID) -> MemberRead:
+    """Resume a suspended member: access returns per assigned permission sets."""
+    org, mem = _member_org(db, org_id, actor_id)
+    _require_perm(db, org, mem, actor_id, "Members.Suspend")
+    target = _any_membership(db, org_id, target_user_id)
+    if target is None or target.is_deleted or target.state != MembershipState.SUSPENDED.value:
+        raise NotFoundError("suspended member not found")
+    target.state = MembershipState.ACTIVE.value
+    _audit(db, org_id, actor_id, "member.resumed", user_id=str(target_user_id))
+    _notify(db, target_user_id, "member.resumed", f"Your membership in {org.name} was reactivated",
+            org_id=org_id)
+    db.commit()
+    logger.info("member resumed: org_id=%s user_id=%s", org_id, target_user_id)
+    return read_member(db, org, target)
+
+
 def remove_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, target_user_id: uuid.UUID) -> None:
     org, mem = _member_org(db, org_id, actor_id)
     _require_perm(db, org, mem, actor_id, "Members.Remove")

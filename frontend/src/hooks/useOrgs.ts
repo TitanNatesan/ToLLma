@@ -18,11 +18,11 @@ export const ORG_KEYS = {
 } as const;
 
 export function useOrgs() {
-  return useQuery({ queryKey: ORG_KEYS.list, queryFn: orgApi.listOrgs });
+  return useQuery({ queryKey: ORG_KEYS.list, queryFn: orgApi.listOrgs, staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useOrg(id: string) {
-  return useQuery({ queryKey: ORG_KEYS.detail(id), queryFn: () => orgApi.getOrg(id) });
+  return useQuery({ queryKey: ORG_KEYS.detail(id), queryFn: () => orgApi.getOrg(id), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useOrgSearch(q: string) {
@@ -34,11 +34,11 @@ export function useOrgSearch(q: string) {
 }
 
 export function useMembers(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.members(orgId), queryFn: () => orgApi.listMembers(orgId) });
+  return useQuery({ queryKey: ORG_KEYS.members(orgId), queryFn: () => orgApi.listMembers(orgId), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useOrgSets(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.sets(orgId), queryFn: () => orgApi.listSets(orgId) });
+  return useQuery({ queryKey: ORG_KEYS.sets(orgId), queryFn: () => orgApi.listSets(orgId), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function usePermissionCatalog() {
@@ -49,23 +49,24 @@ export function useOrgInvitations(orgId: string) {
   return useQuery({
     queryKey: ORG_KEYS.invitations(orgId),
     queryFn: () => orgApi.listInvitations(orgId),
+    staleTime: 0,
   });
 }
 
 export function useJoinRequests(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.requests(orgId), queryFn: () => orgApi.listRequests(orgId) });
+  return useQuery({ queryKey: ORG_KEYS.requests(orgId), queryFn: () => orgApi.listRequests(orgId), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useOrgAudit(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.audit(orgId), queryFn: () => orgApi.getAudit(orgId) });
+  return useQuery({ queryKey: ORG_KEYS.audit(orgId), queryFn: () => orgApi.getAudit(orgId), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useMyInvitations() {
-  return useQuery({ queryKey: ORG_KEYS.mine, queryFn: orgApi.myInvitations });
+  return useQuery({ queryKey: ORG_KEYS.mine, queryFn: orgApi.myInvitations, staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useNotifications() {
-  return useQuery({ queryKey: ORG_KEYS.notifications, queryFn: () => orgApi.listNotifications() });
+  return useQuery({ queryKey: ORG_KEYS.notifications, queryFn: () => orgApi.listNotifications(), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useUnreadCount() {
@@ -135,6 +136,14 @@ export function useOrgMutations(orgId?: string) {
     }),
     removeMember: useMutation({
       mutationFn: (userId: string) => orgApi.removeMember(orgId ?? "", userId),
+      onSuccess: () => inv(),
+    }),
+    suspendMember: useMutation({
+      mutationFn: (userId: string) => orgApi.suspendMember(orgId ?? "", userId),
+      onSuccess: () => inv(),
+    }),
+    resumeMember: useMutation({
+      mutationFn: (userId: string) => orgApi.resumeMember(orgId ?? "", userId),
       onSuccess: () => inv(),
     }),
     leave: useMutation({ mutationFn: (id: string) => orgApi.leaveOrg(id), onSuccess: () => inv() }),

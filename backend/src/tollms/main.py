@@ -141,9 +141,10 @@ def create_app() -> FastAPI:
         try:
             response = await call_next(request)
             logger.info(
-                "%s %s %s -> %s %.0fms",
+                "%s %s %s -> %s %.0fms ua=%s",
                 request_id, request.method, request.url.path,
                 response.status_code, (time.monotonic() - start) * 1000,
+                request.headers.get("user-agent", "?")[:80],
             )
             if request.url.path.startswith("/api/admin"):
                 emit_event(

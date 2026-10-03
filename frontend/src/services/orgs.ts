@@ -59,6 +59,20 @@ export function removeMember(orgId: string, userId: string): Promise<void> {
   return req<void>(`${BASE}/${orgId}/members/${userId}`, { method: "DELETE" });
 }
 
+export function suspendMember(orgId: string, userId: string): Promise<Member> {
+  return req<Member>(`${BASE}/${orgId}/members/${userId}/suspend`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function resumeMember(orgId: string, userId: string): Promise<Member> {
+  return req<Member>(`${BASE}/${orgId}/members/${userId}/resume`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export function leaveOrg(orgId: string): Promise<void> {
   return req<void>(`${BASE}/${orgId}/leave`, { method: "POST", body: JSON.stringify({}) });
 }

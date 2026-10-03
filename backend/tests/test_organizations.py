@@ -253,6 +253,39 @@ def test_join_request_approve_reject_and_gates(client: TestClient, db, user_fact
     assert other.get(f"{ORG}/{oid}").status_code == 404
 
 
+def test_suspend_resume_lifecycle(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    org = _mkorg(client)
+    oid = org["id"]
+    bob = _mkuser("susp")
+    bob_email = _email_of(bob)
+    _invite_and_accept(client, bob, db, oid, [])
+
+    # Non-privileged member cannot suspend (404 oracle).
+    assert bob.post(f"{ORG}/{oid}/members/{_user_id(db, _email_of(client))}/suspend").status_code == 404
+
+    uid = _user_id(db, bob_email)
+    r = client.post(f"{ORG}/{oid}/members/{uid}/suspend")
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "suspended"
+
+    # Suspended: org access denied, login + personal intact.
+    assert bob.get(f"{ORG}/{oid}").status_code == 404
+    assert bob.get("/auth/me").status_code == 200
+    assert bob.get(f"{ORG}/invitations/mine").status_code == 200
+
+    # Root cannot suspend itself... (root suspend blocked); resume restores.
+    assert client.post(f"{ORG}/{oid}/members/{_user_id(db, _email_of(client))}/suspend").status_code == 409
+    r2 = client.post(f"{ORG}/{oid}/members/{uid}/resume")
+    assert r2.status_code == 200 and r2.json()["state"] == "active"
+    assert bob.get(f"{ORG}/{oid}").status_code == 200
+
+    # Resume of non-suspended member is 404.
+    assert client.post(f"{ORG}/{oid}/members/{uid}/resume").status_code == 404
+    actions = {a["action"] for a in client.get(f"{ORG}/{oid}/audit").json()}
+    assert {"member.suspended", "member.resumed"} <= actions
+
+
 def test_member_removal_root_protection_and_leave(client: TestClient, db, user_factory) -> None:
     user_factory()
     me = _email_of(client)

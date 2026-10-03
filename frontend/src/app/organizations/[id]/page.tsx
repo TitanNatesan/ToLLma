@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, LogOut, UserMinus } from "lucide-react";
 import { toast } from "sonner";
@@ -10,8 +11,7 @@ import {
 import { InviteModal } from "../components/InviteModal";
 import { SetManager } from "../components/SetManager";
 import { AssignSetsDialog, ConfirmDialog } from "../components/Dialogs";
-import {
-  useJoinRequests, useMembers, useOrg, useOrgAudit,
+import { useJoinRequests, useMembers, useOrg, useOrgAudit,
   useOrgInvitations, useOrgMutations, useOrgSets,
 } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
@@ -45,6 +45,16 @@ function OrgDashboardInner() {
   const mut = useOrgMutations(orgId);
   const data = org.data;
   const can = (code: string) => !!data && (data.is_root || data.permissions.includes(code));
+  const qc = useQueryClient();
+
+  // Section switches don't remount (same page, new searchParam), so queries
+  // would otherwise keep serving the previously fetched list. Refetch the
+  // governance queries on every section change: two admins acting at once
+  // must always see each other's transitions.
+  useEffect(() => {
+    void qc.invalidateQueries({ queryKey: ["orgs", orgId] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, orgId]);
 
   async function run(p: Promise<unknown>, ok: string) {
     try {
@@ -96,8 +106,11 @@ function OrgDashboardInner() {
 
         {section === "members" && (
           <MembersSection members={members.data ?? []} canInvite={can("Members.Invite")}
-            canRemove={can("Members.Remove")} canAssign={can("PermissionSets.Assign")}
-            onInvite={() => setInviteOpen(true)} onAssign={setAssigning} onRemove={setRemoving} />
+            canRemove={can("Members.Remove")} canSuspend={can("Members.Suspend")}
+            canAssign={can("PermissionSets.Assign")}
+            onInvite={() => setInviteOpen(true)} onAssign={setAssigning} onRemove={setRemoving}
+            onSuspend={(m) => void run(mut.suspendMember.mutateAsync(m.user_id), `${m.email} suspended.`)}
+            onResume={(m) => void run(mut.resumeMember.mutateAsync(m.user_id), `${m.email} reactivated.`)} />
         )}
 
         {section === "invitations" && (
@@ -145,7 +158,7 @@ function OrgDashboardInner() {
           : Promise.resolve()} />
 
       <AssignSetsDialog open={assigning !== null} email={assigning?.email ?? ""}
-        sets={sets.data ?? []}
+        sets={sets.data ?? []} loading={sets.isLoading}
         assigned={(assigning && (sets.data ?? [])
           .filter((s) => assigning.permission_sets.includes(s.name)).map((s) => s.id)) ?? []}
         onClose={() => setAssigning(null)}
@@ -206,9 +219,10 @@ function Overview({ org, memberCount, pendingInvites, pendingRequests, setCount 
   );
 }
 
-function MembersSection({ members, canInvite, canRemove, canAssign, onInvite, onAssign, onRemove }: {
-  members: Member[]; canInvite: boolean; canRemove: boolean; canAssign: boolean;
+function MembersSection({ members, canInvite, canRemove, canSuspend, canAssign, onInvite, onAssign, onRemove, onSuspend, onResume }: {
+  members: Member[]; canInvite: boolean; canRemove: boolean; canSuspend: boolean; canAssign: boolean;
   onInvite: () => void; onAssign: (m: Member) => void; onRemove: (m: Member) => void;
+  onSuspend: (m: Member) => void; onResume: (m: Member) => void;
 }) {
   return (
     <div className="space-y-2" data-testid="org-members">
@@ -236,6 +250,14 @@ function MembersSection({ members, canInvite, canRemove, canAssign, onInvite, on
                 {canAssign && (
                   <Button size="sm" variant="outline" onClick={() => onAssign(m)}
                     data-testid={`org-assign-${m.user_id}`}>Assign sets</Button>
+                )}
+                {canSuspend && m.state === "active" && (
+                  <Button size="sm" variant="outline" onClick={() => onSuspend(m)}
+                    data-testid={`org-suspend-${m.user_id}`}>Suspend</Button>
+                )}
+                {canSuspend && m.state === "suspended" && (
+                  <Button size="sm" variant="outline" onClick={() => onResume(m)}
+                    data-testid={`org-resume-${m.user_id}`}>Reactivate</Button>
                 )}
                 {canRemove && (
                   <Button size="sm" variant="outline" onClick={() => onRemove(m)}
@@ -338,7 +360,7 @@ function RequestsSection({ orgId, canReview }: { orgId: string; canReview: boole
       ))}
       {(requests.data ?? []).length === 0 && <EmptyState title="No join requests" description="" />}
       <AssignSetsDialog open={reviewing !== null} email={reviewing?.email ?? ""}
-        sets={orgSets.data ?? []} assigned={[]} testId="org-approve-dialog"
+        sets={orgSets.data ?? []} loading={orgSets.isLoading} assigned={[]} testId="org-approve-dialog"
         onClose={() => setReviewing(null)}
         onAssign={(ids) => reviewing
           ? mut.approveRequest.mutateAsync({ invitationId: reviewing.id, setIds: ids })
