@@ -20,14 +20,17 @@ import {
 } from "@/components/ui";
 import { useCatalogProviders, useCatalogStats } from "@/hooks/useCatalog";
 import { parseApiError } from "@/lib/errors";
+import { apiBaseHost } from "./ConnectionTemplateFields";
 import type { CatalogProvider } from "@/types/catalog";
 import type { ProviderType } from "@/types";
 
 /** Provider catalog browser: search + gateway filter + paginated cards with
- * logos. Configure is offered only for gateway-supported providers; catalog
- * entries never hold credentials. */
+ * logos. Catalog entries never hold credentials. Gateway-supported rows
+ * configure directly; catalog-only rows with a known API base URL can be
+ * configured via the Custom (OpenAI-compatible) gateway; rows without an
+ * executable gateway stay disabled. */
 export function CatalogBrowser({ onConfigure }: {
-  onConfigure: (provider: CatalogProvider) => void;
+  onConfigure: (provider: CatalogProvider, viaCustom: boolean) => void;
 }) {
   const [search, setSearch] = useState("");
   const [committed, setCommitted] = useState("");
@@ -134,9 +137,12 @@ export function gatewayFamilyLabel(family: string | null): string {
 
 function CatalogCard({ provider: p, onConfigure }: {
   provider: CatalogProvider;
-  onConfigure: (provider: CatalogProvider) => void;
+  onConfigure: (provider: CatalogProvider, viaCustom: boolean) => void;
 }) {
   const supported = p.gateway_supported && !!p.gateway_family;
+  const host = apiBaseHost(p.api_base_url);
+  const envVars = p.env_vars ?? [];
+  const shownEnvs = envVars.slice(0, 3);
   return (
     <Card data-testid={`catalog-card-${p.slug}`}>
       <CardContent className="flex gap-3 p-3.5">
@@ -144,13 +150,18 @@ function CatalogCard({ provider: p, onConfigure }: {
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{p.name}</p>
           <p className="truncate font-mono text-[11px] text-zinc-500">/{p.slug}</p>
+          {host && (
+            <p className="truncate font-mono text-[11px] text-zinc-500" data-testid={`catalog-host-${p.slug}`}>
+              {host}
+            </p>
+          )}
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
             {supported ? (
-              <Badge variant="default" className="gap-1 text-[10px]">
+              <Badge variant="default" className="gap-1 text-[10px]" title="Request-ready: ToLLma has a gateway adapter for this provider">
                 <CheckCircle2 className="size-3" aria-hidden /> Gateway supported
               </Badge>
             ) : (
-              <Badge variant="secondary" className="gap-1 text-[10px]" title="Discoverable, but ToLLma has no adapter for this provider yet">
+              <Badge variant="secondary" className="gap-1 text-[10px]" title="Catalog-only: discoverable, but ToLLma has no dedicated adapter for this provider yet">
                 <MinusCircle className="size-3" aria-hidden /> Catalog only
               </Badge>
             )}
@@ -158,19 +169,44 @@ function CatalogCard({ provider: p, onConfigure }: {
               {p.model_count} model{p.model_count === 1 ? "" : "s"}
             </span>
           </div>
-          <div className="mt-2.5 flex gap-1.5">
+          {shownEnvs.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1" data-testid={`catalog-env-${p.slug}`}>
+              {shownEnvs.map((e) => (
+                <code key={e} className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                  {e}
+                </code>
+              ))}
+              {envVars.length > shownEnvs.length && (
+                <span className="text-[10px] text-zinc-400">+{envVars.length - shownEnvs.length} more</span>
+              )}
+            </div>
+          )}
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
             {supported ? (
               <Button
                 size="sm"
-                onClick={() => onConfigure(p)}
+                onClick={() => onConfigure(p, false)}
                 data-testid={`catalog-configure-${p.slug}`}
               >
                 Configure
               </Button>
             ) : (
-              <Button size="sm" variant="outline" disabled title="ToLLma has no gateway adapter for this provider yet">
-                Configure
-              </Button>
+              <>
+                <Button size="sm" variant="outline" disabled title="No executable gateway yet — configuration will be kept">
+                  Configure
+                </Button>
+                {p.api_base_url && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onConfigure(p, true)}
+                    data-testid={`catalog-configure-custom-${p.slug}`}
+                    title="Configure via the Custom (OpenAI-compatible) gateway using this provider's API base URL"
+                  >
+                    Via Custom
+                  </Button>
+                )}
+              </>
             )}
             {p.doc_url && (
               <a
@@ -178,6 +214,7 @@ function CatalogCard({ provider: p, onConfigure }: {
                 target="_blank"
                 rel="noreferrer"
                 aria-label={`${p.name} documentation`}
+                data-testid={`catalog-doc-${p.slug}`}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
               >
                 <BookOpen className="size-3.5" aria-hidden />
@@ -194,7 +231,7 @@ function CatalogCard({ provider: p, onConfigure }: {
 export function CatalogBrowserDialog({ open, onClose, onConfigure }: {
   open: boolean;
   onClose: () => void;
-  onConfigure: (provider: CatalogProvider, family: ProviderType | null) => void;
+  onConfigure: (provider: CatalogProvider, family: ProviderType | null, opts?: { viaCustom: boolean }) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={(n) => { if (!n) onClose(); }}>
@@ -202,18 +239,27 @@ export function CatalogBrowserDialog({ open, onClose, onConfigure }: {
         <DialogTitle className="text-sm font-semibold">Provider catalog</DialogTitle>
         <DialogDescription>
           Discovery metadata from Models.dev. Catalog entries never hold credentials;
-          Configure is available only where ToLLma has a gateway adapter.
+          gateway-supported providers configure directly, others go through the
+          Custom gateway where an API base URL is known.
         </DialogDescription>
         <div className="mt-3 max-h-[70vh] overflow-hidden">
           {open && (
             <CatalogBrowser
-              onConfigure={(p) => {
+              onConfigure={(p, viaCustom) => {
+                if (viaCustom) {
+                  if (!p.api_base_url) {
+                    toast.error("This provider is catalog-only: no executable gateway yet.");
+                    return;
+                  }
+                  onConfigure(p, "CUSTOM", { viaCustom: true });
+                  return;
+                }
                 const family = (p.gateway_family ?? null) as ProviderType | null;
                 if (!p.gateway_supported || !family) {
                   toast.error("This provider is catalog-only: no gateway adapter yet.");
                   return;
                 }
-                onConfigure(p, family);
+                onConfigure(p, family, { viaCustom: false });
               }}
             />
           )}

@@ -3,13 +3,22 @@
 import type {
   AuditEntry,
   Invitation,
+  InvitePreview,
   Member,
   Notification,
+  OrgAnalyticsOverview,
+  OrgBudget,
   OrgCard,
   Organization,
+  OrgKey,
+  OrgKeyCreateInput,
+  OrgKeySecretResponse,
+  OrgProvider,
+  OrgProviderCreateInput,
   PermissionGroup,
   PermissionSet,
 } from "@/types/orgs";
+import type { User } from "@/types";
 
 const BASE = "/api/v1/orgs";
 const NOTIF = "/api/v1/notifications";
@@ -195,4 +204,101 @@ export function markNotificationRead(id: string): Promise<Notification> {
 
 export function markAllNotificationsRead(): Promise<{ marked: number }> {
   return req<{ marked: number }>(`${NOTIF}/read-all`, { method: "POST", body: JSON.stringify({}) });
+}
+
+// --- Phase B: org API keys --------------------------------------------------
+
+export function listOrgKeys(orgId: string): Promise<OrgKey[]> {
+  return req<OrgKey[]>(`${BASE}/${orgId}/keys`);
+}
+
+export function createOrgKey(orgId: string, payload: OrgKeyCreateInput): Promise<OrgKeySecretResponse> {
+  return req<OrgKeySecretResponse>(`${BASE}/${orgId}/keys`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function revokeOrgKey(orgId: string, keyId: string): Promise<void> {
+  return req<void>(`${BASE}/${orgId}/keys/${keyId}`, { method: "DELETE" });
+}
+
+// --- Phase B: org providers -------------------------------------------------
+
+export function listOrgProviders(orgId: string): Promise<OrgProvider[]> {
+  return req<OrgProvider[]>(`${BASE}/${orgId}/providers`);
+}
+
+export function createOrgProvider(orgId: string, payload: OrgProviderCreateInput): Promise<OrgProvider> {
+  return req<OrgProvider>(`${BASE}/${orgId}/providers`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteOrgProvider(orgId: string, providerId: string): Promise<void> {
+  return req<void>(`${BASE}/${orgId}/providers/${providerId}`, { method: "DELETE" });
+}
+
+export function updateOrgProvider(
+  orgId: string,
+  providerId: string,
+  payload: Record<string, unknown>,
+): Promise<OrgProvider> {
+  return req<OrgProvider>(`${BASE}/${orgId}/providers/${providerId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// --- Phase B: org budget pools ----------------------------------------------
+
+export function getOrgBudget(orgId: string): Promise<OrgBudget> {
+  return req<OrgBudget>(`${BASE}/${orgId}/budget`);
+}
+
+export function updateOrgBudget(orgId: string, payload: Record<string, unknown>): Promise<OrgBudget> {
+  return req<OrgBudget>(`${BASE}/${orgId}/budget`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// --- Phase B: org analytics -------------------------------------------------
+
+export function getOrgAnalyticsOverview(orgId: string): Promise<OrgAnalyticsOverview> {
+  return req<OrgAnalyticsOverview>(`${BASE}/${orgId}/analytics/overview`);
+}
+
+// --- Phase B: public invitation preview (no auth required) -------------------
+
+export function previewInvitation(token: string): Promise<InvitePreview> {
+  return req<InvitePreview>(`${BASE}/invitations/preview/${encodeURIComponent(token)}`);
+}
+
+// --- Phase B: public invitation accept/reject with account creation (no auth) ---
+
+/** POST .../accept-new response: login-shaped session plus the joined org. */
+export interface InviteAcceptNewResponse {
+  user: User;
+  access_token?: string | null;
+  refresh_token?: string | null;
+  org_id: string;
+}
+
+export function acceptInvitationNew(
+  token: string,
+  payload: { full_name: string; password: string; email?: string },
+): Promise<InviteAcceptNewResponse> {
+  return req<InviteAcceptNewResponse>(
+    `${BASE}/invitations/by-token/${encodeURIComponent(token)}/accept-new`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export function rejectInvitationNew(token: string): Promise<{ status: string }> {
+  return req<{ status: string }>(
+    `${BASE}/invitations/by-token/${encodeURIComponent(token)}/reject-new`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 }

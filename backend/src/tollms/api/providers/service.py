@@ -78,57 +78,142 @@ def get_provider(db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None 
     provider = db.get(Provider, provider_id)
     if provider is None or provider.is_deleted:
         raise NotFoundError(f"provider {provider_id} not found")
-    if user_id is not None and provider.user_id != user_id:
+    if user_id is None:
+        return provider  # unscoped (internal/tests): no ownership check
+    if provider.org_id is not None:
+        # Org-scoped: visible only inside one of the caller's ACTIVE orgs.
+        # (Scope is decided by org_id alone; user_id on org rows is audit.)
+        if provider.org_id not in _active_org_ids(db, user_id):
+            raise NotFoundError(f"provider {provider_id} not found")
+        return provider
+    if provider.user_id != user_id:
         raise NotFoundError(f"provider {provider_id} not found")
     return provider
+
+
+def _active_org_ids(db: Session, user_id: uuid.UUID) -> set[uuid.UUID]:
+    """Org ids where `user_id` holds ACTIVE, live membership.
+
+    Local Membership query (models only — never an `api.*` import, so the
+    providers engine stays below the feature-service cycle).
+    """
+    from tollms.models.organization import Membership, MembershipState
+
+    return set(
+        db.scalars(
+            select(Membership.org_id).where(
+                Membership.user_id == user_id,
+                Membership.is_deleted.is_(False),
+                Membership.state == MembershipState.ACTIVE.value,
+            )
+        )
+    )
 
 
 def list_providers(
     db: Session, *, active_only: bool = False, user_id: uuid.UUID | None = None
 ) -> list[Provider]:
+    """Personal providers owned by `user_id` plus org providers of the
+    caller's ACTIVE orgs (config visible; credentials stay masked at the
+    router — raw secrets are never serialized)."""
     stmt = select(Provider).where(Provider.is_deleted.is_(False)).order_by(Provider.created_at)
     if user_id is not None:
-        stmt = stmt.where(Provider.user_id == user_id)
+        from sqlalchemy import and_, or_
+
+        org_ids = _active_org_ids(db, user_id)
+        personal = and_(Provider.org_id.is_(None), Provider.user_id == user_id)
+        if org_ids:
+            stmt = stmt.where(or_(personal, Provider.org_id.in_(list(org_ids))))
+        else:
+            stmt = stmt.where(personal)
     if active_only:
         stmt = stmt.where(Provider.is_active.is_(True))
     return list(db.scalars(stmt))
 
 
 def ensure_unique_name(
-    db: Session, name: str, exclude_id: uuid.UUID | None = None, user_id: uuid.UUID | None = None
+    db: Session, name: str, exclude_id: uuid.UUID | None = None, user_id: uuid.UUID | None = None,
+    *, org_id: uuid.UUID | None = None,
 ) -> None:
+    """Name uniqueness per scope among live rows: personal scope is
+    (user_id, name) with org_id NULL; org scope is (org_id, name)."""
     stmt = select(Provider).where(Provider.is_deleted.is_(False), Provider.name.ilike(name.strip()))
-    if user_id is not None:
-        stmt = stmt.where(Provider.user_id == user_id)
+    if org_id is not None:
+        stmt = stmt.where(Provider.org_id == org_id)
+    else:
+        stmt = stmt.where(Provider.org_id.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(Provider.user_id == user_id)
     if exclude_id is not None:
         stmt = stmt.where(Provider.id != exclude_id)
     if db.scalar(stmt) is not None:
         raise ValidationError(f"provider name {name.strip()!r} is already taken")
 
 
-def create_provider(db: Session, data: ProviderCreate, user_id: uuid.UUID | None = None) -> Provider:
-    ensure_unique_name(db, data.name, user_id=user_id)
+def create_provider(
+    db: Session, data: ProviderCreate, user_id: uuid.UUID | None = None, *,
+    org_id: uuid.UUID | None = None,
+) -> Provider:
+    """Create a provider. Org-scoped rows carry both `org_id` (scope) and
+    `user_id` (creating caller, audit only).
+
+    With `catalog_slug` the server stamps ``metadata_['catalog']`` with the
+    catalog identity and pre-fills ``credentials.base_url`` from the catalog
+    row for CUSTOM providers when the caller omits it. Caller-supplied
+    credentials are never overwritten."""
+    ensure_unique_name(db, data.name, user_id=user_id, org_id=org_id)
+    credentials = dict(data.credentials)
+    metadata = dict(data.metadata or {})
+    if data.catalog_slug:
+        from tollms.api.catalog import service as catalog_service
+
+        row = catalog_service.get_catalog_row(db, data.catalog_slug)
+        metadata["catalog"] = {"slug": row.slug, "gateway_family": row.gateway_family}
+        if (
+            data.provider_type == ProviderType.CUSTOM
+            and "base_url" not in credentials
+            and row.api_base_url
+        ):
+            credentials["base_url"] = row.api_base_url
     provider = Provider(
         user_id=user_id,
+        org_id=org_id,
         name=data.name,
         provider_type=data.provider_type,
-        credentials_encrypted=encrypt(json.dumps(data.credentials)),
-        metadata_=data.metadata,
+        credentials_encrypted=encrypt(json.dumps(credentials)),
+        metadata_=metadata,
         is_active=data.is_active,
     )
     db.add(provider)
     db.commit()
     db.refresh(provider)
-    logger.info("provider created: %s (%s)", provider.id, provider.provider_type)
+    logger.info("provider created: %s (%s) org=%s", provider.id, provider.provider_type, org_id)
     return provider
+
+
+def _require_org_provider_perm(db: Session, provider: Provider, user_id: uuid.UUID, code: str) -> None:
+    """Org providers mutate only with the org permission in the same org.
+
+    Lazy `api.orgs` import: orgs/service.py composes this module for org
+    provider creation, so a top-level import would cycle.
+    """
+    from tollms.api.orgs import service as org_service
+
+    org, mem = org_service._member_org(db, provider.org_id, user_id)
+    org_service._require_perm(db, org, mem, user_id, code)
 
 
 def update_provider(
     db: Session, provider_id: uuid.UUID, data: ProviderUpdate, user_id: uuid.UUID | None = None
 ) -> Provider:
     provider = get_provider(db, provider_id, user_id)
+    if provider.org_id is not None and user_id is not None:
+        _require_org_provider_perm(db, provider, user_id, "Providers.Update")
+        if data.credentials is not None:
+            _require_org_provider_perm(db, provider, user_id, "Providers.RotateCredentials")
     if data.name is not None:
-        ensure_unique_name(db, data.name, exclude_id=provider.id, user_id=user_id)
+        ensure_unique_name(db, data.name, exclude_id=provider.id, user_id=user_id,
+                           org_id=provider.org_id)
         provider.name = data.name
     if data.credentials is not None:
         provider.credentials_encrypted = encrypt(json.dumps(data.credentials))
@@ -145,6 +230,8 @@ def update_provider(
 
 def delete_provider(db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None = None) -> None:
     provider = get_provider(db, provider_id, user_id)
+    if provider.org_id is not None and user_id is not None:
+        _require_org_provider_perm(db, provider, user_id, "Providers.Delete")
     provider.is_deleted = True
     provider.deleted_at = datetime.now(timezone.utc)
     provider.is_active = False
@@ -165,8 +252,11 @@ async def validate_provider(
     Fresh validations are cached for cache_ttl.VALIDATION seconds; cache
     hits return the last result without re-probing or rewriting the DB.
     Calls with an explicit transport (tests) always probe live.
+    Org providers additionally require Providers.Validate (404 oracle).
     """
     provider = get_provider(db, provider_id, user_id)
+    if user_id is not None and provider.org_id is not None:
+        _require_org_provider_perm(db, provider, user_id, "Providers.Validate")
     manager = get_manager()
     if transport is None:
         hit = await manager.get(cache_keys.provider_validation(provider.id))
@@ -313,11 +403,14 @@ async def discover_provider_models(
     Fresh results are cached for cache_ttl.DISCOVERY seconds behind a
     provider_refresh lock; cache hits recompute registration live from the
     DB. Calls with an explicit transport (tests) always fetch live.
+    Org providers additionally require Providers.RefreshModels (404 oracle).
     """
     from tollms.api.models.service import list_models as _list  # avoid import cycle at module load
     from tollms.services.model_repository.mapping import map_models as _map
 
     provider = get_provider(db, provider_id, user_id)
+    if user_id is not None and provider.org_id is not None:
+        _require_org_provider_perm(db, provider, user_id, "Providers.RefreshModels")
     registered = {m.model_id for m in _list(db, provider_id=provider.id, user_id=user_id)}
     manager = get_manager()
     cache_key = cache_keys.provider_models(provider.id)

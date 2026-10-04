@@ -283,9 +283,15 @@ def run_sync(
 
 SOURCE_URLS = {"litellm": LITELLM_URL, "openrouter": OPENROUTER_URL, "modelsdev": MODELS_DEV_URL}
 
-# models.dev provider id -> ToLLma gateway family. This maps OUR adapter
-# implementations, not their catalog: every unmapped provider stays
+# npm package -> ToLLma gateway family, for providers whose SDK speaks a wire
+# protocol one of OUR adapters implements verbatim. Anything else stays
 # catalog-only and can never be configured as a gateway connection.
+NPM_GATEWAY_FAMILIES: dict[str, str] = {
+    "@ai-sdk/anthropic": ProviderType.ANTHROPIC_MESSAGES.value,
+    "@ai-sdk/openai-compatible": ProviderType.CUSTOM.value,
+}
+# models.dev provider slug -> ToLLma gateway family (explicit, wins over npm).
+# This maps OUR adapter implementations, not their catalog.
 GATEWAY_FAMILIES: dict[str, str] = {
     "openai": ProviderType.OPENAI.value,
     "anthropic": ProviderType.ANTHROPIC_MESSAGES.value,
@@ -310,7 +316,9 @@ def sync_provider_catalog(
         if not slug:
             continue
         seen.add(slug)
-        family = GATEWAY_FAMILIES.get(slug)
+        family = GATEWAY_FAMILIES.get(slug) or NPM_GATEWAY_FAMILIES.get(
+            str(entry.get("npm_package") or "")
+        )
         row = db.execute(
             select(ProviderCatalog).where(
                 ProviderCatalog.source == "modelsdev",

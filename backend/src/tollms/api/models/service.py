@@ -23,6 +23,33 @@ def _owned_provider_ids(db: Session, user_id: uuid.UUID | None) -> set[uuid.UUID
     return set(db.scalars(select(Provider.id).where(Provider.user_id == user_id)))
 
 
+def _visible_provider_ids(db: Session, user_id: uuid.UUID) -> set[uuid.UUID]:
+    """Providers visible to `user_id`: personal owned rows (org_id NULL) plus
+    org providers of the caller's ACTIVE orgs. Scope is decided by `org_id`
+    alone — `user_id` on org rows is audit, never scope."""
+    from tollms.models.organization import Membership, MembershipState
+
+    org_ids = set(
+        db.scalars(
+            select(Membership.org_id).where(
+                Membership.user_id == user_id,
+                Membership.is_deleted.is_(False),
+                Membership.state == MembershipState.ACTIVE.value,
+            )
+        )
+    )
+    from sqlalchemy import or_
+
+    personal = (Provider.org_id.is_(None)) & (Provider.user_id == user_id)
+    if org_ids:
+        stmt = select(Provider.id).where(
+            or_(personal, Provider.org_id.in_(list(org_ids)))
+        )
+    else:
+        stmt = select(Provider.id).where(personal)
+    return set(db.scalars(stmt))
+
+
 def get_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = None) -> AIModel:
     model = db.get(AIModel, model_id)
     if model is None or model.is_deleted:
@@ -32,7 +59,7 @@ def get_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = None
     )
     if owner is None or owner.is_deleted or not owner.is_active:
         raise NotFoundError(f"model {model_id} not found")
-    if user_id is not None and owner.user_id is not None and owner.user_id != user_id:
+    if user_id is not None and owner.id not in _visible_provider_ids(db, user_id):
         raise NotFoundError(f"model {model_id} not found")
     return model
 
@@ -57,9 +84,10 @@ def list_models(
         .where(Provider.is_deleted.is_(False), Provider.is_active.is_(True))
     )
     if user_id is not None:
-        stmt = stmt.where(
-            AIModel.provider_id.in_(select(Provider.id).where(Provider.user_id == user_id))
-        )
+        visible = _visible_provider_ids(db, user_id)
+        if not visible:
+            return []
+        stmt = stmt.where(AIModel.provider_id.in_(list(visible)))
     if provider_id is not None:
         stmt = stmt.where(AIModel.provider_id == provider_id)
     if search:

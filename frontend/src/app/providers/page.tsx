@@ -788,7 +788,7 @@ export default function ProvidersPage() {
       {/* Provider Wizard Modal (Add / Edit) */}
       {addProviderOpen && (
         <ProviderWizardModal
-          key={editingProvider?.id ?? catalogPrefill?.family ?? "new"}
+          key={editingProvider?.id ?? catalogPrefill?.slug ?? catalogPrefill?.family ?? "new"}
           open={addProviderOpen}
         onClose={() => {
           setAddProviderOpen(false);
@@ -798,6 +798,8 @@ export default function ProvidersPage() {
         editingProvider={editingProvider}
         initialType={(catalogPrefill?.family ?? null) as ProviderType | null}
         initialName={catalogPrefill?.name ?? null}
+        catalogSlug={catalogPrefill?.slug ?? null}
+        initialBaseUrl={catalogPrefill?.baseUrl ?? null}
         onSaved={(p, discMsg) => {
           setSelectedProviderId(p.id);
           if (discMsg) {
@@ -812,11 +814,16 @@ export default function ProvidersPage() {
         <CatalogBrowserDialog
           open={catalogOpen}
           onClose={() => setCatalogOpen(false)}
-          onConfigure={(p, family) => {
+          onConfigure={(p, family, opts) => {
             if (!family) return;
             setCatalogOpen(false);
             setEditingProvider(null);
-            setCatalogPrefill({ family, name: p.name });
+            setCatalogPrefill({
+              family,
+              name: p.name,
+              slug: p.slug,
+              baseUrl: opts?.viaCustom ? (p.api_base_url ?? null) : null,
+            });
             setAddProviderOpen(true);
           }}
         />

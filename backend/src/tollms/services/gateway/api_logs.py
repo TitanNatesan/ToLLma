@@ -232,6 +232,8 @@ class ApiLogEntry:
     ip_address: str | None = None
     user_agent: str | None = None
     is_streaming: bool = False
+    # Server-derived org attribution: the resolving key's org (None = personal).
+    org_id: uuid.UUID | None = None
 
 
 def _derive_total(entry: ApiLogEntry) -> int | None:
@@ -260,6 +262,7 @@ def log_request(db: Session, entry: ApiLogEntry) -> None:
             request_id=entry.request_id,
             api_key_id=entry.api_key_id,
             user_id=entry.user_id,
+            org_id=entry.org_id,
             provider=entry.provider,
             model=entry.model,
             endpoint=entry.endpoint,

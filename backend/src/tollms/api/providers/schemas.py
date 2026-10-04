@@ -16,6 +16,10 @@ class ProviderCreate(BaseModel):
     credentials: dict[str, Any]
     metadata: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
+    # Optional catalog slug: the server stamps provider metadata with the
+    # catalog identity and pre-fills base_url for CUSTOM/openai-compatible
+    # rows when the caller omits it. Unknown slugs 404.
+    catalog_slug: str | None = None
 
 
 class ProviderUpdate(BaseModel):

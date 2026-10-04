@@ -362,6 +362,8 @@ def _log_request(
         request_id=meta.request_id,
         api_key_id=ctx.key_id,
         user_id=ctx.user_id,
+        # Server-derived attribution: the resolving key's org (None = personal).
+        org_id=getattr(ctx, "org_id", None),
         provider=provider_label,
         model=model_label,
         endpoint=unified.endpoint,
@@ -387,6 +389,27 @@ def _log_request(
     incr_counter("gateway.request", {"plane": "public", "status": status})
 
 
+def _org_cap_usd(db: Session, ctx: KeyContext) -> Decimal | None:
+    """Live org spend cap for keyed requests. None = personal key or uncapped.
+
+    Read per request (indexed PK lookup): caps must take effect immediately
+    after PATCH without waiting on a cache TTL.
+    """
+    org_id = getattr(ctx, "org_id", None)
+    if org_id is None:
+        return None
+    try:
+        from tollms.models.organization import Organization
+
+        org = db.get(Organization, org_id)
+        if org is None or org.is_deleted:
+            return None
+        return org.max_spend
+    except Exception:
+        logger.warning("public gateway: org cap lookup failed", exc_info=True)
+        return None
+
+
 def _record_usage(
     ctx: KeyContext,
     provider: Provider,
@@ -395,6 +418,7 @@ def _record_usage(
     tokens: int,
     cost: Decimal,
     request_id: str | None = None,
+    org_cap: Decimal | None = None,
 ) -> None:
     try:
         record_usage(
@@ -404,6 +428,7 @@ def _record_usage(
             provider_id=provider.id,
             model_id=model.id,
             request_id=request_id,
+            org_max_spend_usd=org_cap,
         )
     except Exception:
         logger.warning("public gateway: record_usage failed", exc_info=True)
@@ -414,6 +439,7 @@ def _release_reservation(prepared: "_Prepared") -> None:
     _record_usage(
         prepared.ctx, prepared.provider, prepared.model,
         tokens=0, cost=Decimal(0), request_id=prepared.meta.request_id,
+        org_cap=prepared.org_cap,
     )
 
 
@@ -433,6 +459,7 @@ class _Prepared:
     started: float
     provider_label: str = field(init=False)
     model_label: str = field(init=False)
+    org_cap: Decimal | None = None
 
     def __post_init__(self) -> None:
         self.provider_label = self.provider.provider_type.value.lower()
@@ -502,17 +529,41 @@ def _require_chat_capabilities(model, unified: UnifiedRequest) -> None:
         )
 
 
+def _caller_org_ids(db: Session, ctx: KeyContext) -> list:
+    """ACTIVE org ids of the key's assignee (org scope for model resolution).
+
+    Local Membership query (models only — `api.*` imports would invert the
+    layering). Personal keys resolve personal scope only.
+    """
+    if getattr(ctx, "org_id", None) is None:
+        return []
+    from tollms.models.organization import Membership, MembershipState
+
+    return list(
+        db.scalars(
+            select(Membership.org_id).where(
+                Membership.user_id == ctx.user_id,
+                Membership.is_deleted.is_(False),
+                Membership.state == MembershipState.ACTIVE.value,
+            )
+        )
+    )
+
+
 def _prepare(
     db: Session, ctx: KeyContext, unified: UnifiedRequest, meta: ClientMeta
 ) -> _Prepared:
     """Resolve, authorize, rate-limit and build the adapter before any I/O."""
-    resolved: ResolvedModel = resolve_model(db, unified.model_identifier, ctx.user_id)
+    resolved: ResolvedModel = resolve_model(
+        db, unified.model_identifier, ctx.user_id, org_ids=_caller_org_ids(db, ctx) or None,
+    )
     provider, model = resolved.provider, resolved.model
     if not ctx.model_allowed(provider.id, model.id):
         raise ForbiddenError("model_not_allowed")
     _require_capability(model, unified.endpoint)
     if unified.endpoint in CHAT_ENDPOINTS:
         _require_chat_capabilities(model, unified)
+    org_cap = _org_cap_usd(db, ctx)
     decision = check_request(
         ctx,
         provider_id=provider.id,
@@ -520,6 +571,7 @@ def _prepare(
         estimated_tokens=_prompt_tokens(unified),
         estimated_cost=_estimated_cost(db, provider, model, unified),
         request_id=meta.request_id,
+        org_max_spend_usd=org_cap,
     )
     if not decision.allowed:
         raise _LimitsDenied(_denied_result(decision))
@@ -527,7 +579,7 @@ def _prepare(
     adapter = build_adapter(provider, model, credentials)
     adapter.max_output_tokens = model.max_output_tokens
     messages = unified.as_chat_messages()
-    return _Prepared(
+    prepared = _Prepared(
         ctx=ctx,
         meta=meta,
         unified=unified,
@@ -538,6 +590,8 @@ def _prepare(
         history_text="".join(message.content for message in messages),
         started=time.monotonic(),
     )
+    prepared.org_cap = org_cap
+    return prepared
 
 
 # --- non-streaming execution ----------------------------------------------------------
@@ -610,6 +664,7 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             prepared.ctx, prepared.provider, prepared.model,
             tokens=total, cost=breakdown.total_cost,
             request_id=prepared.meta.request_id,
+            org_cap=prepared.org_cap,
         )
         _log_request(
             db, prepared.ctx, prepared.meta, prepared.unified,
@@ -713,6 +768,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             prepared.ctx, prepared.provider, prepared.model,
             tokens=0, cost=cost,
             request_id=prepared.meta.request_id,
+            org_cap=prepared.org_cap,
         )
         latency_ms = (time.monotonic() - started) * 1000
         _log_request(
@@ -1029,6 +1085,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             prepared.ctx, prepared.provider, prepared.model,
             tokens=total, cost=breakdown.total_cost,
             request_id=prepared.meta.request_id,
+            org_cap=prepared.org_cap,
         )
         latency_ms = (time.monotonic() - prepared.started) * 1000
         _log_request(
@@ -1128,12 +1185,18 @@ def key_identity(db: Session, ctx: KeyContext) -> dict:
 
 
 def list_public_models(db: Session, ctx: KeyContext) -> list[tuple[Provider, AIModel]]:
-    """Active models owned by the key's user that the key is allowed to call."""
+    """Active models the key is allowed to call: the assignee's personal rows
+    plus org providers of the assignee's ACTIVE orgs."""
+    from sqlalchemy import and_, or_
+
+    org_ids = _caller_org_ids(db, ctx)
+    personal = (Provider.org_id.is_(None), Provider.user_id == ctx.user_id)
+    scope = or_(and_(*personal), Provider.org_id.in_(org_ids)) if org_ids else and_(*personal)
     rows = db.execute(
         select(Provider, AIModel)
         .join(AIModel, AIModel.provider_id == Provider.id)
         .where(
-            Provider.user_id == ctx.user_id,
+            scope,
             Provider.is_deleted.is_(False),
             Provider.is_active.is_(True),
             AIModel.is_deleted.is_(False),

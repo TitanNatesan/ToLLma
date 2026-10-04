@@ -454,7 +454,6 @@ class ModelsDevSourceAdapter:
                 video_output="video" in out_modalities,
             ),
         }
-        knowledge = info.get("knowledge")
         return NormalizedModel(
             source=self.name,
             model_key=key,
@@ -479,7 +478,7 @@ class ModelsDevSourceAdapter:
                 "audio_input_cost": None,
             },
             caps=caps,
-            raw={"provider": provider_id, "knowledge": knowledge, "open_weights": info.get("open_weights")},
+            raw=dict(info),
         )
 
 

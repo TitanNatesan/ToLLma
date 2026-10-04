@@ -71,9 +71,11 @@ def masked_prefix(key_prefix: str) -> str:
 
 
 def _key_select():
+    # Personal keys only (org_id IS NULL). Org keys are managed exclusively
+    # through the organizations API (`api/orgs/service.py`).
     return (
         select(ApiKey)
-        .where(ApiKey.is_deleted.is_(False))
+        .where(ApiKey.is_deleted.is_(False), ApiKey.org_id.is_(None))
         .options(
             selectinload(ApiKey.policy),
             selectinload(ApiKey.ip_rules),
@@ -181,9 +183,27 @@ def _validated_policy(data: PolicyIn) -> dict:
 
 
 def _validated_model_permissions(
-    db: Session, items: list[ModelPermissionIn], user_id: uuid.UUID
+    db: Session,
+    items: list[ModelPermissionIn],
+    user_id: uuid.UUID,
+    *,
+    visible_org_ids: set[uuid.UUID] | frozenset | None = None,
+    require_org_id: uuid.UUID | None = None,
 ) -> list[dict]:
-    """Validate scopes exist, belong to the caller, and are unique per key."""
+    """Validate scopes exist, are visible to the caller, and are unique per key.
+
+    Personal scope (``visible_org_ids=None``): only personal providers/models
+    owned by the caller are visible — org providers (``org_id`` set, even when
+    their ``user_id`` equals the caller) are never reachable from personal
+    keys. Org scope: providers/models of every org in ``visible_org_ids``
+    (the granter's ACTIVE orgs) are additionally visible.
+
+    ``require_org_id`` (org-key issuance only): every listed provider/model
+    must additionally belong to the key's own org. A granter in two orgs can
+    otherwise stamp another org's model onto this org's key — harmless at the
+    gateway (resolution still scopes to the assignee's orgs) but wrong as
+    configuration, so issuance rejects it.
+    """
     seen: set[tuple] = set()
     for item in items:
         _reject_bad_number(item.max_budget, field="model_permissions.max_budget")
@@ -196,6 +216,15 @@ def _validated_model_permissions(
     if not items:
         return []
 
+    visible_orgs = set(visible_org_ids or ())
+
+    def _provider_visible(provider: Provider) -> bool:
+        if provider.is_deleted:
+            return False
+        if provider.org_id is not None:
+            return provider.org_id in visible_orgs
+        return provider.user_id == user_id
+
     provider_ids = {item.provider_id for item in items if item.provider_id}
     providers: dict[uuid.UUID, Provider] = {}
     if provider_ids:
@@ -204,8 +233,10 @@ def _validated_model_permissions(
         if missing:
             raise ValidationError(f"unknown provider: {min(str(value) for value in missing)}")
         for provider in providers.values():
-            if provider.is_deleted or (provider.user_id is not None and provider.user_id != user_id):
+            if not _provider_visible(provider):
                 raise ValidationError(f"provider {provider.id} not found")
+            if require_org_id is not None and provider.org_id != require_org_id:
+                raise ValidationError(f"provider {provider.id} is outside this organization")
 
     model_ids = {item.model_id for item in items if item.model_id}
     models: dict[uuid.UUID, AIModel] = {}
@@ -222,13 +253,10 @@ def _validated_model_permissions(
         )
         for model in models.values():
             owner = owners.get(model.provider_id) or providers.get(model.provider_id)
-            if (
-                model.is_deleted
-                or owner is None
-                or owner.is_deleted
-                or (owner.user_id is not None and owner.user_id != user_id)
-            ):
+            if model.is_deleted or owner is None or not _provider_visible(owner):
                 raise ValidationError(f"model {model.id} not found")
+            if require_org_id is not None and owner.org_id != require_org_id:
+                raise ValidationError(f"model {model.id} is outside this organization")
 
     for item in items:
         if item.provider_id and item.model_id and models[item.model_id].provider_id != item.provider_id:
@@ -238,28 +266,72 @@ def _validated_model_permissions(
 
 # --- mutations ---------------------------------------------------------------
 
+# Validated primitives for one key row. Shared by personal creation below and
+# org-key issuance (`api/orgs/service.py`) so raw-key handling, hashing and
+# persistence exist exactly once.
+class _KeyParts:
+    def __init__(self, *, name: str, description: str | None, expires_at,
+                 policy_values: dict | None, ip_rules: list[dict], permissions: list[dict]) -> None:
+        self.name = name
+        self.description = description
+        self.expires_at = expires_at
+        self.policy_values = policy_values
+        self.ip_rules = ip_rules
+        self.permissions = permissions
 
-def create_key(db: Session, data: ApiKeyCreate, user_id: uuid.UUID) -> tuple[ApiKey, str]:
-    """Create a key; returns (row, raw_key) with the raw value shown exactly once."""
+
+def prepare_key_parts(
+    db: Session, data: ApiKeyCreate, user_id: uuid.UUID, *,
+    visible_org_ids: set[uuid.UUID] | frozenset | None = None,
+    key_org_id: uuid.UUID | None = None,
+) -> _KeyParts:
+    """Validate a creation payload (personal or org scope) into persistable parts."""
     ip_rules = _validated_ip_rules(data.ip_rules)
-    permissions = _validated_model_permissions(db, data.model_permissions, user_id)
+    permissions = _validated_model_permissions(db, data.model_permissions, user_id,
+                                               visible_org_ids=visible_org_ids,
+                                               require_org_id=key_org_id)
     _ensure_future_expires(data.expires_at, field="expires_at")
+    policy_values = _validated_policy(data.policy) if data.policy is not None else None
+    return _KeyParts(
+        name=data.name, description=data.description, expires_at=data.expires_at,
+        policy_values=policy_values, ip_rules=ip_rules, permissions=permissions,
+    )
+
+
+def persist_key(
+    db: Session, parts: _KeyParts, *, user_id: uuid.UUID,
+    org_id: uuid.UUID | None = None, issued_by: uuid.UUID | None = None,
+) -> tuple[ApiKey, str]:
+    """Insert the key row; returns (row, raw_key) with the raw value shown once.
+
+    Personal keys pass ``org_id=None``; org keys pass the org, the assignee as
+    ``user_id`` and the granting caller as ``issued_by``.
+    """
     raw_key, key_prefix, key_hash = key_engine.generate_key()
     api_key = ApiKey(
         user_id=user_id,
-        name=data.name,
-        description=data.description,
+        org_id=org_id,
+        issued_by=issued_by,
+        name=parts.name,
+        description=parts.description,
         key_prefix=key_prefix,
         key_hash=key_hash,
-        expires_at=data.expires_at,
+        expires_at=parts.expires_at,
     )
-    if data.policy is not None:
-        api_key.policy = ApiKeyPolicy(**_validated_policy(data.policy))
-    api_key.ip_rules = [ApiKeyIpRule(**rule) for rule in ip_rules]
-    api_key.model_permissions = [ApiKeyModelPermission(**perm) for perm in permissions]
+    if parts.policy_values is not None:
+        api_key.policy = ApiKeyPolicy(**parts.policy_values)
+    api_key.ip_rules = [ApiKeyIpRule(**rule) for rule in parts.ip_rules]
+    api_key.model_permissions = [ApiKeyModelPermission(**perm) for perm in parts.permissions]
     db.add(api_key)
     db.commit()
-    logger.info("api key created: %s (%s)", api_key.id, key_prefix)
+    logger.info("api key created: %s (%s) org=%s", api_key.id, key_prefix, org_id)
+    return api_key, raw_key
+
+
+def create_key(db: Session, data: ApiKeyCreate, user_id: uuid.UUID) -> tuple[ApiKey, str]:
+    """Create a personal key; returns (row, raw_key) shown exactly once."""
+    parts = prepare_key_parts(db, data, user_id)
+    api_key, raw_key = persist_key(db, parts, user_id=user_id)
     return get_key(db, api_key.id, user_id), raw_key
 
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
+    from tollms.models.organization import Organization
     from tollms.models.registered_model import AIModel
     from tollms.models.user import User
 
@@ -36,18 +37,33 @@ class Provider(SoftDeleteMixin, TimestampedModel):
         Index("ix_providers_active", "is_active"),
         Index("ix_providers_created", "created_at"),
         Index("ix_providers_user", "user_id"),
-        # Names unique per owner among live rows (NULL owners = legacy rows, never conflict).
+        Index("ix_providers_org", "org_id"),
+        # Names unique per scope among live rows: personal keys live under
+        # (user_id, name) with org_id IS NULL; org providers under
+        # (org_id, name) with org_id IS NOT NULL. NULL user_id legacy rows
+        # never conflict (PostgreSQL treats NULLs as distinct).
         Index(
-            "uq_providers_name_live",
+            "uq_providers_personal_name_live",
             "user_id",
             "name",
             unique=True,
-            postgresql_where=text("is_deleted = false"),
+            postgresql_where=text("is_deleted = false AND org_id IS NULL"),
+        ),
+        Index(
+            "uq_providers_org_name_live",
+            "org_id",
+            "name",
+            unique=True,
+            postgresql_where=text("is_deleted = false AND org_id IS NOT NULL"),
         ),
     )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    # NULL = personal provider (owned by user_id). Non-NULL = org-scoped.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     provider_type: Mapped[ProviderType] = mapped_column(Enum(ProviderType, name="provider_type"), nullable=False)
@@ -60,3 +76,4 @@ class Provider(SoftDeleteMixin, TimestampedModel):
 
     models: Mapped[list["AIModel"]] = relationship(back_populates="provider")
     owner: Mapped["User | None"] = relationship(back_populates="providers")
+    organization: Mapped["Organization | None"] = relationship(back_populates="providers")

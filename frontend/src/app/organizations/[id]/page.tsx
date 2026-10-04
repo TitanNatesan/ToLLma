@@ -11,6 +11,10 @@ import {
 import { InviteModal } from "../components/InviteModal";
 import { SetManager } from "../components/SetManager";
 import { AssignSetsDialog, ConfirmDialog } from "../components/Dialogs";
+import { OrgKeysSection } from "../components/OrgKeysSection";
+import { OrgProvidersSection } from "../components/OrgProvidersSection";
+import { OrgAnalyticsSection } from "../components/OrgAnalyticsSection";
+import { OrgBudgetCard } from "../components/OrgBudgetCard";
 import { useJoinRequests, useMembers, useOrg, useOrgAudit,
   useOrgInvitations, useOrgMutations, useOrgSets,
 } from "@/hooks/useOrgs";
@@ -138,9 +142,34 @@ function OrgDashboardInner() {
           <SettingsSection orgId={orgId} org={data} canManage={can("Organization.Settings")} />
         )}
 
-        {(section === "teams" || section === "providers" || section === "keys"
-          || section === "budgets" || section === "analytics") && (
-          <EmptyState title={`${titles[section]} arrives in a later phase`}
+        {section === "keys" && (
+          <OrgKeysSection orgId={orgId} members={members.data ?? []}
+            canCreate={can("Keys.Create")} canRead={data.is_root || can("Keys.Read")}
+            canRevoke={can("Keys.Revoke") || can("Keys.Delete")} />
+        )}
+
+        {section === "providers" && (
+          <OrgProvidersSection orgId={orgId}
+            canManage={data.is_root || can("Providers.Create") || can("Providers.Update")}
+            canRead={data.is_root || can("Providers.Read")} />
+        )}
+
+        {section === "analytics" && (
+          <OrgAnalyticsSection orgId={orgId}
+            canView={data.is_root || can("Analytics.ViewUsage") || can("Organization.ViewAnalytics")}
+            canSeeCost={data.is_root || can("Analytics.ViewCost")}
+            canReadBudget={data.is_root || can("Budgets.Read")}
+            canEditBudget={data.is_root || can("Budgets.Update")} />
+        )}
+
+        {section === "budgets" && (
+          <OrgBudgetCard orgId={orgId}
+            canRead={data.is_root || can("Budgets.Read")}
+            canEdit={data.is_root || can("Budgets.Update")} />
+        )}
+
+        {section === "teams" && (
+          <EmptyState title="Teams arrives in a later phase"
             description="The navigation reserves this module so nothing needs redesigning when it lands." />
         )}
       </div>

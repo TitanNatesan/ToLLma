@@ -281,6 +281,29 @@ def _resolve(db: Session, provider_id: uuid.UUID, model_id: uuid.UUID, user_id: 
     return provider, model
 
 
+def org_attribution(db: Session, provider: Provider, user_id: uuid.UUID | None) -> uuid.UUID | None:
+    """Server-derived org for in-app generations on `provider`.
+
+    Returns the provider's org only when it is org-scoped AND the caller
+    holds ACTIVE membership there; otherwise None (personal traffic).
+    In-app generations never carry an API key.
+    """
+    from tollms.models.organization import Membership, MembershipState
+
+    org_id = getattr(provider, "org_id", None)
+    if org_id is None or user_id is None:
+        return None
+    active = db.scalar(
+        select(Membership.id).where(
+            Membership.org_id == org_id,
+            Membership.user_id == user_id,
+            Membership.is_deleted.is_(False),
+            Membership.state == MembershipState.ACTIVE.value,
+        )
+    )
+    return org_id if active is not None else None
+
+
 def _transcriber(provider, credentials: dict) -> tuple[str, str] | None:
     """(base_url, api_key) for Whisper transcription via the provider's own
     OpenAI-compatible endpoint. None when the provider has no such path."""
@@ -809,6 +832,7 @@ async def start_generation(
         session_id=session_id,
         provider_id=provider.id,
         model_id=model.id,
+        org_id=org_attribution(db, provider, user_id),
         run_id=run.id,
     )
     if setup.media_endpoint:
@@ -1189,6 +1213,7 @@ async def start_regeneration(
         is_regeneration=True,
         provider_id=provider.id,
         model_id=model.id,
+        org_id=org_attribution(db, provider, user_id),
     )
     if _is_media_model(model):
         # Retry/regenerate reuses the preceding user prompt, no duplicate rows.

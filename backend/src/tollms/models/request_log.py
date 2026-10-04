@@ -39,6 +39,15 @@ class RequestLog(TimestampedModel):
     model_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("models.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Org attribution for the org usage ledger (NULL = personal traffic).
+    # No cascade: retention purge is app-level, never FK-driven.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True
+    )
+    # Gateway key that served the request, when applicable.
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
+    )
     request_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     request_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -58,6 +67,8 @@ class RequestLog(TimestampedModel):
 
     __table_args__ = (
         Index("ix_request_logs_user_created", "user_id", "created_at"),
+        Index("ix_request_logs_org_created", "org_id", "created_at"),
+        Index("ix_request_logs_api_key", "api_key_id"),
         Index("ix_request_logs_status", "status"),
         Index("ix_request_logs_conversation", "conversation_id", "created_at"),
         # Platform-admin error analytics.

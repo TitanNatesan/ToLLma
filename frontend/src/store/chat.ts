@@ -32,7 +32,7 @@ interface ChatState {
   activeGeneration: ActiveGenerationRef | null;
   addProviderOpen: boolean;
   catalogOpen: boolean;
-  catalogPrefill: { family: string; name: string } | null;
+  catalogPrefill: { family: string; name: string; slug?: string | null; baseUrl?: string | null } | null;
   providerSearch: string;
   providerTypeFilter: string;
   selectedProviderId: string | null;
@@ -55,7 +55,7 @@ interface ChatState {
   setActiveGeneration: (gen: ActiveGenerationRef | null) => void;
   setAddProviderOpen: (open: boolean) => void;
   setCatalogOpen: (open: boolean) => void;
-  setCatalogPrefill: (prefill: { family: string; name: string } | null) => void;
+  setCatalogPrefill: (prefill: { family: string; name: string; slug?: string | null; baseUrl?: string | null } | null) => void;
   setProviderSearch: (s: string) => void;
   setProviderTypeFilter: (t: string) => void;
   setSelectedProviderId: (id: string | null) => void;

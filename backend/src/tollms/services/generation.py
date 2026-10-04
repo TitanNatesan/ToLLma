@@ -77,6 +77,10 @@ class GenerationSpec:
     is_regeneration: bool = False
     provider_id: uuid.UUID | None = None
     model_id: uuid.UUID | None = None
+    # Server-derived org attribution for the org usage ledger: the provider's
+    # org when the caller holds ACTIVE membership there, else None (personal).
+    # In-app generations carry no API key (api_key_id stays None in the log).
+    org_id: uuid.UUID | None = None
     error_code: str | None = None
     # Time to first streamed token (ms), measured by the driver.
     ttfb_ms: float | None = None
@@ -527,6 +531,8 @@ class GenerationManager:
             db,
             request_log_engine.RequestLogEntry(
                 user_id=spec.user_id,
+                org_id=spec.org_id,
+                api_key_id=None,
                 conversation_id=spec.conversation_id,
                 message_id=spec.generation_id,
                 provider_id=spec.provider_id,

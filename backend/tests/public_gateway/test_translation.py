@@ -278,7 +278,7 @@ def test_resolve_provider_hint(cache_stub):
     assert resolved.provider is provider
     assert resolved.model is model
     key = cache_stub.set.call_args.args[0]
-    assert key == f"tollma:modelres:{provider.user_id}:deepseek/deepseek-chat"
+    assert key == f"tollma:modelres:{provider.user_id}:-:deepseek/deepseek-chat"
     assert cache_stub.set.call_args.kwargs["ttl"] == 30
 
 
@@ -291,7 +291,7 @@ def test_resolve_bare_unique(cache_stub):
     ):
         resolved = model_resolution.resolve_model(None, "DeepSeek-chat", provider.user_id)
     assert resolved.model is model
-    bare.assert_called_once_with(None, provider.user_id, "DeepSeek-chat")
+    bare.assert_called_once_with(None, provider.user_id, "DeepSeek-chat", None)
 
 
 def test_resolve_ambiguous_model(cache_stub):
@@ -325,8 +325,8 @@ def test_resolve_slashed_model_id_falls_back_to_bare(cache_stub):
         patch.object(model_resolution, "_candidates_bare", return_value=[(provider, model)]) as bare,
     ):
         resolved = model_resolution.resolve_model(None, "meta-llama/Llama-3", provider.user_id)
-    hinted.assert_called_once_with(None, provider.user_id, "meta-llama", "Llama-3")
-    bare.assert_called_once_with(None, provider.user_id, "meta-llama/Llama-3")
+    hinted.assert_called_once_with(None, provider.user_id, "meta-llama", "Llama-3", None)
+    bare.assert_called_once_with(None, provider.user_id, "meta-llama/Llama-3", None)
     assert resolved.model is model
 
 

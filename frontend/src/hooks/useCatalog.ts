@@ -1,7 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { getCatalogProvider, getCatalogStats, listCatalogProviders } from "@/services/catalog";
+import {
+  getCatalogProvider,
+  getCatalogStats,
+  getConnectionTemplateWithFallback,
+  listCatalogProviders,
+} from "@/services/catalog";
 
 export function useCatalogProviders(params: {
   search: string;
@@ -33,4 +38,18 @@ export function useCatalogProvider(slug: string | null) {
 
 export function useCatalogStats() {
   return useQuery({ queryKey: ["catalog", "stats"], queryFn: getCatalogStats, staleTime: 60_000 });
+}
+
+/**
+ * Connection template for the wizard. Falls back to a catalog-row-derived
+ * template when the backend endpoint 404s (parallel backend still landing).
+ */
+export function useConnectionTemplate(slug: string | null) {
+  return useQuery({
+    queryKey: ["catalog", "connection-template", slug],
+    queryFn: () => getConnectionTemplateWithFallback(slug ?? ""),
+    enabled: !!slug,
+    staleTime: 60_000,
+    retry: false,
+  });
 }

@@ -43,3 +43,32 @@ class CatalogStatsRead(BaseModel):
     last_sync_at: datetime | None
     last_sync_status: str | None
     sources: list[str] = Field(default_factory=list)
+
+
+class CredentialField(BaseModel):
+    """One credential input for the provider config UI. No secrets here —
+    only the key name, display label, and whether a value is required."""
+
+    key: str
+    label: str
+    required: bool = True
+    secret: bool = True
+
+
+class ConnectionTemplateRead(BaseModel):
+    """Metadata-driven contract for the provider config UI: catalog identity
+    plus suggested connection values. Credential-bearing creation still goes
+    through the provider endpoints (secrets never flow through the catalog)."""
+
+    slug: str
+    name: str
+    logo_url: str | None = None
+    api_base_url: str | None = None
+    doc_url: str | None = None
+    npm_package: str | None = None
+    env_vars: list[str] = Field(default_factory=list)
+    gateway_family: str | None = None
+    gateway_supported: bool = False
+    suggested_provider_type: str | None = None
+    suggested_base_url: str | None = None
+    credential_fields: list[CredentialField] = Field(default_factory=list)

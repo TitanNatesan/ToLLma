@@ -2692,3 +2692,240 @@ None (validation only; no defects requiring fixes).
 
 ### Architecture Notes
 404-oracle authz confirmed end-to-end (require_active_user → _member_org → _require_perm); escalation invariant untouched (root-only grants here); single-step invite→ACTIVE (no PendingApproval state — matches code, deviates from 04-state-machines doc); invitation tokens never in org listings (mine-only/DB); resend invalidates old token.
+
+## 2026-10-03 — ponytail plugin fixed on OpenCode V2 (V1-only build → dual-API 4.10.3)
+
+### Requirement Completed
+Make the ponytail plugin actually load and work under OpenCode V2. The entry added in the V2 config migration was inert because the cached build was V1-only.
+
+### Files Modified
+- `.opencode/opencode.json` — pinned `"@dietrichgebert/ponytail@4.10.3"` instead of the bare package name, so resolution cannot fall back to a cached V1-only build.
+
+### Root Cause
+Upstream published V2 support in `4.10.1`–`4.10.3` (2026-10-02/03). The machine had `4.10.0` cached at `~/.cache/opencode/npm/@dietrichgebert/ponytail@latest/`, whose default export is the V1 function form (`async ({ client }) => ({ ...V1 hooks })`). V2 rejects that shape:
+`Plugin must export a default definition with an id and an effect or setup function.`
+An earlier check against `4.10.0` (then the newest release) led to the wrong conclusion that the package had no V2 build — `4.10.3` does.
+
+### Decisions
+- Pinned the exact version rather than relying on `latest`: OpenCode's plugin update check is currently broken on this machine (`failed to check plugin update … ERR_INVALID_PROTOCOL: Protocol "https:" not supported. Expected "http:"`), so a floating spec can strand a stale cache entry. The stale `@latest` cache directory is now inert because the config spec no longer matches it.
+- Did not vendor or hand-port the plugin — the dual-API build (`id` + `setup(ctx)` for V2, `server()` for V1) is upstream's supported shape and is what V2 expects.
+
+### Verification
+- Log: `18:15:48 loading plugin id=@dietrichgebert/ponytail@4.10.3 entrypoint=…/ponytail@4.10.3/…/ponytail.mjs` with **no** `failed to load plugin` line after it (the previous failure at `16:40:19` was the cached 4.10.0).
+- Loaded build inspected: exports `id: 'ponytail'`, `async setup(ctx)` (V2) and `async server({ client })` (V1); V2 path wires `ctx.skill.transform`, `ctx.command.transform`, `ctx.session.prompt`, `ctx.session.hook('context', …)`.
+- OpenCode advertised all six ponytail skills (`ponytail`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, `ponytail-review`), which only happens if `setup()` ran and `ctx.skill.transform` registered them.
+- `~/.config/opencode/.ponytail-active` = `full`, so the `context` hook's system-prompt injection is not silenced (only `off` silences it).
+- No ERROR/WARN entries mentioning the plugin after the successful load.
+
+### Recommended Next Steps
+- Revisit the exact-version pin when the plugin update check is fixed upstream (then the bare spec becomes safe again).
+- `/ponytail lite|full|ultra` persists the level; the mode applies from the next message.
+
+## 2026-10-04 — Added context7 + postgres MCPs, three skills
+
+### Requirement Completed
+Installed context7 (remote docs) and postgres (local read-only DB) MCP servers; installed skills vercel-composition-patterns, frontend-design (anthropics), agent-browser skill.
+
+### Files Modified
+- `.opencode/opencode.json` — added `mcp.servers.context7` (remote `https://mcp.context7.com/mcp`, V2 defaults) and `mcp.servers.postgres` (local `npx -y @modelcontextprotocol/server-postgres postgresql://postgres:postgres@localhost:5432/tollms`, catalog/execution 60s). Dev-only credentials, already in repo `.env`.
+
+### Files Created
+- `.agents/skills/vercel-composition-patterns/SKILL.md` (`npx skills add vercel-labs/agent-skills --skill vercel-composition-patterns -a opencode -y`)
+- `.agents/skills/frontend-design/SKILL.md` (`npx skills add anthropics/skills --skill frontend-design -a opencode -y`)
+- `.agents/skills/agent-browser/SKILL.md` (`npx skills add vercel-labs/agent-browser --skill agent-browser -a opencode -y`)
+
+### Decisions
+- Postgres connection string hardcodes localhost dev credentials (match repo `.env`) instead of `{env:DATABASE_URL}` so it works with zero extra setup; server package is read-only by design.
+- No timeout override on context7/remote (V2 defaults: catalog 30s, execution 12h); local postgres keeps the 60s catalog/execution pattern used by the other local servers.
+
+### Verification
+- `opencode mcp list` → all 5 connected: agent-browser, context7, graphify, postgres, sequential-thinking.
+- Live `postgres.query("SELECT count(*) … information_schema.tables")` → 33 public tables.
+- Live `context7 resolve-library-id("Next.js")` → `/vercel/next.js`.
+- All three skills advertised by OpenCode with descriptions; SKILL.md frontmatter present.
+- Skills inventory now: agent-browser, find-skills, frontend-design, shadcn, vercel-composition-patterns.
+
+### Recommended Next Steps
+- Decide whether to commit `.agents/skills/` + `skills-lock.json` or gitignore them (still open from 2026-10-03 entry).
+
+## 2026-10-04 — Phase-B org backend (Backend Agent)
+
+### Requirement
+Implement Phase-B org backend: org keys, personal isolation, revocation hooks, org providers, budgets, attribution, invite preview, analytics, invitation enrichment, pytest suite.
+
+### Implementation Summary
+- Org keys (`api/orgs`): POST/GET/DELETE `/{org_id}/keys` with Keys.Create/Read/Revoke gates (404 oracle), assignee must be ACTIVE member, model-scope visibility escalation check, cap check (allocated+new <= max_spend else 422), issued_by=caller/user_id=assignee/org_id=org, raw-once + key.issued/key.revoked events + audit.
+- Personal isolation: all `api/keys/service.py` reads filter `org_id IS NULL`; shared `prepare_key_parts`/`persist_key` (no duplication); personal scopes can never see org providers/models (scope decided by `org_id` alone).
+- Gateway backstop: `KeyContext.org_id` (+cache); `authenticate` denies org keys whose assignee lacks ACTIVE membership (cached contexts re-checked live).
+- Revocation hooks in remove/suspend/leave: all live assignee org keys disabled+soft-deleted+tombstoned; resume/approve never restore.
+- Org providers: POST/GET/PATCH/DELETE `/{org_id}/providers` (Providers.Create/Read/Update/Delete); V1 GET list/get show personal + ACTIVE-org providers (masked only — credentials_encrypted never serialized for anyone); V1 update/delete on org rows require same-org perm; name uniqueness per scope.
+- Models visibility: personal-owned or org-in-ACTIVE-orgs; lifecycle join preserved.
+- Budgets: GET (Budgets.Read/Update or Analytics.ViewUsage), PATCH (Budgets.Update, cap >= allocated else 422, budget.cap_changed audit+event); allocated = SUM live-key policy budgets.
+- Attribution: `api_request_logs.org_id` = key org; `request_logs.org_id` = provider org iff caller ACTIVE member else NULL, api_key_id NULL in-app (GenerationSpec.org_id, both spawn sites).
+- Public preview `GET /invitations/preview/{token}` (no auth, auth:verify rate limit), identical 404s; `_read_invitation` enriched with inviter email/name + set name/codes (token behavior unchanged).
+- Analytics overview from both log tables WHERE org_id (ViewUsage gate, ViewCost-gated costs, removed_badge, metadata only, team level OUT).
+
+### Files Changed
+- Created `backend/tests/test_org_phase_b.py` (11 tests). Modified: `api/orgs/{router,service,schemas}.py`, `api/keys/service.py`, `api/providers/service.py`, `api/models/service.py`, `api/public_gateway/service.py`, `api/gateway/service.py`, `services/api_keys/keys.py`, `services/gateway/{model_resolution,api_logs}.py`, `services/generation.py`, `tests/public_gateway/test_translation.py` (3 white-box assertions updated for scoped cache key + org_ids param).
+
+### Testing Performed
+- New: 11/11 pass. Required: `test_org_phase_b + tests/keys + test_discovery` = 35 pass. Full backend suite: 581 pass. `alembic check`: no operations. No ruff/lint tooling configured in backend container (skipped).
+
+### Architecture Notes
+- Layering kept: routers endpoint-only; orgs->keys/providers composition is api->api; providers->orgs perm check is function-lazy import (no load cycle); engines use models-only Membership queries, never api imports.
+- Found+fixed during work: `or_(*personal, ...)` scope-splitting bug (would have leaked cross-owner providers) in providers list, model resolution, public listing.
+
+---
+
+## 2026-10-04 — Org gap-closure run COMPLETE (Phase-B keys/ledger/landing/analytics + re-validation)
+
+### Requirement
+Reconcile 4 validation gaps (org keys/ledger, invite landing, PendingApproval, analytics), implement missing-required functionality per FINAL v1 architecture, re-validate via agent-browser.
+
+### Reconciliation decisions
+- Org keys/providers/ledger/budgets/analytics = missing-required (D) → implemented as Phase B.
+- Public invite landing = task-commissioned (D) → implemented (token-capability preview + /invite/[token] + auth ?invite/?email plumbing).
+- PendingApproval for INVITES = invitation-IS-approval (permissioned inviter + escalation); request-join flow remains the approval path → no behavior churn, deviation logged.
+- usage_events realized as org-attributed rows in existing request_logs + api_request_logs (no duplicate table); usage_adjustments deferred (no acceptance need); team-level analytics OUT (teams UI placeholder).
+
+### Implementation Summary
+- DB (migration d4e5f6a7b8c0): api_keys.org_id/issued_by, providers.org_id (scope-split uniques), request_logs.org_id/api_key_id, api_request_logs.org_id, organizations.max_spend. alembic check green.
+- Backend: org key issuance (Keys.Create, budget allocation vs cap, model-scope escalation) / list (Keys.Read) / revoke (Keys.Revoke); personal isolation (org_id IS NULL); gateway auth resolves org keys + ACTIVE-membership backstop; remove/suspend revoke assignee org keys; org providers CRUD + member-visible models; budgets GET/PATCH (cap≥allocated); server-derived attribution both paths; public preview (rate-limited, 404-oracle); analytics overview (ViewUsage + ViewCost-gated cost). 581/581 pytest incl. 11 new phase-B tests.
+- Frontend: Keys/Providers/Analytics+Budget sections, public landing, enriched authenticated landing, auth plumbing, sidebar enabled. tsc+eslint+vitest(126) clean.
+- Orchestrator integration fixes: org-key model_permissions object coercion (type+payload), key budget label from policy, analytics totals nesting + sub-cent money format, analytics removed_badge field.
+
+### Files Changed
+~25 backend + ~12 frontend files (uncommitted per standing rule); migration d4e5f6a7b8c0_org_phase_b.py; tests/test_org_phase_b.py.
+
+### Testing Performed
+- agent-browser full re-run (run 1791053058, 8 sessions): root/org/4 sets/7 invites; existing ignore/reject/accept; new UI signup/verify/accept/reject; PUBLIC landing (details → signup w/ locked email → verify → accept → ACTIVE); org CUSTOM provider to local echo stub; model discover+register ($2.50/$10); 2 org keys ($5 each, raw-once); 5 gateway calls (3+2) → ledger 5/750/$0.0037 org-attributed; analytics exact + member-denied; unauthorized key-create denied; removals → keys revoked (gateway 401), history preserved w/ removed badges, allocation $0, personal intact; budget cap $100 set (pools $100/$0/$100); deleted-provider regression (model vanishes); cross-session isolation throughout.
+- Backend 581/581; tsc/eslint clean; backend logs free of run errors.
+
+### Architecture Notes
+- Real bug fixed by backend agent: or_/and_ scope-split leak in provider visibility (3 places).
+- Pre-existing drift fixed: uq_providers_name_live metadata/DB mismatch.
+- V1 chat has no virtual-key concept (personal or org) — org-key consumption path = public gateway; §30 single-picker remains Phase-D future work.
+- In-app chat org attribution derives from provider scope + ACTIVE membership.
+
+---
+
+## 2026-10-04 — Adversarial security/isolation/data-integrity validation (PASS with 3 fixed defects)
+
+### Requirement
+Adversarial validation of Phase-B org scope: isolation, IDOR, forgery, escalation, key scope, revoked-key cache, preservation, attribution tampering, budgets (+concurrency), provider isolation/deletion, invite token security, removal re-auth, multi-org, root protection, escalation, analytics isolation, conversation ownership, stale state, error consistency, DB integrity, migration safety. Fix real defects + regression tests.
+
+### Implementation Summary (defects fixed)
+1. Org spend cap was creation-time only (auditor-verified): added shared atomic Valkey counter `apilim:{org}:org-spend`, reservation in check_request (`org_budget` 403), reconcile in record_usage, overbudget flag; wired via _Prepared.org_cap (single live DB read). New tests/public_gateway/test_org_spend_cap.py (7).
+2. Org-key issuance allowed cross-org model scope (caller-wide visibility): added require_org_id to prepare_key_parts/_validated_model_permissions (422 "outside this organization"); 2 new tests in test_org_phase_b.py (cross-org reject, personal-sneak reject) + preview expiry/consumed 404 test.
+3. Analytics counted failed/denied rows (phantom model/provider rows, inflated REQUESTS): all 10 ledger queries now status='success'; +1 regression test.
+4. Sub-cent org caps rounded to $0.00 by Numeric(14,2): migration e5f6a7b8c9d1 widens max_spend to (14,6); frontend money() sub-cent display in analytics + budget card; removed_badge type fix.
+
+### Files Changed
+backend/src/tollms/services/gateway/limits.py, api/public_gateway/service.py, api/keys/service.py, api/orgs/service.py, models/organization.py, alembic e5f6a7b8c9d1, tests (spend-cap 7, phase-b +4); frontend OrgAnalyticsSection/OrgBudgetCard/OrgKeysSection/types/useOrgs. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser adversarial run (stamp 1791081398, 8 sessions, Org A/B, 5 users): IDOR 404-oracle ×7+4; forgery (422 cap, 422 model, smuggled fields ignored, outsider 404); escalation denials (revoke/budget/sets/assign/invite); scope matrix (B→B 200, A→B 404, personal→org 404); attribution tamper defeated (server-derived); cap E2E (pre-call org_budget 403 + post-call flag 403); 25-burst overshoot analyzed (estimate semantics, V1-inherited); removal → 3× immediate 401, live-session 404s, re-login same, personal key 200; history 38 rows + audit + badges preserved; suspend→deny→resume→restore; member-c A-removal → B intact; root self-remove 409; preview oracle (200 valid / identical 404 random+modified+consumed); invite integrity 404s; provider deletion (model gone, logs kept); catalog clean; analytics isolation (cost restricted, pools denied, B 404s, B-only-B); stale-state zero leaks; conversation ownership structural.
+- Backend 592/592; tsc/eslint clean; alembic single head e5f6a7b8c9d1, check green. Known caveats: estimate-vs-actual burst overshoot (V1 semantics, flag backstop); in-app chat unbudgeted (V1 parity); full-pytest cache flush (`tollma:*`) disrupts concurrent live sessions (dev-only overlap; tests use separate DB).
+
+### Architecture Notes
+- 404-oracle + escalation invariant hold on every org route (auditor table). Tombstone(90s) > context TTL(30s); cached gateway contexts re-check membership live (no revoked-key window). Failed gateway attempts log with key-org attribution (audit value, excluded from analytics). Lifetime org counter vs allocation model documented. Latent (unreachable) CASCADE notes: api_keys.user_id, model-permission rows, messages.conversation_id — no app hard-delete path triggers them; account-purge org-key audit gap noted as future hardening.
+
+---
+
+## 2026-10-04 — New-user invite flow rebuilt (public stepped page + atomic accept) + validated
+
+### Requirement
+New invited users hit login-first; required: public invitation → review → profile setup → atomic accept (account+membership), public reject without account, existing-user flow unchanged.
+
+### Root cause
+/invite was already public (BARE_PATHS/proxy); login-first was flow design (accept required an account; page shunted to signup→verify→login→accept). Fixed with atomic endpoints + stepped page, not redirects.
+
+### Implementation Summary
+- Backend: POST .../by-token/{token}/accept-new (public, rate-limited): pending/kind/expiry/org gates + identical 404 oracle; email locked to invite (mismatch 422); existing account → 409 INVITE_ACCOUNT_EXISTS; reuses signup password policy; email_verified=True (token proves mailbox control); single-commit user+membership+sets+invite+audit; session via login path post-commit (degraded flag if Valkey fails). POST .../reject-new: pending-only reject, no user/membership, inviter notified. Google assessed: OAuth round-trip can't carry invite (fixed callback, stateless record) → manual only, documented.
+- Frontend: /invite/[token] stepped (Review with sets/codes/expiry → Profile with locked email + pw policy → Done → /organizations/{id}); themed ConfirmDialog reject; 409 → login link; generic not-found preserved; authenticated flows untouched.
+- Tests: tests/test_org_invite_new_user.py (9: happy, oracle, 409, mismatch, tampering-shape, reject, reuse, expiry/consumed). Flake incident: file flaked under MY concurrent load (parallel suites+browser); 10+ quiet greens + solo full suite 601/601. Rule: never run concurrent pytest against shared compose Valkey/test-DB.
+
+### Files Changed
+backend/api/orgs/{router,service,schemas}.py; backend/tests/test_org_invite_new_user.py; frontend invite page + services/orgs.ts + hooks/useOrgs.ts. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (stamp 1791095262): root→org→Greeter set→2 invites; fresh session link → NO login, stepped page (org/inviter/email/sets/codes/expiry); profile+accept → /organizations/{id}; DB: verified user, ACTIVE+Greeter, invite accepted; reject → rejected + zero users; invalid/reuse → identical generic page; duplicate invite guard; member permission proof.
+- Backend 601/601 solo; tsc/eslint/vitest (agents) clean; backend logs clean.
+
+### Architecture Notes
+- Oracle tension resolved: arbitrary tokens → generic not-found; in-session own accept/reject → contextual states.
+- No Playwright files; no auth regressions (/login/signup/verify/Google/logout untouched).
+
+---
+
+## 2026-10-04 — Invite email pointed at login-gated route; fixed + full E2E re-validation
+
+### Requirement
+Mission reported new-user invite flow still broken: invite link → LOGIN PAGE.
+
+### Root cause
+`_invite_link()` (backend/src/tollms/api/orgs/service.py) built `{FRONTEND_URL}/organizations/invites?token=…` — an authenticated route absent from proxy PUBLIC_PATHS / Shell BARE_PATHS. Unauthenticated open → proxy 302 → /login. The public stepped page `/invite/[token]` existed and was correctly guarded-open, but nothing linked to it. Found by 3 parallel explore subagents (email-URL, auth-guard, backend-endpoint audits); guards verified innocent, email URL guilty.
+
+### Implementation Summary
+- `_invite_link` → `{FRONTEND_URL}/invite/{token}` (one line). New users land on public review→profile→atomic-accept; existing users use the page's "I have an account" → /login?invite= → AuthCard sessionStorage binding → /organizations/invites?token= (unchanged authed flow).
+- `preview_invitation` gate: added missing `inv.kind == INVITE` check (accept/reject-new already had it; join-request tokens were publicly previewable).
+- `frontend/src/app/not-found.tsx` (new): themed 404 via EmptyState + Dashboard/Login links (was absent).
+- Stale comment on /organizations/invites corrected (post-auth landing, not email target).
+- New regression test `test_invite_email_links_directly_to_public_page` (outbox asserts /invite/<token>, no login-gated path).
+
+### Files Changed
+backend/src/tollms/api/orgs/service.py; backend/tests/test_org_invite_new_user.py (10 tests); frontend/src/app/not-found.tsx (new); frontend/src/app/organizations/invites/page.tsx (comment). Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser E2E (stamp 1791098835, 6 sessions, UI-driven invites): fresh session → /invite/<real-token> → NO login, review (org/inviter/email/sets/codes/expiry) → Continue → locked-email profile → Accept → org dashboard; DB: verified user, ACTIVE+Greeter, invite accepted. Reject: themed confirm → "Invitation rejected", invite=rejected, 0 users. Existing user: public page → login → invites page (org+Greeter shown) → Accept → joined (ACTIVE/accepted). Invalid + consumed-reuse → identical generic not-found. Refresh re-resolves. Authed unknown route → custom 404; unauthenticated unknown → login (guard intact). No Playwright files; no native alerts.
+- Backend: test_org_invite_new_user 10/10, test_org_phase_b 15/15; tsc + eslint clean.
+
+### Architecture Notes
+- Oracle preserved: arbitrary tokens → generic page; in-session own accept/reject → contextual states.
+- Google-on-invite still omitted (prior documented limitation); manual flow fully functional.
+
+---
+
+## 2026-10-04 — Invite page unscrollable (body overflow lock); scoped fix + verified
+
+### Requirement
+User reported unable to scroll `/invite/<token>`; Accept/Reject below the fold unreachable on long invites.
+
+### Root cause
+`frontend/src/app/globals.css` sets `body { overflow: hidden }` (AppShell provides its own inner scroll areas). Bare `/invite` page rendered `min-h-screen` content directly in body with no scrollable ancestor — page could never scroll.
+
+### Implementation Summary
+One-line scoped fix: invite page root `min-h-screen` → `h-screen overflow-y-auto` (own scroll container; global lock untouched so AppShell unaffected). AuthCard/login left as-is (out of scope).
+
+### Files Changed
+frontend/src/app/invite/[token]/page.tsx (one class). Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (fresh session, real invite): container scrollable (scrollHeight 906 > client 577), scrollTo bottom (scrollTop 329), filled profile, clicked Accept after scrolling → landed in org. tsc + eslint clean.
+
+---
+
+## 2026-10-04 — Full models.dev catalog configurable + org provider management
+
+### Requirement
+Every models.dev provider representable/configurable; org providers with ownership/credentials/models/auth/lifecycle/isolation.
+
+### Investigation (3 parallel subagents)
+- Catalog (226 live providers) already synced to provider_catalog with api_base_url/env_vars/npm; only 5 slugs gateway-mapped; no catalog→connection flow; wizard raw-Type hand-config; modelsdev raw truncated to 3 keys.
+- Org scoping correct except: legacy NULL-owner rows visible via models API, Validate/RefreshModels/RotateCredentials perms unenforced, conversation refs unvalidated, no provider.updated audit.
+
+### Implementation Summary
+- Backend: POST /catalog/providers/{slug}/connection-template (auth, secret-free credential_fields from env_vars); catalog_slug on ProviderCreate (stamp + base_url prefill, caller-creds-win); NPM_GATEWAY_FAMILIES (openai-compatible→CUSTOM, anthropic-sdk→ANTHROPIC_MESSAGES); raw=dict(info); NULL-arm removals; org perm gates; conversation validation; provider.updated audit. No migration, no new adapters. tests/test_catalog_template.py (14).
+- Frontend: ConnectionTemplateFields renderer (all 226, no per-provider switch, client fallback if endpoint 404s); catalog cards (host/env chips/doc/badge/Via Custom); wizard catalog prefill + env→adapter key translation; OrgProvidersSection full lifecycle (browse-create/validate/refresh/edit/disable/delete).
+- Live resync: 226 = 185 CUSTOM + 8 ANTHROPIC + 4 native + 29 catalog-only (honestly badge-gated, config kept).
+
+### Files Changed
+backend api/catalog/*, api/providers/*, api/orgs/service.py, services/model_repository/{sources,sync}.py, api/{models,keys,conversations}/service.py, tests/test_catalog_template.py; frontend catalog wizard/org-provider components + services/hooks/types. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (no Playwright): catalog 226/197 supported in UI; template Configure (env field + prefilled base URL); fake key → clean 401 error; Org A create/edit/disable/delete via UI; Org B same-slug independent row + creds; cross-org API 404, UI zero-leak; Org B survives Org A delete.
+- Backend 616/616 solo; alembic check clean; tsc/eslint/vitest (130) clean.
+
+### Architecture Notes
+- Catalog-vs-gateway split preserved: 29 native-SDK providers configurable-but-not-executable (badge + tooltip), one-line mapping to promote when verified.
+- Pre-existing generic ErrorState for non-member org access (no leak); org-page 404 copy left as future polish.

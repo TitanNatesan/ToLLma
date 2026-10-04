@@ -29,6 +29,8 @@ import {
   type EndpointCategory,
 } from "@/app/providers/fields";
 import { useProviders, useProviderMutations } from "@/hooks/useRegistry";
+import { useConnectionTemplate } from "@/hooks/useCatalog";
+import { templateCredentials } from "@/services/catalog";
 import { useChatStore } from "@/store/chat";
 import {
   draftValidateProvider,
@@ -43,6 +45,7 @@ import type {
   ProviderType,
 } from "@/types";
 import { EMPTY_MODEL_FORM, ModelForm, fromSuggested, toPayload, type ModelFormState } from "./ModelForm";
+import { ConnectionTemplateFields } from "./ConnectionTemplateFields";
 import {
   Check,
   CheckCircle2,
@@ -70,6 +73,10 @@ interface ProviderWizardModalProps {
   initialType?: ProviderType | null;
   /** Prefill the connection name when launched from the provider catalog. */
   initialName?: string | null;
+  /** Catalog slug: loads the connection template (family + base URL + expected fields). */
+  catalogSlug?: string | null;
+  /** Base URL prefill for catalog-only entries configured via Custom. */
+  initialBaseUrl?: string | null;
 }
 
 const PROVIDER_METAS: Record<
@@ -367,6 +374,8 @@ export function ProviderWizardModal({
   onSaved,
   initialType,
   initialName,
+  catalogSlug,
+  initialBaseUrl,
 }: ProviderWizardModalProps) {
   const { data: providers = [] } = useProviders();
   const pm = useProviderMutations();
@@ -399,6 +408,18 @@ export function ProviderWizardModal({
   const [priceFilter, setPriceFilter] = useState<"ALL" | "PRICED" | "FREE">("ALL");
   const [endpointFilter, setEndpointFilter] = useState("ALL");
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
+
+  // Catalog-launched runs load the connection template (backend endpoint with
+  // a catalog-row-derived fallback) to prefill family + base URL + fields.
+  const templateQuery = useConnectionTemplate(!isEditing && open ? (catalogSlug ?? null) : null);
+  const template = templateQuery.data ?? null;
+
+  // Prefill base_url from the catalog base URL (derived, never clobbers user input).
+  const suggestedBaseUrl = initialBaseUrl ?? template?.suggested_base_url ?? null;
+  const effectiveCreds = useMemo(() => {
+    if (!template || !suggestedBaseUrl) return creds;
+    return creds.base_url ? creds : { ...creds, base_url: suggestedBaseUrl };
+  }, [creds, template, suggestedBaseUrl]);
 
   // Auto-save draft progress (steps 1-2 carry the draft; nothing persisted server-side).
   useEffect(() => {
@@ -460,7 +481,11 @@ export function ProviderWizardModal({
 
   const nameTaken = providers.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
   const requiredCreds = (CREDENTIAL_FIELDS[type] ?? []).filter(([, spec]) => !spec.optional);
-  const credsReady = requiredCreds.every(([key]) => (creds[key] ?? "").trim() !== "");
+  const staticCredsReady = requiredCreds.every(([key]) => (creds[key] ?? "").trim() !== "");
+  const templateCredsReady = (template?.credential_fields ?? [])
+    .filter((f) => f.required)
+    .every((f) => (effectiveCreds[f.key] ?? "").trim() !== "");
+  const credsReady = template ? templateCredsReady : staticCredsReady;
 
   const filtered = useMemo(() => {
     if (!mapped) return [];
@@ -558,7 +583,9 @@ export function ProviderWizardModal({
   async function runValidation() {
     setBusy(true);
     try {
-      const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      // Template path: raw env-name keys -> adapter credential keys.
+      const source = template ? templateCredentials(template, effectiveCreds) : creds;
+      const credentials = Object.fromEntries(Object.entries(source).filter(([, v]) => v !== ""));
       const res = await draftValidateProvider({ provider_type: type, credentials });
       setValidation(res);
       if (res.valid) toast.success(`Credentials valid — ${res.discovered.length} models found`);
@@ -574,7 +601,9 @@ export function ProviderWizardModal({
     if (!mapped) return;
     setBusy(true);
     try {
-      const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      // Template path: raw env-name keys -> adapter credential keys.
+      const source = template ? templateCredentials(template, effectiveCreds) : creds;
+      const credentials = Object.fromEntries(Object.entries(source).filter(([, v]) => v !== ""));
       const matchById = Object.fromEntries(mapped.map((m) => [m.model_id, m]));
       const defaultEndpoint = PROVIDER_DEFAULT_ENDPOINTS[type] || "chat_completions";
       const models = [...selected].map((id) => {
@@ -817,22 +846,35 @@ export function ProviderWizardModal({
                       </span>
                       <span className="text-[11px] text-zinc-400">Keys are stored encrypted on your server</span>
                     </div>
-                    {CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
-                      <CredentialField
-                        key={fieldKey}
-                        fieldKey={fieldKey}
-                        spec={spec}
-                        value={creds[fieldKey] ?? ""}
-                        onChange={(v) => setCreds((prev) => ({ ...prev, [fieldKey]: v }))}
-                        showSecret={showSecrets[fieldKey]}
-                        onToggleSecret={() =>
-                          setShowSecrets((prev) => ({
-                            ...prev,
-                            [fieldKey]: !prev[fieldKey],
-                          }))
-                        }
+                    {catalogSlug && templateQuery.isLoading && (
+                      <p className="flex items-center gap-2 text-xs text-zinc-500">
+                        <Loader2 className="size-3.5 animate-spin" /> Loading connection template…
+                      </p>
+                    )}
+                    {template ? (
+                      <ConnectionTemplateFields
+                        template={template}
+                        creds={effectiveCreds}
+                        onChange={(k, v) => setCreds((prev) => ({ ...prev, [k]: v }))}
                       />
-                    ))}
+                    ) : (
+                      CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
+                        <CredentialField
+                          key={fieldKey}
+                          fieldKey={fieldKey}
+                          spec={spec}
+                          value={creds[fieldKey] ?? ""}
+                          onChange={(v) => setCreds((prev) => ({ ...prev, [fieldKey]: v }))}
+                          showSecret={showSecrets[fieldKey]}
+                          onToggleSecret={() =>
+                            setShowSecrets((prev) => ({
+                              ...prev,
+                              [fieldKey]: !prev[fieldKey],
+                            }))
+                          }
+                        />
+                      ))
+                    )}
                   </div>
                 )}
 

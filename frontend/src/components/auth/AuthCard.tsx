@@ -63,12 +63,73 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   const [signupError, setSignupError] = useState<string | null>(null);
   const [signupBusy, setSignupBusy] = useState(false);
 
+  // Organization invite binding (Phase B): ?invite=<token>&email=<address>.
+  // The email field is prefilled and locked; the token survives mode flips
+  // and the signup→verify→login hop via sessionStorage, then lands on the
+  // invitations page. Google buttons intentionally stay untouched.
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const invite = params.get("invite");
+    const email = params.get("email");
+    if (invite) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setInviteToken(invite);
+      try {
+        window.sessionStorage.setItem("tollma_invite_token", invite);
+      } catch {
+        /* storage blocked: token still works for this page view */
+      }
+    } else {
+      try {
+        const stored = window.sessionStorage.getItem("tollma_invite_token");
+        if (stored) setInviteToken(stored);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (email && email.includes("@")) {
+      setInviteEmail(email);
+      setLoginEmail(email);
+      setSignupEmail(email);
+    }
+  }, []);
+
+  function consumeInviteToken(): string | null {
+    if (inviteToken) {
+      try {
+        window.sessionStorage.removeItem("tollma_invite_token");
+      } catch {
+        /* ignore */
+      }
+      return inviteToken;
+    }
+    try {
+      const stored = window.sessionStorage.getItem("tollma_invite_token");
+      if (stored) {
+        window.sessionStorage.removeItem("tollma_invite_token");
+        return stored;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function afterAuth() {
+    const token = consumeInviteToken();
+    router.push(token ? `/organizations/invites?token=${encodeURIComponent(token)}` : "/");
+  }
+
   const switchToSignup = (e: React.MouseEvent) => {
     e.preventDefault();
     setLoginError(null);
     setMode("signup");
     if (typeof window !== "undefined") {
-      window.history.pushState(null, "", "/signup");
+      window.history.pushState(null, "", `/signup${window.location.search}`);
     }
   };
 
@@ -77,7 +138,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
     setSignupError(null);
     setMode("login");
     if (typeof window !== "undefined") {
-      window.history.pushState(null, "", "/login");
+      window.history.pushState(null, "", `/login${window.location.search}`);
     }
   };
 
@@ -91,7 +152,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       if (res.access_token) {
         setAccessToken(res.access_token);
       }
-      router.push("/");
+      afterAuth();
     } catch (err) {
       setLoginError(
         err instanceof ApiError && err.status === 401
@@ -117,7 +178,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       if (res.access_token) {
         setAccessToken(res.access_token);
       }
-      router.push("/");
+      afterAuth();
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
         setSignupError(
@@ -188,10 +249,17 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     placeholder="name@company.com"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
+                    readOnly={inviteEmail !== null}
+                    title={inviteEmail ? "Email is locked to your invitation" : undefined}
                     data-testid="login-email"
                     className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-xs text-white placeholder-zinc-500 transition-colors focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
                   />
                 </div>
+                {inviteEmail && (
+                  <p className="text-[11px] text-zinc-500" data-testid="login-invite-note">
+                    Locked to your invitation email. After login you&apos;ll land on the invitation.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -354,10 +422,17 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     placeholder="name@company.com"
                     value={signupEmail}
                     onChange={(e) => setSignupEmail(e.target.value)}
+                    readOnly={inviteEmail !== null}
+                    title={inviteEmail ? "Email is locked to your invitation" : undefined}
                     data-testid="signup-email"
                     className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-xs text-white placeholder-zinc-500 transition-colors focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
                   />
                 </div>
+                {inviteEmail && (
+                  <p className="text-[11px] text-zinc-500" data-testid="signup-invite-note">
+                    Locked to your invitation email. After signup you&apos;ll land on the invitation.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">

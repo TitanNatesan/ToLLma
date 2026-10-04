@@ -88,6 +88,10 @@ class KeyContext:
     enabled: bool
     expires_at: datetime | None
     policy: KeyPolicy
+    # Owning org for org-scoped keys; None for personal keys. The assignee
+    # (`user_id`) must hold ACTIVE membership in this org (enforced in
+    # `authenticate` as a backstop even if revocation rows lag).
+    org_id: uuid.UUID | None = None
     # Empty tuple = no restriction (all models allowed).
     model_permissions: tuple[ModelPermission, ...] = field(default_factory=tuple)
     allow_rules: tuple[str, ...] = field(default_factory=tuple)
@@ -221,6 +225,7 @@ def compile_context(key: ApiKey, owner: User | None = None) -> KeyContext:
         key_prefix=key.key_prefix,
         enabled=key.enabled,
         expires_at=key.expires_at,
+        org_id=key.org_id,
         policy=KeyPolicy(
             max_budget_usd=policy.max_budget_usd if policy else None,
             budget_reset_days=policy.budget_reset_days if policy else None,
@@ -260,6 +265,7 @@ def _context_to_cache(ctx: KeyContext) -> dict:
         "key_prefix": ctx.key_prefix,
         "enabled": ctx.enabled,
         "expires_at": ctx.expires_at.isoformat() if ctx.expires_at else None,
+        "org_id": str(ctx.org_id) if ctx.org_id else None,
         "policy": {
             "max_budget_usd": str(ctx.policy.max_budget_usd) if ctx.policy.max_budget_usd is not None else None,
             "budget_reset_days": ctx.policy.budget_reset_days,
@@ -299,6 +305,11 @@ def _context_from_cache(data: dict) -> KeyContext:
         return Decimal(value) if value is not None else None
 
     policy = data.get("policy") or {}
+    org_raw = data.get("org_id")
+    try:
+        org_id = uuid.UUID(org_raw) if org_raw else None
+    except (ValueError, TypeError, AttributeError):
+        org_id = None
     return KeyContext(
         key_id=uuid.UUID(data["key_id"]),
         user_id=uuid.UUID(data["user_id"]),
@@ -306,6 +317,7 @@ def _context_from_cache(data: dict) -> KeyContext:
         key_prefix=data.get("key_prefix", ""),
         enabled=bool(data.get("enabled", True)),
         expires_at=_dt(data.get("expires_at")),
+        org_id=org_id,
         policy=KeyPolicy(
             max_budget_usd=_dec(policy.get("max_budget_usd")),
             budget_reset_days=policy.get("budget_reset_days"),
@@ -338,6 +350,28 @@ def _context_from_cache(data: dict) -> KeyContext:
     )
 
 
+def _assignee_active(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """True when `user_id` holds ACTIVE, live membership in `org_id`.
+
+    Local Membership query (never an `api.*` import: engines stay below the
+    feature layer). Cached contexts can lag key revocation, but membership
+    state is read live on every authentication.
+    """
+    from tollms.models.organization import Membership, MembershipState
+
+    return (
+        db.scalar(
+            select(Membership.id).where(
+                Membership.org_id == org_id,
+                Membership.user_id == user_id,
+                Membership.is_deleted.is_(False),
+                Membership.state == MembershipState.ACTIVE.value,
+            )
+        )
+        is not None
+    )
+
+
 def authenticate(db: Session, raw_key: str) -> KeyContext | None:
     """Resolve a raw key to its context. O(1): hash lookup + short Valkey cache.
 
@@ -346,6 +380,11 @@ def authenticate(db: Session, raw_key: str) -> KeyContext | None:
     the 401 path as before). Disabled/expired keys, and keys whose owner is
     inactive, deleted, or pending deletion, return their context so callers
     can distinguish 401 (unknown) from 403 (revoked/expired/owner-blocked).
+
+    Org keys additionally require the assignee to hold ACTIVE membership in
+    the key's org at call time (404-style denial: None, never a distinct
+    error). This backstop holds even if key-revocation rows lag behind a
+    membership change, because membership state — not key rows — is checked.
     """
     if not raw_key:
         return None
@@ -361,9 +400,15 @@ def authenticate(db: Session, raw_key: str) -> KeyContext | None:
     cached = cache_get_sync(_cache_key(key_hash))
     if isinstance(cached, dict):
         try:
-            return _context_from_cache(cached)
+            ctx = _context_from_cache(cached)
         except Exception:
             logger.warning("api key context cache decode failed", exc_info=True)
+        else:
+            if ctx.org_id is not None and not _assignee_active(db, ctx.org_id, ctx.user_id):
+                # Membership lapsed after this context was cached: deny as
+                # unknown (never serve a stale org grant).
+                return None
+            return ctx
 
     key = db.scalar(
         select(ApiKey)
@@ -380,6 +425,10 @@ def authenticate(db: Session, raw_key: str) -> KeyContext | None:
     if owner is None:
         # Defensive: FK CASCADE deletes keys with a purged owner, so a missing
         # owner means the row vanished out of band — 401 unknown either way.
+        return None
+    if key.org_id is not None and not _assignee_active(db, key.org_id, key.user_id):
+        # Org key whose assignee lost ACTIVE membership (removed/suspended):
+        # deny as unknown so no existence oracle leaks the key's org scope.
         return None
     ctx = compile_context(key, owner)
     try:

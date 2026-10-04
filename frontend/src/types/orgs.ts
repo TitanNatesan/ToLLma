@@ -42,11 +42,20 @@ export interface Invitation {
   kind: "invite" | "request";
   status: "pending" | "accepted" | "rejected" | "expired" | "closed";
   expires_at: string;
-  invited_by: string | null;
+  /** Phase B: enriched to carry inviter identity (object) or legacy UUID string. */
+  invited_by: string | { name?: string | null; email?: string | null } | null;
   set_ids: string[];
   created_at: string;
   /** Single-use secret; present only on the recipient's own queue. */
   token?: string | null;
+  /** Phase B enrichment (optional until the backend ships it): inviter display fields. */
+  invited_by_name?: string | null;
+  invited_by_email?: string | null;
+  inviter?: { name?: string | null; email?: string | null } | null;
+  /** Phase B enrichment: granted sets with their permission codes. */
+  permission_sets?: Array<string | { name: string; codes?: string[]; permissions?: string[] }>;
+  set_names?: string[];
+  set_details?: Array<{ name: string; codes?: string[]; permissions?: string[] }>;
 }
 
 export interface Member {
@@ -155,3 +164,142 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     { code: "Audit.Export", label: "Export audit log" },
   ] },
 ];
+
+// --- Phase B: org keys / providers / budgets / analytics / invite preview ---
+
+/** Organization API key read (never carries the secret). Field names are
+ * tolerant: the parallel backend may use snake_case variants. */
+export interface OrgKey {
+  id: string;
+  name: string;
+  description?: string | null;
+  assignee_user_id?: string | null;
+  assignee_email?: string | null;
+  /** Alternate backend namings for the assignee identity. */
+  user_id?: string | null;
+  email?: string | null;
+  user_email?: string | null;
+  max_budget_usd?: number | string | null;
+  max_budget?: number | string | null;
+  budget_usd?: number | string | null;
+  budget?: number | string | null;
+  model_permissions?: unknown;
+  model_ids?: string[] | null;
+  models?: string[] | Array<{ id?: string; name?: string }> | null;
+  model_count?: number | null;
+  key_prefix?: string | null;
+  masked?: string | null;
+  revoked?: boolean | null;
+  created_at: string;
+}
+
+export interface OrgKeyCreateInput {
+  assignee_user_id: string;
+  name: string;
+  description?: string;
+  max_budget_usd?: number | null;
+  model_permissions?: Array<{ model_id: string; provider_id?: string }>
+}
+
+/** Create response: the raw secret appears exactly once. */
+export interface OrgKeySecretResponse {
+  raw_key: string;
+  key?: OrgKey;
+  id?: string;
+  name?: string;
+}
+
+/** Organization provider read. Mirrors the personal Provider shape. */
+export interface OrgProvider {
+  id: string;
+  name: string;
+  provider_type?: string;
+  type?: string;
+  validation_status?: string;
+  status?: string;
+  validation_message?: string | null;
+  message?: string | null;
+  credentials_masked?: Record<string, string>;
+  credentials?: Record<string, string>;
+  is_active?: boolean;
+  last_validated_at?: string | null;
+  created_at?: string;
+}
+
+export interface OrgProviderCreateInput {
+  name: string;
+  provider_type: string;
+  credentials: Record<string, unknown>;
+  catalog_slug?: string | null;
+}
+
+export interface OrgBudget {
+  max_spend?: number | string | null;
+  max_budget_usd?: number | string | null;
+  cap?: number | string | null;
+  allocated?: number | string | null;
+  unallocated?: number | string | null;
+  currency?: string | null;
+}
+
+export interface OrgAnalyticsRow {
+  id?: string;
+  key?: string;
+  name?: string;
+  label?: string;
+  model?: string;
+  provider?: string;
+  email?: string;
+  user_email?: string;
+  user_id?: string;
+  requests?: number | string | null;
+  total_requests?: number | string | null;
+  tokens?: number | string | null;
+  total_tokens?: number | string | null;
+  cost?: number | string | null;
+  total_cost?: number | string | null;
+  spend?: number | string | null;
+  removed?: boolean | null;
+  removed_badge?: boolean | null;
+  is_removed?: boolean | null;
+  member_removed?: boolean | null;
+}
+
+/** GET /orgs/{id}/analytics/overview. Cost is null without ViewCost. */
+export interface OrgAnalyticsOverview {
+  requests?: number | string | null;
+  total_requests?: number | string | null;
+  tokens?: number | string | null;
+  total_tokens?: number | string | null;
+  cost?: number | string | null;
+  total_cost?: number | string | null;
+  spend?: number | string | null;
+  cost_restricted?: boolean | null;
+  by_model?: OrgAnalyticsRow[];
+  models?: OrgAnalyticsRow[];
+  by_provider?: OrgAnalyticsRow[];
+  providers?: OrgAnalyticsRow[];
+  by_user?: OrgAnalyticsRow[];
+  users?: OrgAnalyticsRow[];
+  by_member?: OrgAnalyticsRow[];
+  members?: OrgAnalyticsRow[];
+}
+
+export interface InvitePreviewSet {
+  name: string;
+  codes?: string[];
+  permissions?: string[];
+}
+
+export interface InvitePreview {
+  org_name: string;
+  org_slug?: string | null;
+  email: string;
+  invited_by?: { name?: string | null; email?: string | null } | string | null;
+  inviter?: { name?: string | null; email?: string | null } | null;
+  invited_by_name?: string | null;
+  invited_by_email?: string | null;
+  permission_sets?: InvitePreviewSet[];
+  sets?: InvitePreviewSet[];
+  expires_at?: string | null;
+}

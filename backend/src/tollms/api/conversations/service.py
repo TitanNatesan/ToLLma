@@ -107,6 +107,14 @@ def get_conversation_with_messages(
 def create_conversation(
     db: Session, data: ConversationCreate, user_id: uuid.UUID | None = None
 ) -> Conversation:
+    if data.provider_id is not None:
+        from tollms.api.providers.service import get_provider as _get_provider
+
+        _get_provider(db, data.provider_id, user_id)  # 404 unless visible
+    if data.model_id is not None:
+        from tollms.api.models.service import get_model as _get_model
+
+        _get_model(db, data.model_id, user_id)  # 404 unless visible
     conv = Conversation(
         user_id=user_id,
         title=data.title or "New conversation",

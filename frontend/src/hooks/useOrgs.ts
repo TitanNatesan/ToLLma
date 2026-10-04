@@ -11,6 +11,10 @@ export const ORG_KEYS = {
   invitations: (id: string) => ["orgs", id, "invitations"],
   requests: (id: string) => ["orgs", id, "requests"],
   audit: (id: string) => ["orgs", id, "audit"],
+  keys: (id: string) => ["orgs", id, "keys"],
+  providers: (id: string) => ["orgs", id, "providers"],
+  budget: (id: string) => ["orgs", id, "budget"],
+  analyticsOverview: (id: string) => ["orgs", id, "analytics", "overview"],
   mine: ["orgs", "mine-invitations"],
   search: (q: string) => ["orgs", "search", q],
   notifications: ["notifications"],
@@ -89,7 +93,94 @@ function invalidateOrg(qc: ReturnType<typeof useQueryClient>, orgId?: string) {
     void qc.invalidateQueries({ queryKey: ORG_KEYS.invitations(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.requests(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.audit(orgId) });
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.keys(orgId) });
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.providers(orgId) });
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.budget(orgId) });
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.analyticsOverview(orgId) });
   }
+}
+
+/** Phase B: org API keys (defensive: 404 while the backend lands → empty states). */
+export function useOrgKeys(orgId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ORG_KEYS.keys(orgId),
+    queryFn: () => orgApi.listOrgKeys(orgId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/** Phase B: org providers. */
+export function useOrgProviders(orgId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ORG_KEYS.providers(orgId),
+    queryFn: () => orgApi.listOrgProviders(orgId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/** Phase B: org budget pools ({max_spend, allocated, unallocated}). */
+export function useOrgBudget(orgId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ORG_KEYS.budget(orgId),
+    queryFn: () => orgApi.getOrgBudget(orgId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/** Phase B: org analytics overview (ViewUsage; cost null without ViewCost). */
+export function useOrgAnalyticsOverview(orgId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ORG_KEYS.analyticsOverview(orgId),
+    queryFn: () => orgApi.getOrgAnalyticsOverview(orgId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/** Phase B: public invitation preview (no auth; invalid/expired → error → not-found UI). */
+export function useInvitePreview(token: string) {
+  return useQuery({
+    queryKey: ["orgs", "invite-preview", token],
+    queryFn: () => orgApi.previewInvitation(token),
+    retry: false,
+    staleTime: 30_000,
+    enabled: token.trim().length > 0,
+  });
+}
+
+/** Phase B: public accept-new (creates the account + joins; 409 = account exists). */
+export function useAcceptInviteNew() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { token: string; full_name: string; password: string; email?: string }) =>
+      orgApi.acceptInvitationNew(p.token, { full_name: p.full_name, password: p.password, email: p.email }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ORG_KEYS.list });
+      void qc.invalidateQueries({ queryKey: ORG_KEYS.mine });
+    },
+  });
+}
+
+/** Phase B: public reject-new (declines; never creates an account). */
+export function useRejectInviteNew() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (token: string) => orgApi.rejectInvitationNew(token),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ORG_KEYS.mine });
+    },
+  });
 }
 
 export function useOrgMutations(orgId?: string) {
@@ -168,6 +259,33 @@ export function useOrgMutations(orgId?: string) {
     }),
     cloneSet: useMutation({
       mutationFn: (p: { setId: string; name: string }) => orgApi.cloneSet(orgId ?? "", p.setId, p.name),
+      onSuccess: () => inv(),
+    }),
+    createKey: useMutation({
+      mutationFn: (p: { name: string; assignee_user_id: string; description?: string; max_budget_usd?: number | null; model_permissions?: Array<{ model_id: string; provider_id?: string }> }) =>
+        orgApi.createOrgKey(orgId ?? "", p),
+      onSuccess: () => inv(),
+    }),
+    revokeKey: useMutation({
+      mutationFn: (keyId: string) => orgApi.revokeOrgKey(orgId ?? "", keyId),
+      onSuccess: () => inv(),
+    }),
+    createOrgProvider: useMutation({
+      mutationFn: (p: { name: string; provider_type: string; credentials: Record<string, unknown> }) =>
+        orgApi.createOrgProvider(orgId ?? "", p),
+      onSuccess: () => inv(),
+    }),
+    deleteOrgProvider: useMutation({
+      mutationFn: (providerId: string) => orgApi.deleteOrgProvider(orgId ?? "", providerId),
+      onSuccess: () => inv(),
+    }),
+    updateOrgProvider: useMutation({
+      mutationFn: (p: { providerId: string; payload: Record<string, unknown> }) =>
+        orgApi.updateOrgProvider(orgId ?? "", p.providerId, p.payload),
+      onSuccess: () => inv(),
+    }),
+    updateBudget: useMutation({
+      mutationFn: (p: Record<string, unknown>) => orgApi.updateOrgBudget(orgId ?? "", p),
       onSuccess: () => inv(),
     }),
     markRead: useMutation({

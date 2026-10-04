@@ -8,16 +8,19 @@ provider + model rows:
   display name (case-insensitive) or its ``provider_type`` prefix.
 - a bare model id: the whole string must match exactly one active model.
 
-Only rows owned by ``user_id`` are visible. A short 30s Valkey cache stores
-the resolved row ids (never ORM objects or prices), so reruns are cheap while
-capability/price edits still propagate almost immediately.
+Visible rows are the caller's personal providers plus org providers of every
+org id in ``org_ids`` (the caller's ACTIVE orgs; empty/None = personal only).
+A short 30s Valkey cache stores the resolved row ids (never ORM objects or
+prices), so reruns are cheap while capability/price edits still propagate
+almost immediately.
 """
 
 import logging
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from tollms.core.exceptions import NotFoundError, ValidationError
@@ -40,8 +43,9 @@ class ResolvedModel:
     model: AIModel
 
 
-def _cache_key(user_id: uuid.UUID, identifier: str) -> str:
-    return f"{_CACHE_PREFIX}:{user_id}:{identifier}"
+def _cache_key(user_id: uuid.UUID, identifier: str, org_ids: Collection[uuid.UUID] | None = None) -> str:
+    scope = ",".join(sorted(str(o) for o in (org_ids or ()))) or "-"
+    return f"{_CACHE_PREFIX}:{user_id}:{scope}:{identifier}"
 
 
 def provider_aliases(provider: Provider) -> set[str]:
@@ -66,13 +70,23 @@ def _split_hint(identifier: str) -> tuple[str | None, str]:
     return None, identifier
 
 
-def _base_query(user_id: uuid.UUID, model_id: str):
-    """Active, owned models matching one exact ``model_id``."""
+def _scope_filter(user_id: uuid.UUID, org_ids: Collection[uuid.UUID] | None):
+    """Personal providers owned by `user_id` plus org providers of `org_ids`."""
+    from sqlalchemy import and_, or_
+
+    personal = and_(Provider.org_id.is_(None), Provider.user_id == user_id)
+    if org_ids:
+        return or_(personal, Provider.org_id.in_(list(org_ids)))
+    return personal
+
+
+def _base_query(user_id: uuid.UUID, model_id: str, org_ids: Collection[uuid.UUID] | None = None):
+    """Active, visible models matching one exact ``model_id``."""
     return (
         select(Provider, AIModel)
         .join(AIModel, AIModel.provider_id == Provider.id)
         .where(
-            Provider.user_id == user_id,
+            _scope_filter(user_id, org_ids),
             Provider.is_deleted.is_(False),
             Provider.is_active.is_(True),
             AIModel.is_deleted.is_(False),
@@ -84,18 +98,22 @@ def _base_query(user_id: uuid.UUID, model_id: str):
 
 
 def _candidates_with_hint(
-    db: Session, user_id: uuid.UUID, hint: str, tail: str
+    db: Session, user_id: uuid.UUID, hint: str, tail: str,
+    org_ids: Collection[uuid.UUID] | None = None,
 ) -> tuple[list[tuple[Provider, AIModel]], bool]:
     """(matching rows, whether the hint addressed any provider at all)."""
-    rows = [(provider, model) for provider, model in db.execute(_base_query(user_id, tail))]
+    rows = [(provider, model) for provider, model in db.execute(_base_query(user_id, tail, org_ids))]
     hint_matched = any(hint in provider_aliases(provider) for provider, _ in rows)
     if not hint_matched:
         return [], False
     return [(provider, model) for provider, model in rows if hint in provider_aliases(provider)], True
 
 
-def _candidates_bare(db: Session, user_id: uuid.UUID, model_id: str) -> list[tuple[Provider, AIModel]]:
-    return [(provider, model) for provider, model in db.execute(_base_query(user_id, model_id))]
+def _candidates_bare(
+    db: Session, user_id: uuid.UUID, model_id: str,
+    org_ids: Collection[uuid.UUID] | None = None,
+) -> list[tuple[Provider, AIModel]]:
+    return [(provider, model) for provider, model in db.execute(_base_query(user_id, model_id, org_ids))]
 
 
 def _one(identifier: str, matches: list[tuple[Provider, AIModel]]) -> ResolvedModel:
@@ -109,20 +127,36 @@ def _one(identifier: str, matches: list[tuple[Provider, AIModel]]) -> ResolvedMo
     return ResolvedModel(provider=provider, model=model)
 
 
-def _resolve_uncached(db: Session, user_id: uuid.UUID, identifier: str) -> ResolvedModel:
+def _resolve_uncached(
+    db: Session, user_id: uuid.UUID, identifier: str,
+    org_ids: Collection[uuid.UUID] | None = None,
+) -> ResolvedModel:
     hint, tail = _split_hint(identifier)
     if hint is not None:
-        matches, hint_matched = _candidates_with_hint(db, user_id, hint, tail)
+        matches, hint_matched = _candidates_with_hint(db, user_id, hint, tail, org_ids)
         if hint_matched:
             resolved = _one(identifier, matches)
             logger.info("public gateway: resolved %r via provider hint", identifier)
             return resolved
         # The "hint" is really part of a slashed model id (e.g. meta-llama/…).
-    return _one(identifier, _candidates_bare(db, user_id, identifier))
+    return _one(identifier, _candidates_bare(db, user_id, identifier, org_ids))
 
 
-def _read_cache(db: Session, user_id: uuid.UUID, identifier: str) -> ResolvedModel | None:
-    data = cache_get_sync(_cache_key(user_id, identifier))
+def _row_visible(provider: Provider, model: AIModel, user_id: uuid.UUID,
+                 org_ids: Collection[uuid.UUID] | None) -> bool:
+    if provider.is_deleted or model.is_deleted or not provider.is_active or not model.is_active:
+        return False
+    if model.provider_id != provider.id:
+        return False
+    org_id = getattr(provider, "org_id", None)
+    if org_id is not None:
+        return org_ids is not None and org_id in set(org_ids)
+    return provider.user_id == user_id
+
+
+def _read_cache(db: Session, user_id: uuid.UUID, identifier: str,
+                org_ids: Collection[uuid.UUID] | None = None) -> ResolvedModel | None:
+    data = cache_get_sync(_cache_key(user_id, identifier, org_ids))
     if not isinstance(data, dict) or not data.get("provider_id") or not data.get("model_id"):
         return None
     try:
@@ -132,29 +166,33 @@ def _read_cache(db: Session, user_id: uuid.UUID, identifier: str) -> ResolvedMod
         return None
     if provider is None or model is None:
         return None
-    if provider.is_deleted or model.is_deleted or not provider.is_active or not model.is_active:
-        return None
-    if provider.user_id != user_id or model.provider_id != provider.id:
+    if not _row_visible(provider, model, user_id, org_ids):
         return None
     return ResolvedModel(provider=provider, model=model)
 
 
-def _write_cache(user_id: uuid.UUID, identifier: str, resolved: ResolvedModel) -> None:
+def _write_cache(user_id: uuid.UUID, identifier: str, resolved: ResolvedModel,
+                 org_ids: Collection[uuid.UUID] | None = None) -> None:
     cache_set_sync(
-        _cache_key(user_id, identifier),
+        _cache_key(user_id, identifier, org_ids),
         {"provider_id": str(resolved.provider.id), "model_id": str(resolved.model.id)},
         ttl=CACHE_TTL_SECONDS,
     )
 
 
-def resolve_model(db: Session, identifier: str, user_id: uuid.UUID) -> ResolvedModel:
-    """Resolve ``identifier`` for ``user_id`` or raise NotFound/Validation."""
+def resolve_model(db: Session, identifier: str, user_id: uuid.UUID,
+                  org_ids: Collection[uuid.UUID] | None = None) -> ResolvedModel:
+    """Resolve ``identifier`` for ``user_id`` or raise NotFound/Validation.
+
+    ``org_ids`` extends visibility to org providers of those orgs (the
+    caller's ACTIVE orgs); personal scope alone is the default.
+    """
     text = (identifier or "").strip()
     if not text:
         raise ValidationError("model is required")
-    cached = _read_cache(db, user_id, text)
+    cached = _read_cache(db, user_id, text, org_ids)
     if cached is not None:
         return cached
-    resolved = _resolve_uncached(db, user_id, text)
-    _write_cache(user_id, text, resolved)
+    resolved = _resolve_uncached(db, user_id, text, org_ids)
+    _write_cache(user_id, text, resolved, org_ids)
     return resolved

@@ -10,6 +10,20 @@ function VerifyBody() {
   const params = useSearchParams();
   const setUser = useAuthStore((s) => s.setUser);
   const token = params.get("token");
+  // Organization invite hop-through: ?invite= (or the stored token from the
+  // signup card) survives verification so login can land on the invitation.
+  const inviteParam = params.get("invite");
+  const [invite] = useState<string | null>(() => {
+    if (inviteParam) return inviteParam;
+    if (typeof window === "undefined") return null;
+    try {
+      return window.sessionStorage.getItem("tollma_invite_token");
+    } catch {
+      return null;
+    }
+  });
+  const loginHref = invite ? `/login?invite=${encodeURIComponent(invite)}` : "/login";
+  const invitesHref = invite ? `/organizations/invites?token=${encodeURIComponent(invite)}` : "/";
   // No token: render the error state directly (no effect round-trip).
   const [status, setStatus] = useState<"pending" | "ok" | "bad">(token ? "pending" : "bad");
 
@@ -39,14 +53,14 @@ function VerifyBody() {
           <>
             <h1 className="text-lg font-semibold" data-testid="verify-ok">Email verified</h1>
             <p className="text-sm text-zinc-500">Your account is active.</p>
-            <Link href="/" className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Go to ToLLma</Link>
+            <Link href={invitesHref} className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Go to ToLLma</Link>
           </>
         )}
         {status === "bad" && (
           <>
             <h1 className="text-lg font-semibold" data-testid="verify-bad">Link invalid or expired</h1>
             <p className="text-sm text-zinc-500">Verification links are single-use and expire after 24 hours.</p>
-            <Link href="/login" className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Back to login</Link>
+            <Link href={loginHref} className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Back to login</Link>
           </>
         )}
       </div>

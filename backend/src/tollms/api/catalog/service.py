@@ -8,7 +8,13 @@ in the callers that need them, never in this module.
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from tollms.api.catalog.schemas import CatalogStatsRead, ProviderCatalogPage, ProviderCatalogRead
+from tollms.api.catalog.schemas import (
+    CatalogStatsRead,
+    ConnectionTemplateRead,
+    CredentialField,
+    ProviderCatalogPage,
+    ProviderCatalogRead,
+)
 from tollms.core.exceptions import NotFoundError
 from tollms.models.model_repository import SyncRun
 from tollms.models.provider_catalog import ProviderCatalog
@@ -59,6 +65,15 @@ def list_providers(
 
 
 def get_provider(db: Session, slug: str) -> ProviderCatalogRead:
+    return _read(_get_row(db, slug))
+
+
+def get_catalog_row(db: Session, slug: str) -> ProviderCatalog:
+    """The ORM row for creation-from-slug flows (providers service)."""
+    return _get_row(db, slug)
+
+
+def _get_row(db: Session, slug: str) -> ProviderCatalog:
     row = db.execute(
         select(ProviderCatalog).where(
             ProviderCatalog.slug == slug.strip().lower(), ProviderCatalog.is_deleted.is_(False)
@@ -66,7 +81,34 @@ def get_provider(db: Session, slug: str) -> ProviderCatalogRead:
     ).scalars().first()
     if row is None:
         raise NotFoundError("catalog provider not found")
-    return _read(row)
+    return row
+
+
+def connection_template(db: Session, slug: str) -> ConnectionTemplateRead:
+    """Build the config-UI template from a catalog row. No secrets: env var
+    names and the public base URL only."""
+    row = _get_row(db, slug)
+    env_vars = list(row.env_vars or [])
+    fields = [
+        CredentialField(
+            key=name, label=name.replace("_", " ").strip().title() or name,
+            required=True, secret=True,
+        )
+        for name in env_vars
+    ]
+    if row.api_base_url:
+        fields.append(
+            CredentialField(key="base_url", label="Base URL", required=False, secret=False)
+        )
+    return ConnectionTemplateRead(
+        slug=row.slug, name=row.name, logo_url=row.logo_url,
+        api_base_url=row.api_base_url, doc_url=row.doc_url,
+        npm_package=row.npm_package, env_vars=env_vars,
+        gateway_family=row.gateway_family, gateway_supported=row.gateway_supported,
+        suggested_provider_type=row.gateway_family if row.gateway_supported else None,
+        suggested_base_url=row.api_base_url,
+        credential_fields=fields,
+    )
 
 
 def stats(db: Session) -> CatalogStatsRead:

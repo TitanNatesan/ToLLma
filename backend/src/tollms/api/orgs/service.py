@@ -7,18 +7,35 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
+from tollms.api.keys import service as keys_service
+from tollms.api.auth import service as auth_service
 from tollms.api.orgs.schemas import (
+    AcceptNewResponse,
+    AnalyticsDayPoint,
+    AnalyticsModelRow,
+    AnalyticsOverview,
+    AnalyticsProviderRow,
+    AnalyticsTotals,
+    AnalyticsUserRow,
     AuditRead,
+    BudgetRead,
     InvitationRead,
+    InvitePreview,
+    InviterRef,
     MemberRead,
     OrgCard,
+    OrgKeyRead,
     OrgRead,
     PermissionSetRead,
+    PermissionSetSummary,
+    RejectNewResponse,
 )
+from tollms.core import security
 from tollms.core.config import get_settings
 from tollms.core.exceptions import ConflictError, NotFoundError, ValidationError
 from tollms.models.organization import (
@@ -560,7 +577,9 @@ def _find_user_by_email(db: Session, email: str) -> User | None:
 
 
 def _invite_link(token: str) -> str:
-    return f"{get_settings().frontend_url.rstrip('/')}/organizations/invites?token={token}"
+    # Public invitation entry point: unauthenticated users must land on the
+    # invitation/profile-setup page, never on a login-gated route.
+    return f"{get_settings().frontend_url.rstrip('/')}/invite/{token}"
 
 
 def _send_invite_email(to: str, org_name: str, inviter: str, token: str) -> None:
@@ -665,6 +684,21 @@ def _approver_ids(db: Session, org_id: uuid.UUID) -> list[uuid.UUID]:
     return ids
 
 
+def _set_summaries(db: Session, set_ids: list[str]) -> list[PermissionSetSummary]:
+    """Resolve invitation set ids (org sets + system sets) to name+codes."""
+    out: list[PermissionSetSummary] = []
+    for raw in set_ids or []:
+        try:
+            sid = uuid.UUID(str(raw))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        row = db.get(PermissionSet, sid)
+        if row is None or row.is_deleted:
+            continue
+        out.append(PermissionSetSummary(id=str(row.id), name=row.name, codes=_set_codes(db, row.id)))
+    return out
+
+
 def _read_invitation(db: Session, inv: Invitation, org_name: str = "",
                      include_token: bool = False) -> InvitationRead:
     name = org_name
@@ -674,10 +708,14 @@ def _read_invitation(db: Session, inv: Invitation, org_name: str = "",
         slug = org.slug
         if not name:
             name = org.name
+    inviter = db.get(User, inv.invited_by) if inv.invited_by else None
     return InvitationRead(
         id=inv.id, org_id=inv.org_id, org_name=name, email=inv.email, kind=inv.kind, status=inv.status,
         expires_at=inv.expires_at, invited_by=inv.invited_by, set_ids=list(inv.set_ids or []),
         created_at=inv.created_at, token=inv.token if include_token else None, org_slug=slug,
+        invited_by_email=inviter.email if inviter else None,
+        invited_by_name=(inviter.full_name if inviter else None),
+        permission_sets=_set_summaries(db, list(inv.set_ids or [])),
     )
 
 
@@ -902,6 +940,7 @@ def suspend_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, target_u
     if target.is_root:
         raise ConflictError("cannot suspend the root")
     target.state = MembershipState.SUSPENDED.value
+    _revoke_member_keys(db, org_id, target_user_id, reason="member.suspended", actor_id=actor_id)
     _audit(db, org_id, actor_id, "member.suspended", user_id=str(target_user_id))
     _notify(db, target_user_id, "member.suspended", f"Your membership in {org.name} was suspended",
             org_id=org_id)
@@ -938,6 +977,7 @@ def remove_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, target_us
     target.is_deleted = True
     target.deleted_by = actor_id
     target.deleted_at = datetime.now(timezone.utc)
+    _revoke_member_keys(db, org_id, target_user_id, reason="member.removed", actor_id=actor_id)
     _audit(db, org_id, actor_id, "member.removed", user_id=str(target_user_id))
     _notify(db, target_user_id, "member.removed", f"You were removed from {org.name}", org_id=org_id)
     db.commit()
@@ -952,6 +992,8 @@ def leave_organization(db: Session, user_id: uuid.UUID, org_id: uuid.UUID) -> No
     mem.is_deleted = True
     mem.deleted_by = user_id
     mem.deleted_at = datetime.now(timezone.utc)
+    # Self-removal revokes the leaver's org keys like an admin removal does.
+    _revoke_member_keys(db, org_id, user_id, reason="member.left", actor_id=user_id)
     _audit(db, org.id, user_id, "member.left")
     db.commit()
 
@@ -965,3 +1007,668 @@ def get_audit(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, limit: int = 1
     ).scalars().all()
     return [AuditRead(id=r.id, action=r.action, actor_user_id=r.actor_user_id, target=dict(r.target or {}),
                       created_at=r.created_at) for r in rows]
+
+
+# --- Phase B: org keys ----------------------------------------------------------
+#
+# Org-scoped keys (`api_keys.org_id` set): issued by a member to an ACTIVE
+# member, budgeted against the org cap, revoked on membership loss. Raw keys
+# are shown once at issuance and never stored. Personal keys (`org_id` NULL)
+# are managed exclusively through `api/keys/service.py` and never appear here.
+
+
+def active_org_ids(db: Session, user_id: uuid.UUID) -> set[uuid.UUID]:
+    """Org ids where `user_id` holds ACTIVE, live membership."""
+    return set(
+        r[0] for r in db.execute(
+            select(Membership.org_id).where(
+                Membership.user_id == user_id,
+                Membership.is_deleted.is_(False),
+                Membership.state == MembershipState.ACTIVE.value,
+            )
+        ).all()
+    )
+
+
+def _org_key_select():
+    from tollms.models.api_key import ApiKey
+
+    return (
+        select(ApiKey)
+        .where(ApiKey.is_deleted.is_(False))
+        .options(
+            selectinload(ApiKey.policy),
+            selectinload(ApiKey.model_permissions),
+        )
+    )
+
+
+def _read_org_key(db: Session, key) -> OrgKeyRead:
+    assignee = db.get(User, key.user_id)
+    return OrgKeyRead(
+        id=key.id, org_id=key.org_id, assignee_user_id=key.user_id,
+        assignee_email=assignee.email if assignee else None,
+        issued_by=key.issued_by, name=key.name, description=key.description,
+        key_prefix=key.key_prefix, masked=keys_service.masked_prefix(key.key_prefix),
+        enabled=key.enabled, expires_at=key.expires_at, last_used_at=key.last_used_at,
+        rotation_count=key.rotation_count,
+        policy=key.policy, model_permissions=list(key.model_permissions or []),
+        created_at=key.created_at, updated_at=key.updated_at,
+    )
+
+
+def _allocated_budget(db: Session, org_id: uuid.UUID) -> Decimal:
+    """SUM(policy.max_budget_usd) over live org keys (NULL budgets count 0)."""
+    from tollms.models.api_key import ApiKey, ApiKeyPolicy
+
+    total = db.scalar(
+        select(func.coalesce(func.sum(ApiKeyPolicy.max_budget_usd), 0))
+        .join(ApiKey, ApiKey.id == ApiKeyPolicy.api_key_id)
+        .where(
+            ApiKey.org_id == org_id, ApiKey.is_deleted.is_(False),
+            ApiKey.enabled.is_(True),
+        )
+    )
+    return Decimal(str(total or 0))
+
+
+def create_org_key(
+    db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, *, assignee_user_id: uuid.UUID,
+    name: str, description: str | None, max_budget_usd: Decimal | None,
+    model_permissions: list,
+) -> tuple:
+    """Issue an org key to an ACTIVE member. Gates (all 404-oracle except budget):
+
+    - caller ACTIVE member + ``Keys.Create`` (strangers denied as 404);
+    - assignee ACTIVE member (else 404);
+    - every listed model scope visible to the granter (escalation rule);
+    - org cap: allocated + new <= max_spend (else 422).
+    """
+    from tollms.api.keys.schemas import ApiKeyCreate, PolicyIn
+    from tollms.models.api_key import ApiKey
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    granter = _require_perm(db, org, mem, caller_id, "Keys.Create")
+    assignee = _live_membership(db, org_id, assignee_user_id)
+    if assignee is None:
+        raise NotFoundError("member not found")
+    data = ApiKeyCreate(
+        name=name, description=description,
+        policy=PolicyIn(max_budget_usd=max_budget_usd) if max_budget_usd is not None else None,
+        model_permissions=list(model_permissions or []),
+    )
+    parts = keys_service.prepare_key_parts(
+        db, data, caller_id, visible_org_ids=active_org_ids(db, caller_id),
+        key_org_id=org_id,
+    )
+    _ = granter  # visibility (not code-grant) gates model scope per spec
+    if org.max_spend is not None:
+        new_budget = max_budget_usd or Decimal("0")
+        if _allocated_budget(db, org_id) + new_budget > Decimal(str(org.max_spend)):
+            raise ValidationError(
+                f"org budget cap exceeded: allocated + {new_budget} > {org.max_spend}"
+            )
+    api_key, raw_key = keys_service.persist_key(
+        db, parts, user_id=assignee_user_id, org_id=org_id, issued_by=caller_id,
+    )
+    db.flush()
+    stored = db.scalar(_org_key_select().where(ApiKey.id == api_key.id))
+    emit("key.issued", key_id=str(api_key.id), org_id=str(org_id),
+         user_id=str(assignee_user_id), issued_by=str(caller_id))
+    _audit(db, org_id, caller_id, "key.issued", key_id=str(api_key.id),
+           user_id=str(assignee_user_id))
+    db.commit()
+    logger.info("org key issued: %s org=%s assignee=%s", api_key.id, org_id, assignee_user_id)
+    return _read_org_key(db, stored), raw_key
+
+
+def list_org_keys(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID) -> list[OrgKeyRead]:
+    """Metadata only — never hashes or raw key material."""
+    from tollms.models.api_key import ApiKey
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Keys.Read")
+    rows = db.scalars(
+        _org_key_select()
+        .where(ApiKey.org_id == org_id)
+        .order_by(ApiKey.created_at.desc())
+    ).all()
+    return [_read_org_key(db, k) for k in rows]
+
+
+def revoke_org_key(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                   key_id: uuid.UUID) -> None:
+    """Revoke one org key: enabled=False + soft-delete. Never reactivates —
+    re-issuance is always a new row."""
+    from tollms.models.api_key import ApiKey
+    from tollms.services.api_keys import keys as key_engine
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Keys.Revoke")
+    key = db.scalar(
+        _org_key_select().where(ApiKey.id == key_id, ApiKey.org_id == org_id)
+    )
+    if key is None:
+        raise NotFoundError("api key not found")
+    key_hash = key.key_hash
+    key.enabled = False
+    key.is_deleted = True
+    key.deleted_at = datetime.now(timezone.utc)
+    key.deleted_by = caller_id
+    _audit(db, org_id, caller_id, "key.revoked", key_id=str(key_id),
+           user_id=str(key.user_id))
+    db.commit()
+    key_engine.invalidate_context(key_hash)
+    key_engine.write_tombstone(key_hash)
+    emit("key.revoked", key_id=str(key_id), org_id=str(org_id), user_id=str(caller_id))
+    logger.info("org key revoked: %s org=%s", key_id, org_id)
+
+
+def _revoke_member_keys(db: Session, org_id: uuid.UUID, user_id: uuid.UUID, *,
+                        reason: str, actor_id: uuid.UUID | None) -> None:
+    """Revoke ALL live org keys assigned to `user_id` in `org_id`.
+
+    Called from remove/suspend/leave. Resume/approve NEVER restore keys:
+    re-issuance is always a new row. Other members' keys and the user's
+    personal keys are untouched.
+    """
+    from tollms.models.api_key import ApiKey
+    from tollms.services.api_keys import keys as key_engine
+    from tollms.services.observability.events import emit
+
+    rows = db.scalars(
+        select(ApiKey).where(
+            ApiKey.org_id == org_id, ApiKey.user_id == user_id,
+            ApiKey.is_deleted.is_(False),
+        )
+    ).all()
+    for key in rows:
+        key_hash = key.key_hash
+        key.enabled = False
+        key.is_deleted = True
+        key.deleted_at = datetime.now(timezone.utc)
+        key.deleted_by = actor_id
+        _audit(db, org_id, actor_id, "key.revoked", key_id=str(key.id),
+               user_id=str(user_id), reason=reason)
+        emit("key.revoked", key_id=str(key.id), org_id=str(org_id),
+             user_id=str(user_id), reason=reason)
+        try:
+            key_engine.invalidate_context(key_hash)
+            key_engine.write_tombstone(key_hash)
+        except Exception:
+            logger.warning("org key revocation cache cleanup failed: %s", key.id, exc_info=True)
+    if rows:
+        logger.info("org keys revoked on %s: user=%s count=%d", reason, user_id, len(rows))
+    db.flush()
+
+
+# --- Phase B: org providers -------------------------------------------------------
+
+
+def create_org_provider(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                        data) -> object:
+    """Create an org-scoped provider (org_id=org, user_id=caller for audit)."""
+    from tollms.api.providers import service as provider_service
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Providers.Create")
+    provider = provider_service.create_provider(db, data, caller_id, org_id=org_id)
+    _audit(db, org_id, caller_id, "provider.created", provider_id=str(provider.id),
+           provider_name=provider.name)
+    emit("provider.created", provider_id=str(provider.id), org_id=str(org_id),
+         user_id=str(caller_id))
+    return provider
+
+
+def list_org_providers(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID) -> list:
+    """Providers scoped to one org (config visible; secrets stay masked)."""
+    from tollms.models.provider import Provider
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Providers.Read")
+    stmt = (
+        select(Provider)
+        .where(Provider.org_id == org_id, Provider.is_deleted.is_(False))
+        .order_by(Provider.created_at)
+    )
+    return list(db.scalars(stmt))
+
+
+def update_org_provider(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                        provider_id: uuid.UUID, data) -> object:
+    """Update an org provider: Providers.Update + same-org membership."""
+    from tollms.api.providers import service as provider_service
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Providers.Update")
+    provider = provider_service.get_provider(db, provider_id, caller_id)
+    if provider.org_id != org_id:
+        raise NotFoundError("provider not found")
+    updated = provider_service.update_provider(db, provider_id, data, caller_id)
+    _audit(db, org_id, caller_id, "provider.updated", provider_id=str(provider_id))
+    db.commit()
+    return updated
+
+
+def delete_org_provider(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                        provider_id: uuid.UUID) -> None:
+    """Delete an org provider: Providers.Delete + same-org membership."""
+    from tollms.api.providers import service as provider_service
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Providers.Delete")
+    provider = provider_service.get_provider(db, provider_id, caller_id)
+    if provider.org_id != org_id:
+        raise NotFoundError("provider not found")
+    provider_service.delete_provider(db, provider_id, caller_id)
+    _audit(db, org_id, caller_id, "provider.deleted", provider_id=str(provider_id))
+    emit("provider.deleted", provider_id=str(provider_id), org_id=str(org_id),
+         user_id=str(caller_id))
+
+
+# --- Phase B: budgets ---------------------------------------------------------------
+
+
+def get_budget(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID) -> BudgetRead:
+    """{max_spend, allocated, unallocated}. Gates: Budgets.Read/Update or
+    Analytics.ViewUsage (strangers denied as 404)."""
+    org, mem = _member_org(db, org_id, caller_id)
+    perms = effective_permissions(db, org_id, caller_id)
+    if not (mem.is_root or perms & {"Budgets.Read", "Budgets.Update", "Analytics.ViewUsage"}):
+        raise NotFoundError(_ORG_NOT_FOUND)
+    allocated = _allocated_budget(db, org_id)
+    cap = Decimal(str(org.max_spend)) if org.max_spend is not None else None
+    return BudgetRead(
+        max_spend=cap, allocated=allocated,
+        unallocated=(cap - allocated) if cap is not None else None,
+    )
+
+
+def set_budget_cap(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                   max_spend: Decimal | None) -> BudgetRead:
+    """Set or clear the org spend cap. A cap below allocated is rejected (422)."""
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Budgets.Update")
+    if max_spend is not None and max_spend < 0:
+        raise ValidationError("max_spend must be >= 0")
+    allocated = _allocated_budget(db, org_id)
+    if max_spend is not None and Decimal(str(max_spend)) < allocated:
+        raise ValidationError(
+            f"cap {max_spend} is below allocated {allocated}: revoke keys first"
+        )
+    org.max_spend = max_spend
+    _audit(db, org_id, caller_id, "budget.cap_changed",
+           max_spend=str(max_spend) if max_spend is not None else None)
+    emit("budget.cap_changed", org_id=str(org_id), user_id=str(caller_id),
+         max_spend=str(max_spend) if max_spend is not None else None)
+    db.commit()
+    db.refresh(org)
+    logger.info("org budget cap changed: org=%s max_spend=%s", org_id, max_spend)
+    return get_budget(db, caller_id, org_id)
+
+
+# --- Phase B: analytics ---------------------------------------------------------------
+#
+# Org usage ledger from request_logs + api_request_logs WHERE org_id=org.
+# Metadata only — these tables never hold prompts or responses. Team-level
+# scoping is explicitly OUT (teams UI is a placeholder); org level only.
+
+
+def org_analytics_overview(db: Session, caller_id: uuid.UUID,
+                           org_id: uuid.UUID) -> AnalyticsOverview:
+    """Org usage overview. Gates: ACTIVE membership + Analytics.ViewUsage
+    (strangers denied as 404). Cost fields are included only when the caller
+    also holds Analytics.ViewCost, else null."""
+    from tollms.models.api_key import ApiRequestLog
+    from tollms.models.provider import Provider
+    from tollms.models.registered_model import AIModel
+    from tollms.models.request_log import RequestLog
+
+    org, mem = _member_org(db, org_id, caller_id)
+    perms = effective_permissions(db, org_id, caller_id)
+    if "Analytics.ViewUsage" not in perms and not mem.is_root:
+        raise NotFoundError(_ORG_NOT_FOUND)
+    show_cost = bool(mem.is_root or "Analytics.ViewCost" in perms)
+
+    def _money(value) -> Decimal | None:
+        return Decimal(str(value or 0)) if show_cost else None
+
+    in_app = db.execute(
+        select(
+            func.count(RequestLog.id),
+            func.coalesce(func.sum(RequestLog.total_tokens), 0),
+            func.coalesce(func.sum(RequestLog.total_cost), 0),
+        ).where(RequestLog.org_id == org_id, RequestLog.status == "success")
+    ).one()
+    via_api = db.execute(
+        select(
+            func.count(ApiRequestLog.id),
+            func.coalesce(func.sum(ApiRequestLog.total_tokens), 0),
+            func.coalesce(func.sum(ApiRequestLog.cost), 0),
+        ).where(ApiRequestLog.org_id == org_id, ApiRequestLog.status == "success")
+    ).one()
+    totals = AnalyticsTotals(
+        requests=int(in_app[0] or 0) + int(via_api[0] or 0),
+        tokens=int(in_app[1] or 0) + int(via_api[1] or 0),
+        cost=_money(Decimal(str(in_app[2] or 0)) + Decimal(str(via_api[2] or 0))),
+    )
+
+    day_bucket_in = func.date_trunc("day", RequestLog.created_at)
+    day_bucket_api = func.date_trunc("day", ApiRequestLog.created_at)
+    day_rows_in = db.execute(
+        select(
+            day_bucket_in, func.count(RequestLog.id),
+            func.coalesce(func.sum(RequestLog.total_tokens), 0),
+            func.coalesce(func.sum(RequestLog.total_cost), 0),
+        ).where(RequestLog.org_id == org_id, RequestLog.status == "success").group_by(day_bucket_in)
+    ).all()
+    day_rows_api = db.execute(
+        select(
+            day_bucket_api, func.count(ApiRequestLog.id),
+            func.coalesce(func.sum(ApiRequestLog.total_tokens), 0),
+            func.coalesce(func.sum(ApiRequestLog.cost), 0),
+        ).where(ApiRequestLog.org_id == org_id, ApiRequestLog.status == "success").group_by(day_bucket_api)
+    ).all()
+    by_day_map: dict[str, dict] = {}
+    for bucket, reqs, toks, cost in list(day_rows_in) + list(day_rows_api):
+        day = bucket.date().isoformat() if hasattr(bucket, "date") else str(bucket)
+        cell = by_day_map.setdefault(day, {"requests": 0, "tokens": 0, "cost": Decimal("0")})
+        cell["requests"] += int(reqs or 0)
+        cell["tokens"] += int(toks or 0)
+        cell["cost"] += Decimal(str(cost or 0))
+    by_day = [
+        AnalyticsDayPoint(date=day, requests=cell["requests"], tokens=cell["tokens"],
+                          cost=_money(cell["cost"]))
+        for day, cell in sorted(by_day_map.items())
+    ]
+
+    model_rows_in = db.execute(
+        select(
+            AIModel.model_id, func.count(RequestLog.id),
+            func.coalesce(func.sum(RequestLog.total_tokens), 0),
+            func.coalesce(func.sum(RequestLog.total_cost), 0),
+        ).join(AIModel, AIModel.id == RequestLog.model_id, isouter=True)
+        .where(RequestLog.org_id == org_id, RequestLog.status == "success").group_by(AIModel.model_id)
+    ).all()
+    model_rows_api = db.execute(
+        select(
+            ApiRequestLog.model, func.count(ApiRequestLog.id),
+            func.coalesce(func.sum(ApiRequestLog.total_tokens), 0),
+            func.coalesce(func.sum(ApiRequestLog.cost), 0),
+        ).where(ApiRequestLog.org_id == org_id, ApiRequestLog.status == "success").group_by(ApiRequestLog.model)
+    ).all()
+    by_model_map: dict[str, dict] = {}
+    for label, reqs, toks, cost in list(model_rows_in) + list(model_rows_api):
+        cell = by_model_map.setdefault(label or "unknown", {"requests": 0, "tokens": 0, "cost": Decimal("0")})
+        cell["requests"] += int(reqs or 0)
+        cell["tokens"] += int(toks or 0)
+        cell["cost"] += Decimal(str(cost or 0))
+    by_model = [
+        AnalyticsModelRow(model=label, requests=cell["requests"], tokens=cell["tokens"],
+                          cost=_money(cell["cost"]))
+        for label, cell in sorted(by_model_map.items(), key=lambda kv: -kv[1]["requests"])
+    ]
+
+    prov_rows_in = db.execute(
+        select(
+            Provider.name, func.count(RequestLog.id),
+            func.coalesce(func.sum(RequestLog.total_tokens), 0),
+            func.coalesce(func.sum(RequestLog.total_cost), 0),
+        ).join(Provider, Provider.id == RequestLog.provider_id, isouter=True)
+        .where(RequestLog.org_id == org_id, RequestLog.status == "success").group_by(Provider.name)
+    ).all()
+    prov_rows_api = db.execute(
+        select(
+            ApiRequestLog.provider, func.count(ApiRequestLog.id),
+            func.coalesce(func.sum(ApiRequestLog.total_tokens), 0),
+            func.coalesce(func.sum(ApiRequestLog.cost), 0),
+        ).where(ApiRequestLog.org_id == org_id, ApiRequestLog.status == "success").group_by(ApiRequestLog.provider)
+    ).all()
+    by_prov_map: dict[str, dict] = {}
+    for label, reqs, toks, cost in list(prov_rows_in) + list(prov_rows_api):
+        cell = by_prov_map.setdefault(label or "unknown", {"requests": 0, "tokens": 0, "cost": Decimal("0")})
+        cell["requests"] += int(reqs or 0)
+        cell["tokens"] += int(toks or 0)
+        cell["cost"] += Decimal(str(cost or 0))
+    by_provider = [
+        AnalyticsProviderRow(provider=label, requests=cell["requests"], tokens=cell["tokens"],
+                             cost=_money(cell["cost"]))
+        for label, cell in sorted(by_prov_map.items(), key=lambda kv: -kv[1]["requests"])
+    ]
+
+    user_rows_in = db.execute(
+        select(
+            RequestLog.user_id, func.count(RequestLog.id),
+            func.coalesce(func.sum(RequestLog.total_tokens), 0),
+            func.coalesce(func.sum(RequestLog.total_cost), 0),
+        ).where(RequestLog.org_id == org_id, RequestLog.status == "success").group_by(RequestLog.user_id)
+    ).all()
+    user_rows_api = db.execute(
+        select(
+            ApiRequestLog.user_id, func.count(ApiRequestLog.id),
+            func.coalesce(func.sum(ApiRequestLog.total_tokens), 0),
+            func.coalesce(func.sum(ApiRequestLog.cost), 0),
+        ).where(ApiRequestLog.org_id == org_id, ApiRequestLog.status == "success").group_by(ApiRequestLog.user_id)
+    ).all()
+    by_user_map: dict[str | None, dict] = {}
+    for uid, reqs, toks, cost in list(user_rows_in) + list(user_rows_api):
+        cell = by_user_map.setdefault(str(uid) if uid else None, {"requests": 0, "tokens": 0, "cost": Decimal("0")})
+        cell["requests"] += int(reqs or 0)
+        cell["tokens"] += int(toks or 0)
+        cell["cost"] += Decimal(str(cost or 0))
+    by_user: list[AnalyticsUserRow] = []
+    for uid_str, cell in sorted(by_user_map.items(), key=lambda kv: -kv[1]["requests"]):
+        uid = uuid.UUID(uid_str) if uid_str else None
+        user = db.get(User, uid) if uid else None
+        live = (
+            _live_membership(db, org_id, uid) is not None if uid is not None else False
+        )
+        by_user.append(AnalyticsUserRow(
+            user_id=uid, email=user.email if user else None,
+            removed_badge=bool(uid is not None and not live),
+            requests=cell["requests"], tokens=cell["tokens"], cost=_money(cell["cost"]),
+        ))
+
+    return AnalyticsOverview(
+        totals=totals, by_day=by_day, by_model=by_model,
+        by_provider=by_provider, by_user=by_user,
+    )
+
+
+# --- Phase B: public invitation preview ----------------------------------------------
+
+
+def preview_invitation(db: Session, token: str) -> InvitePreview:
+    """Public invitation preview (no auth; caller rate-limits).
+
+    Returns display metadata ONLY for pending + unexpired invitations
+    (lazy-expiring due rows first). Invalid, expired and consumed tokens all
+    raise the identical 404 body (no oracle).
+    """
+    _expire_due(db)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    inv = db.execute(
+        select(Invitation).where(Invitation.token == token, Invitation.is_deleted.is_(False))
+    ).scalars().first()
+    if inv is None or inv.kind != InvitationKind.INVITE.value \
+            or inv.status != InvitationStatus.PENDING.value \
+            or inv.expires_at < datetime.now(timezone.utc):
+        raise NotFoundError("invitation not found")
+    org = db.get(Organization, inv.org_id)
+    if org is None or org.is_deleted or org.status != OrgStatus.ACTIVE.value:
+        raise NotFoundError("invitation not found")
+    inviter = db.get(User, inv.invited_by) if inv.invited_by else None
+    return InvitePreview(
+        org_name=org.name, org_slug=org.slug, email=inv.email,
+        invited_by=InviterRef(
+            name=inviter.full_name if inviter else None,
+            email=inviter.email if inviter else None,
+        ),
+        permission_sets=_set_summaries(db, list(inv.set_ids or [])),
+        expires_at=inv.expires_at,
+    )
+
+
+# --- Phase B: public new-account invite accept / reject -----------------------
+
+_INVITE_NOT_FOUND = "invitation not found"
+
+
+class InviteAccountExistsError(ConflictError):
+    """409 when the invited address already owns an account.
+
+    Lives here (not in core) so the orgs package owns its wire code without
+    touching the shared taxonomy: status stays 409, only `error.code`
+    becomes INVITE_ACCOUNT_EXISTS so the client routes to login.
+    """
+
+    def to_payload(self) -> dict:
+        payload = super().to_payload()
+        payload["error"]["code"] = "INVITE_ACCOUNT_EXISTS"
+        return payload
+
+
+def _load_public_invitation(db: Session, token: str) -> tuple[Invitation, Organization]:
+    """Public by-token gate: kind=invite, pending, unexpired, org live.
+
+    Unknown, tampered, consumed, rejected and expired tokens (and dead orgs)
+    all raise the IDENTICAL 404 body (no existence oracle).
+    """
+    _expire_due(db)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    inv = db.execute(
+        select(Invitation).where(Invitation.token == token, Invitation.is_deleted.is_(False))
+    ).scalars().first()
+    if inv is None or inv.kind != InvitationKind.INVITE.value \
+            or inv.status != InvitationStatus.PENDING.value \
+            or inv.expires_at < datetime.now(timezone.utc):
+        raise NotFoundError(_INVITE_NOT_FOUND)
+    org = db.get(Organization, inv.org_id)
+    if org is None or org.is_deleted or org.status != OrgStatus.ACTIVE.value:
+        raise NotFoundError(_INVITE_NOT_FOUND)
+    return inv, org
+
+
+def _live_invite_set_ids(db: Session, org_id: uuid.UUID, set_ids: list[str]) -> list[uuid.UUID]:
+    """Invitation sets that are still assignable: live custom sets of the same
+    org plus live system sets. Deleted/foreign/garbage ids are silently
+    skipped — invitation-time validation already gated them; sets deleted
+    since are gone, never a reason to fail the accept."""
+    live: set[uuid.UUID] = set()
+    for raw in set_ids or []:
+        try:
+            sid = uuid.UUID(str(raw))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        row = db.get(PermissionSet, sid)
+        if row is None or row.is_deleted:
+            continue
+        if row.org_id is not None and row.org_id != org_id:
+            continue
+        live.add(row.id)
+    return sorted(live)
+
+
+async def accept_new_invitation(
+    db: Session, token: str, *, full_name: str, password: str, email: str | None,
+    user_agent: str | None = None, ip: str | None = None,
+) -> tuple[AcceptNewResponse, str | None, str | None]:
+    """Atomic public accept: create the account, join the org, consume the invite.
+
+    Single commit covers user + membership + sets + invitation + audit; the
+    login session is issued only AFTER the commit via login's exact issuance
+    path. Returns (response, access_token, refresh_token) — tokens are None
+    with session_issued=False when the Valkey session write failed post-commit
+    (account exists, invite consumed: the client logs in normally).
+    """
+    inv, org = _load_public_invitation(db, token)
+    invite_email = auth_service.normalize_email(inv.email)
+    if email is not None and auth_service.normalize_email(email) != invite_email:
+        raise ValidationError("email does not match the invitation")
+    if _find_user_by_email(db, invite_email) is not None:
+        # No state changed: the caller already owns an account and must use
+        # the login-then-accept path instead.
+        raise InviteAccountExistsError(
+            "an account with this email already exists; log in to accept the invitation"
+        )
+    user = User(email=invite_email, full_name=(full_name or "").strip() or None)
+    auth_service.set_local_identity(user)
+    auth_service.set_password(user, password)  # exact signup strength policy (422 on weak)
+    # Token possession proves mailbox control at least as strongly as the
+    # verification link (single-use secret, 7-day TTL, emailed to this
+    # address): no separate verification round-trip is needed.
+    user.email_verified = True
+    user.last_login_at = datetime.now(timezone.utc)
+    db.add(user)
+    db.flush()
+    inv.user_id = user.id
+    mem = _live_membership(db, org.id, user.id)
+    if mem is None:
+        # A brand-new user cannot hold a membership yet; this branch always
+        # wins outside of races. Reuse (never duplicate) if one somehow does.
+        mem = Membership(org_id=org.id, user_id=user.id, is_root=False,
+                         state=MembershipState.ACTIVE.value)
+        db.add(mem)
+        db.flush()
+        for sid in _live_invite_set_ids(db, org.id, list(inv.set_ids or [])):
+            db.add(MembershipPermissionSet(membership_id=mem.id, set_id=sid))
+    inv.status = InvitationStatus.ACCEPTED.value
+    _audit(db, org.id, user.id, "member.accepted", email=inv.email, invitation_id=str(inv.id))
+    for approver_id in _approver_ids(db, org.id):
+        if approver_id != user.id:
+            _notify(db, approver_id, "invitation.accepted", f"{inv.email} joined {org.name}",
+                    org_id=org.id, invitation_id=str(inv.id))
+    db.commit()
+    db.refresh(user)
+    logger.info("invitation accepted by new account: org_id=%s user_id=%s", org.id, user.id)
+    try:
+        refresh_jti = security.generate_refresh_jti()
+        session_id = await security.create_session(
+            user.id, user.email, "password", user_agent=user_agent, ip=ip,
+            refresh_jti=refresh_jti,
+        )
+    except Exception:
+        # Degradation, never rollback: the atomic commit above already created
+        # the user + membership and consumed the invite. The client must log in
+        # normally (flagged below); nothing is lost.
+        logger.warning("accept-new session issuance failed after commit: user_id=%s",
+                       user.id, exc_info=True)
+        return (
+            AcceptNewResponse(user=auth_service.read_user(user), org_id=org.id,
+                              access_token=None, refresh_token=None, session_issued=False),
+            None, None,
+        )
+    access = security.create_access_token(user.id, user.email, session_id)
+    refresh = security.create_refresh_token(user.id, session_id, refresh_jti)
+    return (
+        AcceptNewResponse(user=auth_service.read_user(user), org_id=org.id,
+                          access_token=access, refresh_token=refresh, session_issued=True),
+        access, refresh,
+    )
+
+
+def reject_new_invitation(db: Session, token: str) -> RejectNewResponse:
+    """Public invite decline: same pending gate + identical 404 oracle as the
+    accept path. Consumes the invitation only — creates NO user, NO
+    membership. The inviter is notified via the existing rejected notifier."""
+    inv, _org = _load_public_invitation(db, token)
+    inv.status = InvitationStatus.REJECTED.value
+    _audit(db, inv.org_id, None, "member.rejected_invite", email=inv.email,
+           invitation_id=str(inv.id))
+    if inv.invited_by:
+        _notify(db, inv.invited_by, "invitation.rejected", f"{inv.email} declined to join",
+                org_id=inv.org_id, invitation_id=str(inv.id))
+    db.commit()
+    return RejectNewResponse()

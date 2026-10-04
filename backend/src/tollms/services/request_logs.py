@@ -24,6 +24,8 @@ class RequestLogEntry:
     """Plain-data input so the generation driver can log without ORM objects."""
 
     user_id: uuid.UUID | None = None
+    org_id: uuid.UUID | None = None
+    api_key_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
     message_id: uuid.UUID | None = None
     provider_id: uuid.UUID | None = None
@@ -47,6 +49,8 @@ def record(db: Session, entry: RequestLogEntry) -> RequestLog:
     """Insert one request-log row. Caller owns the transaction/commit."""
     row = RequestLog(
         user_id=entry.user_id,
+        org_id=entry.org_id,
+        api_key_id=entry.api_key_id,
         conversation_id=entry.conversation_id,
         message_id=entry.message_id,
         provider_id=entry.provider_id,

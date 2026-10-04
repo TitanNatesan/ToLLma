@@ -9,12 +9,18 @@ Conversations stay user-owned; attribution ledger arrives in Phase B.
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
+
+if TYPE_CHECKING:
+    from tollms.models.api_key import ApiKey
+    from tollms.models.provider import Provider
 
 
 class OrgStatus(str, enum.Enum):
@@ -64,9 +70,13 @@ class Organization(SoftDeleteMixin, TimestampedModel):
     visibility_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="metadata_only")
     personal_sharing_enforced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     audit_retention_days: Mapped[int] = mapped_column(nullable=False, default=365)
+    # Org spend cap in USD (NULL = unlimited). Enforced at the backend layer.
+    max_spend: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
 
     memberships: Mapped[list["Membership"]] = relationship(back_populates="organization")
     permission_sets: Mapped[list["PermissionSet"]] = relationship(back_populates="organization")
+    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="organization")
+    providers: Mapped[list["Provider"]] = relationship(back_populates="organization")
 
 
 class Membership(SoftDeleteMixin, TimestampedModel):
