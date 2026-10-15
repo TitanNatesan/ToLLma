@@ -2929,3 +2929,111 @@ backend api/catalog/*, api/providers/*, api/orgs/service.py, services/model_repo
 ### Architecture Notes
 - Catalog-vs-gateway split preserved: 29 native-SDK providers configurable-but-not-executable (badge + tooltip), one-line mapping to promote when verified.
 - Pre-existing generic ErrorState for non-member org access (no leak); org-page 404 copy left as future polish.
+
+---
+
+## 2026-10-04 — Team management implemented (backend + UI + full validation)
+
+### Requirement
+Complete team management in orgs: CRUD, members, sets, effective-union, escalation prevention, isolation, UI, audit, browser validation.
+
+### Root Cause Analysis
+Teams were entirely absent (no tables/API/UI/tests); only dead Teams.* codes existed. effective_permissions() was direct-only single-site.
+
+### Implementation Summary
+- Backend: migration f6a7b8c9d1e2 (teams + team_memberships + team_permission_sets, partial live UQs, RESTRICT, app-side cross-org 404-oracle); ORM + exports; 8 endpoints (CRUD/members/sets) with Teams.* gates; effective union (direct ∪ team-via-active, root full, non-active empty, no cache); _check_grantable on all team grants; system-set 422; root-detach 409; remove/leave row drops, suspend yields empty; delete_set team-check; audit team.created/updated/deleted/member_added/member_removed/sets_assigned. tests/test_teams.py (17).
+- Frontend: OrgTeamsSection (list/create/detail: overview/members/sets/danger zone), team hooks/services/types, placeholder replaced, sidebar phase flag removed; perm-gating via page can() (UX-only), labels from server catalog; honest 404-denied/empty/error states; themed confirms, toasts, no native alerts.
+
+### Files Changed
+backend models/organization.py + __init__.py, alembic f6a7b8c9d1e2, api/orgs/{router,service,schemas}.py, tests/test_teams.py; frontend OrgTeamsSection + page wiring + sidebar + orgs service/hooks/types. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser multi-user (root/mgr/mem/outsider, no Playwright): create/edit/rename/set-swap/add/remove/delete all via UI with toasts+confirms; propagation allowed→denied end-to-end (API 200→404 + UI); mem w/o Teams.Read gated with honest copy while analytics works; mgr escalation denied + legitimate create allowed; outsider zero data; delete preserves users.
+- Backend 633/633 solo; alembic single head f6a7b8c9d1e2, check clean; tsc/eslint clean; vitest 130/130.
+
+### Architecture Notes
+- Team rows key off membership_id (leave/remove cascades, suspend keeps rows but yields empty). No permission cache (none existed; not added). Analytics team-slice stays org-only per design deferral. Non-member org page generic ErrorState is pre-existing.
+
+---
+
+## 2026-10-15 — Prompt caching audit + fixes (P0 double-billing, Bedrock, ledger parity)
+
+### Requirement
+Verify/fix prompt caching per provider: request construction, usage parsing, stable prefixes, cache-aware costing, UI/API evidence, isolation.
+
+### Root Causes Found (3 parallel audits)
+1. P0: calculate() billed cached tokens twice (full prompt @ input + cache lines); savings displays assumed the correct world. Tests codified the bug.
+2. Bedrock usage dropped cacheRead/WriteInputTokens (directive sent, savings invisible); cachePoint system-only.
+3. request_logs dropped cache/reasoning tokens (messages had them); public usage envelopes omitted cache fields.
+
+### Implementation Summary
+- costing.py: input bills prompt-read-write (mirrors reasoning split) + docstring; updated test_intelligence (2) + test_cost_estimator expectations.
+- base.py usage_extras: Bedrock camelCase keys; bedrock.py yields them; caching.py bedrock_messages() + wiring.
+- Migration a8b9c0d1e2f3 (request_logs cache_read/write/reasoning_tokens) + 3 writers + parity test.
+- Public envelopes: native cache fields (OpenAI/Responses/Anthropic) when nonzero + 2 SDK tests; test_caching +4 (Bedrock keys, bedrock_messages, net-input math, ledger parity).
+- History verified stable (full, no request IDs upstream); external API stateless by design; retry double-bill + rate-count non-refund documented, not changed.
+
+### Files Changed
+backend services/gateway/{costing,base(usage),caching,bedrock}, services/{generation,request_logs}, api/{gateway/service,public_gateway/router}, models/request_log, alembic a8b9c0d1e2f3, tests test_{caching,cost_estimator,intelligence} + public_gateway/test_sdk_compat. Uncommitted per standing rule.
+
+### Testing Performed
+- Backend 671/671 solo; alembic single head, check clean; tsc/eslint/vitest (frontend untouched) n/a.
+- agent-browser + stub transport (real pipeline): turn-2 prefix hit → cache_read=1000 persisted; $0.0026→$0.0011 exact; UI badge + Cached Tokens + Savings; external API usage + ledger at corrected cost.
+- Live provider cache hits NOT VERIFIED (only validated key belongs to user; untouched). test_generations progress test flaked once under full-suite load, passes solo (pre-existing timing sensitivity).
+
+### Architecture Notes
+- No ToLLma-side token cache exists or was added: "caching" = provider-native directives/keys + usage/cost accounting.
+- CUSTOM/Gemini/Vertex explicit caching deliberately absent (documented); Bedrock non-Claude nothing.
+
+---
+
+## 2026-10-15 — Prompt-only image sends + multi-preview badge + loader refresh
+
+### Requirement
+Quality changes never applied (fixed low/1024x1024 on every call); user directive: image models get only the user prompt, no invented params; multi-image generating shows one preview + count badge; better loading effect.
+
+### Root Cause
+IMAGE_DEFAULT_OPTIONS size/quality sent on every call; 3-template aspect parser (3:1 → silent 1024 fallback); quality prose ignored as param. Fingerprint: constant $0.0059/Low badges.
+
+### Implementation Summary
+- Backend: generate_image/_edit_image prompt-only (size/quality only when explicitly passed; public API passthrough kept; fixed public `image`→`image_bytes` kwarg bug); _parse_image_intent count-only (size table deleted); metadata drops invented size/quality; estimate on default tier; __init__ None-check for options; regen prompt-only; per-image "(i of n)" progress deltas for count>1.
+- Frontend: MessageView parses total + label ("Generating image 2 of 3…"); MediaGenerationSkeleton total prop (×N badge, N-images caption, dual shimmer via CSS classes, animations-off respected).
+- Tests: continuity rewritten to prompt-only contract (exact-body assert); test_media + validation_matrix stale assertions updated.
+
+### Files Changed
+backend api/gateway/service.py, services/gateway/adapters/openai.py, api/public_gateway/service.py; tests test_media_continuity/test_media/test_validation_matrix; frontend MessageView, MediaGenerationSkeleton, globals.css. Uncommitted per standing rule.
+
+### Testing Performed
+- Backend full solo 664/666 → fixed 2 stale assertions → affected files 38/38 green. No src changes after full run, so no re-run needed. alembic clean (no migration).
+- agent-browser + stub: 3-variation run sent 3 prompt-only generations; mid-flight DOM {skeletons:1, badge:"×3", label:"Generating image 2 of 3…"}; 3 downloads completed. tsc/eslint/vitest 130 green.
+
+### Architecture Notes
+- Video path untouched (seconds/size still sent — scoped to image models per directive). Variations driven app-side loop, never provider `n`.
+
+## 2026-10-15 — Added git + docker MCPs, 9 skills, 6 custom agents
+
+### Requirement Completed
+Installed MCP servers git (`uvx mcp-server-git`) and docker (official Docker MCP Catalog route); installed 9 skills; created 6 project subagents; verified graphify graph is current.
+
+### Files Modified
+- `.opencode/opencode.json` — added `mcp.servers.git` (`["uvx","mcp-server-git","--repository","."]`, V2 defaults) and `mcp.servers.docker` (`["npx","-y","mcp-server-docker"]`, catalog/execution 60s).
+
+### Files Created
+- `.opencode/agents/backend.md`, `frontend.md`, `reviewer.md`, `tester.md`, `db.md`, `debugger.md` — all `mode: subagent` with scoped permissions (backend/frontend edit-scoped to their trees; reviewer/db/debugger edit-denied; tester edits tests only).
+- Skills (via `npx skills add … -a opencode -y`): `vercel-react-best-practices`, `web-design-guidelines`, `next-cache-components-adoption`, `next-cache-components-optimizer`, `ui-ux-pro-max`, `webapp-testing`, `ai-sdk`, `fastapi`, `fba`. Inventory now 14 skills.
+
+### Decisions
+- Docker MCP: `github.com/docker/mcp-servers` 404s — the real official source is `github.com/docker/mcp-registry`, consumed via the `docker mcp gateway` (installed here, v2.0.1). But the gateway exposes 0 tools in this headless-engine environment (empty embedded catalog, no Docker Desktop), verified by direct stdio handshake. Wired community `mcp-server-docker@1.0.0` instead after verifying it over stdio (`initialize` ok, exposes `run_command`). Raw `shell` + docker CLI remains the primary Docker interface (ps/logs/compose); the MCP is a convenience handle. Note: its `run_command` defaults to service `laravel_app` — always pass `service` explicitly.
+- Next.js skills moved: `vercel-labs/next-skills` is retired; skills now live in `vercel/next.js`. Installed both successors of `next-cache-components` (`-adoption` + `-optimizer`); `next-best-practices` no longer exists as a skill (superseded by Next.js bundled docs + the auto-generated AGENTS.md block already in `frontend/`).
+- `db.md` references only the installed `postgres` MCP, not the uninstalled `supabase-postgres-best-practices` skill.
+
+### Verification
+- `opencode mcp list` → all 7 connected: agent-browser, context7, docker, git, graphify, postgres, sequential-thinking.
+- Git MCP: 12 tools live in catalog (git_status et al). Docker MCP: stdio smoke test passed pre-wire.
+- All 9 new skills advertised by OpenCode with descriptions.
+- Graphify MCP `graph_stats` → 8812 nodes, 25533 edges, 372 communities (92% EXTRACTED); `graph.json` rebuilt by the watch service during this session.
+- `opencode.json` parses; no new config warnings.
+
+### Recommended Next Steps
+- Still open: commit vs gitignore `.agents/skills/` + `skills-lock.json`.
+- Consider `supabase-postgres-best-practices` skill to pair with the `db` agent, and obra `systematic-debugging` to pair with `debugger`.

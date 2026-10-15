@@ -1,9 +1,9 @@
-"""Organizations & Teams Phase A: orgs, memberships, permission sets,
+"""Organizations & Teams: orgs, memberships, teams, permission sets,
 invitations/join-requests, audit log, notifications.
 
-Phase A scope only: no teams-owned resources beyond membership grouping
-(teams themselves are NOT implemented here), no org providers/keys/budgets.
-Conversations stay user-owned; attribution ledger arrives in Phase B.
+Teams are flat membership groupings: they own nothing (no org providers,
+keys, budgets, conversations). Members gain the union of their direct sets
+plus the sets attached to their teams. Conversations stay user-owned.
 """
 
 import enum
@@ -75,6 +75,7 @@ class Organization(SoftDeleteMixin, TimestampedModel):
 
     memberships: Mapped[list["Membership"]] = relationship(back_populates="organization")
     permission_sets: Mapped[list["PermissionSet"]] = relationship(back_populates="organization")
+    teams: Mapped[list["Team"]] = relationship(back_populates="organization")
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="organization")
     providers: Mapped[list["Provider"]] = relationship(back_populates="organization")
 
@@ -97,6 +98,7 @@ class Membership(SoftDeleteMixin, TimestampedModel):
 
     organization: Mapped[Organization] = relationship(back_populates="memberships")
     sets: Mapped[list["MembershipPermissionSet"]] = relationship(back_populates="membership")
+    team_memberships: Mapped[list["TeamMembership"]] = relationship(back_populates="membership")
 
 
 class PermissionSet(SoftDeleteMixin, TimestampedModel):
@@ -115,6 +117,7 @@ class PermissionSet(SoftDeleteMixin, TimestampedModel):
 
     organization: Mapped[Organization | None] = relationship(back_populates="permission_sets")
     permissions: Mapped[list["PermissionSetPermission"]] = relationship(back_populates="permission_set")
+    team_sets: Mapped[list["TeamPermissionSet"]] = relationship(back_populates="permission_set")
 
 
 class PermissionSetPermission(TimestampedModel):
@@ -135,6 +138,67 @@ class MembershipPermissionSet(TimestampedModel):
     set_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("permission_sets.id"), nullable=False)
 
     membership: Mapped[Membership] = relationship(back_populates="sets")
+
+
+class Team(SoftDeleteMixin, TimestampedModel):
+    """Flat membership grouping inside one org. Owns nothing: deleting a team
+    drops only its link rows, never users, memberships, or org resources."""
+
+    __tablename__ = "teams"
+    __table_args__ = (
+        # Live-only name uniqueness per org so a deleted name is reusable.
+        Index("uq_teams_org_name_live", "org_id", "name", unique=True,
+              postgresql_where=text("is_deleted = false")),
+        Index("ix_teams_org", "org_id"),
+    )
+
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    organization: Mapped[Organization] = relationship(back_populates="teams")
+    team_memberships: Mapped[list["TeamMembership"]] = relationship(back_populates="team")
+    team_sets: Mapped[list["TeamPermissionSet"]] = relationship(back_populates="team")
+
+
+class TeamMembership(TimestampedModel):
+    """Team roster row keyed by membership (not user): leaving/removing the org
+    hard-deletes these rows. NO soft-delete. Cross-org pairing
+    (team.org_id vs membership.org_id) is enforced app-side in the orgs service
+    (404 oracle) — repo precedent is RESTRICT FKs + service checks."""
+
+    __tablename__ = "team_memberships"
+    __table_args__ = (
+        Index("uq_team_memberships", "team_id", "membership_id", unique=True),
+        Index("ix_team_memberships_team", "team_id"),
+        Index("ix_team_memberships_membership", "membership_id"),
+    )
+
+    team_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=False)
+    membership_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id"), nullable=False)
+
+    team: Mapped[Team] = relationship(back_populates="team_memberships")
+    membership: Mapped[Membership] = relationship(back_populates="team_memberships")
+
+
+class TeamPermissionSet(TimestampedModel):
+    """Sets granted to a team. Same link-table convention: hard-delete rows, no
+    soft-delete. System sets are readable but never attachable (service 422);
+    cross-org pairing enforced app-side (404 oracle)."""
+
+    __tablename__ = "team_permission_sets"
+    __table_args__ = (
+        Index("uq_team_permission_sets", "team_id", "set_id", unique=True),
+        Index("ix_team_permission_sets_team", "team_id"),
+        Index("ix_team_permission_sets_set", "set_id"),
+    )
+
+    team_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=False)
+    set_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("permission_sets.id"), nullable=False)
+
+    team: Mapped[Team] = relationship(back_populates="team_sets")
+    permission_set: Mapped[PermissionSet] = relationship(back_populates="team_sets")
 
 
 class Invitation(SoftDeleteMixin, TimestampedModel):

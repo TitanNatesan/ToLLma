@@ -415,10 +415,46 @@ class OpenAIImagesAdapter(OpenAIBaseAdapter):
     supports_vision = False
     supports_audio = False
 
+    async def _first_image_bytes(self, client: httpx.AsyncClient, payload: dict) -> bytes:
+        """First image from a generations/edits payload (b64 inline or URL)."""
+        usage = payload.get("usage")
+        self.last_media_usage = usage if isinstance(usage, dict) else None
+        items = payload.get("data") or []
+        if not items:
+            raise RuntimeError("provider returned no image data")
+        item = items[0]
+        if item.get("b64_json"):
+            return base64.b64decode(item["b64_json"])
+        url = item.get("url")
+        if not url:
+            raise RuntimeError("provider returned neither b64_json nor url")
+        fetched = await client.get(url)
+        if fetched.status_code >= 400:
+            raise RuntimeError(f"image download failed ({fetched.status_code})")
+        return fetched.content
+
     async def generate_image(
-        self, prompt: str, *, size: str = "1024x1024", quality: str = "low"
+        self,
+        prompt: str,
+        *,
+        size: str | None = None,
+        quality: str | None = None,
+        image_bytes: bytes | None = None,
     ) -> bytes:
-        body: dict = {"model": self.model_id, "prompt": prompt, "n": 1, "size": size}
+        """One image for one prompt; with `image_bytes` this is an edit call.
+
+        Only the user prompt is sent by default: size/quality ride along
+        solely when the caller passes them explicitly (public API callers
+        forwarding user-supplied params). The model interprets prose like
+        "2:1" or "high quality" itself; the backend never invents technical
+        params that would override that interpretation.
+        Extra params stay keyword-only so existing callers are unaffected.
+        """
+        if image_bytes is not None:
+            return await self._edit_image(prompt, size=size, image=image_bytes)
+        body: dict = {"model": self.model_id, "prompt": prompt}
+        if size:
+            body["size"] = size
         if quality:
             body["quality"] = quality
         async with self._client() as client:
@@ -429,22 +465,26 @@ class OpenAIImagesAdapter(OpenAIBaseAdapter):
                 detail = r.text[:500]
                 logger.warning("openai images error %s: %s", r.status_code, detail)
                 raise RuntimeError(f"provider error {r.status_code}: {detail}")
-            payload = r.json()
-            usage = payload.get("usage")
-            self.last_media_usage = usage if isinstance(usage, dict) else None
-            items = payload.get("data") or []
-            if not items:
-                raise RuntimeError("provider returned no image data")
-            item = items[0]
-            if item.get("b64_json"):
-                return base64.b64decode(item["b64_json"])
-            url = item.get("url")
-            if not url:
-                raise RuntimeError("provider returned neither b64_json nor url")
-            fetched = await client.get(url)
-        if fetched.status_code >= 400:
-            raise RuntimeError(f"image download failed ({fetched.status_code})")
-        return fetched.content
+            return await self._first_image_bytes(client, r.json())
+
+    async def _edit_image(self, prompt: str, *, size: str | None, image: bytes) -> bytes:
+        """POST multipart {base}/images/edits (model, prompt, image[, size])."""
+        files = {
+            "model": (None, self.model_id),
+            "prompt": (None, prompt),
+            "image": ("input_reference.png", image, "image/png"),
+        }
+        if size:
+            files["size"] = (None, size)
+        async with self._client() as client:
+            r = await client.post(
+                f"{self._base_url()}/images/edits", files=files, headers=self._headers()
+            )
+            if r.status_code >= 400:
+                detail = r.text[:500]
+                logger.warning("openai image edits error %s: %s", r.status_code, detail)
+                raise RuntimeError(f"provider error {r.status_code}: {detail}")
+            return await self._first_image_bytes(client, r.json())
 
 
 class OpenAIAudioTranscriptionsAdapter(OpenAIBaseAdapter):

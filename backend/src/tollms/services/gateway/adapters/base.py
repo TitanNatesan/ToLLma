@@ -271,10 +271,14 @@ def usage_extras(usage: dict) -> dict[str, int | None]:
         return {
             "cache_read_tokens": _as_int(
                 usage.get("cache_read_input_tokens")
+                or usage.get("cacheReadInputTokens")
                 or usage.get("cachedContentTokenCount")
                 or prompt_details.get("cached_tokens")
             ),
-            "cache_write_tokens": _as_int(usage.get("cache_creation_input_tokens")),
+            "cache_write_tokens": _as_int(
+                usage.get("cache_creation_input_tokens")
+                or usage.get("cacheWriteInputTokens")
+            ),
             "reasoning_tokens": _as_int(
                 usage.get("thoughtsTokenCount") or completion_details.get("reasoning_tokens")
             ),

@@ -204,6 +204,14 @@ function formatLatency(ms: number | null): string | null {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${stripTrailingZeros((ms / 1000).toFixed(1))}s`;
 }
 
+/** Total image count from "(i of N)" progress deltas; undefined when unknown. */
+function mediaProgressTotal(content: string): number | undefined {
+  const matches = [...content.matchAll(/\((\d+)\s+of\s+(\d+)\)/g)];
+  if (matches.length === 0) return undefined;
+  const total = Number(matches[matches.length - 1]?.[2]);
+  return Number.isFinite(total) && total > 1 ? total : undefined;
+}
+
 /** Human generation state from the streamed progress log. */
 function mediaProgressLabel(kind: "image" | "video", content: string): string {
   const lines = content
@@ -213,7 +221,11 @@ function mediaProgressLabel(kind: "image" | "video", content: string): string {
   const last = (lines[lines.length - 1] ?? "").toLowerCase();
   if (last.startsWith("uploading")) return `Uploading ${kind}…`;
   if (last.startsWith("generated")) return "Finalizing…";
-  if (last.startsWith("generating")) return `Generating ${kind}…`;
+  if (last.startsWith("generating")) {
+    const progress = /\((\d+)\s+of\s+(\d+)\)/.exec(last);
+    if (progress) return `Generating ${kind} ${progress[1]} of ${progress[2]}…`;
+    return `Generating ${kind}…`;
+  }
   return lines[lines.length - 1] ?? `Generating ${kind}…`;
 }
 
@@ -319,9 +331,11 @@ function MessageViewInner({
         : "complete";
 
   // Media generations stream progress text; render a skeleton instead of the
-  // raw log. The label tracks the live generation state.
+  // raw log. The label tracks the live generation state. Multi-image runs
+  // stream "(i of N)" progress: one skeleton + badge, never N loaders.
   const mediaKind = /^Generating (image|video)/.exec(message.content)?.[1] as "image" | "video" | undefined;
   const progressLabel = mediaKind ? mediaProgressLabel(mediaKind, message.content) : undefined;
+  const mediaTotal = mediaKind === "image" ? mediaProgressTotal(message.content) : undefined;
 
   const generations = msg.generations ?? [];
   const activeGenerationIndex = Math.max(
@@ -467,7 +481,7 @@ function MessageViewInner({
 
               {mediaKind ? (
                 isStreaming ? (
-                  <MediaGenerationSkeleton kind={mediaKind} label={progressLabel} />
+                  <MediaGenerationSkeleton kind={mediaKind} label={progressLabel} total={mediaTotal} />
                 ) : null
               ) : (
                 <AssistantContent

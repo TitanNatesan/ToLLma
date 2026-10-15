@@ -9,10 +9,11 @@ generation, and refresh reattaches to it.
 import base64
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import asyncio
@@ -93,6 +94,93 @@ MEDIA_ENDPOINTS = ("images/generations", "video/generations")
 IMAGE_DEFAULT_OPTIONS: dict = {"size": "1024x1024", "quality": "low"}
 VIDEO_DEFAULT_OPTIONS: dict = {"size": "1280x720", "seconds": "4"}
 
+# Upper bound for parsed image counts ("99 variations" clamps here).
+IMAGE_MAX_COUNT = 10
+
+# Provider families whose image adapter speaks /images/edits.
+_EDIT_CAPABLE_TYPES = frozenset({ProviderType.OPENAI, ProviderType.CUSTOM})
+
+_COUNT_RE = re.compile(r"(\d{1,2})\s*(?:variations?|versions?|images?|pictures?|copies|options?)\b")
+
+
+def _parse_image_intent(text: str) -> tuple[int, str]:
+    """(count, count_source) from free-form prompt text.
+
+    No LLM call: "<n> variations"-style phrases fix the output count (the
+    generation loop runs once per image; no `n` param is sent). Size, aspect,
+    quality and all other technical properties stay in the prompt prose for
+    the model to interpret — the backend never invents them.
+    """
+    lowered = (text or "").lower()
+    count, count_source = 1, "default"
+    match = _COUNT_RE.search(lowered)
+    if match:
+        count = max(1, min(int(match.group(1)), IMAGE_MAX_COUNT))
+        count_source = "explicit"
+    return count, count_source
+
+
+def _parse_video_intent(text: str) -> tuple[str, str]:
+    """(seconds, seconds_source) from free-form prompt text.
+
+    No LLM call: an explicit "<n> second(s)" wins, clamped to a sane range;
+    otherwise the model default applies. Unknown prose is left untouched.
+    """
+    lowered = (text or "").lower()
+    seconds, seconds_source = VIDEO_DEFAULT_OPTIONS["seconds"], "default"
+    match = re.search(r"(\d{1,2})\s*-?\s*seconds?", lowered)
+    if match:
+        seconds = str(max(1, min(int(match.group(1)), 60)))
+        seconds_source = "explicit"
+    return seconds, seconds_source
+
+
+def _resolve_image_reference(messages, grouped, user_id, conv_id):
+    """Most recent prior assistant-message image attachment in this conversation.
+
+    Returns (row, reference_message_id, prior_prompt_excerpt) or None.
+    Rows failing ownership (wrong user / wrong conversation) are skipped, never
+    raised: a forged reference falls back to plain generation, never a 500.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if getattr(message.role, "value", message.role) != Role.ASSISTANT.value:
+            continue
+        candidates = [
+            row
+            for row in grouped.get(message.id, [])
+            if row.kind == "image"
+            and (user_id is None or row.user_id == user_id)
+            and row.conversation_id == conv_id
+        ]
+        if not candidates:
+            continue
+        prior_prompt = next(
+            (
+                messages[j].content
+                for j in range(index - 1, -1, -1)
+                if getattr(messages[j].role, "value", messages[j].role) == Role.USER.value
+            ),
+            "",
+        )
+        return candidates[-1], message.id, (prior_prompt or "")[:120]
+    return None
+
+
+def _select_media_operation(*, supports_edit: bool, has_reference: bool, prior_excerpt: str, prompt: str):
+    """(operation, final_prompt, note) for an image turn.
+
+    Edit only when a reference exists AND the provider speaks /images/edits;
+    otherwise generate, augmenting with the prior subject line when one exists.
+    """
+    if has_reference and supports_edit:
+        return "edit", prompt, None
+    if has_reference and prior_excerpt:
+        return "generate", f"Same subject as: {prior_excerpt}. {prompt}", "edit_unsupported"
+    if has_reference:
+        return "generate", prompt, "edit_unsupported"
+    return "generate", prompt, None
+
 
 def _is_media_model(model) -> bool:
     return (getattr(model, "primary_endpoint", None) or "") in MEDIA_ENDPOINTS
@@ -161,6 +249,10 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
         prompt: str,
         provider_type: str,
         reference_attachment_id: uuid.UUID | None = None,
+        reference_bytes: bytes | None = None,
+        operation: str = "generate",
+        count: int = 1,
+        lineage: dict | None = None,
         options: dict | None = None,
         cost_estimate: CostEstimate | None = None,
         session_factory=None,
@@ -175,7 +267,11 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
         self.user_id = user_id
         self.prompt = prompt
         self.reference_attachment_id = reference_attachment_id
-        self.options = options or media_options(endpoint)
+        self.reference_bytes = reference_bytes
+        self.operation = operation
+        self.count = max(1, int(count or 1))
+        self.lineage = dict(lineage or {})
+        self.options = options if options is not None else media_options(endpoint)
         self.cost_estimate = cost_estimate
         if session_factory is None:
             from tollms.db.session import SessionLocal
@@ -195,20 +291,35 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
         if not isinstance(usage, dict):
             return None
         details = usage.get("input_tokens_details") or {}
-        return actual_image_cost(
+        cost = actual_image_cost(
             model_id=self.model.model_id,
             input_tokens=usage.get("input_tokens"),
             output_tokens=usage.get("output_tokens"),
             text_input_tokens=details.get("text_tokens"),
             image_input_tokens=details.get("image_tokens"),
         )
+        # Count loops as sequential one-image calls: usage covers one call.
+        if cost is not None and self.count > 1:
+            cost = replace(
+                cost,
+                estimated_cost=cost.estimated_cost * self.count,
+                basis={**cost.basis, "count": self.count},
+            )
+        return cost
 
     async def chat_stream(self, messages) -> AsyncIterator[StreamChunk]:
         from tollms.services.gateway.dispatch import call_endpoint
 
         kind = "image" if self.media_endpoint == "images/generations" else "video"
         options = dict(self.options)
-        if kind == "video" and self.reference_attachment_id is not None:
+        endpoint = self.media_endpoint
+        if kind == "image":
+            # The endpoint records what actually happened: edits only when the
+            # reference bytes made it here, otherwise plain generations.
+            if self.operation == "edit" and self.reference_bytes is not None:
+                endpoint = "images/edits"
+                options["image_bytes"] = self.reference_bytes
+        elif self.reference_attachment_id is not None:
             db = self.session_factory()
             try:
                 reference, content = attachment_service.read_content(
@@ -221,34 +332,56 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
                 image_filename=reference.filename,
                 image_mime=reference.mime_type,
             )
+        operation = "edit" if endpoint == "images/edits" else "generate"
+        logger.info(
+            "media generation: kind=%s operation=%s size=%s count=%d ref=%s",
+            kind, operation, options.get("size"), self.count, self.reference_attachment_id,
+        )
         yield StreamChunk(delta=f"Generating {kind}…\n")
         try:
-            result = await call_endpoint(self.adapter, self.media_endpoint, prompt=self.prompt, options=options)
+            payloads = []
+            for index in range(self.count):
+                # Per-image progress so the UI can show one preview with a
+                # "×N" badge instead of N stacked loaders. Only emitted for
+                # multi-image runs; single generations keep the plain label.
+                if kind == "image" and self.count > 1:
+                    yield StreamChunk(delta=f"Generating image ({index + 1} of {self.count})…\n")
+                payloads.append(
+                    await call_endpoint(self.adapter, endpoint, prompt=self.prompt, options=options)
+                )
         except Exception as exc:
             yield StreamChunk(delta=f"\nGeneration failed: {exc}")
             raise
         yield StreamChunk(delta="Uploading…\n")
         cost = self._actual_cost(kind) or self.cost_estimate
         self.final_cost = cost
-        filename = f"{self.model.model_id}-{uuid.uuid4().hex[:8]}.{'png' if kind == 'image' else 'mp4'}"
         db = self.session_factory()
         try:
-            attachment = attachment_service.upload_attachment(
-                db,
-                user_id=self.user_id,
-                filename=filename,
-                content_type="image/png" if kind == "image" else "video/mp4",
-                data=result,
-            )
-            attachment_service.link_to_message(db, attachment, self.conversation_id, self.message_id)
+            filenames: list[str] = []
+            for payload in payloads:
+                filename = f"{self.model.model_id}-{uuid.uuid4().hex[:8]}.{'png' if kind == 'image' else 'mp4'}"
+                attachment = attachment_service.upload_attachment(
+                    db,
+                    user_id=self.user_id,
+                    filename=filename,
+                    content_type="image/png" if kind == "image" else "video/mp4",
+                    data=payload,
+                )
+                attachment_service.link_to_message(db, attachment, self.conversation_id, self.message_id)
+                filenames.append(filename)
             metadata: dict = {
                 "generation_type": kind,
+                "generation_operation": operation,
                 "status": "completed",
                 "model": self.model.model_id,
                 "provider": self.provider_type.lower(),
                 "size": options.get("size"),
-                "filename": filename,
+                "filename": filenames[0],
+                **self.lineage,
             }
+            if len(filenames) > 1:
+                metadata["filenames"] = filenames
+                metadata["count"] = len(filenames)
             if kind == "image":
                 metadata["quality"] = options.get("quality")
             else:
@@ -266,7 +399,8 @@ class _MediaGenerationAdapter(BaseProviderAdapter):
             db.commit()
         finally:
             db.close()
-        yield StreamChunk(delta=f"Generated {kind}: {filename}")
+        for filename in filenames:
+            yield StreamChunk(delta=f"Generated {kind}: {filename}")
 
 
 def _resolve(db: Session, provider_id: uuid.UUID, model_id: uuid.UUID, user_id: uuid.UUID | None = None):
@@ -597,6 +731,9 @@ async def run_chat(
                 prompt_tokens=tokens.prompt,
                 completion_tokens=tokens.completion,
                 total_tokens=tokens.prompt + tokens.completion,
+                cache_read_tokens=tokens.cache_read,
+                cache_write_tokens=tokens.cache_write,
+                reasoning_tokens=tokens.reasoning,
                 input_cost=cost[0],
                 output_cost=cost[1],
                 total_cost=cost[2],
@@ -656,6 +793,14 @@ class _Setup:
     media_endpoint: str | None = None
     media_options: dict | None = None
     media_cost: CostEstimate | None = None
+    media_operation: str = "generate"
+    media_prompt: str | None = None
+    media_count: int = 1
+    media_ref_id: uuid.UUID | None = None
+    media_ref_message_id: uuid.UUID | None = None
+    media_prior_excerpt: str = ""
+    media_ref_bytes: bytes | None = None
+    media_lineage: dict | None = None
 
 
 async def _setup_generation(
@@ -693,17 +838,96 @@ async def _setup_generation(
     media_endpoint = model.primary_endpoint if _is_media_model(model) else None
     media_opts: dict | None = None
     media_cost: CostEstimate | None = None
+    operation, final_prompt, count = "generate", data.message, 1
+    ref_id, ref_message_id, prior_excerpt, ref_bytes, lineage = None, None, "", None, {}
     if media_endpoint:
         # Media models take the prompt directly; long text history and document
         # text injection do not apply. Uploaded rows stay available as reference.
-        history = [ChatMessage(role="user", content=data.message)]
-        texts, media = [], []
         media_opts = media_options(media_endpoint)
-        media_cost = media_cost_estimate(db, provider, model, media_endpoint, media_opts)
-        logger.info(
-            "gateway stream: media model %s endpoint=%s cost=%s",
-            model.model_id, media_endpoint, media_cost.estimated_cost,
-        )
+        operation, final_prompt, count = "generate", data.message, 1
+        ref_id, ref_message_id, prior_excerpt, ref_bytes, lineage = None, None, "", None, {}
+        if media_endpoint == "images/generations":
+            # Prompt-only sends: no size/quality params are invented. The
+            # count drives the per-image loop; everything else stays in the
+            # prompt prose for the model to interpret. Cost is estimated on
+            # the default rate-card tier and flagged estimated downstream.
+            count, count_source = _parse_image_intent(data.message)
+            media_opts = {}
+            media_cost = media_cost_estimate(db, provider, model, media_endpoint, {"n": count})
+            # Explicit uploads first, else the most recent prior image in this
+            # conversation — history is resolved, not discarded.
+            ref_row = next((row for row in rows if row.kind == "image"), None)
+            if ref_row is None:
+                stored = list_messages(db, conv_id, user_id)
+                grouped = attachment_service.attachments_for_messages(
+                    db, [m.id for m in stored], user_id
+                )
+                resolved = _resolve_image_reference(stored, grouped, user_id, conv_id)
+                if resolved is not None:
+                    ref_row, ref_message_id, prior_excerpt = resolved
+            if ref_row is not None:
+                try:
+                    ref_bytes = attachment_engine.read_bytes(ref_row.storage_path)
+                except Exception:
+                    logger.warning("media reference unreadable, generating fresh: ref=%s", ref_row.id)
+                    ref_row, ref_message_id, ref_bytes = None, None, None
+            operation, final_prompt, note = _select_media_operation(
+                supports_edit=provider.provider_type in _EDIT_CAPABLE_TYPES,
+                has_reference=ref_row is not None,
+                prior_excerpt=prior_excerpt,
+                prompt=data.message,
+            )
+            ref_id = ref_row.id if ref_row is not None else None
+            lineage = {"intent": {"count_source": count_source}}
+            if ref_id is not None:
+                lineage["reference_attachment_id"] = str(ref_id)
+            if ref_message_id is not None:
+                lineage["reference_message_id"] = str(ref_message_id)
+            if prior_excerpt:
+                lineage["prior_prompt_excerpt"] = prior_excerpt
+            if note is not None:
+                lineage["note"] = note
+                if note == "edit_unsupported":
+                    lineage["edit_unsupported"] = True
+            logger.info(
+                "gateway stream: media model %s endpoint=%s operation=%s count=%d ref=%s cost=%s",
+                model.model_id, media_endpoint, operation, count, ref_id, media_cost.estimated_cost,
+            )
+        else:
+            media_cost = media_cost_estimate(db, provider, model, media_endpoint, media_opts)
+            seconds, seconds_source = _parse_video_intent(data.message)
+            media_opts = {**media_opts, "seconds": seconds}
+            # Image-to-video: explicit uploads first, else the most recent
+            # prior image in this conversation — same rule as stills.
+            ref_row = next((row for row in rows if row.kind == "image"), None)
+            if ref_row is None:
+                stored = list_messages(db, conv_id, user_id)
+                grouped = attachment_service.attachments_for_messages(
+                    db, [m.id for m in stored], user_id
+                )
+                resolved = _resolve_image_reference(stored, grouped, user_id, conv_id)
+                if resolved is not None:
+                    ref_row, ref_message_id, prior_excerpt = resolved
+            if ref_row is not None:
+                try:
+                    ref_bytes = attachment_engine.read_bytes(ref_row.storage_path)
+                except Exception:
+                    logger.warning("media reference unreadable, generating fresh: ref=%s", ref_row.id)
+                    ref_row, ref_message_id, ref_bytes = None, None, None
+            ref_id = ref_row.id if ref_row is not None else None
+            lineage = {"intent": {"seconds_source": seconds_source}}
+            if ref_id is not None:
+                lineage["reference_attachment_id"] = str(ref_id)
+            if ref_message_id is not None:
+                lineage["reference_message_id"] = str(ref_message_id)
+            if rows:
+                lineage.setdefault("reference_attachment_id", str(rows[0].id))
+            logger.info(
+                "gateway stream: media model %s endpoint=%s cost=%s",
+                model.model_id, media_endpoint, media_cost.estimated_cost,
+            )
+        history = [ChatMessage(role="user", content=final_prompt)]
+        texts, media = [], []
     else:
         texts, media = await _assemble_attachments(
             db, rows=rows, model=model, adapter=adapter,
@@ -720,6 +944,10 @@ async def _setup_generation(
         conv_id=conv_id, provider=provider, model=model, adapter=adapter,
         rows=rows, history=history, history_text="".join(m.content for m in history),
         media_endpoint=media_endpoint, media_options=media_opts, media_cost=media_cost,
+        media_operation=operation, media_prompt=final_prompt, media_count=count,
+        media_ref_id=ref_id, media_ref_message_id=ref_message_id,
+        media_prior_excerpt=prior_excerpt, media_ref_bytes=ref_bytes,
+        media_lineage=lineage or None,
     )
 
 
@@ -844,9 +1072,15 @@ async def start_generation(
             conversation_id=conv_id,
             message_id=assistant.id,
             user_id=user_id,
-            prompt=data.message,
+            prompt=setup.media_prompt or data.message,
             provider_type=provider.provider_type.value,
-            reference_attachment_id=setup.rows[0].id if setup.rows else None,
+            reference_attachment_id=setup.media_ref_id or (
+                setup.rows[0].id if setup.media_endpoint == "video/generations" and setup.rows else None
+            ),
+            reference_bytes=setup.media_ref_bytes,
+            operation=setup.media_operation,
+            count=setup.media_count,
+            lineage=setup.media_lineage,
             options=setup.media_options,
             cost_estimate=setup.media_cost,
             session_factory=session_factory or generation_engine.manager.session_factory(),
@@ -1217,8 +1451,12 @@ async def start_regeneration(
     )
     if _is_media_model(model):
         # Retry/regenerate reuses the preceding user prompt, no duplicate rows.
+        # Image retries stay prompt-only (no invented size/quality); video
+        # keeps its duration default.
         regen_endpoint = model.primary_endpoint
-        regen_options = media_options(regen_endpoint)
+        regen_options = (
+            {} if regen_endpoint == "images/generations" else media_options(regen_endpoint)
+        )
         regen_cost = media_cost_estimate(db, provider, model, regen_endpoint, regen_options)
         spec.adapter = _MediaGenerationAdapter(
             model=model,
@@ -1229,6 +1467,10 @@ async def start_regeneration(
             user_id=user_id,
             prompt=preceding.content,
             provider_type=provider.provider_type.value,
+            operation="generate",
+            lineage={"intent": {"count_source": "default"}}
+            if regen_endpoint == "images/generations"
+            else None,
             options=regen_options,
             cost_estimate=regen_cost,
             session_factory=session_factory or generation_engine.manager.session_factory(),

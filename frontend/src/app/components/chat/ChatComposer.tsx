@@ -71,6 +71,10 @@ export type { ChatSendPayload };
 interface ChatComposerProps {
   streaming: boolean;
   disabled?: boolean;
+  /** Kind of media on the conversation's last assistant message (if any).
+   *  Informational only: the backend auto-resolves the edit reference, so
+   *  this never touches the send payload. */
+  continuityKind?: "image" | "video" | null;
   onSend: (payload: ChatSendPayload) => void;
   onStop: () => void;
 }
@@ -294,7 +298,7 @@ interface Rejection {
   suggestions: AIModel[];
 }
 
-export function ChatComposer({ streaming, disabled = false, onSend, onStop }: ChatComposerProps) {
+export function ChatComposer({ streaming, disabled = false, continuityKind = null, onSend, onStop }: ChatComposerProps) {
   const {
     providerId,
     modelId,
@@ -315,6 +319,10 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
   const [reasoningLevel, setReasoningLevel] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [rejection, setRejection] = useState<Rejection | null>(null);
+  // Informational continuity chip, dismissed per conversation (local only).
+  const [continuityDismissed, setContinuityDismissed] = useState<Record<string, boolean>>({});
+  const continuityVisible =
+    !!continuityKind && !continuityDismissed[activeConversationId ?? ""];
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const ready = !!providerId && !!modelId && !disabled;
@@ -655,6 +663,30 @@ export function ChatComposer({ streaming, disabled = false, onSend, onStop }: Ch
         }}
         status={streaming ? "streaming" : "ready"}
       >
+        {/* Image-continuity hint: the backend edits the last image by default,
+            so this is informational only — no payload change, no re-upload. */}
+        {continuityVisible && (
+          <div
+            className="mb-2 flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
+            data-testid="continuity-chip"
+          >
+            <ImageIcon className="size-3 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              Continuing from last {continuityKind} — new requests edit it
+            </span>
+            <button
+              type="button"
+              aria-label="Dismiss continuity hint"
+              data-testid="continuity-dismiss"
+              onClick={() =>
+                setContinuityDismissed((prev) => ({ ...prev, [activeConversationId ?? ""]: true }))
+              }
+              className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-zinc-200 dark:hover:bg-zinc-800"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        )}
         <DropzoneOverlay
           isDragging={dragActive && canDrop}
           acceptLabel={kinds.join(", ")}

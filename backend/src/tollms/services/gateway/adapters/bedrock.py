@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from tollms.services.gateway.caching import bedrock_system
+from tollms.services.gateway.caching import bedrock_messages, bedrock_system
 from tollms.services.gateway.adapters.base import (
     THINK_CLOSE,
     THINK_OPEN,
@@ -15,6 +15,7 @@ from tollms.services.gateway.adapters.base import (
     StreamChunk,
     reasoning_effort,
     thinking_params,
+    usage_extras,
 )
 
 logger = logging.getLogger(__name__)
@@ -194,7 +195,7 @@ class BedrockAdapter(BaseProviderAdapter):
             if m.role != "system"
         ]
         resolved_model_id = resolve_bedrock_model_id(self.model_id, self.credentials.get("region", "us-east-1"))
-        payload: dict = {"modelId": resolved_model_id, "messages": rest}
+        payload: dict = {"modelId": resolved_model_id, "messages": bedrock_messages(self.prompt_cache, rest)}
         if system:
             payload["system"] = bedrock_system(self.prompt_cache, system)
         thinking = bedrock_thinking_fields(
@@ -259,10 +260,13 @@ class BedrockAdapter(BaseProviderAdapter):
                 elif "metadata" in event:
                     usage = event["metadata"].get("usage") or {}
                     if usage.get("totalTokens"):
+                        extras = usage_extras(usage)
                         yield StreamChunk(
                             prompt_tokens=usage.get("inputTokens"),
                             completion_tokens=usage.get("outputTokens"),
                             total_tokens=usage.get("totalTokens"),
+                            cache_read_tokens=extras["cache_read_tokens"],
+                            cache_write_tokens=extras["cache_write_tokens"],
                         )
             if in_reasoning:
                 yield StreamChunk(delta=THINK_CLOSE)

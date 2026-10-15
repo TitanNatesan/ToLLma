@@ -303,3 +303,40 @@ export interface InvitePreview {
   sets?: InvitePreviewSet[];
   expires_at?: string | null;
 }
+
+// --- Teams (parallel backend; shapes stay tolerant until the contract lands) ---
+
+export interface TeamMember {
+  membership_id: string;
+  user_id: string;
+  email: string;
+  full_name?: string | null;
+  state: string;
+}
+
+export interface TeamSetRef {
+  id: string;
+  name: string;
+  codes: string[];
+}
+
+/** Team read. List rows may omit members/sets; detail carries the full shape. */
+export interface Team {
+  id: string;
+  org_id: string;
+  name: string;
+  description?: string | null;
+  member_count: number;
+  members?: TeamMember[];
+  sets?: TeamSetRef[];
+  /** Union of effective permission codes across assigned sets. */
+  codes: string[];
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface TeamCreateInput {
+  name: string;
+  description?: string;
+  set_ids?: string[];
+}

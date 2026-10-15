@@ -26,6 +26,9 @@ from tollms.models.organization import (  # noqa: F401
     OrgStatus,
     PermissionSet,
     PermissionSetPermission,
+    Team,
+    TeamMembership,
+    TeamPermissionSet,
 )
 from tollms.models.password_reset import PasswordResetToken  # noqa: F401
 from tollms.models.provider import Provider, ProviderType  # noqa: F401

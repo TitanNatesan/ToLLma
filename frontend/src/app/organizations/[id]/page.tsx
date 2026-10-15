@@ -12,6 +12,7 @@ import { InviteModal } from "../components/InviteModal";
 import { SetManager } from "../components/SetManager";
 import { AssignSetsDialog, ConfirmDialog } from "../components/Dialogs";
 import { OrgKeysSection } from "../components/OrgKeysSection";
+import { OrgTeamsSection } from "../components/OrgTeamsSection";
 import { OrgProvidersSection } from "../components/OrgProvidersSection";
 import { OrgAnalyticsSection } from "../components/OrgAnalyticsSection";
 import { OrgBudgetCard } from "../components/OrgBudgetCard";
@@ -169,8 +170,17 @@ function OrgDashboardInner() {
         )}
 
         {section === "teams" && (
-          <EmptyState title="Teams arrives in a later phase"
-            description="The navigation reserves this module so nothing needs redesigning when it lands." />
+          <OrgTeamsSection orgId={orgId} members={members.data ?? []} sets={sets.data ?? []}
+            isRoot={data.is_root} myPermissions={data.permissions}
+            perms={{
+              canRead: can("Teams.Read"),
+              canCreate: can("Teams.Create"),
+              canUpdate: can("Teams.Update"),
+              canDelete: can("Teams.Delete"),
+              canAddMembers: can("Teams.AssignMembers"),
+              canRemoveMembers: can("Teams.RemoveMembers"),
+              canAssignSets: can("Teams.AssignPermissionSets"),
+            }} />
         )}
       </div>
 

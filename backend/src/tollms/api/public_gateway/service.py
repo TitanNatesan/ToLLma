@@ -754,7 +754,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
                     raise ValidationError("image must be valid base64") from None
             kwargs = _pick_options(adapter.generate_image, options, ("size", "quality"))
             if edit_image is not None:
-                kwargs["image"] = edit_image
+                kwargs["image_bytes"] = edit_image
             count = max(1, int(options.get("n") or 1))
             payloads = [
                 await dispatch.call_endpoint(

@@ -487,6 +487,20 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   );
 
   const lastUser = [...persistedMessages].reverse().find((m) => m.role === "user");
+  // Image continuity: only the conversation's LAST assistant message counts.
+  // If it carries a generated image/video, the composer shows an informational
+  // chip (backend auto-resolves the edit reference — no payload change).
+  const continuityKind = useMemo<"image" | "video" | null>(() => {
+    for (let i = persistedMessages.length - 1; i >= 0; i--) {
+      const m = persistedMessages[i];
+      if (m.role !== "assistant") continue;
+      const kinds = (m.attachments ?? []).map((a) => a.kind);
+      if (kinds.includes("video")) return "video";
+      if (kinds.includes("image")) return "image";
+      return null;
+    }
+    return null;
+  }, [persistedMessages]);
   const lastAssistantId = [...persistedMessages].reverse().find((m) => m.role === "assistant")?.id;
   const ready = !!providerId && !!modelId;
 
@@ -842,6 +856,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         <div className="mx-auto w-full max-w-[960px] px-4">
         <ChatComposer
           streaming={streaming}
+          continuityKind={continuityKind}
           onSend={(t) => send(t, routeIdRef.current ?? activeId)}
           onStop={stop}
         />

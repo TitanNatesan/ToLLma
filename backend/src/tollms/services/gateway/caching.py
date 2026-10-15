@@ -123,6 +123,25 @@ def bedrock_system(plan_: CachingPlan | None, system_blocks: list[dict]) -> list
     return [*system_blocks, {"cachePoint": {"type": "default"}}]
 
 
+def bedrock_messages(plan_: CachingPlan | None, messages: list[dict]) -> list[dict]:
+    """Mark the final conversation message with a cache point.
+
+    Together with the system cache point this caches the whole stable prefix
+    for the next turn. Bedrock ignores cache points below the model's minimum
+    cacheable length, so this is always safe; non-Bedrock plans return the
+    list untouched.
+    """
+    if plan_ is None or not plan_.enabled or plan_.strategy != "bedrock":
+        return messages
+    if not messages:
+        return messages
+    last = messages[-1]
+    content = last.get("content")
+    if isinstance(content, list) and content:
+        last["content"] = [*content, {"cachePoint": {"type": "default"}}]
+    return messages
+
+
 def supports_prompt_caching(model, repo_entry=None) -> bool:
     """Model metadata or repository capability; never inspects model names."""
     metadata = getattr(model, "metadata_", None)

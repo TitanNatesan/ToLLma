@@ -36,6 +36,9 @@ class RequestLogEntry:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
     input_cost: Decimal | None = None
     output_cost: Decimal | None = None
     total_cost: Decimal | None = None
@@ -61,6 +64,9 @@ def record(db: Session, entry: RequestLogEntry) -> RequestLog:
         prompt_tokens=entry.prompt_tokens,
         completion_tokens=entry.completion_tokens,
         total_tokens=entry.total_tokens,
+        cache_read_tokens=entry.cache_read_tokens,
+        cache_write_tokens=entry.cache_write_tokens,
+        reasoning_tokens=entry.reasoning_tokens,
         input_cost=entry.input_cost,
         output_cost=entry.output_cost,
         total_cost=entry.total_cost,

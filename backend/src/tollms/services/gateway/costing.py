@@ -50,10 +50,18 @@ class CostBreakdown:
 
 
 def calculate(tokens: UsageTokens, prices: PriceSet) -> CostBreakdown:
-    """Pure function: no DB, no network. Every field is always computed."""
+    """Pure function: no DB, no network. Every field is always computed.
+
+    Provider input totals are INCLUSIVE: OpenAI prompt_tokens includes
+    cached_tokens, Anthropic input_tokens includes cache read/creation, and
+    Gemini promptTokenCount includes cachedContentTokenCount. The cache lines
+    therefore bill only their discounted rates by charging the input rate on
+    the uncached remainder (mirroring the reasoning/completion split below).
+    """
+    billed_prompt = max(0, tokens.prompt - tokens.cache_read - tokens.cache_write)
     billed_completion = max(0, tokens.completion - tokens.reasoning)
     out = CostBreakdown(
-        input_cost=Decimal(tokens.prompt) * prices.input / _UNIT,
+        input_cost=Decimal(billed_prompt) * prices.input / _UNIT,
         output_cost=Decimal(billed_completion) * prices.output / _UNIT,
         cache_read_cost=Decimal(tokens.cache_read) * prices.cache_read / _UNIT,
         cache_write_cost=Decimal(tokens.cache_write) * prices.cache_write / _UNIT,

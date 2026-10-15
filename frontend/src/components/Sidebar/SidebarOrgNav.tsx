@@ -35,7 +35,7 @@ interface Item {
 const ITEMS: Item[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "members", label: "Members", icon: Users },
-  { id: "teams", label: "Teams", icon: UsersRound, phase: "B" },
+  { id: "teams", label: "Teams", icon: UsersRound },
   { id: "sets", label: "Permission Sets", icon: ShieldCheck },
   { id: "providers", label: "Providers", icon: Building2 },
   { id: "keys", label: "Keys", icon: KeyRound },

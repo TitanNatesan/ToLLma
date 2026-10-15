@@ -15,6 +15,8 @@ export const ORG_KEYS = {
   providers: (id: string) => ["orgs", id, "providers"],
   budget: (id: string) => ["orgs", id, "budget"],
   analyticsOverview: (id: string) => ["orgs", id, "analytics", "overview"],
+  teams: (id: string) => ["orgs", id, "teams"],
+  team: (orgId: string, teamId: string) => ["orgs", orgId, "teams", teamId],
   mine: ["orgs", "mine-invitations"],
   search: (q: string) => ["orgs", "search", q],
   notifications: ["notifications"],
@@ -97,6 +99,7 @@ function invalidateOrg(qc: ReturnType<typeof useQueryClient>, orgId?: string) {
     void qc.invalidateQueries({ queryKey: ORG_KEYS.providers(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.budget(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.analyticsOverview(orgId) });
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.teams(orgId) });
   }
 }
 
@@ -181,6 +184,73 @@ export function useRejectInviteNew() {
       void qc.invalidateQueries({ queryKey: ORG_KEYS.mine });
     },
   });
+}
+
+/** Teams list (defensive: 404 while the backend lands → honest empty states). */
+export function useTeams(orgId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ORG_KEYS.teams(orgId),
+    queryFn: () => orgApi.listTeams(orgId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/** Team detail (retry off: 404 is the denied-or-missing oracle). */
+export function useTeam(orgId: string, teamId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ORG_KEYS.team(orgId, teamId),
+    queryFn: () => orgApi.getTeam(orgId, teamId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: (options?.enabled ?? true) && teamId.trim().length > 0,
+  });
+}
+
+/** Teams mutations; same invalidation pattern as useOrgMutations. */
+export function useTeamMutations(orgId?: string) {
+  const qc = useQueryClient();
+  const inv = (id?: string) => invalidateOrg(qc, id ?? orgId);
+  const invTeam = (teamId?: string) => {
+    inv();
+    if (teamId && orgId) {
+      void qc.invalidateQueries({ queryKey: ORG_KEYS.team(orgId, teamId) });
+    }
+  };
+  return {
+    createTeam: useMutation({
+      mutationFn: (p: { name: string; description?: string; setIds?: string[] }) =>
+        orgApi.createTeam(orgId ?? "", { name: p.name, description: p.description, set_ids: p.setIds }),
+      onSuccess: () => inv(),
+    }),
+    updateTeam: useMutation({
+      mutationFn: (p: { teamId: string; payload: Record<string, unknown> }) =>
+        orgApi.updateTeam(orgId ?? "", p.teamId, p.payload),
+      onSuccess: (_d, v) => invTeam(v.teamId),
+    }),
+    deleteTeam: useMutation({
+      mutationFn: (teamId: string) => orgApi.deleteTeam(orgId ?? "", teamId),
+      onSuccess: () => inv(),
+    }),
+    addMember: useMutation({
+      mutationFn: (p: { teamId: string; userId: string }) =>
+        orgApi.addTeamMember(orgId ?? "", p.teamId, p.userId),
+      onSuccess: (_d, v) => invTeam(v.teamId),
+    }),
+    removeMember: useMutation({
+      mutationFn: (p: { teamId: string; userId: string }) =>
+        orgApi.removeTeamMember(orgId ?? "", p.teamId, p.userId),
+      onSuccess: (_d, v) => invTeam(v.teamId),
+    }),
+    replaceSets: useMutation({
+      mutationFn: (p: { teamId: string; setIds: string[] }) =>
+        orgApi.replaceTeamSets(orgId ?? "", p.teamId, p.setIds),
+      onSuccess: (_d, v) => invTeam(v.teamId),
+    }),
+  };
 }
 
 export function useOrgMutations(orgId?: string) {

@@ -89,7 +89,9 @@ def test_lookup_and_suggest(client: TestClient, db: Session, user_factory) -> No
 def test_calculate_covers_cache_and_reasoning() -> None:
     prices = PriceSet(input=Decimal(2), output=Decimal(10), cache_read=Decimal(1), reasoning=Decimal(0))
     out = calculate(UsageTokens(prompt=1_000_000, completion=1_000_000, cache_read=1_000_000, reasoning=500_000), prices)
-    assert out.input_cost == Decimal(2)
+    # prompt total is inclusive of cached tokens: input bills the uncached
+    # remainder (0 here), cache line bills its own discounted rate.
+    assert out.input_cost == Decimal(0)
     assert out.cache_read_cost == Decimal(1)
     # reasoning has no explicit price -> billed at output rate, excluded from plain output
     assert out.reasoning_cost == Decimal(5)
@@ -136,8 +138,9 @@ def _repo_priced_chat(db: Session, provider_factory, model_factory):
 
 def test_chat_uses_repository_pricing_and_cache_tokens(db: Session, provider_factory, model_factory) -> None:
     result = _repo_priced_chat(db, provider_factory, model_factory)
-    # repo $100/1M input x 10 tokens; model prices are 0 so any cost proves repo pricing
-    assert abs(float(result.input_cost) - 0.001) < 1e-9
+    # repo $100/1M input x 10 tokens with 4 cached: input bills the 6
+    # uncached tokens (cache price is 0, so any cost proves repo pricing).
+    assert abs(float(result.input_cost) - 0.0006) < 1e-9
     assert result.cache_read_tokens == 4
     assert result.reasoning_tokens == 2
 

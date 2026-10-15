@@ -17,6 +17,8 @@ import type {
   OrgProviderCreateInput,
   PermissionGroup,
   PermissionSet,
+  Team,
+  TeamCreateInput,
 } from "@/types/orgs";
 import type { User } from "@/types";
 
@@ -301,4 +303,59 @@ export function rejectInvitationNew(token: string): Promise<{ status: string }> 
     `${BASE}/invitations/by-token/${encodeURIComponent(token)}/reject-new`,
     { method: "POST", body: JSON.stringify({}) },
   );
+}
+
+// --- Teams (parallel backend; callers treat 404 as denied-or-missing) --------
+
+/** Normalize list/detail shapes: array, or an enveloped {teams|items|data}. */
+function asTeamList(payload: unknown): Team[] {
+  if (Array.isArray(payload)) return payload as Team[];
+  if (payload && typeof payload === "object") {
+    const rec = payload as Record<string, unknown>;
+    for (const key of ["teams", "items", "data"]) {
+      if (Array.isArray(rec[key])) return rec[key] as Team[];
+    }
+  }
+  return [];
+}
+
+export async function listTeams(orgId: string): Promise<Team[]> {
+  return asTeamList(await req<unknown>(`${BASE}/${orgId}/teams`));
+}
+
+export function createTeam(orgId: string, payload: TeamCreateInput): Promise<Team> {
+  return req<Team>(`${BASE}/${orgId}/teams`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function getTeam(orgId: string, teamId: string): Promise<Team> {
+  return req<Team>(`${BASE}/${orgId}/teams/${teamId}`);
+}
+
+export function updateTeam(orgId: string, teamId: string, payload: Record<string, unknown>): Promise<Team> {
+  return req<Team>(`${BASE}/${orgId}/teams/${teamId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteTeam(orgId: string, teamId: string): Promise<void> {
+  return req<void>(`${BASE}/${orgId}/teams/${teamId}`, { method: "DELETE" });
+}
+
+export function addTeamMember(orgId: string, teamId: string, userId: string): Promise<Team> {
+  return req<Team>(`${BASE}/${orgId}/teams/${teamId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+export function removeTeamMember(orgId: string, teamId: string, userId: string): Promise<void> {
+  return req<void>(`${BASE}/${orgId}/teams/${teamId}/members/${userId}`, { method: "DELETE" });
+}
+
+export function replaceTeamSets(orgId: string, teamId: string, setIds: string[]): Promise<Team> {
+  return req<Team>(`${BASE}/${orgId}/teams/${teamId}/sets`, {
+    method: "PUT",
+    body: JSON.stringify({ set_ids: setIds }),
+  });
 }

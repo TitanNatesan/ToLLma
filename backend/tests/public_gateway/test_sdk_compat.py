@@ -226,3 +226,62 @@ def test_missing_key_is_unauthenticated(client: TestClient) -> None:
         json={"model": "x/y", "messages": [{"role": "user", "content": "hi"}]},
     )
     assert response.status_code == 401, response.text
+
+
+CACHED_SSE_BODY = (
+    'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n'
+    'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "prompt_tokens_details": {"cached_tokens": 8}}}\n\n'
+    "data: [DONE]\n\n"
+)
+
+
+def _bind_cached_mock(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/chat/completions":
+            return httpx.Response(
+                200, content=CACHED_SSE_BODY.encode(), headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(404, json={"error": "unexpected path"})
+
+    transport = httpx.MockTransport(handler)
+
+    def fake_build_adapter(provider, model, credentials):
+        return real_build_adapter(provider, model, credentials, transport)
+
+    monkeypatch.setattr(gateway_service, "build_adapter", fake_build_adapter)
+
+
+def test_openai_chat_usage_surfaces_cached_tokens(
+    client: TestClient, provider_factory, model_factory, monkeypatch
+) -> None:
+    provider = provider_factory("MockCache")
+    model_factory(provider["id"])
+    _bind_cached_mock(monkeypatch)
+    raw_key = _make_key(client)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "MockCache/mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        headers=_auth(raw_key),
+    )
+    assert response.status_code == 200, response.text
+    usage = response.json()["usage"]
+    assert usage["prompt_tokens"] == 10
+    assert usage["prompt_tokens_details"] == {"cached_tokens": 8}
+
+
+def test_openai_chat_usage_omits_cache_details_without_hits(
+    client: TestClient, provider_factory, model_factory, monkeypatch
+) -> None:
+    provider = provider_factory("MockNoCache")
+    model_factory(provider["id"])
+    _bind_mock(monkeypatch)
+    raw_key = _make_key(client)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "MockNoCache/mock-model", "messages": [{"role": "user", "content": "hi"}]},
+        headers=_auth(raw_key),
+    )
+    assert response.status_code == 200, response.text
+    assert "prompt_tokens_details" not in response.json()["usage"]

@@ -34,6 +34,10 @@ from tollms.api.orgs.schemas import (
     PermissionSetRead,
     PermissionSetSummary,
     RejectNewResponse,
+    TeamDetail,
+    TeamMemberRead,
+    TeamRead,
+    TeamSetRead,
 )
 from tollms.core import security
 from tollms.core.config import get_settings
@@ -51,6 +55,9 @@ from tollms.models.organization import (
     OrgStatus,
     PermissionSet,
     PermissionSetPermission,
+    Team,
+    TeamMembership,
+    TeamPermissionSet,
 )
 from tollms.models.user import User
 from tollms.services.email.service import route_email
@@ -226,8 +233,12 @@ def _any_membership(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> Membe
 
 def effective_permissions(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> set[str]:
     """Root holds every catalog code implicitly. Active members get the union
-    of assigned live sets (custom org sets + assigned system sets). Everyone
-    else (suspended/removed/stranger) evaluates to empty."""
+    of their direct live sets plus the team leg: codes from sets attached to
+    the caller's teams (reachable only via the caller's own ACTIVE membership,
+    so suspend/remove/leave drop the team leg automatically while the roster
+    rows are retained through suspend). Everyone else
+    (suspended/removed/stranger) evaluates to empty. No cache: every
+    _require_perm caller inherits the union by calling this single site."""
     mem = _live_membership(db, org_id, user_id)
     if mem is None:
         return set()
@@ -238,6 +249,19 @@ def effective_permissions(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) ->
             select(MembershipPermissionSet.set_id).where(MembershipPermissionSet.membership_id == mem.id)
         ).all()
     ]
+    team_set_ids = [
+        r[0] for r in db.execute(
+            select(TeamPermissionSet.set_id)
+            .join(TeamMembership, TeamMembership.team_id == TeamPermissionSet.team_id)
+            .join(Team, Team.id == TeamMembership.team_id)
+            .where(
+                TeamMembership.membership_id == mem.id,
+                Team.org_id == org_id,
+                Team.is_deleted.is_(False),
+            )
+        ).all()
+    ]
+    set_ids = list(set(set_ids) | set(team_set_ids))
     if not set_ids:
         return set()
     return set(
@@ -483,7 +507,10 @@ def delete_set(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, set_id: uuid.
     assigned = db.execute(
         select(MembershipPermissionSet.membership_id).where(MembershipPermissionSet.set_id == set_id).limit(1)
     ).first()
-    if assigned:
+    team_assigned = db.execute(
+        select(TeamPermissionSet.team_id).where(TeamPermissionSet.set_id == set_id).limit(1)
+    ).first()
+    if assigned or team_assigned:
         raise ConflictError("permission set is assigned; unassign it first")
     row.is_deleted = True
     row.deleted_by = user_id
@@ -520,6 +547,220 @@ def assign_sets(db: Session, granter_id: uuid.UUID, org_id: uuid.UUID, target_us
            sets=[r.name for r in rows])
     db.commit()
     return read_member(db, org, target)
+
+
+# --- teams ----------------------------------------------------------------------
+
+
+def _get_team(db: Session, org_id: uuid.UUID, team_id: uuid.UUID) -> Team:
+    """Live team of this org. Missing, deleted, and foreign-org ids all raise
+    the identical 404 (no cross-org existence oracle)."""
+    team = db.get(Team, team_id)
+    if team is None or team.is_deleted or team.org_id != org_id:
+        raise NotFoundError("team not found")
+    return team
+
+
+def _team_codes(db: Session, team_id: uuid.UUID) -> list[str]:
+    """Union of live codes from the team's attached sets (deduped, sorted)."""
+    return sorted(set(
+        r[0] for r in db.execute(
+            select(PermissionSetPermission.code)
+            .join(TeamPermissionSet, TeamPermissionSet.set_id == PermissionSetPermission.set_id)
+            .join(PermissionSet, PermissionSet.id == PermissionSetPermission.set_id)
+            .where(TeamPermissionSet.team_id == team_id, PermissionSet.is_deleted.is_(False))
+        ).all()
+    ))
+
+
+def _read_team(db: Session, team: Team) -> TeamDetail:
+    links = db.execute(
+        select(TeamMembership).where(TeamMembership.team_id == team.id)
+        .order_by(TeamMembership.created_at)
+    ).scalars().all()
+    members: list[TeamMemberRead] = []
+    for link in links:
+        membership = db.get(Membership, link.membership_id)
+        if membership is None or membership.is_deleted:
+            continue
+        user = db.get(User, membership.user_id)
+        members.append(TeamMemberRead(
+            membership_id=membership.id, user_id=membership.user_id,
+            email=user.email if user else "", full_name=user.full_name if user else None,
+            state=membership.state,
+        ))
+    rows = db.execute(
+        select(PermissionSet)
+        .join(TeamPermissionSet, TeamPermissionSet.set_id == PermissionSet.id)
+        .where(TeamPermissionSet.team_id == team.id, PermissionSet.is_deleted.is_(False))
+        .order_by(PermissionSet.name)
+    ).scalars().all()
+    return TeamDetail(
+        id=team.id, name=team.name, description=team.description,
+        member_count=len(members), codes=_team_codes(db, team.id),
+        created_at=team.created_at, members=members,
+        sets=[TeamSetRead(id=r.id, name=r.name, codes=_set_codes(db, r.id)) for r in rows],
+    )
+
+
+def _reject_system_sets(rows: list[PermissionSet]) -> None:
+    """System sets are readable but never writable on teams — clone first.
+    422 like the existing system-set write guards (update/delete_set)."""
+    if any(r.is_system for r in rows):
+        raise ValidationError("system permission sets cannot be assigned to teams; clone them instead")
+
+
+def create_team(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, *, name: str,
+                description: str | None, set_ids: list[uuid.UUID]) -> TeamDetail:
+    org, mem = _member_org(db, org_id, user_id)
+    granter = _require_perm(db, org, mem, user_id, "Teams.Create")
+    name = (name or "").strip()
+    if not name:
+        raise ValidationError("team name is required")
+    dup = db.execute(
+        select(Team.id).where(
+            Team.org_id == org_id, func.lower(Team.name) == name.lower(),
+            Team.is_deleted.is_(False))
+    ).first()
+    if dup:
+        raise ConflictError("team name already exists")
+    rows = _resolve_sets(db, org_id, list(set_ids or []))
+    _reject_system_sets(rows)
+    codes = sorted({c for r in rows for c in _set_codes(db, r.id)})
+    _check_grantable(granter if not mem.is_root else set(PERMISSION_CATALOG), codes)
+    team = Team(org_id=org_id, name=name, description=description)
+    db.add(team)
+    db.flush()
+    for r in rows:
+        db.add(TeamPermissionSet(team_id=team.id, set_id=r.id))
+    _audit(db, org_id, user_id, "team.created", team_id=str(team.id), team_name=name)
+    db.commit()
+    db.refresh(team)
+    return _read_team(db, team)
+
+
+def list_teams(db: Session, user_id: uuid.UUID, org_id: uuid.UUID) -> list[TeamDetail]:
+    org, mem = _member_org(db, org_id, user_id)
+    _require_perm(db, org, mem, user_id, "Teams.Read")
+    rows = db.execute(
+        select(Team).where(Team.org_id == org_id, Team.is_deleted.is_(False)).order_by(Team.name)
+    ).scalars().all()
+    return [_read_team(db, t) for t in rows]
+
+
+def get_team(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, team_id: uuid.UUID) -> TeamDetail:
+    org, mem = _member_org(db, org_id, user_id)
+    _require_perm(db, org, mem, user_id, "Teams.Read")
+    return _read_team(db, _get_team(db, org_id, team_id))
+
+
+def update_team(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, team_id: uuid.UUID, *,
+                name: str | None = None, description: str | None = None) -> TeamDetail:
+    org, mem = _member_org(db, org_id, user_id)
+    _require_perm(db, org, mem, user_id, "Teams.Update")
+    team = _get_team(db, org_id, team_id)
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValidationError("team name is required")
+        dup = db.execute(
+            select(Team.id).where(
+                Team.org_id == org_id, func.lower(Team.name) == name.lower(),
+                Team.is_deleted.is_(False), Team.id != team.id)
+        ).first()
+        if dup:
+            raise ConflictError("team name already exists")
+        team.name = name
+    if description is not None:
+        team.description = description
+    _audit(db, org_id, user_id, "team.updated", team_id=str(team.id), team_name=team.name)
+    db.commit()
+    db.refresh(team)
+    return _read_team(db, team)
+
+
+def delete_team(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, team_id: uuid.UUID) -> None:
+    """Soft-delete the team + hard-delete its link rows. Users, memberships,
+    providers, conversations, and keys are never touched."""
+    org, mem = _member_org(db, org_id, user_id)
+    _require_perm(db, org, mem, user_id, "Teams.Delete")
+    team = _get_team(db, org_id, team_id)
+    db.query(TeamMembership).filter(TeamMembership.team_id == team.id).delete()
+    db.query(TeamPermissionSet).filter(TeamPermissionSet.team_id == team.id).delete()
+    team.is_deleted = True
+    team.deleted_by = user_id
+    team.deleted_at = datetime.now(timezone.utc)
+    _audit(db, org_id, user_id, "team.deleted", team_id=str(team.id), team_name=team.name)
+    db.commit()
+
+
+def add_team_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, team_id: uuid.UUID,
+                    target_user_id: uuid.UUID) -> TeamDetail:
+    """Roster add: the target gains the team's current codes, so the team's
+    codes must sit inside the adder's effective set (escalation rule)."""
+    org, mem = _member_org(db, org_id, actor_id)
+    granter = _require_perm(db, org, mem, actor_id, "Teams.AssignMembers")
+    team = _get_team(db, org_id, team_id)
+    target = _live_membership(db, org_id, target_user_id)
+    if target is None:
+        raise NotFoundError("member not found")
+    exists = db.execute(
+        select(TeamMembership.id).where(
+            TeamMembership.team_id == team.id, TeamMembership.membership_id == target.id)
+    ).first()
+    if exists:
+        raise ConflictError("user is already a team member")
+    _check_grantable(granter if not mem.is_root else set(PERMISSION_CATALOG), _team_codes(db, team.id))
+    db.add(TeamMembership(team_id=team.id, membership_id=target.id))
+    _audit(db, org_id, actor_id, "team.member_added", team_id=str(team.id),
+           user_id=str(target_user_id))
+    db.commit()
+    return _read_team(db, team)
+
+
+def remove_team_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, team_id: uuid.UUID,
+                       target_user_id: uuid.UUID) -> None:
+    """Roster removal drops only the link row. Root-protection precedent
+    (remove_member): the root is never detached — transfer root first."""
+    org, mem = _member_org(db, org_id, actor_id)
+    _require_perm(db, org, mem, actor_id, "Teams.RemoveMembers")
+    team = _get_team(db, org_id, team_id)
+    # Any live membership (incl. suspended, whose rows are kept) is removable.
+    target = _any_membership(db, org_id, target_user_id)
+    if target is None:
+        raise NotFoundError("member not found")
+    if target.is_root:
+        raise ConflictError("cannot remove the root from a team; transfer root first")
+    link = db.execute(
+        select(TeamMembership).where(
+            TeamMembership.team_id == team.id, TeamMembership.membership_id == target.id)
+    ).scalars().first()
+    if link is None:
+        raise NotFoundError("team member not found")
+    db.delete(link)
+    _audit(db, org_id, actor_id, "team.member_removed", team_id=str(team.id),
+           user_id=str(target_user_id))
+    db.commit()
+
+
+def set_team_sets(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, team_id: uuid.UUID,
+                  set_ids: list[uuid.UUID]) -> TeamDetail:
+    """Replace-all set assignment (same shape as assign_sets). Single
+    team.sets_assigned audit event per replace — not per-add/per-remove."""
+    org, mem = _member_org(db, org_id, actor_id)
+    granter = _require_perm(db, org, mem, actor_id, "Teams.AssignPermissionSets")
+    team = _get_team(db, org_id, team_id)
+    rows = _resolve_sets(db, org_id, list(set_ids or []))
+    _reject_system_sets(rows)
+    codes = sorted({c for r in rows for c in _set_codes(db, r.id)})
+    _check_grantable(granter if not mem.is_root else set(PERMISSION_CATALOG), codes)
+    db.query(TeamPermissionSet).filter(TeamPermissionSet.team_id == team.id).delete()
+    for r in {r.id for r in rows}:
+        db.add(TeamPermissionSet(team_id=team.id, set_id=r))
+    _audit(db, org_id, actor_id, "team.sets_assigned", team_id=str(team.id),
+           sets=[r.name for r in rows])
+    db.commit()
+    return _read_team(db, team)
 
 
 def read_member(db: Session, org: Organization, mem: Membership) -> MemberRead:
@@ -931,7 +1172,9 @@ def reject_request(db: Session, approver_id: uuid.UUID, org_id: uuid.UUID, invit
 
 def suspend_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, target_user_id: uuid.UUID) -> MemberRead:
     """Suspend: org access denied immediately, login/personal assets survive.
-    Effective permissions evaluate to empty (only ACTIVE memberships count)."""
+    Effective permissions evaluate to empty (only ACTIVE memberships count).
+    Team roster rows are deliberately KEPT: the team leg already drops to
+    empty via the membership state, and resume restores it automatically."""
     org, mem = _member_org(db, org_id, actor_id)
     _require_perm(db, org, mem, actor_id, "Members.Suspend")
     target = _live_membership(db, org_id, target_user_id)
@@ -977,6 +1220,9 @@ def remove_member(db: Session, actor_id: uuid.UUID, org_id: uuid.UUID, target_us
     target.is_deleted = True
     target.deleted_by = actor_id
     target.deleted_at = datetime.now(timezone.utc)
+    # Membership-keyed team roster rows die with the membership; the team
+    # itself and every other member are untouched.
+    db.query(TeamMembership).filter(TeamMembership.membership_id == target.id).delete()
     _revoke_member_keys(db, org_id, target_user_id, reason="member.removed", actor_id=actor_id)
     _audit(db, org_id, actor_id, "member.removed", user_id=str(target_user_id))
     _notify(db, target_user_id, "member.removed", f"You were removed from {org.name}", org_id=org_id)
@@ -992,6 +1238,8 @@ def leave_organization(db: Session, user_id: uuid.UUID, org_id: uuid.UUID) -> No
     mem.is_deleted = True
     mem.deleted_by = user_id
     mem.deleted_at = datetime.now(timezone.utc)
+    # Self-removal drops the leaver's team roster rows like an admin removal.
+    db.query(TeamMembership).filter(TeamMembership.membership_id == mem.id).delete()
     # Self-removal revokes the leaver's org keys like an admin removal does.
     _revoke_member_keys(db, org_id, user_id, reason="member.left", actor_id=user_id)
     _audit(db, org.id, user_id, "member.left")

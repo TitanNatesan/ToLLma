@@ -32,6 +32,18 @@
           "execution": 60000
         }
       },
+      "git": {
+        "type": "local",
+        "command": ["uvx", "mcp-server-git", "--repository", "."]
+      },
+      "docker": {
+        "type": "local",
+        "command": ["npx", "-y", "mcp-server-docker"],
+        "timeout": {
+          "catalog": 60000,
+          "execution": 60000
+        }
+      },
       "sequential-thinking": {
         "type": "local",
         "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],

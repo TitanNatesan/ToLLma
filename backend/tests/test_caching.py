@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -158,3 +159,82 @@ def test_every_provider_family_returns_a_plan(provider: str) -> None:
     plan = caching.plan(provider, supported=True, model_id="anthropic.claude-sonnet-4")
     assert plan.enabled is True
     assert plan.strategy in ("openai", "anthropic", "bedrock", "implicit")
+
+
+def test_bedrock_usage_extras_reads_camelcase_counters() -> None:
+    from tollms.services.gateway.adapters.base import usage_extras
+
+    out = usage_extras({"cacheReadInputTokens": 500, "cacheWriteInputTokens": 100})
+    assert out["cache_read_tokens"] == 500
+    assert out["cache_write_tokens"] == 100
+
+
+def test_bedrock_messages_marks_final_message_cache_point() -> None:
+    from tollms.services.gateway.caching import bedrock_messages, plan
+
+    p = plan("BEDROCK_CONVERSE", supported=True, conversation_id="c", model_id="anthropic.claude-x")
+    msgs = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {"role": "assistant", "content": [{"text": "hello"}]},
+    ]
+    out = bedrock_messages(p, msgs)
+    assert out[-1]["content"][-1] == {"cachePoint": {"type": "default"}}
+    assert out[0]["content"] == [{"text": "hi"}]  # only the final message marked
+
+
+def test_bedrock_messages_noop_without_plan() -> None:
+    from tollms.services.gateway.caching import bedrock_messages
+
+    msgs = [{"role": "user", "content": [{"text": "hi"}]}]
+    assert bedrock_messages(None, msgs) == msgs
+
+
+def test_calculate_bills_input_net_of_cached_tokens() -> None:
+    from tollms.services.gateway.costing import PriceSet, UsageTokens, calculate
+
+    out = calculate(
+        UsageTokens(prompt=1000, completion=500, cache_read=800, cache_write=100),
+        PriceSet(input=Decimal(2), output=Decimal(10), cache_read=Decimal("0.5"), cache_write=Decimal("1")),
+    )
+    # input bills the 100 uncached tokens only; cache lines bill separately.
+    assert out.input_cost == Decimal(100) * Decimal(2) / Decimal(1_000_000)
+    assert out.cache_read_cost == Decimal(800) * Decimal("0.5") / Decimal(1_000_000)
+    assert out.cache_write_cost == Decimal(100) * Decimal(1) / Decimal(1_000_000)
+    assert out.total_cost == out.input_cost + out.output_cost + out.cache_read_cost + out.cache_write_cost
+
+
+def test_request_logs_persist_cache_tokens(
+    db, provider_factory, model_factory
+) -> None:
+    """request_logs carries cache/reasoning detail like messages (audit parity)."""
+    import asyncio
+    import uuid as uuid_mod
+
+    import httpx as httpx_mod
+
+    from tollms.api.gateway.schemas import ChatRequest
+    from tollms.api.gateway.service import run_chat
+    from tollms.models.request_log import RequestLog
+
+    p = provider_factory("CacheLedger", ptype="OPENAI", creds={"api_key": "k"})
+    m = model_factory(p["id"], model_id="cache-model")
+    body = (
+        'data: {"choices": [{"delta": {"content": "Hi"}}]}\n\n'
+        'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5,'
+        ' "total_tokens": 15, "prompt_tokens_details": {"cached_tokens": 4}}}\n\n'
+        "data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx_mod.Request) -> httpx_mod.Response:
+        return httpx_mod.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+
+    result = asyncio.run(
+        run_chat(
+            db,
+            ChatRequest(provider_id=uuid_mod.UUID(p["id"]), model_id=uuid_mod.UUID(m["id"]), message="hi"),
+            httpx_mod.MockTransport(handler),
+        )
+    )
+    row = db.query(RequestLog).filter(RequestLog.message_id == result.message_id).one()
+    assert row.cache_read_tokens == 4
+    assert row.prompt_tokens == 10

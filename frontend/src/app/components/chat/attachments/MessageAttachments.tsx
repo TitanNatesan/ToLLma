@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Pencil } from "lucide-react";
 import {
   Attachment,
   AttachmentInfo,
@@ -18,6 +18,21 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * Backend lineage contract (assistant message metadata): generation_operation
+ * is "generate" | "edit", with optional reference_attachment_id + intent.
+ * Everything is defensive: old messages omit metadata entirely and render
+ * exactly as before. edit_unsupported is honored only if the backend sends it.
+ */
+function generationOperation(metadata?: Record<string, unknown>): string | null {
+  const op = metadata?.generation_operation;
+  return typeof op === "string" ? op : null;
+}
+
+function editUnsupported(metadata?: Record<string, unknown>): boolean {
+  return metadata?.edit_unsupported === true;
 }
 
 function toAttachmentData(attachment: ChatAttachment): AttachmentData {
@@ -59,9 +74,28 @@ function MessageAttachmentsInner({
 
   const media = attachments.filter((a) => a.kind === "image" || a.kind === "video");
   const documents = attachments.filter((a) => a.kind !== "image" && a.kind !== "video");
+  // Lineage affordance: only when the backend says this media was an edit of
+  // the conversation's previous image (or fell back to a fresh generation).
+  // Absent/unknown metadata renders exactly as before.
+  const unsupported = editUnsupported(metadata);
+  const showLineage = generationOperation(metadata) === "edit" && !unsupported;
+  const mediaNoun = media.length > 0 && media.every((a) => a.kind === "video") ? "video" : "image";
 
   return (
     <div className="mb-1.5 space-y-2" data-testid="message-attachments">
+      {media.length > 0 && (showLineage || unsupported) && (
+        <div
+          className="flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400"
+          data-testid={unsupported ? "edit-fallback-notice" : "edit-lineage"}
+        >
+          <Pencil className="size-3" />
+          <span>
+            {unsupported
+              ? `Edit not supported — generated a fresh ${mediaNoun} instead`
+              : `Edited from previous ${mediaNoun}`}
+          </span>
+        </div>
+      )}
       {media.length > 0 && (
         <div className="flex w-full flex-col items-center gap-2" data-testid="message-media">
           {media.map((attachment) => (

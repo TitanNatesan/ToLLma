@@ -68,6 +68,11 @@ def _chat_completion_payload(outcome: service.ChatOutcome) -> dict:
             "prompt_tokens": tokens.prompt,
             "completion_tokens": tokens.completion,
             "total_tokens": outcome.total_tokens,
+            **(
+                {"prompt_tokens_details": {"cached_tokens": tokens.cache_read}}
+                if tokens.cache_read
+                else {}
+            ),
         },
     }
 
@@ -94,13 +99,18 @@ def _responses_payload(outcome: service.ChatOutcome) -> dict:
             "input_tokens": tokens.prompt,
             "output_tokens": tokens.completion,
             "total_tokens": outcome.total_tokens,
+            **(
+                {"input_tokens_details": {"cached_tokens": tokens.cache_read}}
+                if tokens.cache_read
+                else {}
+            ),
         },
     }
 
 
 def _anthropic_payload(outcome: service.ChatOutcome) -> dict:
     tokens = outcome.usage
-    return {
+    payload = {
         "id": "msg_" + uuid.uuid4().hex[:24],
         "type": "message",
         "role": "assistant",
@@ -110,6 +120,11 @@ def _anthropic_payload(outcome: service.ChatOutcome) -> dict:
         "stop_sequence": None,
         "usage": {"input_tokens": tokens.prompt, "output_tokens": tokens.completion},
     }
+    if tokens.cache_read:
+        payload["usage"]["cache_read_input_tokens"] = tokens.cache_read
+    if tokens.cache_write:
+        payload["usage"]["cache_creation_input_tokens"] = tokens.cache_write
+    return payload
 
 
 def _images_payload(outcome: service.MediaOutcome) -> dict:

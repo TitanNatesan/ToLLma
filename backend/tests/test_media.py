@@ -69,8 +69,8 @@ def test_chat_media_generation_stores_actual_cost_and_metadata(
     assert assistant.metadata_["generation_type"] == "image"
     assert assistant.metadata_["cost_source"] == "actual"
     assert assistant.metadata_["cost_estimated"] is False
-    assert assistant.metadata_["quality"] == "low"
-    assert assistant.metadata_["size"] == "1024x1024"
+    # Prompt-only sends: no invented size/quality params, so none recorded.
+    assert "quality" not in assistant.metadata_ and "size" not in assistant.metadata_
     # 60 text tokens @ $5/1M + 4160 output tokens @ $40/1M = $0.1667
     assert float(assistant.total_cost) == pytest.approx(0.1667, abs=1e-9)
     assert assistant.usage_estimated is False
