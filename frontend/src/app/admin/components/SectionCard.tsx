@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { SectionHeader } from "@/components/ui/SectionHeader";
 
 export interface SectionCardProps {
   title: string;
@@ -22,15 +23,7 @@ export function SectionCard({ title, description, action, children, className, t
       )}
       data-testid={testId}
     >
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            {title}
-          </h2>
-          {description && <p className="mt-1 text-xs text-zinc-400">{description}</p>}
-        </div>
-        {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
-      </div>
+      <SectionHeader title={title} description={description} action={action} tone="label" className="mb-4" />
       {children}
     </section>
   );

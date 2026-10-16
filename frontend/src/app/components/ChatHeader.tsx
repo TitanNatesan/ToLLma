@@ -127,7 +127,8 @@ export function ChatHeader() {
             <Button
               size="sm"
               variant="ghost"
-              className="h-8 w-8 p-0 -ml-1 text-zinc-500 shrink-0"
+              // Mobile-only: desktop uses the shared shell reveal rail.
+              className="h-8 w-8 p-0 -ml-1 text-zinc-500 shrink-0 md:hidden"
               onClick={() => setLeftSidebar(true)}
               aria-label="Open sidebar"
               data-testid="left-sidebar-toggle"

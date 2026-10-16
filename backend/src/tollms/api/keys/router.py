@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from tollms.api.keys import analytics as key_analytics
 from tollms.api.keys import service
 from tollms.api.keys.schemas import (
     ApiKeyCreate,
@@ -143,4 +144,4 @@ def analytics(
     db: Session = Depends(get_db),
     user: User = Depends(require_active_user),
 ) -> KeyAnalytics:
-    return service.get_analytics(db, key_id, user.id, preset)
+    return key_analytics.get_analytics(db, key_id, user.id, preset)

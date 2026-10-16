@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { SectionHeader } from "@/components/ui/SectionHeader";
 
 /** Settings card shell: anchor target + heading + body. Matches analytics cards. */
 export function SettingsCard({
@@ -30,13 +31,7 @@ export function SettingsCard({
       )}
       data-testid={testId ?? `settings-section-${id}`}
     >
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
-          {description && <p className="mt-0.5 text-xs text-zinc-400">{description}</p>}
-        </div>
-        {action && <div className="shrink-0">{action}</div>}
-      </div>
+      <SectionHeader title={title} description={description} action={action} className="mb-4" />
       {children}
     </section>
   );

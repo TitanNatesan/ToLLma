@@ -19,25 +19,51 @@ models/* + db/*           (ORM entities, session, Base)
 ## `api/` — feature packages
 
 One package per API feature: `conversations/`, `providers/`, `models/`,
-`repository/`, `gateway/`, `health/`, `auth/`.
+`repository/`, `gateway/`, `health/`, `auth/`, `orgs/`, `keys/`.
 
 Each feature package holds `router.py`, `schemas.py`, `service.py`
 (`health` is router-only). A `service.py` inside `api/` is a
 feature/application service — it owns that feature's CRUD, orchestration,
 and validation, and composes engines from `services/`.
 
+Large domains split into subpackages: `api/orgs/{overview,members,teams,
+permissions,providers,keys,budgets,requests,invitations,analytics,audit}/`
+(each with `router.py` + `service.py` + `schemas.py` only where justified —
+no empty placeholders), `api/orgs/common/` (genuinely shared guards/audit
+used by 3+ domains), `api/keys/analytics.py`, `core/{passwords,sessions,
+dependencies}.py`. Thin compat facades (`api/orgs/service.py`,
+`core/security.py`) re-export moved names for existing importers; new code
+imports from the owning submodule directly.
+
 Rules:
 
 - `router.py`: FastAPI endpoints only. No business logic, no direct
   `services.*` engine imports, never touches the database.
+  Top-level routers compose domain routers (`router.include_router(...)`)
+  and keep the package prefix/tags; `main.py` stays one bare
+  `include_router` line per package. Root `""` paths stay on the parent
+  router (nested empty-path includes raise at startup).
 - `service.py`: business logic + database access. May import other
   `api.*` feature services and anything under `services/`.
   Must not contain route definitions or low-level adapter implementations.
+  Keep lazy (function-level) imports wherever a top-level import would
+  cycle — orgs↔providers/models laziness is load-bearing on both sides.
 - `schemas.py`: request/response models + DTOs. May import enums from
-  `models/` (e.g. `ProviderType`), never ORM classes.
+  `models/` (e.g. `ProviderType`), never ORM classes. Domain schemas import
+  directly from `auth`/`keys`/`providers.schemas` — never sibling domain
+  submodules.
 - No ORM model class may be defined inside `api/`.
 - No new top-level feature package without a router + service + schemas trio
   (no `utils.py` until two callers need it).
+- No `common/` dumping ground: shared code lives in `common/` only with
+  3+ real domain callers; single-domain helpers colocate with their domain.
+- No wildcard imports; no router imports from services (one-way: routers →
+  services → engines); `common/` and engines never import routers or
+  `tollms.main`.
+- Moves are verbatim first, behavior second: preserve paths, methods,
+  status codes, error bodies (404-oracle), per-endpoint Depends, and
+  response models. Verify with OpenAPI diff (paths/methods/params equal)
+  plus focused tests before deleting originals.
 
 ## `services/` — reusable backend engines
 
@@ -96,7 +122,9 @@ One module per table group: `conversation.py`, `message.py`, `provider.py`,
 ## Invariants (CI-verifiable)
 
 - No `tollms.modules` package and no `tollms.modules.*` imports anywhere.
-- `docker compose exec backend pytest -q` passes (currently 62 tests).
+- `docker compose exec backend pytest -q` passes (currently 683 tests).
 - `docker compose exec backend alembic check` reports no operations.
 - Every API module independently maintainable: no giant service files,
   no giant routers, no circular imports.
+- `python -c "from tollms.main import app; app.openapi()"` succeeds with no
+  duplicate (path, method) registrations after any router move.

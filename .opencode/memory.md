@@ -3037,3 +3037,124 @@ Installed MCP servers git (`uvx mcp-server-git`) and docker (official Docker MCP
 ### Recommended Next Steps
 - Still open: commit vs gitignore `.agents/skills/` + `skills-lock.json`.
 - Consider `supabase-postgres-best-practices` skill to pair with the `db` agent, and obra `systematic-debugging` to pair with `debugger`.
+
+---
+
+## 2026-10-15 — Shared sidebar collapse/reveal system
+
+### Requirement
+Collapse stranded users: reveal control lived only in chat page (desktop) / PageHeader (mobile-only), so collapsing on org/providers/etc. left no way back.
+
+### Root Cause
+Single shared Sidebar (width→0 slabs away, nothing remains) + single persisted leftSidebarOpen store, but reveal openers were page-specific: ChatHeader "Show sidebar" (all viewports, chat only), providers page two more ("Show Providers", detail icon), PageHeader menu md:hidden. Desktop non-chat collapse = dead end.
+
+### Implementation Summary
+- New shared SidebarReveal (rail w-10, PanelLeftOpen mirroring collapse icon, "Expand sidebar" label + aria-expanded=false + Show-sidebar tooltip side=right), rendered by AppShell when closed (in-flow: never clipped, survives routes; hidden on mobile via md:flex).
+- ChatHeader + providers duplicates scoped md:hidden (mobile drawer openers preserved; desktop uses rail). PageHeader untouched (already mobile-only shared).
+- No state changes (single persisted store preserved). No backend changes.
+- Updated chat-ux collapse spec to the shared sidebar-reveal testid.
+
+### Files Changed
+frontend components/Sidebar/SidebarReveal.tsx (new), ui/AppShell.tsx, app/components/ChatHeader.tsx, app/providers/page.tsx, tests/chat-ux.spec.ts. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (2 sessions): collapse→rail+reveal (sidebar 1px), reveal→260px; rail persists across /providers /organizations /settings /api-keys /analytics + org-teams page; org reveal restores org nav; 3× toggle glitch-free; keyboard focus+activate; refresh-collapsed persists; mobile 390px rail hidden + chat/provider drawer openers work; dark theme screenshot verified; providers desktop zero duplicate openers.
+- Playwright chat-ux collapse spec passes; tsc/eslint/vitest 130 green.
+
+### Architecture Notes
+- Mobile keeps header openers by design (overlay drawer needs in-page affordance); desktop has exactly one reveal owner (AppShell rail).
+
+---
+
+## 2026-10-16 — Org provider registration parity + UI alignment sweep
+
+### Requirement
+Org provider registry must match personal 5-step wizard; systematic visual alignment across all routes.
+
+### Root Causes
+- Org create was a single dialog (no validation gate/model select/review); register_provider personal-only; model attach on org providers had no perm gate.
+- 17 UI defects from missing shared primitives (PageContainer, sticky/badge props, GhostButton alias, duplicated SectionHeaders/grids/RangePickers/hash hooks, bespoke auth submits/pills/tabs).
+
+### Implementation Summary
+- Backend: POST /orgs/{id}/providers/register (atomic, URL org_id, org-scoped uniqueness, validation stamp, audit); model create/update/delete gated by Providers.* on org rows + model.created audit; 7 tests.
+- Frontend: wizard `ownership` prop (personal default; draft localStorage personal-only; "Connect N models" copy); org section renders wizard; createOrgProviderWithModels; RotateCredentials distinct error.
+- UI: PageContainer (+4 pages), PageHeader sticky/hideMenu, GhostButton deleted, SectionHeader adoption (admin icon-chip left custom), CardGrid/StatGrid, RangePicker merge, useHashSection, auth submits + pills + tabs via Button.
+
+### Files Changed
+backend api/orgs/{router,service,schemas}.py, api/models/service.py, tests/test_org_phase_b.py; frontend wizard + OrgProvidersSection + services/orgs + hooks/types + ui/{PageContainer,Grids,RangePicker,PageHeader,SectionHeader,primitives} + 12 page/component files. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser: org 5-step wizard end-to-end via stub (type→creds→validate→2 models→Connect; org-owned + 2 models + valid stamp + audits; personal list union by design); outsider isolation (empty + 404 oracle); member-without-perms register 404; route screenshots (chat/providers/orgs/analytics/settings/api-keys/login/org-providers/mobile wizard) all clean; mobile drawer + wizard layout verified.
+- Backend 673/673 (backend agent solo); tsc/eslint clean; vitest 130/130.
+
+### Architecture Notes
+- No migration; personal register untouched. Intentional normalizations flagged: org tabs underline→pills, auth tollma-500→600, pills h-8, semibold/title shades. Remaining follow-ups: SplitPane, max-w tokens, auth/public shell merge, Field migration, admin segmented presets.
+
+## 2026-10-16 — Main AGENTS.md rewritten to real agents + trigger-only skill/MCP routing
+
+### Requirement Completed
+Replaced the 8 fictional agent definitions (Architecture, Database, Backend, Frontend, Security, QA, DevOps, Documentation — none existed) with the real `.opencode/agents/` roster, rewrote all orchestration examples to real names, and added a Skills & MCP Routing section enforcing trigger-only usage.
+
+### Files Modified
+- `AGENTS.md` — Available Sub-Agents section now a table of the 6 real agents (backend, frontend, db, reviewer, tester, debugger) with scope rules; Step 2 tree and all 4 Parallel Execution Examples use real names; new "Skills & MCP Routing — On Trigger Only" section with trigger tables for all 14 skills and 7 MCP servers plus guardrails (postgres local-dev-only, docker always-pass-service, no-trigger-means-none).
+
+### Decisions
+- Kept all non-agent sections (principles, escalation, memory rules, definition of done) untouched.
+- reviewer added to full-feature flow; debugger only on failure — keeps the default path lean.
+
+### Testing Performed
+- Verified every referenced agent file (6/6), skill dir (14/14), and MCP server (7/7) exists.
+
+### Architecture Notes
+- Agent permission model unchanged: reviewer/db/debugger report-only, tester tests-only, backend/frontend tree-scoped.
+
+---
+
+## 2026-10-16 — Org workspace redesign (tables, Operations, unified assignment, analytics, audit, settings)
+
+### Requirement
+Card layouts → data tables; unified Operations page; unified permission-set assignment (existing/custom/derive); analytics dashboard; audit detail; settings restructure; permission-aware UI; obsolete removal.
+
+### Root Causes
+Backend served bare lists (no enrichment, no filters/pagination on most endpoints); frontend had no shared table/drawer/assignment abstractions; invite/team dialogs were existing-sets-only.
+
+### Implementation Summary
+- Backend (additive only, no migration): members (+teams/set_ids/joined/key_count, search/state/limit/offset), sets (+member/team counts), teams (?include, search/paging), keys (+spend_usd), invitations (?kind/search/paging), requests (?status default pending), audit (?action/actor/from/to/cursor + actor enrichment + stable order), analytics (?from/to/team_id/key_id + by_key; by_team=[] documented). tests/test_org_tables.py (10).
+- Frontend: DataTable→ui, useDebouncedValue, auditDescriptions map; OrgMembers/Teams/Sets tables + DetailPanel drawers; PermissionSetPicker (Existing/Create/Derive, snapshot semantics, delegable filter) in InviteModal + TeamCreateDialog; OrgOperationsSection (tabs+counts, legacy redirects, nav swap); OrgAnalyticsDashboard (single-query KPIs/charts/insights); OrgAuditTable (server filters, cursor paging, detail drawer, redaction); OrgSettingsSection (tabs, honest danger zone); deleted SetManager/OrgTeamsSection/OrgKeysSection/OrgAnalyticsSection.
+- Orchestrator fix: members section lacked canRead gate (generic error for denied readers) → honest permission copy + useMembers enabled flag + page wiring.
+
+### Files Changed
+backend api/orgs/{router,service,schemas}.py, tests/test_org_tables.py; frontend 11 new components + [id]/page + nav + hooks/services/types; 4 obsolete files deleted. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser multi-role (root/limited/readonly/outsider): tables+search+drawer, derive→review→send DB-linked, key create/secret/revoke, request approve w/ sets, audit detail, settings save, escalation 404, outsider zero-leak, legacy redirects, mobile wizard.
+- Backend 683/683 solo; alembic single head, check clean; tsc/eslint clean; vitest 130/130.
+
+### Architecture Notes
+- Snapshot (not live) inheritance for derived sets, stated in UI. by_team attribution unreliable → always [] (documented). No migration. Refactor mission queued next (must audit post-change tree).
+
+---
+
+## 2026-10-16 — Backend domain refactor (orgs split, keys analytics, security split)
+
+### Requirement
+Split oversized modules (orgs/service.py 2475 lines first), audit whole backend, update backend.md, preserve contracts.
+
+### Root Causes
+Single-file domains: orgs service/router/schemas, keys lifecycle+analytics, security passwords+sessions+deps.
+
+### Implementation Summary
+- api/orgs/ → 11 domain packages (common/guards+audit, overview, members, teams, permissions, providers, keys, budgets, requests, invitations, analytics, audit) + thin facades (service/schemas/router, 105 names, v0.2 removal note); 2 root "" routes stay on parent (FastAPI nested-include limitation, behavior-neutral); lazy imports preserved (no cycles); OpenAPI 164/164 paths identical.
+- api/keys/analytics.py extracted (216 lines); core/security.py → passwords/sessions/dependencies + 109-line facade.
+- backend.md: domain composition rules, lazy-import discipline, verbatim-move verification, OpenAPI-dupe invariant, test count 683.
+- Reviewer triage: High 1-2 + Med 4/8/9 verified pre-existing via git show (carried verbatim, documented follow-ups); fixed transitive import (overview router) + stale doc path.
+
+### Files Changed
+~50 created (orgs domains, keys/analytics, core/*), facades (orgs service/schemas/router, keys service/router, security), backend.md. No migrations, no frontend, no test edits. Uncommitted per standing rule.
+
+### Testing Performed
+- Focused org+keys 115 green; OpenAPI diff identical; facade completeness; duplicate-route check clean.
+- Backend 683/683 solo; alembic check clean.
+
+### Architecture Notes
+- Retained with reasons: gateway/public_gateway/auth/analytics/settings/generation (larger/riskier, single-theme or cohesive; documented candidates for future passes). providers/models still lazy-import facade trio — migrate to common.guards directly, then delete facade.

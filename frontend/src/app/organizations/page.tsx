@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Bell, Building2, Check, Plus, Search, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Badge, Button, Card, CardContent, EmptyState, LoadingState, ErrorState, PageHeader,
+  Badge, Button, Card, CardContent, EmptyState, LoadingState, ErrorState, PageHeader, CardGrid,
 } from "@/components/ui";
 import { CreateOrgModal } from "./components/CreateOrgModal";
 import { JoinModal } from "./components/JoinModal";
@@ -91,19 +91,15 @@ function OrganizationsInner() {
       />
       <div className="flex gap-1 border-b border-zinc-200 px-4 dark:border-zinc-800">
         {(["orgs", "inbox"] as const).map((v) => (
-          <button key={v} onClick={() => setView(v)} data-testid={`org-tab-${v}`}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-2 text-xs font-medium",
-              view === v
-                ? "border-b-2 border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100"
-                : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400",
-            )}>
+          <Button key={v} type="button" size="sm" variant={view === v ? "default" : "ghost"}
+            onClick={() => setView(v)} data-testid={`org-tab-${v}`}
+            className={view === v ? undefined : "text-zinc-500 dark:text-zinc-400"}>
             {v === "inbox" ? <Bell className="size-3.5" /> : <Building2 className="size-3.5" />}
             {v === "inbox" ? "Inbox" : "My organizations"}
             {v === "inbox" && (unread.data?.unread ?? 0) > 0 && (
               <Badge variant="secondary" data-testid="org-unread-badge">{unread.data?.unread}</Badge>
             )}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -133,7 +129,7 @@ function OrganizationsInner() {
               <EmptyState title="No organizations yet"
                 description="Create one (you become root) or join an existing organization." />
             )}
-            <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+            <CardGrid>
               {(orgs.data ?? []).map((o) => (
                 <Card key={o.id} data-testid={`org-card-${o.slug}`}>
                   <CardContent className="p-3.5">
@@ -155,7 +151,7 @@ function OrganizationsInner() {
                   </CardContent>
                 </Card>
               ))}
-            </div>
+            </CardGrid>
           </div>
         )}
 

@@ -168,7 +168,7 @@ function InviteLandingInner() {
 
   return (
     <div className="flex h-screen flex-col overflow-y-auto bg-zinc-50 dark:bg-zinc-950" data-testid="invite-landing-page">
-      <PageHeader title="Organization invitation" subtitle="Review before you accept." />
+      <PageHeader title="Organization invitation" subtitle="Review before you accept." hideMenu />
       <div className="mx-auto w-full max-w-2xl flex-1 p-4">
         {preview.isLoading && <LoadingState message="Loading invitation…" />}
         {!preview.isLoading && (preview.isError || !preview.data) && (

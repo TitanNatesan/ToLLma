@@ -1,17 +1,16 @@
 "use client";
 
 import {
-  useCallback,
   useEffect,
   useMemo,
   useState,
-  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge, Button, ErrorState, PageHeader } from "@/components/ui";
+import { Badge, Button, ErrorState, PageContainer, PageHeader } from "@/components/ui";
 import { ADMIN_SECTIONS, ADMIN_SECTION_IDS, type AdminSectionId } from "@/components/Sidebar/SidebarAdmin";
+import { useHashSection } from "@/hooks/useHashSection";
 import { useAuthStore } from "@/store/auth";
 import { cn } from "@/lib/utils";
 import {
@@ -35,14 +34,14 @@ import { CacheSection } from "./components/CacheSection";
 import { CatalogSection } from "./components/CatalogSection";
 import { CostsSection } from "./components/CostsSection";
 import { ErrorsSection } from "./components/ErrorsSection";
-import { fmtDateTime } from "./components/format";
+import { fmtDate, fmtDateTime } from "./components/format";
 import { ForbiddenState } from "./components/ForbiddenState";
 import { HealthSection } from "./components/HealthSection";
 import { MediaSection } from "./components/MediaSection";
 import { ModelsSection } from "./components/ModelsSection";
 import { OverviewSection } from "./components/OverviewSection";
 import { ProvidersSection } from "./components/ProvidersSection";
-import { RangePicker } from "./components/RangePicker";
+import { AdminRangePicker } from "@/components/ui/RangePicker";
 import { SectionSkeleton } from "./components/Skeletons";
 import { TokensSection } from "./components/TokensSection";
 import { UsageSection } from "./components/UsageSection";
@@ -219,7 +218,7 @@ export default function AdminPage() {
 
   // The URL hash is the single source of truth for which section renders.
   // Deep links (`/admin#tokens`) and sidebar clicks both drive it.
-  const activeId = useHashSection();
+  const activeId = useHashSection(ADMIN_SECTION_IDS, "overview");
 
   const queryClient = useQueryClient();
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["admin"] });
@@ -241,31 +240,29 @@ export default function AdminPage() {
               Retry all failed ({failedCount})
             </Button>
           )}
-          <RangePicker
+          <AdminRangePicker
             preset={preset}
             onPreset={setPreset}
-            range={dashboard.data?.range}
+            rangeLabel={
+              dashboard.data
+                ? `${fmtDate(dashboard.data.range.start)} – ${fmtDate(dashboard.data.range.end)} · ${dashboard.data.range.timezone}`
+                : undefined
+            }
             onRefresh={refresh}
             refreshing={refreshing}
             disabled={!isAdmin}
           />
         </>
       }
-      className="sticky top-0 z-20"
+      sticky
     />
   );
 
   if (forbidden) {
     return (
-      <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto scroll-smooth bg-white dark:bg-zinc-950"
-        data-testid="admin-page"
-      >
-        {pageHeader}
-        <div className="p-4">
-          <ForbiddenState onRetry={isAdmin ? refresh : undefined} />
-        </div>
-      </main>
+      <PageContainer header={pageHeader} testId="admin-page" dense>
+        <ForbiddenState onRetry={isAdmin ? refresh : undefined} />
+      </PageContainer>
     );
   }
 
@@ -347,14 +344,8 @@ export default function AdminPage() {
   }
 
   return (
-    <main
-      className="flex min-w-0 flex-1 flex-col overflow-y-auto scroll-smooth bg-white dark:bg-zinc-950"
-      data-testid="admin-page"
-    >
-      {pageHeader}
-
-      <div className="space-y-6 px-4 py-6 pb-16">
-        {(() => {
+    <PageContainer header={pageHeader} testId="admin-page" dense>
+      {(() => {
           const section = ADMIN_SECTIONS.find(({ id }) => id === activeId) ?? ADMIN_SECTIONS[0];
           return (
             <section
@@ -382,22 +373,8 @@ export default function AdminPage() {
             {dashboard.data.range.timezone} buckets
           </p>
         )}
-      </div>
-    </main>
+    </PageContainer>
   );
 }
 
-/** Active admin section from the URL hash (`/admin#tokens`), default overview. */
-function useHashSection(): AdminSectionId {
-  const subscribe = useCallback((onChange: () => void) => {
-    window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
-  }, []);
-  const getSnapshot = useCallback((): AdminSectionId => {
-    const hash = window.location.hash.slice(1);
-    return (ADMIN_SECTION_IDS as readonly string[]).includes(hash)
-      ? (hash as AdminSectionId)
-      : "overview";
-  }, []);
-  return useSyncExternalStore(subscribe, getSnapshot, () => "overview");
-}
+

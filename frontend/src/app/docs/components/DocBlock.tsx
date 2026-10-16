@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { SectionHeader } from "@/components/ui/SectionHeader";
 
 export function DocPage({ children, testId }: { children: ReactNode; testId: string }) {
   return (
@@ -26,7 +27,7 @@ export function DocSection({
       data-testid={testId}
       className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800"
     >
-      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
+      <SectionHeader title={title} />
       <div className="mt-2 flex flex-col gap-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
         {children}
       </div>

@@ -8,7 +8,6 @@ import {
   Card,
   CardContent,
   ErrorState,
-  GhostButton,
   LoadingState,
   SearchInput,
   Select,
@@ -227,7 +226,7 @@ export default function ProvidersPage() {
         ) : !selected ? (
           <div className="relative flex flex-1 items-center justify-center p-8">
             {!leftSidebarOpen && (
-              <div className="absolute top-4 left-4">
+              <div className="absolute top-4 left-4 md:hidden">
                 <Tooltip content="Show sidebar">
                   <Button
                     size="sm"
@@ -284,7 +283,7 @@ export default function ProvidersPage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-8 w-8 p-0 text-zinc-500 -ml-1 mr-1"
+                          className="h-8 w-8 p-0 text-zinc-500 -ml-1 mr-1 md:hidden"
                           onClick={() => setLeftSidebar(true)}
                           aria-label="Open sidebar"
                           data-testid="left-sidebar-toggle"
@@ -386,7 +385,7 @@ export default function ProvidersPage() {
 
                 {/* Operations Toolbar: only Validate + Refresh models */}
                 <div className="flex flex-wrap gap-2">
-                  <GhostButton
+                  <Button variant="outline"
                     size="sm"
                     className="gap-1.5 text-xs"
                     onClick={() => runValidate(selected.id)}
@@ -395,9 +394,9 @@ export default function ProvidersPage() {
                   >
                     <CheckCircle2 className="size-3.5 text-tollma-500" />
                     {busy === `validate:${selected.id}` ? "Checking…" : "Validate"}
-                  </GhostButton>
+                  </Button>
 
-                  <GhostButton
+                  <Button variant="outline"
                     size="sm"
                     className="gap-1.5 text-xs"
                     onClick={() => runDiscover(selected.id)}
@@ -411,7 +410,7 @@ export default function ProvidersPage() {
                       )}
                     />
                     {busy === `discover:${selected.id}` ? "Discovering…" : "Refresh models"}
-                  </GhostButton>
+                  </Button>
                 </div>
 
                 {discoverMsg[selected.id] && (
@@ -574,7 +573,7 @@ export default function ProvidersPage() {
                         >
                           Register
                         </Button>
-                        <GhostButton
+                        <Button variant="outline"
                           size="sm"
                           className="h-7 text-[11px]"
                           onClick={() => {
@@ -584,7 +583,7 @@ export default function ProvidersPage() {
                           data-testid={`available-details-${m.model_id}`}
                         >
                           View Details
-                        </GhostButton>
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -715,7 +714,7 @@ export default function ProvidersPage() {
                           <span className="text-[10px]">{m.is_active ? "On" : "Off"}</span>
                         </label>
 
-                        <GhostButton
+                        <Button variant="outline"
                           size="sm"
                           className="h-7 w-7 p-0"
                           onClick={() => {
@@ -726,9 +725,9 @@ export default function ProvidersPage() {
                           title="Edit Model"
                         >
                           <Pencil className="size-3" />
-                        </GhostButton>
+                        </Button>
 
-                        <GhostButton
+                        <Button variant="outline"
                           size="sm"
                           className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
                           onClick={() => setDeleteModelTarget(m)}
@@ -736,7 +735,7 @@ export default function ProvidersPage() {
                           title="Delete Model"
                         >
                           <Trash2 className="size-3" />
-                        </GhostButton>
+                        </Button>
                       </div>
                     </div>
                   ))}

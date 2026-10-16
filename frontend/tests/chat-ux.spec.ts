@@ -36,8 +36,8 @@ test.describe("Three-panel layout", () => {
     const box = await sidebar.boundingBox();
     expect(box?.width ?? 0).toBeLessThan(10);
 
-    // Reopen via the chat header affordance
-    await page.getByRole("button", { name: "Open sidebar" }).click();
+    // Reopen via the shared shell reveal rail (all pages use this control)
+    await page.getByTestId("sidebar-reveal").click();
     await page.waitForTimeout(400);
     const boxOpen = await sidebar.boundingBox();
     expect(boxOpen?.width ?? 0).toBeGreaterThan(100);

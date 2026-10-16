@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar/Sidebar";
+import { SidebarReveal } from "@/components/Sidebar/SidebarReveal";
 import { useChatStore } from "@/store/chat";
 import { useGlobalShortcuts } from "@/hooks/useShortcuts";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
@@ -28,6 +29,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen w-screen overflow-hidden bg-white text-zinc-950 antialiased dark:bg-zinc-950 dark:text-zinc-50">
       {/* Primary Navigation: context-aware left sidebar */}
       <Sidebar onOpenCommandPalette={() => setCmdOpen(true)} />
+
+      {/* Collapsed-state rail (desktop): the single shared reveal control.
+          In normal flow so it is never clipped or lost across routes. */}
+      {!leftSidebarOpen && <SidebarReveal />}
 
       {/* Off-canvas backdrop below md; tapping it closes the sidebar. */}
       {leftSidebarOpen && (

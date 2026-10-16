@@ -311,7 +311,8 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <Button
                 type="submit"
                 disabled={loginBusy}
-                className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
+                size="lg"
+                className="w-full"
                 data-testid="login-submit"
               >
                 {loginBusy ? (
@@ -476,7 +477,8 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <Button
                 type="submit"
                 disabled={signupBusy}
-                className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
+                size="lg"
+                className="w-full"
                 data-testid="signup-submit"
               >
                 {signupBusy ? (

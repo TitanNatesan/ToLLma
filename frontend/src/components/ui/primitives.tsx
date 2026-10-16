@@ -52,10 +52,8 @@ export function Button({ className, variant, size, asChild, ...props }: ButtonPr
   return <Comp className={cn(buttonVariants({ variant, size }), className)} {...props} />;
 }
 
-// Back-compat alias used across pages (outline variant).
-export function GhostButton({ className, variant = "outline", ...props }: ButtonProps) {
-  return <Button variant={variant} className={className} {...props} />;
-}
+// GhostButton was removed: it aliased the outline variant under a misleading
+// name. Use `<Button variant="outline">` explicitly.
 
 export function IconButton({ className, variant = "ghost", size = "icon", ...props }: ButtonProps) {
   return <Button variant={variant} size={size} className={cn("shrink-0", className)} {...props} />;

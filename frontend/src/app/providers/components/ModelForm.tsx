@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button, Card, CardContent, Checkbox, Field, GhostButton, Input, Select } from "@/components/ui";
+import { Button, Card, CardContent, Checkbox, Field, Input, Select } from "@/components/ui";
 import { lookupRepositoryModel } from "@/services/api";
 import type { AIModel } from "@/types";
 import { stripTrailingZeros } from "@/lib/utils";
@@ -354,9 +354,9 @@ export function ModelForm({
           >
             Save model
           </Button>
-          <GhostButton onClick={onCancel} className="text-xs">
+          <Button variant="outline" onClick={onCancel} className="text-xs">
             Cancel
-          </GhostButton>
+          </Button>
         </div>
       </CardContent>
     </Card>

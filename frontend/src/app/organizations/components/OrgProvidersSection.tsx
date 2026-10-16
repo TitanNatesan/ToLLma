@@ -6,20 +6,17 @@ import { toast } from "sonner";
 import {
   Badge, Button, Card, CardContent, Dialog, DialogContent,
   DialogDescription, DialogTitle, EmptyState, ErrorState, Field, Input,
-  LoadingState, Select, Switch, Textarea,
+  LoadingState, Switch, Textarea,
 } from "@/components/ui";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ConfirmDialog } from "./Dialogs";
 import { useOrgMutations, useOrgProviders } from "@/hooks/useOrgs";
-import { useConnectionTemplate } from "@/hooks/useCatalog";
-import { templateCredentials } from "@/services/catalog";
 import { parseApiError } from "@/lib/errors";
 import { ApiError, discoverProviderModels, validateProvider } from "@/services/api";
-import { CREDENTIAL_FIELDS, PROVIDER_TYPES, providerTypeLabel } from "@/app/providers/fields";
+import { CREDENTIAL_FIELDS, providerTypeLabel } from "@/app/providers/fields";
 import { CatalogBrowserDialog } from "@/app/providers/components/CatalogBrowser";
-import { ConnectionTemplateFields } from "@/app/providers/components/ConnectionTemplateFields";
+import { ProviderWizardModal } from "@/app/providers/components/ProviderWizardModal";
 import type { ProviderType } from "@/types";
-import type { CatalogProvider } from "@/types/catalog";
 import type { OrgProvider } from "@/types/orgs";
 
 function typeLabel(p: OrgProvider): string {
@@ -42,6 +39,19 @@ function isNotFound(e: unknown): boolean {
   return e instanceof ApiError && e.status === 404;
 }
 
+/** Credential rotation needs Providers.Update + Providers.RotateCredentials. */
+function isRotatePermError(e: unknown): boolean {
+  if (!(e instanceof ApiError) || e.status !== 403) return false;
+  try {
+    return JSON.stringify(e.data).toLowerCase().includes("rotate");
+  } catch {
+    return false;
+  }
+}
+
+const ROTATE_PERM_COPY =
+  "Credential rotation also requires the Providers.RotateCredentials permission. Ask an organization admin to grant it.";
+
 export function OrgProvidersSection({ orgId, canManage, canRead }: {
   orgId: string;
   canManage: boolean;
@@ -50,9 +60,18 @@ export function OrgProvidersSection({ orgId, canManage, canRead }: {
   const providers = useOrgProviders(orgId, { enabled: canRead });
   const mut = useOrgMutations(orgId);
   const [createOpen, setCreateOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogPrefill, setCatalogPrefill] = useState<{
+    family: ProviderType;
+    name: string;
+    slug: string;
+    baseUrl: string | null;
+  } | null>(null);
   const [deleting, setDeleting] = useState<OrgProvider | null>(null);
   const [editing, setEditing] = useState<OrgProvider | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+
+  const orgProviderNames = useMemo(() => (providers.data ?? []).map((p) => p.name), [providers.data]);
 
   async function remove() {
     if (!deleting) return;
@@ -116,9 +135,14 @@ export function OrgProvidersSection({ orgId, canManage, canRead }: {
           {providers.data ? `${providers.data.length} provider${providers.data.length === 1 ? "" : "s"}` : "Organization providers"}
         </p>
         {canManage && (
-          <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="org-prov-create-open">
-            <Building2 className="size-3.5" aria-hidden /> New provider
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="outline" onClick={() => setCatalogOpen(true)} data-testid="org-prov-browse-catalog">
+              Browse catalog
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="org-prov-create-open">
+              <Building2 className="size-3.5" aria-hidden /> New provider
+            </Button>
+          </div>
         )}
       </div>
 
@@ -202,9 +226,38 @@ export function OrgProvidersSection({ orgId, canManage, canRead }: {
       })}
 
       {createOpen && (
-        <OrgProviderCreateDialog orgId={orgId}
-          onClose={() => setCreateOpen(false)}
-          onCreated={() => setCreateOpen(false)} />
+        <ProviderWizardModal
+          key={catalogPrefill?.slug ?? catalogPrefill?.family ?? "new"}
+          open={createOpen}
+          onClose={() => {
+            setCreateOpen(false);
+            setCatalogPrefill(null);
+          }}
+          ownership={{ type: "org", orgId }}
+          existingNames={orgProviderNames}
+          initialType={catalogPrefill?.family ?? null}
+          initialName={catalogPrefill?.name ?? null}
+          catalogSlug={catalogPrefill?.slug ?? null}
+          initialBaseUrl={catalogPrefill?.baseUrl ?? null}
+        />
+      )}
+
+      {catalogOpen && (
+        <CatalogBrowserDialog
+          open={catalogOpen}
+          onClose={() => setCatalogOpen(false)}
+          onConfigure={(p, family, opts) => {
+            if (!family) return;
+            setCatalogOpen(false);
+            setCatalogPrefill({
+              family,
+              name: p.name,
+              slug: p.slug,
+              baseUrl: opts?.viaCustom ? (p.api_base_url ?? null) : null,
+            });
+            setCreateOpen(true);
+          }}
+        />
       )}
 
       {editing && (
@@ -219,148 +272,6 @@ export function OrgProvidersSection({ orgId, canManage, canRead }: {
         onClose={() => setDeleting(null)}
         onConfirm={() => remove().then(() => setDeleting(null))} />
     </div>
-  );
-}
-
-function OrgProviderCreateDialog({ orgId, onClose, onCreated }: {
-  orgId: string;
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const mut = useOrgMutations(orgId);
-  const [name, setName] = useState("");
-  const [type, setType] = useState<ProviderType>("OPENAI");
-  const [creds, setCreds] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [catalogOpen, setCatalogOpen] = useState(false);
-  const [catalogSel, setCatalogSel] = useState<CatalogProvider | null>(null);
-
-  // Metadata-driven fields when launched from the catalog (backend template
-  // with a catalog-row fallback); static per-type fields otherwise.
-  const templateQuery = useConnectionTemplate(catalogSel?.slug ?? null);
-  const template = templateQuery.data ?? null;
-  const requiredKeys: string[] = template
-    ? (template.credential_fields ?? []).filter((f) => f.required).map((f) => f.key)
-    : (CREDENTIAL_FIELDS[type] ?? []).filter(([, spec]) => !spec.optional).map(([key]) => key);
-  // Base URL default from the template (derived, never clobbers user input).
-  const submitCreds = useMemo(() => {
-    const base = template?.suggested_base_url ?? null;
-    if (!template || !base) return creds;
-    return creds.base_url ? creds : { ...creds, base_url: base };
-  }, [creds, template]);
-  const ready = requiredKeys.every((key) => (submitCreds[key] ?? "").trim() !== "");
-  const valid = name.trim().length >= 2 && ready && !busy;
-
-  function pickFromCatalog(p: CatalogProvider, family: ProviderType | null, viaCustom: boolean) {
-    if (!family) return;
-    setCatalogOpen(false);
-    setCatalogSel(p);
-    setType(family);
-    if (!name.trim()) setName(p.name);
-    const base = viaCustom ? p.api_base_url : null;
-    setCreds((prev) => (base && !prev.base_url ? { ...prev, base_url: base } : {}));
-  }
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    try {
-      // Template path: raw env-name keys -> adapter credential keys.
-      const source = template ? templateCredentials(template, submitCreds) : submitCreds;
-      const credentials = Object.fromEntries(Object.entries(source).filter(([, v]) => v !== ""));
-      await mut.createOrgProvider.mutateAsync({
-        name: name.trim(),
-        provider_type: type,
-        credentials,
-        ...(catalogSel ? { catalog_slug: catalogSel.slug } : {}),
-      });
-      toast.success(`Provider "${name.trim()}" connected.`);
-      onCreated();
-    } catch (e) {
-      setError(parseApiError(e).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(n) => { if (!n && !busy) onClose(); }}>
-      <DialogContent className="max-w-md p-4" data-testid="org-prov-dialog">
-        <DialogTitle className="text-sm font-semibold">Connect organization provider</DialogTitle>
-        <DialogDescription>
-          Shared credentials are stored encrypted and usable by every member within policy.
-        </DialogDescription>
-        <div className="mt-3 space-y-3">
-          <Field label="Provider name">
-            <Input value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Team OpenAI" maxLength={80} data-testid="org-prov-name" />
-          </Field>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-zinc-500">
-              {catalogSel ? `From catalog: /${catalogSel.slug}` : "Or pick expected credentials from the catalog"}
-            </span>
-            <Button variant="outline" size="sm" onClick={() => setCatalogOpen(true)}
-              data-testid="org-prov-browse-catalog">
-              Browse catalog
-            </Button>
-          </div>
-          <Field label="Provider type">
-            <Select value={type} onChange={(e) => {
-              setType(e.target.value as ProviderType);
-              setCreds({});
-              setCatalogSel(null);
-            }} data-testid="org-prov-type">
-              {PROVIDER_TYPES.map((t) => (
-                <option key={t} value={t}>{providerTypeLabel(t)}</option>
-              ))}
-            </Select>
-          </Field>
-          {template ? (
-            <ConnectionTemplateFields
-              template={template}
-              creds={submitCreds}
-              onChange={(k, v) => setCreds((p) => ({ ...p, [k]: v }))}
-            />
-          ) : (
-            (CREDENTIAL_FIELDS[type] ?? []).map(([key, spec]) => (
-              <Field key={key} label={spec.label + (spec.optional ? " (optional)" : "")}>
-                {spec.multiline ? (
-                  <Textarea rows={3} value={creds[key] ?? ""}
-                    onChange={(e) => setCreds((p) => ({ ...p, [key]: e.target.value }))}
-                    data-testid={`org-prov-cred-${key}`}
-                    placeholder={spec.secret ? "••••••••••••••••" : ""} />
-                ) : (
-                  <Input type={spec.secret ? "password" : "text"} value={creds[key] ?? ""}
-                    onChange={(e) => setCreds((p) => ({ ...p, [key]: e.target.value }))}
-                    data-testid={`org-prov-cred-${key}`}
-                    placeholder={spec.secret ? "••••••••••••••••" : ""} />
-                )}
-              </Field>
-            ))
-          )}
-          {error && (
-            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
-              {error}
-            </p>
-          )}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-            <Button size="sm" onClick={() => void submit()} disabled={!valid} data-testid="org-prov-submit">
-              {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />} Connect
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-      {catalogOpen && (
-        <CatalogBrowserDialog
-          open={catalogOpen}
-          onClose={() => setCatalogOpen(false)}
-          onConfigure={(p, family, opts) =>
-            pickFromCatalog(p, family, opts?.viaCustom ?? false)}
-        />
-      )}
-    </Dialog>
   );
 }
 
@@ -392,7 +303,7 @@ function OrgProviderEditDialog({ orgId, provider, onClose, onSaved }: {
       toast.success(`Provider "${name.trim()}" updated.`);
       onSaved();
     } catch (e) {
-      setError(parseApiError(e).message);
+      setError(isRotatePermError(e) ? ROTATE_PERM_COPY : parseApiError(e).message);
     } finally {
       setBusy(false);
     }

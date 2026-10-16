@@ -31,6 +31,29 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return apiRequest<T>(path, init);
 }
 
+/** Append defined params as a query string; skips undefined/null/empty values. */
+function qs(params: object): string {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === "") continue;
+    sp.set(k, String(v));
+  }
+  const q = sp.toString();
+  return q ? `?${q}` : "";
+}
+
+/** Normalize list/detail shapes: array, or an enveloped {items|data|results|entries}. */
+function asList<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  if (payload && typeof payload === "object") {
+    const rec = payload as Record<string, unknown>;
+    for (const key of ["items", "data", "results", "entries"]) {
+      if (Array.isArray(rec[key])) return rec[key] as T[];
+    }
+  }
+  return [];
+}
+
 export function permissionCatalog(): Promise<PermissionGroup[]> {
   return req<PermissionGroup[]>(`${BASE}/permissions/catalog`);
 }
@@ -62,8 +85,15 @@ export function updateOrg(id: string, payload: Record<string, unknown>): Promise
   return req<Organization>(`${BASE}/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
 }
 
-export function listMembers(orgId: string): Promise<Member[]> {
-  return req<Member[]>(`${BASE}/${orgId}/members`);
+export interface MemberQuery {
+  search?: string;
+  state?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listMembers(orgId: string, params?: MemberQuery): Promise<Member[]> {
+  return asList<Member>(await req<unknown>(`${BASE}/${orgId}/members${qs(params ?? {})}`));
 }
 
 export function removeMember(orgId: string, userId: string): Promise<void> {
@@ -95,8 +125,14 @@ export function assignSets(orgId: string, userId: string, setIds: string[]): Pro
   });
 }
 
-export function listSets(orgId: string): Promise<PermissionSet[]> {
-  return req<PermissionSet[]>(`${BASE}/${orgId}/sets`);
+export interface SetQuery {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listSets(orgId: string, params?: SetQuery): Promise<PermissionSet[]> {
+  return asList<PermissionSet>(await req<unknown>(`${BASE}/${orgId}/sets${qs(params ?? {})}`));
 }
 
 export function createSet(orgId: string, payload: {
@@ -132,9 +168,22 @@ export function inviteUser(orgId: string, email: string, setIds: string[]): Prom
   });
 }
 
-export function listInvitations(orgId: string, status?: string): Promise<Invitation[]> {
-  const q = status ? `?status=${encodeURIComponent(status)}` : "";
-  return req<Invitation[]>(`${BASE}/${orgId}/invitations${q}`);
+export interface InvitationQuery {
+  status?: string;
+  kind?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listInvitations(
+  orgId: string,
+  status?: string,
+  params?: InvitationQuery,
+): Promise<Invitation[]> {
+  return asList<Invitation>(
+    await req<unknown>(`${BASE}/${orgId}/invitations${qs({ status, ...(params ?? {}) })}`),
+  );
 }
 
 export function cancelInvitation(orgId: string, invitationId: string): Promise<void> {
@@ -170,8 +219,15 @@ export function requestJoin(orgId: string): Promise<Invitation> {
   return req<Invitation>(`${BASE}/${orgId}/requests`, { method: "POST", body: JSON.stringify({}) });
 }
 
-export function listRequests(orgId: string): Promise<Invitation[]> {
-  return req<Invitation[]>(`${BASE}/${orgId}/requests`);
+export interface RequestQuery {
+  status?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listRequests(orgId: string, params?: RequestQuery): Promise<Invitation[]> {
+  return asList<Invitation>(await req<unknown>(`${BASE}/${orgId}/requests${qs(params ?? {})}`));
 }
 
 export function approveRequest(orgId: string, invitationId: string, setIds: string[]): Promise<Member> {
@@ -188,8 +244,38 @@ export function rejectRequest(orgId: string, invitationId: string): Promise<void
   });
 }
 
-export function getAudit(orgId: string, limit = 100): Promise<AuditEntry[]> {
-  return req<AuditEntry[]>(`${BASE}/${orgId}/audit?limit=${limit}`);
+export interface AuditQuery {
+  action?: string;
+  actor?: string;
+  from?: string;
+  to?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface AuditPage {
+  entries: AuditEntry[];
+  nextCursor: string | null;
+}
+
+export async function getAudit(orgId: string, limitOrQuery: number | AuditQuery = 100): Promise<AuditEntry[]> {
+  const q = typeof limitOrQuery === "number" ? { limit: limitOrQuery } : limitOrQuery;
+  return asList<AuditEntry>(await req<unknown>(`${BASE}/${orgId}/audit${qs(q)}`));
+}
+
+/** Cursor-paged audit read; tolerates enveloped ({entries,cursor}) or bare arrays. */
+export async function getAuditPage(orgId: string, query: AuditQuery): Promise<AuditPage> {
+  const payload = await req<unknown>(`${BASE}/${orgId}/audit${qs(query)}`);
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const rec = payload as Record<string, unknown>;
+    for (const key of ["entries", "items", "data", "results"]) {
+      if (Array.isArray(rec[key])) {
+        const next = rec.next_cursor ?? rec.nextCursor ?? rec.cursor ?? null;
+        return { entries: rec[key] as AuditEntry[], nextCursor: typeof next === "string" ? next : null };
+      }
+    }
+  }
+  return { entries: asList<AuditEntry>(payload), nextCursor: null };
 }
 
 export function listNotifications(limit = 50): Promise<Notification[]> {
@@ -210,8 +296,14 @@ export function markAllNotificationsRead(): Promise<{ marked: number }> {
 
 // --- Phase B: org API keys --------------------------------------------------
 
-export function listOrgKeys(orgId: string): Promise<OrgKey[]> {
-  return req<OrgKey[]>(`${BASE}/${orgId}/keys`);
+export interface OrgKeyQuery {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listOrgKeys(orgId: string, params?: OrgKeyQuery): Promise<OrgKey[]> {
+  return asList<OrgKey>(await req<unknown>(`${BASE}/${orgId}/keys${qs(params ?? {})}`));
 }
 
 export function createOrgKey(orgId: string, payload: OrgKeyCreateInput): Promise<OrgKeySecretResponse> {
@@ -233,6 +325,19 @@ export function listOrgProviders(orgId: string): Promise<OrgProvider[]> {
 
 export function createOrgProvider(orgId: string, payload: OrgProviderCreateInput): Promise<OrgProvider> {
   return req<OrgProvider>(`${BASE}/${orgId}/providers`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Org register-with-models. Same body shape as personal register; org_id comes from the URL only.
+ * NOTE: unlike personal register (RegisterResult envelope), the org endpoint
+ * returns the provider read directly — single commit, so all models persist or nothing does. */
+export function createOrgProviderWithModels(
+  orgId: string,
+  payload: OrgProviderCreateInput,
+): Promise<OrgProvider> {
+  return req<OrgProvider>(`${BASE}/${orgId}/providers/register`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -268,8 +373,11 @@ export function updateOrgBudget(orgId: string, payload: Record<string, unknown>)
 
 // --- Phase B: org analytics -------------------------------------------------
 
-export function getOrgAnalyticsOverview(orgId: string): Promise<OrgAnalyticsOverview> {
-  return req<OrgAnalyticsOverview>(`${BASE}/${orgId}/analytics/overview`);
+export async function getOrgAnalyticsOverview(
+  orgId: string,
+  params?: import("@/types/orgs").OrgAnalyticsParams,
+): Promise<OrgAnalyticsOverview> {
+  return req<OrgAnalyticsOverview>(`${BASE}/${orgId}/analytics/overview${qs(params ?? {})}`);
 }
 
 // --- Phase B: public invitation preview (no auth required) -------------------
@@ -319,8 +427,15 @@ function asTeamList(payload: unknown): Team[] {
   return [];
 }
 
-export async function listTeams(orgId: string): Promise<Team[]> {
-  return asTeamList(await req<unknown>(`${BASE}/${orgId}/teams`));
+export interface TeamQuery {
+  include?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listTeams(orgId: string, params?: TeamQuery): Promise<Team[]> {
+  return asTeamList(await req<unknown>(`${BASE}/${orgId}/teams${qs(params ?? {})}`));
 }
 
 export function createTeam(orgId: string, payload: TeamCreateInput): Promise<Team> {

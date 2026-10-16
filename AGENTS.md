@@ -83,151 +83,23 @@ Sub-agents should execute in parallel whenever dependencies allow.
 
 # Available Sub-Agents
 
-## Architecture Agent
+Real agents live in `.opencode/agents/`. Spawn only these names (plus builtins `build`, `plan`, `general`, `explore`). Never invent agent names.
 
-Responsibilities:
+| Agent | File | Responsibilities | Produces |
+|---|---|---|---|
+| backend | `.opencode/agents/backend.md` | FastAPI implementation, business logic, service layer, providers, workers, APIs | Endpoints, services, schemas, tests |
+| frontend | `.opencode/agents/frontend.md` | Next.js implementation, shadcn/ui integration, state management, accessibility, responsive layouts | Components, pages, hooks, UI tests |
+| db | `.opencode/agents/db.md` | Schema design, migration safety, index strategy, live schema inspection | Migration reviews, ERD notes |
+| reviewer | `.opencode/agents/reviewer.md` | Correctness, security, and regression review (read-only) | Findings in severity order |
+| tester | `.opencode/agents/tester.md` | pytest, vitest, Playwright e2e (tests-only edits) | Unit tests, integration tests, E2E tests |
+| debugger | `.opencode/agents/debugger.md` | Root-cause diagnosis from logs, containers, DB state (read-only) | Root cause + minimal fix proposal |
 
-* Architecture validation
-* Domain modeling
-* Boundary definitions
-* API contracts
-* Dependency planning
-* Scalability review
+Rules:
 
-Produces:
-
-* Architecture decisions
-* Component diagrams
-* Data flow decisions
-
----
-
-## Database Agent
-
-Responsibilities:
-
-* Schema design
-* Migrations
-* Index strategy
-* Constraints
-* Data integrity
-* Query optimization
-
-Produces:
-
-* Models
-* Migrations
-* ERD updates
-
----
-
-## Backend Agent
-
-Responsibilities:
-
-* FastAPI implementation
-* Business logic
-* Service layer
-* Providers
-* Workers
-* APIs
-
-Produces:
-
-* Endpoints
-* Services
-* Schemas
-* Tests
-
----
-
-## Frontend Agent
-
-Responsibilities:
-
-* Next.js implementation
-* shadcn/ui integration
-* State management
-* Accessibility
-* Responsive layouts
-* UX improvements
-
-Produces:
-
-* Components
-* Pages
-* Hooks
-* UI tests
-
----
-
-## Security Agent
-
-Responsibilities:
-
-* Authentication review
-* Authorization review
-* Secrets handling
-* Rate limiting
-* Input validation
-* Security audit
-
-Produces:
-
-* Security findings
-* Remediation changes
-
----
-
-## QA Agent
-
-Responsibilities:
-
-* Test generation
-* Edge case analysis
-* Integration validation
-* Regression validation
-
-Produces:
-
-* Unit tests
-* Integration tests
-* E2E tests
-
----
-
-## DevOps Agent
-
-Responsibilities:
-
-* Docker
-* CI/CD
-* Environment variables
-* Infrastructure
-* Deployment validation
-
-Produces:
-
-* Docker updates
-* Workflow updates
-* Infrastructure changes
-
----
-
-## Documentation Agent
-
-Responsibilities:
-
-* Memory updates
-* API docs
-* Technical docs
-* Migration notes
-
-Produces:
-
-* Documentation
-* Changelog entries
-* Memory updates
+* backend edits `backend/**` only; frontend edits `frontend/**` only.
+* reviewer, db, and debugger never edit — they report, the orchestrator applies fixes via backend/frontend.
+* tester edits tests only — never source files to make tests pass.
+* Spawn the minimum number required; run independent agents in parallel.
 
 ---
 
@@ -256,13 +128,12 @@ Example:
 
 Feature Request
 
-├── Architecture Agent
-├── Database Agent
-├── Backend Agent
-├── Frontend Agent
-└── QA Agent
+├── db
+├── backend
+├── frontend
+└── tester
 
-Run all independent agents in parallel.
+Run all independent agents in parallel, then reviewer before finishing.
 
 ---
 
@@ -345,16 +216,56 @@ Otherwise continue autonomously.
 
 ---
 
+# Skills & MCP Routing — On Trigger Only
+
+Default to built-in tools. Load a skill or query an MCP server only when the task matches its trigger below. Never preload everything; each one costs context.
+
+## Skills (.agents/skills/)
+
+| Trigger | Skill |
+|---|---|
+| FastAPI endpoints, Pydantic models, dependencies, SSE, serving frontend | fastapi |
+| Layered FastAPI architecture (API/Service/CRUD/Model), RBAC, pagination, plugin review | fba |
+| React perf: waterfalls, bundle size, re-renders, memoization | vercel-react-best-practices |
+| Boolean-prop sprawl, compound components, reusable component APIs | vercel-composition-patterns |
+| New UI or visual direction | frontend-design |
+| UI audit: accessibility, spacing, typography, UX compliance | web-design-guidelines |
+| Generate a design system from a brief before coding | ui-ux-pro-max |
+| Cache Components adoption or instant-navigation performance | next-cache-components-adoption, next-cache-components-optimizer |
+| shadcn component usage or customization | shadcn |
+| AI SDK: generateText, streamText, useChat, tool calling | ai-sdk |
+| Unit, integration, or e2e test patterns | webapp-testing |
+| Browser-driven testing, screenshots, form automation | agent-browser (skill) |
+| "Is there a skill for X?" | find-skills |
+
+## MCP Servers (.opencode/opencode.json)
+
+| Trigger | Server |
+|---|---|
+| Codebase structure, callers, dependency questions | graphify |
+| Current library docs (Next.js, FastAPI, SQLAlchemy, Pydantic) | context7 |
+| Live Postgres schema inspection | postgres (read-only by design, local dev DB only — never prod) |
+| Git history, blame, diff beyond what shell needs | git |
+| Container inspection beyond docker compose shell | docker (always pass `service` explicitly; prefer compose shell for ps/logs) |
+| Real-browser verification, screenshots, interaction | agent-browser |
+| Multi-step reflective problem-solving | sequential-thinking |
+
+Rules:
+
+* If no trigger matches, use no skill and no MCP.
+* Skills and MCP servers stack only when each one independently matches.
+
+---
+
 # Parallel Execution Examples
 
 ## New API Feature
 
 Spawn:
 
-* Architecture Agent
-* Database Agent
-* Backend Agent
-* QA Agent
+* db
+* backend
+* tester
 
 Parallelism allowed.
 
@@ -364,9 +275,10 @@ Parallelism allowed.
 
 Spawn:
 
-* Architecture Agent
-* Frontend Agent
-* QA Agent
+* frontend
+* tester
+
+Add reviewer for visual or a11y sign-off.
 
 Parallelism allowed.
 
@@ -376,13 +288,13 @@ Parallelism allowed.
 
 Spawn:
 
-* Architecture Agent
-* Database Agent
-* Backend Agent
-* Frontend Agent
-* Security Agent
-* QA Agent
-* Documentation Agent
+* db
+* backend
+* frontend
+* tester
+* reviewer
+
+Add debugger only on failure.
 
 Run concurrently where dependencies permit.
 
@@ -392,10 +304,9 @@ Run concurrently where dependencies permit.
 
 Spawn:
 
-* Architecture Agent
-* DevOps Agent
-* Security Agent
-* QA Agent
+* debugger
+* reviewer
+* tester
 
 Run concurrently.
 

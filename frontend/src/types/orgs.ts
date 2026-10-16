@@ -31,6 +31,14 @@ export interface PermissionSet {
   is_system: boolean;
   permissions: string[];
   created_at: string;
+  updated_at?: string | null;
+  /** Contract enrichment (optional until the backend ships it). */
+  member_count?: number | null;
+  team_count?: number | null;
+  /** Snapshot-copy source: set name this was cloned from, if any. */
+  source_name?: string | null;
+  cloned_from?: string | null;
+  cloned_from_name?: string | null;
 }
 
 export interface Invitation {
@@ -48,6 +56,12 @@ export interface Invitation {
   created_at: string;
   /** Single-use secret; present only on the recipient's own queue. */
   token?: string | null;
+  updated_at?: string | null;
+  reviewed_by?: string | { name?: string | null; email?: string | null } | null;
+  reviewer_email?: string | null;
+  reviewer_name?: string | null;
+  delivery_status?: string | null;
+  last_sent_at?: string | null;
   /** Phase B enrichment (optional until the backend ships it): inviter display fields. */
   invited_by_name?: string | null;
   invited_by_email?: string | null;
@@ -61,10 +75,19 @@ export interface Invitation {
 export interface Member {
   user_id: string;
   email: string;
+  full_name?: string | null;
   is_root: boolean;
   state: string;
   permission_sets: string[];
   permissions: string[];
+  /** Contract enrichment (optional until the backend ships it). */
+  teams?: Array<{ id: string; name: string }>;
+  team_ids?: string[];
+  team_names?: string[];
+  set_ids?: string[];
+  joined_at?: string | null;
+  created_at?: string | null;
+  key_count?: number | null;
 }
 
 export interface AuditEntry {
@@ -73,6 +96,20 @@ export interface AuditEntry {
   actor_user_id: string | null;
   target: Record<string, unknown>;
   created_at: string;
+  /** Contract enrichment (optional until the backend ships it). */
+  actor_email?: string | null;
+  actor_name?: string | null;
+  actor?: string | { email?: string | null; name?: string | null } | null;
+  outcome?: string | null;
+  status?: string | null;
+  resource?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  changes?: Record<string, unknown> | null;
+  correlation_id?: string | null;
+  request_id?: string | null;
 }
 
 export interface Notification {
@@ -190,6 +227,15 @@ export interface OrgKey {
   key_prefix?: string | null;
   masked?: string | null;
   revoked?: boolean | null;
+  status?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
+  spend_usd?: number | string | null;
+  spend?: number | string | null;
+  total_spend_usd?: number | string | null;
+  last_used_at?: string | null;
+  used_at?: string | null;
+  expires_at?: string | null;
   created_at: string;
 }
 
@@ -230,6 +276,12 @@ export interface OrgProviderCreateInput {
   name: string;
   provider_type: string;
   credentials: Record<string, unknown>;
+  description?: string;
+  metadata?: Record<string, unknown>;
+  validation_status?: string;
+  validation_message?: string;
+  /** Same ModelRegister item shape the personal wizard builds via toPayload. */
+  models?: Record<string, unknown>[];
   catalog_slug?: string | null;
 }
 
@@ -265,6 +317,28 @@ export interface OrgAnalyticsRow {
   member_removed?: boolean | null;
 }
 
+/** Range/filter params for GET /orgs/{id}/analytics/overview. */
+export interface OrgAnalyticsParams {
+  from?: string;
+  to?: string;
+  team_id?: string;
+  key_id?: string;
+  provider?: string;
+  model?: string;
+  user?: string;
+}
+
+export interface OrgAnalyticsPoint {
+  t?: string;
+  timestamp?: string;
+  date?: string;
+  label?: string;
+  requests?: number | string | null;
+  spend?: number | string | null;
+  cost?: number | string | null;
+  tokens?: number | string | null;
+}
+
 /** GET /orgs/{id}/analytics/overview. Cost is null without ViewCost. */
 export interface OrgAnalyticsOverview {
   requests?: number | string | null;
@@ -283,6 +357,21 @@ export interface OrgAnalyticsOverview {
   users?: OrgAnalyticsRow[];
   by_member?: OrgAnalyticsRow[];
   members?: OrgAnalyticsRow[];
+  by_key?: OrgAnalyticsRow[];
+  keys?: OrgAnalyticsRow[];
+  /** Present only as [] — per-team attribution is unreliable, never render splits. */
+  by_team?: OrgAnalyticsRow[];
+  timeline?: OrgAnalyticsPoint[];
+  timeseries?: OrgAnalyticsPoint[];
+  daily?: OrgAnalyticsPoint[];
+  series?: OrgAnalyticsPoint[];
+  active_users?: number | string | null;
+  active_keys?: number | string | null;
+  success_rate?: number | string | null;
+  cache_hit_rate?: number | string | null;
+  range_from?: string | null;
+  range_to?: string | null;
+  range_label?: string | null;
 }
 
 export interface InvitePreviewSet {
@@ -327,8 +416,10 @@ export interface Team {
   name: string;
   description?: string | null;
   member_count: number;
+  set_count?: number | null;
   members?: TeamMember[];
   sets?: TeamSetRef[];
+  set_ids?: string[];
   /** Union of effective permission codes across assigned sets. */
   codes: string[];
   created_at: string;

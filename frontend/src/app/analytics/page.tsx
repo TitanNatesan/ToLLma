@@ -27,8 +27,10 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
+  PageContainer,
   PageHeader,
   Select,
+  StatGrid,
 } from "@/components/ui";
 import {
   AreaChart,
@@ -55,9 +57,9 @@ import { AnalyticsWidgetsPanel } from "./components/AnalyticsWidgetsPanel";
 import { fmtCompactTokens, fmtTokens } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { KpiCard, SectionCard } from "./components/KpiCard";
-import { RangePicker } from "./components/RangePicker";
+import { AnalyticsRangePicker } from "@/components/ui/RangePicker";
 import { ConversationRankList, ModelsTable, ProvidersTable } from "./components/AnalyticsTables";
-import { fmtBucket, fmtBucketFull, fmtFloat, fmtMoney, fmtMs, fmtNumber, fmtPct } from "./format";
+import { PRESET_LABELS, fmtBucket, fmtBucketFull, fmtFloat, fmtMoney, fmtMs, fmtNumber, fmtPct } from "./format";
 import type {
   AnalyticsDataset,
   AnalyticsGranularity,
@@ -186,7 +188,7 @@ export default function AnalyticsPage() {
       title="Analytics"
       subtitle="Usage, spend, tokens and performance intelligence — computed server-side."
       actions={
-        <RangePicker
+        <AnalyticsRangePicker
           preset={preset}
           onPreset={changePreset}
           customStart={customStart}
@@ -205,6 +207,7 @@ export default function AnalyticsPage() {
             breakdown.isFetching ||
             performance.isFetching
           }
+          presetLabels={PRESET_LABELS}
         />
       }
     />
@@ -212,11 +215,11 @@ export default function AnalyticsPage() {
 
   if (!ready) {
     return (
-      <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-        data-testid="analytics-page"
+      <PageContainer
+        header={pageHeader}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
       >
-        {pageHeader}
         <div className="mt-6">
           <EmptyState
             icon={Clock}
@@ -225,17 +228,17 @@ export default function AnalyticsPage() {
             testId="analytics-custom-prompt"
           />
         </div>
-      </main>
+      </PageContainer>
     );
   }
 
   if (summary.isError) {
     return (
-      <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-        data-testid="analytics-page"
+      <PageContainer
+        header={pageHeader}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
       >
-        {pageHeader}
         <div className="mt-6">
           <ErrorState
             title="Analytics unavailable"
@@ -243,35 +246,29 @@ export default function AnalyticsPage() {
             onRetry={() => void summary.refetch()}
           />
         </div>
-      </main>
+      </PageContainer>
     );
   }
 
   if (summary.isLoading || !kpi) {
     return (
-      <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-        data-testid="analytics-page"
+      <PageContainer
+        header={pageHeader}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
       >
-        {pageHeader}
         <div className="mt-10">
           <LoadingState message="Crunching your usage data…" />
         </div>
-      </main>
+      </PageContainer>
     );
   }
 
   const empty = Number(kpi.total_requests.value) === 0;
 
   return (
-    <main
-      className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-      data-testid="analytics-page"
-    >
-      {pageHeader}
-
-      <div className="mt-4 flex flex-col gap-4 pb-10">
-        {empty ? (
+    <PageContainer header={pageHeader} testId="analytics-page">
+      {empty ? (
           <SectionCard id="summary" title="No activity yet" testId="analytics-empty">
             <EmptyState
               icon={BarChart3}
@@ -310,11 +307,7 @@ export default function AnalyticsPage() {
             )}
 
             {/* KPI grid */}
-            <section
-              id="summary"
-              className="grid scroll-mt-4 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
-              data-testid="analytics-kpis"
-            >
+            <StatGrid id="summary" className="scroll-mt-4" testId="analytics-kpis">
               <KpiCard
                 label="Total spend"
                 value={fmtMoney(kpi.total_spend.value)}
@@ -388,7 +381,7 @@ export default function AnalyticsPage() {
                 icon={<Sparkles className="size-4" />}
                 testId="kpi-cache"
               />
-            </section>
+            </StatGrid>
 
             <AnalyticsWidgetsPanel widgets={widgets.data} />
 
@@ -400,23 +393,23 @@ export default function AnalyticsPage() {
               testId="analytics-section-cost"
               action={
                 <div className="flex items-center gap-1">
-                  {GRANULARITIES.map((g) => (
-                    <button
-                      key={g.value}
-                      type="button"
-                      onClick={() => changeGranularity(g.value)}
-                      aria-pressed={activeGranularity === g.value}
-                      data-testid={`granularity-${g.value}`}
-                      className={cn(
-                        "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-                        activeGranularity === g.value
-                          ? "bg-tollma-600 text-white dark:bg-tollma-500"
-                          : "text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
-                      )}
-                    >
-                      {g.label}
-                    </button>
-                  ))}
+                  {GRANULARITIES.map((g) => {
+                    const active = activeGranularity === g.value;
+                    return (
+                      <Button
+                        key={g.value}
+                        type="button"
+                        size="sm"
+                        variant={active ? "default" : "ghost"}
+                        onClick={() => changeGranularity(g.value)}
+                        aria-pressed={active}
+                        data-testid={`granularity-${g.value}`}
+                        className={active ? undefined : "text-zinc-500 dark:text-zinc-400"}
+                      >
+                        {g.label}
+                      </Button>
+                    );
+                  })}
                   {zoom && (
                     <Button variant="ghost" size="sm" className="text-xs" onClick={() => setZoom(null)} data-testid="zoom-reset">
                       Reset zoom
@@ -803,7 +796,6 @@ export default function AnalyticsPage() {
             </p>
           </>
         )}
-      </div>
-    </main>
+    </PageContainer>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as orgApi from "@/services/orgs";
+import type { OrgProviderCreateInput } from "@/types/orgs";
 
 export const ORG_KEYS = {
   list: ["orgs"],
@@ -39,32 +40,38 @@ export function useOrgSearch(q: string) {
   });
 }
 
-export function useMembers(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.members(orgId), queryFn: () => orgApi.listMembers(orgId), staleTime: 0, refetchOnWindowFocus: true });
+export function useMembers(orgId: string, params?: orgApi.MemberQuery & { enabled?: boolean }) {
+  const { enabled, ...query } = params ?? {};
+  const key = params ? [...ORG_KEYS.members(orgId), query] : ORG_KEYS.members(orgId);
+  return useQuery({ queryKey: key, queryFn: () => orgApi.listMembers(orgId, query), staleTime: 0, refetchOnWindowFocus: true, enabled: enabled ?? true });
 }
 
-export function useOrgSets(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.sets(orgId), queryFn: () => orgApi.listSets(orgId), staleTime: 0, refetchOnWindowFocus: true });
+export function useOrgSets(orgId: string, params?: orgApi.SetQuery) {
+  const key = params ? [...ORG_KEYS.sets(orgId), params] : ORG_KEYS.sets(orgId);
+  return useQuery({ queryKey: key, queryFn: () => orgApi.listSets(orgId, params), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function usePermissionCatalog() {
   return useQuery({ queryKey: ["orgs", "permission-catalog"], queryFn: orgApi.permissionCatalog });
 }
 
-export function useOrgInvitations(orgId: string) {
+export function useOrgInvitations(orgId: string, params?: orgApi.InvitationQuery) {
+  const key = params ? [...ORG_KEYS.invitations(orgId), params] : ORG_KEYS.invitations(orgId);
   return useQuery({
-    queryKey: ORG_KEYS.invitations(orgId),
-    queryFn: () => orgApi.listInvitations(orgId),
+    queryKey: key,
+    queryFn: () => orgApi.listInvitations(orgId, params?.status, params),
     staleTime: 0,
   });
 }
 
-export function useJoinRequests(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.requests(orgId), queryFn: () => orgApi.listRequests(orgId), staleTime: 0, refetchOnWindowFocus: true });
+export function useJoinRequests(orgId: string, params?: orgApi.RequestQuery) {
+  const key = params ? [...ORG_KEYS.requests(orgId), params] : ORG_KEYS.requests(orgId);
+  return useQuery({ queryKey: key, queryFn: () => orgApi.listRequests(orgId, params), staleTime: 0, refetchOnWindowFocus: true });
 }
 
-export function useOrgAudit(orgId: string) {
-  return useQuery({ queryKey: ORG_KEYS.audit(orgId), queryFn: () => orgApi.getAudit(orgId), staleTime: 0, refetchOnWindowFocus: true });
+export function useOrgAudit(orgId: string, params?: orgApi.AuditQuery) {
+  const key = params ? [...ORG_KEYS.audit(orgId), params] : ORG_KEYS.audit(orgId);
+  return useQuery({ queryKey: key, queryFn: () => orgApi.getAudit(orgId, params ?? 100), staleTime: 0, refetchOnWindowFocus: true });
 }
 
 export function useMyInvitations() {
@@ -104,10 +111,11 @@ function invalidateOrg(qc: ReturnType<typeof useQueryClient>, orgId?: string) {
 }
 
 /** Phase B: org API keys (defensive: 404 while the backend lands → empty states). */
-export function useOrgKeys(orgId: string, options?: { enabled?: boolean }) {
+export function useOrgKeys(orgId: string, options?: { enabled?: boolean; params?: orgApi.OrgKeyQuery }) {
+  const key = options?.params ? [...ORG_KEYS.keys(orgId), options.params] : ORG_KEYS.keys(orgId);
   return useQuery({
-    queryKey: ORG_KEYS.keys(orgId),
-    queryFn: () => orgApi.listOrgKeys(orgId),
+    queryKey: key,
+    queryFn: () => orgApi.listOrgKeys(orgId, options?.params),
     staleTime: 0,
     refetchOnWindowFocus: true,
     retry: false,
@@ -140,10 +148,16 @@ export function useOrgBudget(orgId: string, options?: { enabled?: boolean }) {
 }
 
 /** Phase B: org analytics overview (ViewUsage; cost null without ViewCost). */
-export function useOrgAnalyticsOverview(orgId: string, options?: { enabled?: boolean }) {
+export function useOrgAnalyticsOverview(
+  orgId: string,
+  options?: { enabled?: boolean; params?: import("@/types/orgs").OrgAnalyticsParams },
+) {
+  const key = options?.params
+    ? [...ORG_KEYS.analyticsOverview(orgId), options.params]
+    : ORG_KEYS.analyticsOverview(orgId);
   return useQuery({
-    queryKey: ORG_KEYS.analyticsOverview(orgId),
-    queryFn: () => orgApi.getOrgAnalyticsOverview(orgId),
+    queryKey: key,
+    queryFn: () => orgApi.getOrgAnalyticsOverview(orgId, options?.params),
     staleTime: 0,
     refetchOnWindowFocus: true,
     retry: false,
@@ -187,10 +201,11 @@ export function useRejectInviteNew() {
 }
 
 /** Teams list (defensive: 404 while the backend lands → honest empty states). */
-export function useTeams(orgId: string, options?: { enabled?: boolean }) {
+export function useTeams(orgId: string, options?: { enabled?: boolean; params?: orgApi.TeamQuery }) {
+  const key = options?.params ? [...ORG_KEYS.teams(orgId), options.params] : ORG_KEYS.teams(orgId);
   return useQuery({
-    queryKey: ORG_KEYS.teams(orgId),
-    queryFn: () => orgApi.listTeams(orgId),
+    queryKey: key,
+    queryFn: () => orgApi.listTeams(orgId, options?.params),
     staleTime: 0,
     refetchOnWindowFocus: true,
     retry: false,
@@ -341,8 +356,13 @@ export function useOrgMutations(orgId?: string) {
       onSuccess: () => inv(),
     }),
     createOrgProvider: useMutation({
-      mutationFn: (p: { name: string; provider_type: string; credentials: Record<string, unknown> }) =>
+      mutationFn: (p: OrgProviderCreateInput) =>
         orgApi.createOrgProvider(orgId ?? "", p),
+      onSuccess: () => inv(),
+    }),
+    createOrgProviderWithModels: useMutation({
+      mutationFn: (p: OrgProviderCreateInput) =>
+        orgApi.createOrgProviderWithModels(orgId ?? "", p),
       onSuccess: () => inv(),
     }),
     deleteOrgProvider: useMutation({

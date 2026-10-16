@@ -5,13 +5,11 @@ import { useParams, usePathname, useSearchParams } from "next/navigation";
 import {
   BarChart3,
   Building2,
-  Inbox,
-  KeyRound,
   LayoutDashboard,
   ScrollText,
   Settings,
+  Settings2,
   ShieldCheck,
-  Ticket,
   Users,
   UsersRound,
   Wallet,
@@ -21,8 +19,10 @@ import { cn } from "@/lib/utils";
 import { useOrgs } from "@/hooks/useOrgs";
 
 export type OrgSection =
-  | "overview" | "members" | "teams" | "sets" | "providers" | "keys"
-  | "budgets" | "requests" | "invitations" | "analytics" | "audit" | "settings";
+  | "overview" | "members" | "teams" | "sets" | "providers" | "operations"
+  | "budgets" | "analytics" | "audit" | "settings"
+  // Legacy sections: no nav item; the page redirects them to operations+tab.
+  | "keys" | "requests" | "invitations";
 
 interface Item {
   id: OrgSection;
@@ -38,10 +38,8 @@ const ITEMS: Item[] = [
   { id: "teams", label: "Teams", icon: UsersRound },
   { id: "sets", label: "Permission Sets", icon: ShieldCheck },
   { id: "providers", label: "Providers", icon: Building2 },
-  { id: "keys", label: "Keys", icon: KeyRound },
+  { id: "operations", label: "Operations", icon: Settings2 },
   { id: "budgets", label: "Budgets", icon: Wallet },
-  { id: "requests", label: "Requests", icon: Inbox },
-  { id: "invitations", label: "Invitations", icon: Ticket },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "audit", label: "Audit", icon: ScrollText },
   { id: "settings", label: "Settings", icon: Settings },

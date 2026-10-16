@@ -10,7 +10,6 @@ import {
   Dialog,
   DialogContent,
   Field,
-  GhostButton,
   Input,
   Select,
   Textarea,
@@ -33,10 +32,12 @@ import { useConnectionTemplate } from "@/hooks/useCatalog";
 import { templateCredentials } from "@/services/catalog";
 import { useChatStore } from "@/store/chat";
 import {
+  ApiError,
   draftValidateProvider,
   mapDiscoveredModels,
   registerProvider,
 } from "@/services/api";
+import { createOrgProviderWithModels } from "@/services/orgs";
 import type {
   DraftValidation,
   MappedModel,
@@ -77,6 +78,18 @@ interface ProviderWizardModalProps {
   catalogSlug?: string | null;
   /** Base URL prefill for catalog-only entries configured via Custom. */
   initialBaseUrl?: string | null;
+  /**
+   * Ownership scope. Defaults to personal (existing callers untouched).
+   * Org mode switches only the register transport + name-taken list; the
+   * validation gate, mapping, and model forms stay scope-agnostic.
+   */
+  ownership?: { type: "personal" } | { type: "org"; orgId: string };
+  /**
+   * Known provider names for the duplicate-name check. Org callers pass the
+   * org provider names so the wizard stays decoupled from org hooks; when
+   * omitted the personal provider list is used.
+   */
+  existingNames?: string[];
 }
 
 const PROVIDER_METAS: Record<
@@ -376,25 +389,30 @@ export function ProviderWizardModal({
   initialName,
   catalogSlug,
   initialBaseUrl,
+  ownership,
+  existingNames,
 }: ProviderWizardModalProps) {
   const { data: providers = [] } = useProviders();
   const pm = useProviderMutations();
   const queryClient = useQueryClient();
   const { setSelectedProviderId } = useChatStore();
   const isEditing = !!editingProvider;
+  // Org runs never touch the personal draft (shared localStorage key) or the
+  // personal provider list — scope switches transport + names only.
+  const orgId = ownership?.type === "org" ? ownership.orgId : null;
 
   // Fresh mount per open (parent remounts via key): initializers restore the draft.
   const [step, setStep] = useState(() => {
-    if (isEditing) return 1;
+    if (isEditing || orgId) return 1;
     const d = loadDraft();
     return d?.step && d.step <= 2 ? d.step : 1;
   });
-  const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (initialName ?? loadDraft()?.name ?? "")));
+  const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (initialName ?? (orgId ? "" : (loadDraft()?.name ?? "")))));
   const [type, setType] = useState<ProviderType>(() =>
-    isEditing ? (editingProvider?.provider_type ?? "OPENAI") : (initialType ?? loadDraft()?.type ?? "OPENAI"),
+    isEditing ? (editingProvider?.provider_type ?? "OPENAI") : (initialType ?? (orgId ? "OPENAI" : (loadDraft()?.type ?? "OPENAI"))),
   );
-  const [description, setDescription] = useState(() => (isEditing ? "" : (loadDraft()?.description ?? "")));
-  const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing ? {} : (loadDraft()?.creds ?? {})));
+  const [description, setDescription] = useState(() => (isEditing || orgId ? "" : (loadDraft()?.description ?? "")));
+  const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing || orgId ? {} : (loadDraft()?.creds ?? {})));
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState<DraftValidation | null>(null);
@@ -422,14 +440,15 @@ export function ProviderWizardModal({
   }, [creds, template, suggestedBaseUrl]);
 
   // Auto-save draft progress (steps 1-2 carry the draft; nothing persisted server-side).
+  // Personal only: org runs must not read or write the shared draft key.
   useEffect(() => {
-    if (!open || isEditing || step > 2) return;
+    if (!open || isEditing || orgId || step > 2) return;
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, type, description, creds, step }));
     } catch {
       /* storage full/blocked: draft stays in memory */
     }
-  }, [open, isEditing, name, type, description, creds, step]);
+  }, [open, isEditing, orgId, name, type, description, creds, step]);
 
   async function runMapping() {
     if (!validation?.valid || mapping) return;
@@ -479,7 +498,8 @@ export function ProviderWizardModal({
     }
   }
 
-  const nameTaken = providers.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+  const knownNames = existingNames ?? providers.map((p) => p.name);
+  const nameTaken = knownNames.some((p) => p.toLowerCase() === name.trim().toLowerCase());
   const requiredCreds = (CREDENTIAL_FIELDS[type] ?? []).filter(([, spec]) => !spec.optional);
   const staticCredsReady = requiredCreds.every(([key]) => (creds[key] ?? "").trim() !== "");
   const templateCredsReady = (template?.credential_fields ?? [])
@@ -632,7 +652,7 @@ export function ProviderWizardModal({
         );
         return { ...rest, repository_match: matchById[id].repository_match };
       });
-      const res = await registerProvider({
+      const payload = {
         name: name.trim(),
         provider_type: type,
         description: description.trim() || undefined,
@@ -640,20 +660,51 @@ export function ProviderWizardModal({
         validation_status: "valid",
         validation_message: validation?.message ?? "validated in wizard",
         models,
-      });
+        ...(catalogSlug ? { catalog_slug: catalogSlug } : {}),
+      };
+      // Same payload both scopes; only the transport differs (org_id from URL).
+      // No silent fallback: a 404 on the org endpoint surfaces honestly below.
+      let savedProvider: Provider;
+      let modelsCreated: number;
+      if (orgId) {
+        // Org endpoint returns the provider read directly (not the
+        // RegisterResult envelope); single-commit means the sent models all
+        // persisted or nothing did, so the local count is exact.
+        const r = await createOrgProviderWithModels(orgId, payload);
+        savedProvider = r as unknown as Provider;
+        modelsCreated = models.length;
+      } else {
+        const r = await registerProvider(payload);
+        savedProvider = r.provider;
+        modelsCreated = r.models_created;
+      }
       try {
         localStorage.removeItem(DRAFT_KEY);
       } catch {
         /* ignore */
       }
-      await queryClient.invalidateQueries({ queryKey: ["providers"] });
-      await queryClient.invalidateQueries({ queryKey: ["models"] });
-      setSelectedProviderId(res.provider.id);
-      toast.success(`Provider registered with ${res.models_created} models`);
-      onSaved?.(res.provider, `${res.models_created} models registered`);
+      if (orgId) {
+        await queryClient.invalidateQueries({ queryKey: ["orgs", orgId, "providers"] });
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ["providers"] });
+        await queryClient.invalidateQueries({ queryKey: ["models"] });
+        setSelectedProviderId(savedProvider.id);
+      }
+      toast.success(
+        orgId
+          ? `Provider connected with ${modelsCreated} models`
+          : `Provider registered with ${modelsCreated} models`,
+      );
+      onSaved?.(savedProvider, `${modelsCreated} models registered`);
       onClose();
     } catch (e) {
-      toast.error("Registration failed", { description: e instanceof Error ? e.message : "Error" });
+      if (e instanceof ApiError && e.status === 404 && orgId) {
+        toast.error("Organization registration unavailable", {
+          description: "The organization provider service is still rolling out. Personal providers keep working.",
+        });
+      } else {
+        toast.error("Registration failed", { description: e instanceof Error ? e.message : "Error" });
+      }
     } finally {
       setBusy(false);
     }
@@ -689,7 +740,9 @@ export function ProviderWizardModal({
                 <p className="text-xs text-zinc-500 mt-0.5">
                   {isEditing
                     ? "Update provider settings"
-                    : "Provider is only registered after step 5 — nothing is saved before that"}
+                    : orgId
+                      ? "Provider is only connected after step 5 — nothing is saved before that"
+                      : "Provider is only registered after step 5 — nothing is saved before that"}
                 </p>
               </div>
               {!isEditing && (
@@ -1233,9 +1286,9 @@ export function ProviderWizardModal({
           </div>
 
           <div className="border-t border-zinc-200 px-6 py-3 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-between">
-            <GhostButton onClick={close} type="button">
+            <Button variant="outline" onClick={close} type="button">
               {step === 5 && !isEditing ? "Close" : "Cancel"}
-            </GhostButton>
+            </Button>
             <div className="flex items-center gap-2">
               {!isEditing && step > 1 && (
                 <Button variant="ghost" onClick={() => setStep((s) => Math.max(1, s - 1))} data-testid="wiz-back" className="gap-1">
@@ -1265,7 +1318,7 @@ export function ProviderWizardModal({
               {!isEditing && step === 5 && (
                 <Button onClick={() => void handleRegister()} disabled={busy || selected.size === 0} data-testid="wiz-register" className="gap-1.5">
                   {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Layers className="size-3.5" />}
-                  Register {selected.size} model{selected.size === 1 ? "" : "s"}
+                  {orgId ? "Connect" : "Register"} {selected.size} model{selected.size === 1 ? "" : "s"}
                 </Button>
               )}
             </div>

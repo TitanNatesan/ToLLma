@@ -10,6 +10,7 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
+  PageContainer,
   PageHeader,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -148,10 +149,9 @@ export default function ApiKeysPage() {
   const closeDelete = useCallback(() => setDeleteTarget(null), []);
 
   return (
-    <main
-      className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-zinc-950"
-      data-testid="api-keys-page"
-    >
+    <>
+    <PageContainer
+      header={
       <PageHeader
         title="API Keys"
         subtitle="Programmatic access to the ToLLma gateway — scoped, rate-limited and auditable."
@@ -180,8 +180,9 @@ export default function ApiKeysPage() {
           </>
         }
       />
-
-      <div className="flex min-w-0 flex-1 flex-col gap-4 p-4">
+      }
+      testId="api-keys-page"
+    >
         {keysQuery.isPending && <LoadingState message="Loading API keys…" className="py-16" />}
 
         {!keysQuery.isPending && keysQuery.error && isApiKeyStatus(keysQuery.error, 403) && (
@@ -229,7 +230,7 @@ export default function ApiKeysPage() {
             onOpenDetails={openDetails}
           />
         )}
-      </div>
+    </PageContainer>
 
       {createOpen && (
         <KeyForm mode="create" onClose={closeCreate} onCreate={handleCreate} />
@@ -276,6 +277,6 @@ export default function ApiKeysPage() {
           onClose={() => setSecret(null)}
         />
       )}
-    </main>
+    </>
   );
 }

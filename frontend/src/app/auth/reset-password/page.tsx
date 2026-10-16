@@ -216,9 +216,10 @@ export default function ResetPasswordPage() {
         )}
 
         <Button
-          className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
+          className="w-full"
           data-testid="reset-submit"
           disabled={busy || password.length === 0 || confirm.length === 0}
+          size="lg"
           type="submit"
         >
           {busy ? (

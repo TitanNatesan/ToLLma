@@ -17,6 +17,36 @@ from tollms.services.observability.events import emit
 logger = logging.getLogger(__name__)
 
 
+def _require_org_perm(db: Session, provider: Provider, user_id: uuid.UUID | None, code: str) -> None:
+    """Org-provider write gate for the generic model endpoints (404 oracle).
+
+    Same gate as providers.service._require_org_provider_perm (lazy import:
+    orgs/service.py composes providers/service.py, so a top-level import
+    would cycle). Personal providers (org_id NULL) and unscoped internal
+    calls (user_id None) pass through unchanged.
+    """
+    if provider is None or provider.org_id is None or user_id is None:
+        return
+    from tollms.api.orgs import service as org_service
+
+    org, mem = org_service._member_org(db, provider.org_id, user_id)
+    org_service._require_perm(db, org, mem, user_id, code)
+
+
+def _audit_org_model(db: Session, provider: Provider, user_id: uuid.UUID | None,
+                     model_id: uuid.UUID) -> bool:
+    """Provider-scoped model.created org audit. Returns True when a row was
+    staged (the caller commits it: same commit for commit=True, outer commit
+    for commit=False register loops)."""
+    if provider.org_id is None or user_id is None:
+        return False
+    from tollms.api.orgs import service as org_service
+
+    org_service._audit(db, provider.org_id, user_id, "model.created",
+                       provider_id=str(provider.id), model_id=str(model_id))
+    return True
+
+
 def _owned_provider_ids(db: Session, user_id: uuid.UUID | None) -> set[uuid.UUID] | None:
     if user_id is None:
         return None
@@ -110,7 +140,8 @@ def create_model(
     commit: bool = True,
     user_id: uuid.UUID | None = None,
 ) -> AIModel:
-    get_provider(db, data.provider_id, user_id)  # validates provider exists and is owned
+    provider = get_provider(db, data.provider_id, user_id)  # validates provider exists and is owned
+    _require_org_perm(db, provider, user_id, "Providers.Create")
     payload = data.model_dump()
     metadata = payload.pop("metadata")
     # Endpoint-aware: primary_endpoint/supported_endpoints are the truth;
@@ -150,6 +181,9 @@ def create_model(
         db.refresh(model)
     else:
         db.flush()
+    if _audit_org_model(db, provider, user_id, model.id) and commit:
+        db.commit()
+        db.refresh(model)
     logger.info("model created: %s (%s)", model.id, model.model_id)
     return model
 
@@ -158,6 +192,7 @@ def update_model(
     db: Session, model_id: uuid.UUID, data: ModelUpdate, user_id: uuid.UUID | None = None
 ) -> AIModel:
     model = get_model(db, model_id, user_id)
+    _require_org_perm(db, db.get(Provider, model.provider_id), user_id, "Providers.Update")
     changes = data.model_dump(exclude_unset=True)
     if changes.keys() & {"endpoint_type", "primary_endpoint", "supported_endpoints"}:
         enum, primary, endpoints = normalize_endpoints(
@@ -181,6 +216,7 @@ def update_model(
 
 def delete_model(db: Session, model_id: uuid.UUID, user_id: uuid.UUID | None = None) -> None:
     model = get_model(db, model_id, user_id)
+    _require_org_perm(db, db.get(Provider, model.provider_id), user_id, "Providers.Delete")
     model.is_deleted = True
     model.deleted_at = datetime.now(timezone.utc)
     model.is_active = False

@@ -12,7 +12,8 @@ from sqlalchemy import select
 
 from tollms.main import app
 from tollms.models.api_key import ApiKey, ApiRequestLog
-from tollms.models.organization import Invitation
+from tollms.models.organization import AuditLog, Invitation
+from tollms.models.provider import Provider
 from tollms.models.request_log import RequestLog
 from tollms.services.api_keys import keys as key_engine
 from tollms.api.public_gateway import service as gateway_service
@@ -654,3 +655,200 @@ def test_org_analytics_counts_only_successful_requests(
     assert body["totals"]["tokens"] == 100
     assert all(r["requests"] == 1 for r in body["by_user"])
     assert "probed-model" not in str(body["by_model"])
+
+
+# --- org provider register (atomic wizard) + model perm gates ---------------------
+
+
+def _reg_payload(name: str = "OrgWiz", **kw) -> dict:
+    payload = {
+        "name": name, "provider_type": "CUSTOM",
+        "description": "wizard",
+        "credentials": {"base_url": "http://mock"},
+        "validation_status": "valid",
+        "validation_message": "credentials valid",
+        "models": [
+            {"model_id": "m1", "name": "M1", "endpoint_type": "chat_completions"},
+            {"model_id": "m2", "name": "M2", "endpoint_type": "chat_completions",
+             "input_price": "2.5", "output_price": "10"},
+        ],
+    }
+    payload.update(kw)
+    return payload
+
+
+def _audit_row(db, oid: str, action: str):
+    db.expire_all()
+    return db.scalar(select(AuditLog).where(
+        AuditLog.org_id == uuid.UUID(oid), AuditLog.action == action))
+
+
+def test_org_provider_register_atomic_happy(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+
+    r = client.post(f"{ORG}/{oid}/providers/register", json=_reg_payload())
+    assert r.status_code == 201, r.text
+    body = r.json()
+    pid = body["id"]
+    assert body["validation_status"] == "valid"
+    assert body["validation_message"] == "credentials valid"
+    assert body["last_validated_at"] is not None
+    assert "credentials_encrypted" not in str(body)
+
+    # Provider row is org-scoped with the caller kept as audit-only user_id.
+    row = db.get(Provider, uuid.UUID(pid))
+    assert row.org_id == uuid.UUID(oid) and row.user_id == uuid.UUID(root_id)
+
+    models = client.get("/api/v1/models", params={"provider_id": pid}).json()
+    assert sorted(m["model_id"] for m in models) == ["m1", "m2"]
+
+    audit = _audit_row(db, oid, "provider.created")
+    assert audit is not None
+    assert audit.target["provider_id"] == pid and audit.target["models_created"] == 2
+
+    # Org-scoped uniqueness: same name rejected, nothing extra persisted.
+    dup = client.post(f"{ORG}/{oid}/providers/register", json=_reg_payload())
+    assert dup.status_code == 422, dup.text
+    assert len(client.get(f"{ORG}/{oid}/providers").json()) == 1
+    assert len(client.get("/api/v1/models", params={"provider_id": pid}).json()) == 2
+
+
+def test_org_register_name_scopes_independent(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    oid = _mkorg(client)["id"]
+
+    personal = client.post("/api/v1/providers", json={
+        "name": "Shared", "provider_type": "CUSTOM",
+        "credentials": {"base_url": "http://mock"}})
+    assert personal.status_code == 201, personal.text
+
+    org = client.post(f"{ORG}/{oid}/providers/register",
+                      json=_reg_payload(name="Shared", models=[]))
+    assert org.status_code == 201, org.text
+    assert uuid.UUID(org.json()["id"]) != uuid.UUID(personal.json()["id"])
+
+    again = client.post("/api/v1/providers", json={
+        "name": "OrgWiz", "provider_type": "CUSTOM",
+        "credentials": {"base_url": "http://mock"}})
+    assert again.status_code == 201, again.text
+
+
+def test_org_register_requires_create_perm(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    oid = _mkorg(client)["id"]
+    sub = _mkuser("noprovcreate")
+    _invite_and_accept(client, sub, db, oid, [_member_set_id(client, oid)])
+
+    # Member without Providers.Create gets the 404 oracle (never 403).
+    r = sub.post(f"{ORG}/{oid}/providers/register", json=_reg_payload())
+    assert r.status_code == 404, r.text
+    assert client.get(f"{ORG}/{oid}/providers").json() == []
+
+
+def test_org_register_cross_org_and_body_org_id(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    oid_a = _mkorg(client, "RegA")["id"]
+    other = _mkuser("crossreg")
+    oid_b = _mkorg(other, "RegB")["id"]
+
+    # Strangers (non-members) get 404 in both directions.
+    assert client.post(f"{ORG}/{oid_b}/providers/register",
+                       json=_reg_payload()).status_code == 404
+    assert other.post(f"{ORG}/{oid_a}/providers/register",
+                      json=_reg_payload()).status_code == 404
+
+    # A perm-holding member of A posting into B is still 404.
+    full = _make_set(client, oid_a, "ProvFull",
+                     ["Providers.Create", "Providers.Read", "Providers.Update", "Providers.Delete"])
+    sub = _mkuser("crossmember")
+    _invite_and_accept(client, sub, db, oid_a, [full])
+    assert sub.post(f"{ORG}/{oid_b}/providers/register",
+                    json=_reg_payload()).status_code == 404
+
+    # org_id smuggled in the body is rejected (422); the path owns the scope.
+    bad = _reg_payload()
+    bad["org_id"] = oid_a
+    r = client.post(f"{ORG}/{oid_a}/providers/register", json=bad)
+    assert r.status_code == 422, r.text
+    assert client.get(f"{ORG}/{oid_a}/providers").json() == []
+
+
+def test_org_register_invalid_model_atomic(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    oid = _mkorg(client)["id"]
+
+    bad = _reg_payload()
+    bad["models"] = [{"model_id": "", "name": "Bad", "endpoint_type": "chat_completions"}]
+    r = client.post(f"{ORG}/{oid}/providers/register", json=bad)
+    assert r.status_code == 422, r.text
+    assert client.get(f"{ORG}/{oid}/providers").json() == []
+    assert client.get("/api/v1/models").json() == []
+
+
+def test_org_model_perm_gates(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    oid = _mkorg(client)["id"]
+    full = _make_set(client, oid, "ProvFull",
+                     ["Providers.Create", "Providers.Read", "Providers.Update", "Providers.Delete"])
+    bare = _mkuser("baremodel")
+    empowered = _mkuser("fullmodel")
+    _invite_and_accept(client, bare, db, oid, [_member_set_id(client, oid)])
+    _invite_and_accept(client, empowered, db, oid, [full])
+
+    prov = client.post(f"{ORG}/{oid}/providers", json={
+        "name": "Gated", "provider_type": "CUSTOM",
+        "credentials": {"base_url": "http://mock"}})
+    assert prov.status_code == 201, prov.text
+    pid = prov.json()["id"]
+
+    seed = client.post("/api/v1/models", json={
+        "provider_id": pid, "model_id": "seed", "name": "Seed",
+        "endpoint_type": "chat_completions"})
+    assert seed.status_code == 201, seed.text
+    mid = seed.json()["id"]
+
+    payload = {"provider_id": pid, "model_id": "x", "name": "X",
+               "endpoint_type": "chat_completions"}
+    # Visible but perm-less: all three ops are 404.
+    assert bare.post("/api/v1/models", json=payload).status_code == 404
+    assert bare.patch(f"/api/v1/models/{mid}", json={"name": "Nope"}).status_code == 404
+    assert bare.delete(f"/api/v1/models/{mid}").status_code == 404
+    assert client.get(f"/api/v1/models/{mid}").status_code == 200
+
+    # Perm-holding member: all three ops succeed.
+    created = empowered.post("/api/v1/models", json=payload)
+    assert created.status_code == 201, created.text
+    assert empowered.patch(f"/api/v1/models/{mid}", json={"name": "Renamed"}).status_code == 200
+    assert empowered.delete(f"/api/v1/models/{created.json()['id']}").status_code == 204
+
+    audit = _audit_row(db, oid, "model.created")
+    assert audit is not None and audit.target["provider_id"] == pid
+
+
+def test_org_provider_rotate_creds_perm(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    oid = _mkorg(client)["id"]
+    updater = _make_set(client, oid, "Updater", ["Providers.Read", "Providers.Update"])
+    rotator = _make_set(client, oid, "Rotator",
+                        ["Providers.Read", "Providers.Update", "Providers.RotateCredentials"])
+    sub = _mkuser("rotator")
+    sub_id = _me(sub)["id"]
+    _invite_and_accept(client, sub, db, oid, [updater])
+
+    prov = client.post(f"{ORG}/{oid}/providers", json={
+        "name": "Rot", "provider_type": "CUSTOM",
+        "credentials": {"base_url": "http://mock"}})
+    assert prov.status_code == 201, prov.text
+    pid = prov.json()["id"]
+
+    # Update without RotateCredentials: credential rotation is 404, rename works.
+    creds = {"credentials": {"base_url": "http://mock", "api_key": "new"}}
+    assert sub.patch(f"{ORG}/{oid}/providers/{pid}", json=creds).status_code == 404
+    assert sub.patch(f"{ORG}/{oid}/providers/{pid}", json={"name": "Rot2"}).status_code == 200
+
+    # Granting RotateCredentials unlocks rotation.
+    grant = client.post(f"{ORG}/{oid}/members/{sub_id}/sets", json={"set_ids": [rotator]})
+    assert grant.status_code == 200, grant.text
+    assert sub.patch(f"{ORG}/{oid}/providers/{pid}", json=creds).status_code == 200
