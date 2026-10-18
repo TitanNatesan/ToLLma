@@ -64,6 +64,10 @@ class RepositoryModelRead(BaseModel):
     video_input_cost: Decimal | None
     video_output_cost: Decimal | None
     reasoning_cost: Decimal | None
+    # Normalized catalog links (models.json). NULL when unlinked.
+    canonical_id: str | None = None
+    reasoning_options: list[dict[str, Any]] | None = None
+    extra_cost: dict[str, Any] | None = None
     # Media rate card (official per-image / per-second prices).
     image_low_price: Decimal | None = None
     image_medium_price: Decimal | None = None
@@ -122,3 +126,34 @@ class SyncRunRead(BaseModel):
     error_details: list[str]
 
     model_config = {"from_attributes": True}
+
+
+
+class CanonicalModelRead(BaseModel):
+    id: uuid.UUID
+    canonical_id: str
+    name: str
+    description: str | None = None
+    family: str | None = None
+    release_date: date | None = None
+    last_updated: date | None = None
+    open_weights: bool | None = None
+    knowledge: str | None = None
+    # `metadata` is reserved on SQLAlchemy models; the column attr is `metadata_`.
+    metadata_: dict[str, Any] = Field(alias="metadata")
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class CanonicalModelPage(BaseModel):
+    items: list[CanonicalModelRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class CanonicalDetailRead(BaseModel):
+    canonical: CanonicalModelRead
+    offerings: list[RepositoryModelRead] = Field(default_factory=list)

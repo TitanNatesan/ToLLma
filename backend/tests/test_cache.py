@@ -203,7 +203,7 @@ def test_sync_invalidates_repository_cache(db: Session) -> None:
     assert find_for_model(db, "OPENAI", "mock-y") is not None
     assert _run(get_manager().exists(cache_keys.repository_match("OPENAI", "mock-y"))) is True
 
-    run = repository_service.run_sync(db, litellm_data={}, openrouter_data={}, modelsdev_data={})
+    run = repository_service.run_sync(db, modelsdev_data={})
     assert run.status == "done"
     assert _run(get_manager().exists(cache_keys.repository_match("OPENAI", "mock-y"))) is False
 
@@ -214,7 +214,7 @@ def test_sync_busy_returns_422(db: Session) -> None:
     assert token is not None
     try:
         with pytest.raises(ValidationError, match="already running"):
-            repository_service.run_sync(db, litellm_data={}, openrouter_data={}, modelsdev_data={})
+            repository_service.run_sync(db, modelsdev_data={})
     finally:
         assert _run(cache_locks.release(cache_keys.LOCK_REPO_SYNC, token)) is True
 

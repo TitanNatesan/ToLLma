@@ -298,6 +298,14 @@ export default function ProvidersPage() {
                     <Badge variant="outline" className="text-xs">
                       {providerTypeLabel(selected.provider_type)}
                     </Badge>
+                    <Badge
+                      variant="secondary"
+                      className="text-xs"
+                      data-testid="provider-scope-personal"
+                      title="Personal providers are visible only to you"
+                    >
+                      Personal
+                    </Badge>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Button

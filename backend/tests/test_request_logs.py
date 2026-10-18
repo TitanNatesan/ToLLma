@@ -28,10 +28,11 @@ def test_non_streaming_chat_writes_request_log(
             return ChatResult(text="hello world", prompt_tokens=10, completion_tokens=5, total_tokens=15)
 
     monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: FakeAdapter())
+    key_id = client.get("/api/v1/chat/keys").json()[0]["id"]
 
     r = client.post(
         "/api/v1/gateway/chat",
-        json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi"},
+        json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi", "key_id": key_id},
     )
     assert r.status_code == 200, r.text
     message_id = r.json()["message_id"]
@@ -68,11 +69,12 @@ def test_request_log_summary_aggregates(db: Session, client, user_factory, provi
             return ChatResult(text="ok", prompt_tokens=100, completion_tokens=50, total_tokens=150)
 
     monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: FakeAdapter())
+    key_id = client.get("/api/v1/chat/keys").json()[0]["id"]
 
     for _ in range(2):
         r = client.post(
             "/api/v1/gateway/chat",
-            json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi"},
+            json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi", "key_id": key_id},
         )
         assert r.status_code == 200, r.text
 
@@ -108,9 +110,10 @@ def test_request_log_filters(client, user_factory, provider_factory, model_facto
             return ChatResult(text="ok", prompt_tokens=1, completion_tokens=1, total_tokens=2)
 
     monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: FakeAdapter())
+    key_id = client.get("/api/v1/chat/keys").json()[0]["id"]
     r = client.post(
         "/api/v1/gateway/chat",
-        json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi"},
+        json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi", "key_id": key_id},
     )
     conversation_id = r.json()["conversation_id"]
 

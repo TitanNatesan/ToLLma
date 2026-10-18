@@ -108,6 +108,7 @@ class ModelRead(BaseModel):
     max_output_tokens: int | None
     release_date: date | None
     repository_model_key: str | None
+    reasoning_options: list[dict[str, Any]] | None = None
     # `metadata` is reserved on SQLAlchemy models; the column attribute is `metadata_`.
     metadata_: dict[str, Any] = Field(alias="metadata")
     is_active: bool
@@ -115,3 +116,49 @@ class ModelRead(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+def read_model(m) -> ModelRead:
+    """Map one registered-model ORM row to its public read shape (no secrets).
+
+    Single home for the mapping so the registry router and the scoped chat
+    picker (`chat_models_for_key`) serialize identically.
+    """
+    return ModelRead(
+        id=m.id,
+        provider_id=m.provider_id,
+        model_id=m.model_id,
+        name=m.name,
+        description=m.description,
+        endpoint_type=m.endpoint_type,
+        primary_endpoint=m.primary_endpoint,
+        supported_endpoints=list(m.supported_endpoints or []),
+        input_price=m.input_price,
+        output_price=m.output_price,
+        cache_read_price=m.cache_read_price,
+        cache_write_price=m.cache_write_price,
+        supports_text=m.supports_text,
+        supports_vision=m.supports_vision,
+        supports_audio_input=m.supports_audio_input,
+        supports_audio_output=m.supports_audio_output,
+        supports_image_generation=m.supports_image_generation,
+        supports_video_generation=m.supports_video_generation,
+        supports_tool_calling=m.supports_tool_calling,
+        supports_reasoning=m.supports_reasoning,
+        supports_embeddings=m.supports_embeddings,
+        supports_streaming=m.supports_streaming,
+        context_window=m.context_window,
+        max_output_tokens=m.max_output_tokens,
+        release_date=m.release_date,
+        repository_model_key=m.repository_model_key,
+        reasoning_options=(
+            m.metadata_.get("reasoning_options")
+            if isinstance(getattr(m, "metadata_", None), dict)
+            and isinstance(m.metadata_.get("reasoning_options"), list)
+            else None
+        ),
+        metadata=m.metadata_,
+        is_active=m.is_active,
+        created_at=m.created_at,
+        updated_at=m.updated_at,
+    )

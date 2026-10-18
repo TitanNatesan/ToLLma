@@ -10,8 +10,7 @@ from sqlalchemy.orm import Session
 
 from tollms.api.models.schemas import ModelCreate
 from tollms.api.models.service import create_model
-from tollms.api.providers.schemas import ProviderCreate
-from tollms.api.providers.service import create_provider, discover_provider_models
+from tollms.api.providers.service import discover_provider_models
 from tollms.models.model_repository import RepositoryModel
 from tollms.models.provider import Provider, ProviderType
 from tollms.models.registered_model import (
@@ -78,19 +77,26 @@ def test_normalize_endpoint_aliases() -> None:
     assert normalize_endpoint("not-a-thing") is None
 
 
-def test_derive_endpoints_from_mode_and_supported_list() -> None:
-    assert derive_endpoints(mode="embedding") == ["embeddings"]
-    assert derive_endpoints(mode="image_generation") == ["images/generations"]
-    assert derive_endpoints(mode="chat") == ["chat_completions"]
+def test_derive_endpoints_from_supported_list_and_modalities() -> None:
     # Explicit upstream list wins and is normalized.
-    assert derive_endpoints(
-        mode="chat", supported=["/v1/responses", "/v1/chat/completions"]
-    ) == ["responses", "chat_completions"]
-    # Modality fallback for sources without mode/endpoint lists.
+    assert derive_endpoints(supported=["/v1/responses", "/v1/chat/completions"]) == [
+        "responses",
+        "chat_completions",
+    ]
+    assert derive_endpoints(supported=["embedding"]) == ["embeddings"]
+    assert derive_endpoints(supported=["not-a-thing"]) == []
+    # Modality fallback (models.dev reports modalities, not endpoints).
     assert derive_endpoints(in_modalities=["text", "audio"], out_modalities=["text"]) == [
         "chat_completions",
         "audio/transcriptions",
     ]
+    assert derive_endpoints(in_modalities=["text"], out_modalities=["image"]) == [
+        "images/generations"
+    ]
+    assert derive_endpoints(in_modalities=["text"], out_modalities=["video"]) == [
+        "video/generations"
+    ]
+    assert derive_endpoints() == []
 
 
 def test_normalize_endpoints_keeps_primary_in_supported() -> None:
@@ -234,8 +240,8 @@ def test_responses_and_chat_share_custom_base_url() -> None:
 
 
 def test_repository_merge_keeps_endpoint_union() -> None:
-    litellm = NormalizedModel(
-        source="litellm",
+    first = NormalizedModel(
+        source="modelsdev",
         model_key="openai/gpt-5",
         canonical_name="openai/gpt-5",
         provider="openai",
@@ -245,8 +251,8 @@ def test_repository_merge_keeps_endpoint_union() -> None:
         supported_endpoints=["responses", "chat_completions"],
         caps={"supports_chat": True},
     )
-    openrouter = NormalizedModel(
-        source="openrouter",
+    second = NormalizedModel(
+        source="modelsdev",
         model_key="openai/gpt-5",
         canonical_name="openai/gpt-5",
         provider="openai",
@@ -256,10 +262,11 @@ def test_repository_merge_keeps_endpoint_union() -> None:
         supported_endpoints=["chat_completions"],
         caps={},
     )
-    merged = merge_records({"openai/gpt-5": [litellm, openrouter]})["openai/gpt-5"]
+    merged = merge_records({"openai/gpt-5": [first, second]})["openai/gpt-5"]
     assert merged["primary_endpoint"] == "responses"
     assert merged["supported_endpoints"] == ["responses", "chat_completions"]
     assert merged["supports_chat"] is True
+    assert merged["sources"] == ["modelsdev"]  # deduped per source
 
 
 # --------------------------------------------------------------------------
@@ -272,9 +279,10 @@ def test_discovery_repository_endpoint_wins_over_adapter_hint(
 ) -> None:
     from tollms.services.gateway.adapters.base import DiscoveredModel
 
-    p = create_provider(
-        db,
-        ProviderCreate(name="OpenAIDisc", provider_type=ProviderType.OPENAI, credentials={"api_key": "k"}),
+    # Personal provider via HTTP: owned row (both-null rows are rejected by
+    # ck_providers_owner_scope).
+    p = provider_factory(
+        "OpenAIDisc", ptype="OPENAI", creds={"api_key": "k"},
     )
     db.add(
         RepositoryModel(
@@ -313,7 +321,7 @@ def test_discovery_repository_endpoint_wins_over_adapter_hint(
         ]
 
     monkeypatch.setattr(OpenAIChatAdapter, "discover_models", fake_discover)
-    res = asyncio.run(discover_provider_models(db, p.id))
+    res = asyncio.run(discover_provider_models(db, uuid.UUID(p["id"])))
     by_id = {item.model_id: item for item in res.discovered}
     assert by_id["gpt-5"].primary_endpoint == "responses"
     assert by_id["gpt-5"].suggested["endpoint_type"] == "responses"

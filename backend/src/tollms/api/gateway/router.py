@@ -12,13 +12,40 @@ from tollms.models.user import User
 from tollms.api.gateway import service
 from tollms.api.gateway.schemas import (
     ActiveGenerationRead,
+    ChatKeyRead,
     ChatRequest,
     ChatResponse,
     GenerationCancelRead,
     GenerationStarted,
 )
+from tollms.api.models.schemas import ModelRead
 
 router = APIRouter(prefix="/api/v1/gateway", tags=["gateway"])
+
+# In-app key picker endpoints (session users). Separate prefix by design:
+# these serve the chat composer, not the gateway pipeline.
+chat_router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+
+
+@chat_router.get("/keys", response_model=list[ChatKeyRead])
+def chat_keys(
+    db: Session = Depends(get_db), user: User = Depends(require_active_user)
+) -> list[ChatKeyRead]:
+    """Eligible keys for the caller (personal live + assigned org keys)."""
+    return service.chat_keys(db, user.id)
+
+
+@chat_router.get("/models", response_model=list[ModelRead])
+def chat_models(
+    key_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)
+) -> list[ModelRead]:
+    """Models eligible for one key (wrong-owner keys 404, same as gateway)."""
+    return service.chat_models_for_key(db, key_id, user.id)
+
+
+# NOTE: chat_router is NOT nested via router.include_router (prefixes would
+# compose into /api/v1/gateway/api/v1/chat/...). main.py includes it directly,
+# mirroring the attachments router (/api/v1/chat/attachments).
 
 
 @router.post("/chat", response_model=ChatResponse)

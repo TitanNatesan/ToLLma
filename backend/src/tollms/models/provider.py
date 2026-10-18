@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,6 +33,13 @@ class ProviderType(str, enum.Enum):
 class Provider(SoftDeleteMixin, TimestampedModel):
     __tablename__ = "providers"
     __table_args__ = (
+        # Ownership is decided SOLELY by org_id: NULL = personal (user_id is
+        # the owner, NOT NULL); NOT NULL = org-owned (user_id is creator
+        # audit, never scope). Both-set rows are valid org rows.
+        CheckConstraint(
+            "(org_id IS NULL AND user_id IS NOT NULL) OR (org_id IS NOT NULL)",
+            name="ck_providers_owner_scope",
+        ),
         Index("ix_providers_type", "provider_type"),
         Index("ix_providers_active", "is_active"),
         Index("ix_providers_created", "created_at"),

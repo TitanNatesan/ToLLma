@@ -81,6 +81,8 @@ class GenerationSpec:
     # org when the caller holds ACTIVE membership there, else None (personal).
     # In-app generations carry no API key (api_key_id stays None in the log).
     org_id: uuid.UUID | None = None
+    # Session-user key serving a keyed in-app generation (None = legacy keyless).
+    api_key_id: uuid.UUID | None = None
     error_code: str | None = None
     # Time to first streamed token (ms), measured by the driver.
     ttfb_ms: float | None = None
@@ -475,6 +477,10 @@ class GenerationManager:
             row.completed_at = _utcnow()
             row.error = error
             row.error_code = spec.error_code
+            if spec.api_key_id is not None:
+                # Re-attribute to the key that authorized this run (regeneration
+                # passes a freshly validated key; initial runs stamp once).
+                row.api_key_id = spec.api_key_id
             row.usage_estimated = estimated
             row.session_id = spec.session_id
             if spec.ttfb_ms is not None:
@@ -532,7 +538,7 @@ class GenerationManager:
             request_log_engine.RequestLogEntry(
                 user_id=spec.user_id,
                 org_id=spec.org_id,
-                api_key_id=None,
+                api_key_id=spec.api_key_id,
                 conversation_id=spec.conversation_id,
                 message_id=spec.generation_id,
                 provider_id=spec.provider_id,

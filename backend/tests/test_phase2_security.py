@@ -68,9 +68,19 @@ def test_draft_validate_and_lookup_authed_not_401(
     user_factory("gate-c@tollma.ai")
     repo_service.run_sync(
         db,
-        litellm_data={"openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"}},
-        openrouter_data={"data": []},
-        modelsdev_data={},
+        modelsdev_data={
+            "openai": {
+                "id": "openai", "name": "OpenAI",
+                "models": {
+                    "gpt-4o": {
+                        "id": "gpt-4o", "name": "GPT-4o",
+                        "modalities": {"input": ["text"], "output": ["text"]},
+                        "limit": {"context": 128000, "output": 4096},
+                        "cost": {"input": 2.5, "output": 10.0},
+                    },
+                },
+            },
+        },
     )
     dv = client.post(
         "/api/v1/providers/draft-validate",

@@ -221,6 +221,7 @@ def suggest_payload(entry: RepositoryModel) -> dict[str, Any]:
         "context_window": entry.context_window,
         "max_output_tokens": entry.max_output_tokens,
         "release_date": entry.release_date,
+        "reasoning_options": getattr(entry, "reasoning_options", None),
     }
 
 

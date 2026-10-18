@@ -36,11 +36,15 @@ def history(
 async def edit(
     message_id: uuid.UUID,
     data: MessageEditRequest,
+    # Session-user key serving the auto-regeneration (same gate as chat send).
+    # Query param: the edit body schema carries only the new content.
+    key_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(require_active_user),
 ) -> MessageEditRead:
     """Edit a user message, then regenerate the response that followed it."""
-    message, versions, target = service.edit_message(db, message_id, data.content, user.id)
+    # Regen-path key gate runs inside edit_message BEFORE the edit commits.
+    message, versions, target = service.edit_message(db, message_id, data.content, user.id, key_id=key_id)
     read = message_reads(db, [message], user.id)[0]
     response = MessageEditRead(
         message=read,
@@ -49,7 +53,7 @@ async def edit(
     )
     if target is not None:
         await service.regenerate_message(
-            db, target.id, user.id, session_factory=None, session_id=None
+            db, target.id, user.id, key_id=key_id, session_factory=None, session_id=None
         )
         response.regeneration_started = True
         response.regenerating_message_id = target.id
@@ -80,6 +84,7 @@ async def regenerate(
         user.id,
         provider_id=payload.provider_id,
         model_id=payload.model_id,
+        key_id=payload.key_id,
         reasoning_level=payload.reasoning_level,
     )
 

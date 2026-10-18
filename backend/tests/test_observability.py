@@ -371,9 +371,10 @@ def test_ui_provider_failure_emits_code(
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="tollms.events"):
+        key_id = client.get("/api/v1/chat/keys").json()[0]["id"]
         r = client.post(
             "/api/v1/gateway/chat",
-            json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi"},
+            json={"provider_id": provider["id"], "model_id": model["id"], "message": "hi", "key_id": key_id},
         )
     assert r.status_code in (500, 502), r.text
     evs = _events(caplog, "gateway.provider_error")

@@ -413,3 +413,110 @@ def put_model_permissions(
     logger.info("api key model permissions replaced: %s (%d rows)", key_id, len(permissions))
     return get_key(db, key_id, user_id)
 
+
+
+# --- primary key lifecycle ---------------------------------------------------
+# One live primary per personal user (partial UQ
+# `uq_api_keys_primary_per_user`). The primary carries empty restrictions
+# (unlimited, no policy/IP rules); the model registry appends an allow-list
+# row per personal model (see `sync_primary_model`). Explicit user policy/IP
+# edits are never touched here, and a disabled/revoked primary is never
+# auto-enabled — the sync skips it until the user re-enables the key.
+
+PRIMARY_KEY_NAME = "Primary key"
+
+
+def find_primary_key(db: Session, user_id: uuid.UUID) -> ApiKey | None:
+    """Live personal primary owned by `user_id`, if any."""
+    return db.scalar(
+        select(ApiKey).where(
+            ApiKey.user_id == user_id,
+            ApiKey.org_id.is_(None),
+            ApiKey.is_primary.is_(True),
+            ApiKey.is_deleted.is_(False),
+        )
+    )
+
+
+def ensure_primary_key(db: Session, user_id: uuid.UUID, *, commit: bool = True) -> ApiKey:
+    """Fetch the live personal primary, creating it (unrestricted) if missing.
+
+    Idempotent under concurrency: creation runs in a savepoint so a lost
+    partial-UQ race rolls back only the insert, then re-fetches the winner.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    key = find_primary_key(db, user_id)
+    if key is not None:
+        return key
+    _raw, key_prefix, key_hash = key_engine.generate_key()
+    candidate = ApiKey(
+        user_id=user_id,
+        org_id=None,
+        name=PRIMARY_KEY_NAME,
+        key_prefix=key_prefix,
+        key_hash=key_hash,
+        is_primary=True,
+    )
+    try:
+        with db.begin_nested():
+            db.add(candidate)
+            db.flush()
+    except IntegrityError:
+        pass  # another transaction won the race; refetch below
+    key = find_primary_key(db, user_id)
+    if key is None:  # pragma: no cover - defensive; UQ guarantees a winner
+        raise ValidationError("could not establish a primary API key")
+    if commit:
+        db.commit()
+        db.refresh(key)
+    logger.info("api primary key ensured: %s", key.id)
+    return key
+
+
+def sync_primary_model(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    provider_id: uuid.UUID,
+    model_id: uuid.UUID,
+    commit: bool = True,
+) -> ApiKey | None:
+    """Append one allow-list row (provider, model, enabled) to the primary.
+
+    Skips silently when the primary is disabled or soft-deleted (never
+    auto-enable, never resurrect); skips duplicates via check-exists-first
+    plus a savepoint for races. Policy/IP restrictions are never modified.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    key = ensure_primary_key(db, user_id, commit=False)
+    if not key.enabled or key.is_deleted:
+        return key
+    exists = db.scalar(
+        select(ApiKeyModelPermission.id).where(
+            ApiKeyModelPermission.api_key_id == key.id,
+            ApiKeyModelPermission.provider_id == provider_id,
+            ApiKeyModelPermission.model_id == model_id,
+        )
+    )
+    if exists is not None:
+        return key
+    try:
+        with db.begin_nested():
+            db.add(
+                ApiKeyModelPermission(
+                    api_key_id=key.id,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    enabled=True,
+                )
+            )
+            db.flush()
+    except IntegrityError:
+        pass  # concurrent sync won; the row exists now
+    key_engine.invalidate_context(key.key_hash)
+    if commit:
+        db.commit()
+    logger.info("api primary key synced model: key=%s model=%s", key.id, model_id)
+    return key

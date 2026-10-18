@@ -131,5 +131,5 @@ def stats(db: Session) -> CatalogStatsRead:
         total_models=int(models),
         last_sync_at=last.finished_at if last else None,
         last_sync_status=last.status if last else None,
-        sources=["litellm", "openrouter", "modelsdev"],
+        sources=["modelsdev"],
     )

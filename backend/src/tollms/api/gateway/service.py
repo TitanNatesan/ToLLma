@@ -26,11 +26,13 @@ from sqlalchemy.orm import Session
 from tollms.api.attachments import service as attachment_service
 from tollms.core.exceptions import (
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     ProviderError,
     ValidationError,
     classify_provider_failure,
 )
+from tollms.models.api_key import ApiKey
 from tollms.models.message import Message, MessageStatus, Role, TERMINAL_STATUSES
 from tollms.models.message_history import GenerationRun
 from tollms.models.request_log import RequestStatus
@@ -63,12 +65,15 @@ from tollms.services.cost_estimator import (
 )
 from tollms.api.gateway.schemas import (
     ActiveGenerationRead,
+    ChatKeyRead,
     ChatRequest,
     ChatResponse,
     GenerationCancelRead,
     GenerationStarted,
 )
+from tollms.api.models.schemas import ModelRead, read_model
 from tollms.services import generation as generation_engine
+from tollms.services.api_keys import keys as key_engine
 from tollms.services.generation import GenerationSpec
 from tollms.services.gateway.adapters.base import ChatMessage, StreamChunk
 from tollms.services.model_repository.lookup import find_for_model
@@ -438,6 +443,262 @@ def org_attribution(db: Session, provider: Provider, user_id: uuid.UUID | None) 
     return org_id if active is not None else None
 
 
+def _require_chat_key(db: Session, key_id: uuid.UUID | None, user_id: uuid.UUID | None) -> ApiKey | None:
+    """Session-user key gate for in-app generations.
+
+    Returns None for the legacy unscoped path (``key_id`` None + ``user_id``
+    None: internal/service/test callers only — mirrors the ``user_id=None``
+    unscoped convention in providers/models/conversations services).
+
+    A session user without ``key_id`` gets 422 KEY_REQUIRED. Every other
+    denial (unknown, wrong owner, cross-org, disabled, expired,
+    soft-deleted, tombstoned, lapsed assignee membership) is a 404 oracle —
+    same convention as ``get_provider`` — so key existence never leaks.
+    """
+    if key_id is None:
+        if user_id is None:
+            return None
+        raise ValidationError(
+            "KEY_REQUIRED: An API key is required to use chat. "
+            "Select a key or create one first."
+        )
+    key = db.get(ApiKey, key_id)
+    if key is None or key.is_deleted:
+        raise NotFoundError("api key not found")
+    if user_id is None or key.user_id != user_id:
+        raise NotFoundError("api key not found")
+    if key.org_id is not None:
+        from tollms.models.organization import Membership, MembershipState
+
+        active = db.scalar(
+            select(Membership.id).where(
+                Membership.org_id == key.org_id,
+                Membership.user_id == user_id,
+                Membership.is_deleted.is_(False),
+                Membership.state == MembershipState.ACTIVE.value,
+            )
+        )
+        if active is None:
+            # Assigned key, but the assignee lost ACTIVE membership (also
+            # covers org keys revoked via remove/suspend/leave).
+            raise NotFoundError("api key not found")
+    if not key.enabled:
+        raise NotFoundError("api key not found")
+    if _key_expired(key, datetime.now(timezone.utc)):
+        raise NotFoundError("api key not found")
+    if key_engine.is_tombstoned(key.key_hash):
+        raise NotFoundError("api key not found")
+    return key
+
+
+def _key_expired(key: ApiKey, now: datetime) -> bool:
+    """Expired via the key or its policy (mirrors _require_chat_key)."""
+    moments = [key.expires_at]
+    if key.policy is not None:
+        moments.append(key.policy.expires_at)
+    for moment in moments:
+        if moment is None:
+            continue
+        m = moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+        if m <= now:
+            return True
+    return False
+
+
+def _eligible_models(db: Session, key: ApiKey, user_id: uuid.UUID | None) -> list[AIModel]:
+    """Models servable under `key`: allow-list ∩ provider live+active ∩
+    model live+active. No permission ROWS at all means all live models in
+    scope (documented intent: unrestricted); rows existing but ALL disabled
+    means ZERO eligible models (deny-all). Scope is the caller's personal
+    providers (personal key) or the key's org providers (org key).
+
+    Provider delete/deactivate and model delete/disable need no allow-list
+    cleanup: they fall out of eligibility here automatically. Rows for
+    unavailable providers are retained but inert (documented limitation:
+    provider deactivation has no row-pruning hook by design).
+    """
+    if key.org_id is None:
+        scope = select(Provider).where(
+            Provider.org_id.is_(None),
+            Provider.user_id == key.user_id,
+            Provider.is_deleted.is_(False),
+            Provider.is_active.is_(True),
+        )
+    else:
+        scope = select(Provider).where(
+            Provider.org_id == key.org_id,
+            Provider.is_deleted.is_(False),
+            Provider.is_active.is_(True),
+        )
+    providers = {p.id for p in db.scalars(scope)}
+    if not providers:
+        return []
+    models = list(
+        db.scalars(
+            select(AIModel)
+            .where(
+                AIModel.provider_id.in_(list(providers)),
+                AIModel.is_deleted.is_(False),
+                AIModel.is_active.is_(True),
+            )
+            .order_by(AIModel.created_at)
+        )
+    )
+    if not key.model_permissions:
+        return models
+    perms = [perm for perm in key.model_permissions if perm.enabled]
+    if not perms:
+        return []
+    return [
+        m
+        for m in models
+        if any(
+            (perm.provider_id is None or perm.provider_id == m.provider_id)
+            and (perm.model_id is None or perm.model_id == m.id)
+            for perm in perms
+        )
+    ]
+
+
+def validate_key_for_model(
+    db: Session, key_id: uuid.UUID | None, user_id: uuid.UUID | None, model_id: uuid.UUID
+) -> ApiKey | None:
+    """Key + allow-list gate for one model, validated BEFORE a mutating step
+    commits (message edits that will auto-regenerate). Same gate as chat
+    send: 422 when a session user omits the key, 404 oracle on bad keys,
+    403 when the model sits outside the key's allow-list."""
+    key = _require_chat_key(db, key_id, user_id)
+    _enforce_key_model(db, key, model_id)
+    return key
+
+
+def _enforce_key_model(db: Session, key: ApiKey | None, model_id: uuid.UUID) -> None:
+    """Requested model must be in the key's eligible set, else 403."""
+    if key is None:
+        return
+    if all(m.id != model_id for m in _eligible_models(db, key, key.user_id)):
+        raise ForbiddenError(
+            f"model_not_allowed: model {model_id} is not allowed for this API key"
+        )
+
+
+def validated_reasoning_level(model: AIModel, level: str | None) -> str | None:
+    """Constrain a requested reasoning level to the model's catalog options.
+
+    Mirrors the frontend gate (`capabilities.ts isReasoningValueValid`) so
+    direct API callers cannot buy thinking the model doesn't offer: unknown
+    levels collapse to None (off) instead of the adapter's medium/high
+    fallback. Models without declared options keep legacy pass-through.
+    """
+    if not level:
+        return None
+    options = (model.metadata_ or {}).get("reasoning_options")
+    if not isinstance(options, list) or not options:
+        return level  # unknown catalog state: legacy adapter clamping applies
+    from tollms.services.gateway.adapters.base import REASONING_OFF_LEVELS
+
+    for entry in options:
+        if not isinstance(entry, dict):
+            continue
+        kind = entry.get("type")
+        if kind == "effort":
+            values = [v for v in entry.get("values") or [] if isinstance(v, str)]
+            if not values:
+                continue
+            if level in REASONING_OFF_LEVELS:
+                return level
+            return level if level in values else None
+        if kind == "budget_tokens":
+            minimum = entry.get("min")
+            maximum = entry.get("max")
+            try:
+                n = int(str(level).strip())
+            except (TypeError, ValueError):
+                return None
+            floor = int(minimum) if isinstance(minimum, (int, float)) and minimum >= 0 else 0
+            ceiling = int(maximum) if isinstance(maximum, (int, float)) and maximum >= floor else None
+            if n >= floor and (ceiling is None or n <= ceiling):
+                return str(n)
+            return None
+        if kind == "toggle":
+            default = entry.get("default")
+            on_value = default if isinstance(default, str) and default else "on"
+            return level if level == on_value else None
+    return None
+
+
+def chat_keys(db: Session, user_id: uuid.UUID) -> list[ChatKeyRead]:
+    """Session user's key picker entries: live personal keys plus org keys
+    assigned to the caller while their membership stays ACTIVE."""
+    from tollms.models.organization import Membership, MembershipState, Organization
+
+    rows = list(
+        db.scalars(
+            select(ApiKey)
+            .where(ApiKey.user_id == user_id, ApiKey.is_deleted.is_(False))
+            .order_by(ApiKey.created_at.desc())
+        )
+    )
+    active_orgs = set(
+        db.scalars(
+            select(Membership.org_id).where(
+                Membership.user_id == user_id,
+                Membership.is_deleted.is_(False),
+                Membership.state == MembershipState.ACTIVE.value,
+            )
+        )
+    )
+    org_ids = {key.org_id for key in rows if key.org_id is not None}
+    org_names: dict = (
+        dict(
+            db.execute(
+                select(Organization.id, Organization.name).where(
+                    Organization.id.in_(list(org_ids))
+                )
+            ).all()
+        )
+        if org_ids
+        else {}
+    )
+    now = datetime.now(timezone.utc)
+    out: list[ChatKeyRead] = []
+    for key in rows:
+        if key.org_id is not None and key.org_id not in active_orgs:
+            continue
+        if not key.enabled:
+            continue
+        if _key_expired(key, now):
+            continue
+        if key_engine.is_tombstoned(key.key_hash):
+            continue
+        out.append(
+            ChatKeyRead(
+                id=key.id,
+                name=key.name,
+                scope="organization" if key.org_id is not None else "personal",
+                org_id=key.org_id,
+                org_name=org_names.get(key.org_id),
+                enabled=key.enabled,
+                model_count=len(_eligible_models(db, key, user_id)),
+            )
+        )
+    return out
+
+
+def chat_models_for_key(
+    db: Session, key_id: uuid.UUID, user_id: uuid.UUID
+) -> list[ModelRead]:
+    """Eligible models for one key (same resolver as the gateway).
+
+    Full ModelRead rows (not minimal ids): the composer renders
+    capabilities/pricing from these directly, so org models never depend
+    on the personal-only registry listing.
+    """
+    key = _require_chat_key(db, key_id, user_id)
+    assert key is not None  # session users never take the legacy path
+    return [read_model(m) for m in _eligible_models(db, key, user_id)]
+
+
 def _transcriber(provider, credentials: dict) -> tuple[str, str] | None:
     """(base_url, api_key) for Whisper transcription via the provider's own
     OpenAI-compatible endpoint. None when the provider has no such path."""
@@ -642,13 +903,16 @@ async def run_chat(
     session_id: str | None = None,
 ) -> ChatResponse:
     """Non-streaming chat. Persists user + assistant messages, usage, cost."""
+    api_key = _require_chat_key(db, data.key_id, user_id)
     provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
+    _enforce_key_model(db, api_key, model.id)
+    api_key_id = api_key.id if api_key is not None else None
     start = time.monotonic()
     started_at = datetime.now(timezone.utc)
     try:
         credentials = decrypted_credentials(provider)
         adapter = build_adapter(provider, model, credentials, transport)
-        adapter.reasoning_level = data.reasoning_level
+        adapter.reasoning_level = validated_reasoning_level(model, data.reasoning_level)
         adapter.max_output_tokens = model.max_output_tokens
         transcriber = _transcriber(provider, credentials)
         rows = attachment_service.get_many(db, data.attachment_ids, user_id)
@@ -688,6 +952,8 @@ async def run_chat(
         extra_cost = (breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost)
         user_msg = add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id,
                     user_id=user_id, session_id=session_id)
+        if api_key_id is not None:
+            user_msg.api_key_id = api_key_id
         for row in rows:
             attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
         db.commit()
@@ -699,10 +965,15 @@ async def run_chat(
             completed_at=datetime.now(timezone.utc),
             user_id=user_id, session_id=session_id, usage_estimated=estimated,
         )
+        if api_key_id is not None:
+            assistant.api_key_id = api_key_id
+            db.commit()
+            db.refresh(assistant)
         db.add(
             GenerationRun(
                 message_id=assistant.id,
                 user_id=user_id,
+                api_key_id=api_key_id,
                 generation_number=1,
                 provider_id=provider.id,
                 model_id=model.id,
@@ -721,6 +992,7 @@ async def run_chat(
             db,
             request_log_engine.RequestLogEntry(
                 user_id=user_id,
+                api_key_id=api_key_id,
                 conversation_id=conv_id,
                 message_id=assistant.id,
                 provider_id=provider.id,
@@ -801,6 +1073,7 @@ class _Setup:
     media_prior_excerpt: str = ""
     media_ref_bytes: bytes | None = None
     media_lineage: dict | None = None
+    api_key_id: uuid.UUID | None = None
 
 
 async def _setup_generation(
@@ -814,10 +1087,12 @@ async def _setup_generation(
     Raises 404/422 before any row exists. Row creation happens in
     start_generation under the conversation lock (409 on active generation).
     """
+    api_key = _require_chat_key(db, data.key_id, user_id)
     provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
+    _enforce_key_model(db, api_key, model.id)
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
-    adapter.reasoning_level = data.reasoning_level
+    adapter.reasoning_level = validated_reasoning_level(model, data.reasoning_level)
     adapter.max_output_tokens = model.max_output_tokens
     transcriber = _transcriber(provider, credentials)
     rows = attachment_service.get_many(db, data.attachment_ids, user_id)
@@ -942,6 +1217,7 @@ async def _setup_generation(
         )
     return _Setup(
         conv_id=conv_id, provider=provider, model=model, adapter=adapter,
+        api_key_id=api_key.id if api_key is not None else None,
         rows=rows, history=history, history_text="".join(m.content for m in history),
         media_endpoint=media_endpoint, media_options=media_opts, media_cost=media_cost,
         media_operation=operation, media_prompt=final_prompt, media_count=count,
@@ -1006,6 +1282,7 @@ async def start_generation(
             run = GenerationRun(
                 message_id=assistant.id,
                 user_id=user_id,
+                api_key_id=setup.api_key_id,
                 generation_number=1,
                 provider_id=provider.id,
                 model_id=model.id,
@@ -1016,8 +1293,12 @@ async def start_generation(
             db.add(run)
             db.commit()
             db.refresh(run)
+            if setup.api_key_id is not None:
+                user_msg.api_key_id = setup.api_key_id
+                assistant.api_key_id = setup.api_key_id
             if data.client_key:
                 assistant.client_key = data.client_key
+            if setup.api_key_id is not None or data.client_key:
                 db.commit()
                 db.refresh(assistant)
             conversation_row = get_conversation(db, conv_id, user_id)
@@ -1061,6 +1342,7 @@ async def start_generation(
         provider_id=provider.id,
         model_id=model.id,
         org_id=org_attribution(db, provider, user_id),
+        api_key_id=setup.api_key_id,
         run_id=run.id,
     )
     if setup.media_endpoint:
@@ -1351,6 +1633,7 @@ async def start_regeneration(
     user_id: uuid.UUID | None = None,
     provider_id: uuid.UUID | None = None,
     model_id: uuid.UUID | None = None,
+    key_id: uuid.UUID | None = None,
     reasoning_level: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     session_factory=None,
@@ -1359,13 +1642,16 @@ async def start_regeneration(
     """Regenerate an assistant message in place, preserving every prior run.
 
     The message row always mirrors the active generation; `generation_runs`
-    keeps the full history for ◀ 1 of N ▶ navigation.
+    keeps the full history for ◀ 1 of N ▶ navigation. Key-gated exactly like
+    chat send: a session user without `key_id` gets 422 KEY_REQUIRED, and the
+    requested model must sit in the key's allow-list (403 otherwise).
     """
     assistant = get_message(db, message_id, user_id)
     if assistant.role != Role.ASSISTANT:
         raise ValidationError("only assistant messages can be regenerated")
     if assistant.status not in TERMINAL_STATUSES:
         raise ConflictError("message is still generating")
+    api_key = _require_chat_key(db, key_id, user_id)
 
     conv_id = assistant.conversation_id
     preceding = db.execute(
@@ -1388,9 +1674,11 @@ async def start_regeneration(
     if target_provider_id is None or target_model_id is None:
         raise ValidationError("message has no model to regenerate with")
     provider, model = _resolve(db, target_provider_id, target_model_id, user_id)
+    _enforce_key_model(db, api_key, model.id)
+    api_key_id = api_key.id if api_key is not None else None
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
-    adapter.reasoning_level = reasoning_level
+    adapter.reasoning_level = validated_reasoning_level(model, reasoning_level)
     adapter.max_output_tokens = model.max_output_tokens
     history = _history_until(db, conv_id, preceding, user_id, adapter, model)
     adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
@@ -1416,6 +1704,7 @@ async def start_regeneration(
         run = GenerationRun(
             message_id=assistant.id,
             user_id=user_id,
+            api_key_id=api_key_id,
             generation_number=int(last_number or 0) + 1,
             provider_id=provider.id,
             model_id=model.id,
@@ -1425,6 +1714,8 @@ async def start_regeneration(
         )
         db.add(run)
         _reset_assistant_for_regeneration(assistant, started_at)
+        if api_key_id is not None:
+            assistant.api_key_id = api_key_id
         db.commit()
         db.refresh(assistant)
         db.refresh(run)
@@ -1448,6 +1739,7 @@ async def start_regeneration(
         provider_id=provider.id,
         model_id=model.id,
         org_id=org_attribution(db, provider, user_id),
+        api_key_id=api_key_id,
     )
     if _is_media_model(model):
         # Retry/regenerate reuses the preceding user prompt, no duplicate rows.

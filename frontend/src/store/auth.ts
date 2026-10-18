@@ -59,6 +59,12 @@ export function clearAuthAndCredentialCache(): void {
   } catch {
     // storage unavailable
   }
+  try {
+    // Wizard drafts (session-scoped creds) live in sessionStorage.
+    sessionStorage.removeItem("tollma-wizard-draft");
+  } catch {
+    // storage unavailable
+  }
 }
 
 interface AuthState {

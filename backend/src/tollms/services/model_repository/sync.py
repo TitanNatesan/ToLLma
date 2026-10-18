@@ -5,12 +5,14 @@ lookup.py; the feature-level API service lives in api/repository/service.py.
 """
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from tollms.models.canonical_model import CanonicalModel
 from tollms.models.model_repository import RepositoryModel, RepositorySource, SyncRun
 from tollms.models.provider import ProviderType
 from tollms.models.provider_catalog import ProviderCatalog
@@ -19,13 +21,11 @@ from tollms.services.cache.manager import cache_invalidate_sync
 from tollms.services.cost_estimator import official_media_prices
 from tollms.services.model_repository.canonical import canonicalize
 from tollms.services.model_repository.sources import (
-    LITELLM_URL,
     MODELS_DEV_URL,
-    OPENROUTER_URL,
-    LiteLLMSourceAdapter,
+    MODELSDEV_LOGO_URL,
     ModelsDevSourceAdapter,
+    NormalizedCanonical,
     NormalizedModel,
-    OpenRouterSourceAdapter,
     normalize_modelsdev_providers,
 )
 
@@ -86,32 +86,37 @@ _ERROR_DETAILS_CAP = 20
 
 
 def merge_records(groups: dict[str, list[NormalizedModel]]) -> dict[str, dict[str, Any]]:
-    """Merge per-source records into one dict per canonical key.
+    """Merge normalized records into one dict per canonical key.
 
-    Source priority: LiteLLM first, then OpenRouter, then models.dev.
-    Scalars take the first non-null value; capabilities OR-merge; raw payloads
-    are kept per source. ToLLma operational metadata (gateway support, adapter
-    choice, credentials) lives outside these rows and is never overwritten.
+    Single source (models.dev): scalars take the first non-null value;
+    capabilities OR-merge; raw payloads are kept per source. ToLLma
+    operational metadata (gateway support, adapter choice, credentials)
+    lives outside these rows and is never overwritten.
     """
     merged: dict[str, dict[str, Any]] = {}
     for key, records in groups.items():
-        ordered = sorted(
-            records, key=lambda r: {"litellm": 0, "openrouter": 1, "modelsdev": 2}.get(r.source, 3)
-        )
+        ordered = records
         first = ordered[0]
         row: dict[str, Any] = {
             "model_key": key,
             "canonical_name": first.canonical_name,
             "provider": first.provider,
             "provider_model_id": first.provider_model_id,
-            "sources": [r.source for r in ordered],
+            "sources": list(dict.fromkeys(r.source for r in ordered)),
             "raw_source_payload": {r.source: r.raw for r in ordered},
         }
         for attr in ("display_name", "family", "vendor", "endpoint_type", "primary_endpoint", "description", "documentation_url", "release_date"):
             row[attr] = next((getattr(r, attr) for r in ordered if getattr(r, attr) is not None), None)
+        for attr in ("canonical_id", "reasoning_options", "extra_cost"):
+            row[attr] = next((getattr(r, attr) for r in ordered if getattr(r, attr) is not None), None)
+        merged_meta: dict[str, Any] = {}
+        for record in ordered:
+            for meta_key, meta_value in (record.metadata_ or {}).items():
+                merged_meta.setdefault(meta_key, meta_value)
+        row["metadata_"] = merged_meta
         for cap in CAPABILITY_FIELDS:
             row[cap] = any(r.caps.get(cap, False) for r in ordered)
-        # Endpoints union in source-priority order; primary falls back to the
+        # Endpoints union in record order; primary falls back to the
         # first supported endpoint and finally to the legacy endpoint_type.
         supported: list[str] = []
         for record in ordered:
@@ -159,17 +164,99 @@ def _apply_row(model: RepositoryModel, row: dict[str, Any], now: datetime) -> bo
     return changed
 
 
+def _verify_catalog_consistency(
+    catalog_payload: dict[str, Any] | None,
+    api_payload: dict[str, Any] | None,
+    models_payload: dict[str, Any] | None,
+) -> str | None:
+    """Warn when catalog.json drifts from api.json/models.json. Never raises.
+
+    catalog.json is byte-identical to {providers: api.json, models:
+    models.json} upstream; it is fetched only as a consistency check and its
+    data is never used. Returns a warning message or None.
+    """
+    try:
+        if not isinstance(catalog_payload, dict):
+            return "catalog.json is not a JSON object"
+        providers = catalog_payload.get("providers")
+        models = catalog_payload.get("models")
+        if api_payload is not None and isinstance(providers, dict) and isinstance(api_payload, dict):
+            if len(providers) != len(api_payload):
+                return (
+                    f"catalog.json provider count {len(providers)} != "
+                    f"api.json provider count {len(api_payload)}"
+                )
+        if models_payload is not None and isinstance(models, dict) and isinstance(models_payload, dict):
+            if len(models) != len(models_payload):
+                return (
+                    f"catalog.json model count {len(models)} != "
+                    f"models.json model count {len(models_payload)}"
+                )
+        return None
+    except Exception as e:
+        return f"catalog.json consistency check failed: {e}"
+
+
+def _upsert_canonicals(
+    db: Session, records: list[NormalizedCanonical], errors: list[str]
+) -> dict[str, CanonicalModel]:
+    """Upsert canonical rows FIRST from models.json. Never raises per-row.
+
+    Keyed by canonical key = entry id. Missing entries are never deactivated
+    (stable identity for live FK links). Returns {canonical_id: row}.
+    """
+    existing = {
+        c.canonical_id: c
+        for c in db.scalars(
+            select(CanonicalModel).where(CanonicalModel.is_deleted.is_(False))
+        )
+    }
+    stored: dict[str, CanonicalModel] = {}
+    for record in records:
+        try:
+            row = existing.get(record.canonical_id)
+            values = {
+                "name": record.name,
+                "description": record.description,
+                "family": record.family,
+                "release_date": record.release_date,
+                "last_updated": record.last_updated,
+                "open_weights": record.open_weights,
+                "knowledge": record.knowledge,
+                "metadata_": dict(record.metadata_ or {}),
+            }
+            if row is None:
+                row = CanonicalModel(canonical_id=record.canonical_id, **values)
+                db.add(row)
+                existing[record.canonical_id] = row
+            else:
+                for field, value in values.items():
+                    if getattr(row, field) != value:
+                        setattr(row, field, value)
+            stored[record.canonical_id] = row
+        except Exception:
+            logger.exception("model repository: failed to store canonical %s", record.canonical_id)
+            errors.append(f"canonical {record.canonical_id}")
+    db.flush()
+    return stored
+
+
 def run_sync(
     db: Session,
     *,
-    litellm_data: dict[str, Any] | None = None,
-    openrouter_data: dict[str, Any] | None = None,
     modelsdev_data: dict[str, Any] | None = None,
+    modelsdev_models_data: dict[str, Any] | None = None,
+    modelsdev_catalog_data: dict[str, Any] | None = None,
 ) -> SyncRun:
     """Execute one sync. Pass payloads directly in tests to stay offline.
 
-    When a payload is None the corresponding source is fetched live.
-    Never raises: fetch/normalize failures are recorded on the SyncRun.
+    Fetches api.json + models.json + catalog.json live when the corresponding
+    payload is None (production). Under pytest, missing models/catalog
+    payloads are skipped silently (no live fetch) so legacy single-payload
+    tests stay offline; the api payload still fetches live when None.
+    catalog.json is parsed only as a consistency check — its data is never
+    used. Fail-closed when all merges are empty. Never raises: per-endpoint
+    fetch/normalize failures are recorded on the SyncRun.
     Rows orphaned in 'running' by a crash/restart are marked 'interrupted'
     first, so last_sync never reports a zombie run.
     """
@@ -184,23 +271,8 @@ def run_sync(
 
     groups: dict[str, list[NormalizedModel]] = {}
     errors: list[str] = []
-    litellm = LiteLLMSourceAdapter()
-    openrouter = OpenRouterSourceAdapter()
+    fetch_failed = False
     modelsdev = ModelsDevSourceAdapter()
-    try:
-        payload = litellm_data if litellm_data is not None else litellm.fetch()
-        for record in litellm.normalize(payload):
-            groups.setdefault(canonicalize(record.model_key), []).append(record)
-    except Exception as e:
-        logger.exception("model repository: litellm sync failed")
-        errors.append(f"litellm: {e}")
-    try:
-        payload = openrouter_data if openrouter_data is not None else openrouter.fetch()
-        for record in openrouter.normalize(payload):
-            groups.setdefault(canonicalize(record.model_key), []).append(record)
-    except Exception as e:
-        logger.exception("model repository: openrouter sync failed")
-        errors.append(f"openrouter: {e}")
     try:
         modelsdev_payload = modelsdev_data if modelsdev_data is not None else modelsdev.fetch()
         for record in modelsdev.normalize(modelsdev_payload):
@@ -209,11 +281,92 @@ def run_sync(
         logger.exception("model repository: modelsdev sync failed")
         errors.append(f"modelsdev: {e}")
         modelsdev_payload = None
+        fetch_failed = True
+
+    # models.json: canonical records (no cost). Skipped silently when the
+    # caller passed an api payload but no models payload (legacy offline
+    # tests) or under pytest without an explicit payload.
+    canonical_records: list[NormalizedCanonical] = []
+    models_payload: dict[str, Any] | None = None
+    if modelsdev_models_data is not None:
+        models_payload = modelsdev_models_data
+    elif modelsdev_data is None and not os.getenv("PYTEST_CURRENT_TEST"):
+        try:
+            models_payload = modelsdev.fetch_models()
+        except Exception as e:
+            logger.exception("model repository: models.json sync failed")
+            errors.append(f"models.json: {e}")
+            models_payload = None
+            fetch_failed = True
+    if models_payload is not None:
+        try:
+            canonical_records = modelsdev.normalize_canonical(models_payload)
+        except Exception as e:
+            logger.exception("model repository: models.json normalize failed")
+            errors.append(f"models.json: {e}")
+            canonical_records = []
+            fetch_failed = True
+
+    # catalog.json: consistency check only, never used as data. Same
+    # skip rule as models.json so offline tests never hit the network.
+    catalog_payload: dict[str, Any] | None = None
+    if modelsdev_catalog_data is not None:
+        catalog_payload = modelsdev_catalog_data
+    elif modelsdev_data is None and modelsdev_models_data is None and not os.getenv("PYTEST_CURRENT_TEST"):
+        try:
+            catalog_payload = modelsdev.fetch_catalog()
+        except Exception as e:
+            logger.exception("model repository: catalog.json sync failed")
+            errors.append(f"catalog.json: {e}")
+            catalog_payload = None
+    if catalog_payload is not None:
+        warning = _verify_catalog_consistency(catalog_payload, modelsdev_payload, models_payload)
+        if warning:
+            logger.warning("model repository: %s", warning)
 
     now = datetime.now(timezone.utc)
     created = updated = deactivated = 0
     try:
+        # Canonicals FIRST so association FK links resolve in the same run.
+        canonical_stored: dict[str, CanonicalModel] = {}
+        if canonical_records:
+            canonical_stored = _upsert_canonicals(db, canonical_records, errors)
+            logger.info("canonical model sync: %s upserted", len(canonical_stored))
+        canonical_lookup = {canonicalize(k): k for k in canonical_stored}
         merged = merge_records(groups)
+        if canonical_stored:
+            # Link canonical_id when the record exists in this run's
+            # canonical set, else NULL (never fabricate). Fall back to
+            # already-persisted canonical rows so a truncated models.json
+            # snapshot churns links to NULL instead of dropping them;
+            # genuinely removed canonicals still resolve to NULL.
+            db_canonicals: dict[str, str] = {}
+            if any(
+                isinstance(r.get("canonical_id"), str) and r.get("canonical_id").strip()
+                and canonicalize(str(r.get("canonical_id"))) not in canonical_lookup
+                for r in merged.values()
+            ):
+                db_canonicals = {
+                    canonicalize(c): c
+                    for c in db.scalars(
+                        select(CanonicalModel.canonical_id).where(
+                            CanonicalModel.is_deleted.is_(False)
+                        )
+                    )
+                }
+            for row in merged.values():
+                raw = row.get("canonical_id")
+                if isinstance(raw, str) and raw.strip():
+                    want = canonical_lookup.get(canonicalize(raw.strip()))
+                    if want is None:
+                        want = db_canonicals.get(canonicalize(raw.strip()))
+                    row["canonical_id"] = want
+                else:
+                    row["canonical_id"] = None
+        else:
+            # No canonical data this run: preserve existing links.
+            for row in merged.values():
+                row.pop("canonical_id", None)
         # Match on canonical form so separator variants never churn rows.
         existing = {
             canonicalize(m.model_key): m
@@ -234,25 +387,39 @@ def run_sync(
                 logger.exception("model repository: failed to store %s", key)
                 errors.append(f"{key}: {e}")
         seen = set(merged)
+        # Fail closed: an empty merge means the fetch failed or the payload
+        # was unexpectedly empty (models.dev never legitimately serves zero
+        # models). Likewise any fetch/normalize failure means this snapshot
+        # is not authoritative for removals. Change nothing except
+        # bookkeeping in those cases: no deactivation, no attribution
+        # rewrite, no catalog sync — the last-known-good catalog stays
+        # servable. Successful upserts of merged rows still proceed.
+        # Extended to cover all-empty (api + models).
+        fail_closed = (not merged and not canonical_stored) or fetch_failed
+        has_api = bool(merged)
         for key, model in existing.items():
-            if key not in seen and model.is_active:
+            if key not in seen and model.is_active and has_api and not fail_closed:
                 model.is_active = False
                 deactivated += 1
         db.flush()  # ids for source rows below
-        _rewrite_source_rows(db, groups, stored)
+        if has_api and not fail_closed:
+            _rewrite_source_rows(db, groups, stored)
         # Provider catalog: link repository rows to their catalog provider,
         # then upsert catalog definitions (credential-free, global scope).
+        # Skipped when fail-closed (nothing merged): never zero model_count
+        # or deactivate catalog rows on a bad upstream run.
         try:
-            for key, records in groups.items():
-                model = stored.get(key)
-                if model is None:
-                    continue
-                slugs = sorted({r.provider for r in records if r.source == "modelsdev" and r.provider})
-                want = slugs[0] if slugs else None
-                if model.catalog_slug != want:
-                    model.catalog_slug = want
-            db.flush()
-            if modelsdev_payload is not None:
+            if has_api and not fail_closed:
+                for key, records in groups.items():
+                    model = stored.get(key)
+                    if model is None:
+                        continue
+                    slugs = sorted({r.provider for r in records if r.provider})
+                    want = slugs[0] if slugs else None
+                    if model.catalog_slug != want:
+                        model.catalog_slug = want
+                db.flush()
+            if modelsdev_payload is not None and has_api and not fail_closed:
                 catalog = sync_provider_catalog(
                     db, normalize_modelsdev_providers(modelsdev_payload), groups
                 )
@@ -281,7 +448,7 @@ def run_sync(
     return run
 
 
-SOURCE_URLS = {"litellm": LITELLM_URL, "openrouter": OPENROUTER_URL, "modelsdev": MODELS_DEV_URL}
+SOURCE_URLS = {"modelsdev": MODELS_DEV_URL}
 
 # npm package -> ToLLma gateway family, for providers whose SDK speaks a wire
 # protocol one of OUR adapters implements verbatim. Anything else stays
@@ -299,9 +466,6 @@ GATEWAY_FAMILIES: dict[str, str] = {
     "google-vertex": ProviderType.VERTEX_AI.value,
     "amazon-bedrock": ProviderType.BEDROCK_CONVERSE.value,
 }
-
-MODELSDEV_LOGO_URL = "https://models.dev/logos/{slug}.svg"
-
 
 def sync_provider_catalog(
     db: Session, providers: list[dict[str, Any]], groups: dict[str, list[NormalizedModel]]
@@ -330,7 +494,7 @@ def sync_provider_catalog(
         chat = streaming = False
         for records in groups.values():
             for record in records:
-                if record.source == "modelsdev" and record.provider == slug:
+                if record.provider == slug:
                     chat = chat or bool(record.caps.get("supports_chat"))
                     streaming = streaming or bool(record.caps.get("supports_streaming"))
         values = {

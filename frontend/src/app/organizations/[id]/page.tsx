@@ -178,7 +178,7 @@ function OrgDashboardInner() {
         )}
 
         {section === "providers" && (
-          <OrgProvidersSection orgId={orgId}
+          <OrgProvidersSection orgId={orgId} orgName={data.name}
             canManage={data.is_root || can("Providers.Create") || can("Providers.Update")}
             canRead={data.is_root || can("Providers.Read")} />
         )}

@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useChatStore } from "@/store/chat";
+import { useChatKeyStore } from "./chatKeyStore";
+import { useOrgStore } from "@/store/org";
 import { useSettingsStore } from "@/store/settings";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useAllChatKeyModels, useChatKeys, type KeyModelsEntry } from "@/hooks/useChatKeys";
 import {
   Button,
   Badge,
@@ -16,17 +20,16 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { uploadChatAttachment } from "@/services/api";
-import { providerTypeLabel } from "@/app/providers/fields";
-import type { AIModel, Provider } from "@/types";
+import type { AIModel, ChatKey } from "@/types";
 
 import {
   Bot,
   Brain,
   ChevronDown,
   CornerDownLeft,
-  Cpu,
   Eye,
   Image as ImageIcon,
+  KeyRound,
   Mic,
   Plus,
   Search,
@@ -38,7 +41,7 @@ import {
 import { AttachmentPicker } from "./AttachmentPicker";
 import { UploadPreview } from "./UploadPreview";
 import { DropzoneOverlay } from "./attachments/DropzoneOverlay";
-import { ReasoningSelector } from "./ReasoningSelector";
+import { ReasoningControl } from "./ReasoningControl";
 import {
   PromptInput,
   PromptInputBody,
@@ -56,7 +59,7 @@ import {
   combinedAccept,
   describeAttachment,
   kindForFile,
-  preferredReasoningLevel,
+  resolveReasoningValue,
   readyAttachments,
   suggestModels,
   unsupportedMessage,
@@ -89,21 +92,43 @@ const CAP_ICONS: Record<string, { icon: ComponentType<{ className?: string }>; l
 };
 
 function UnifiedModelSelector({
-  providers,
+  keys,
+  keyEntries,
   models,
   open,
   onOpenChange,
+  onSelect,
+  activeKeyName,
+  activeKeyScope,
+  activeKeyOrgId,
+  triggerPlaceholder,
+  emptyContent,
 }: {
-  providers: Provider[];
+  /** Eligible keys to group by (order preserved). */
+  keys: ChatKey[];
+  /** Per-key servable models (same key ids). */
+  keyEntries: KeyModelsEntry[];
+  /** Full registry rows for display (capabilities/pricing). */
   models: AIModel[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Single pick sets key + provider + model together. */
+  onSelect: (keyId: string, model: AIModel) => void;
+  /** Key name for the trigger chip. */
+  activeKeyName?: string | null;
+  /** Key scope for the trigger badge + add-provider fallback routing. */
+  activeKeyScope?: "personal" | "organization" | null;
+  /** Org id for the add-provider fallback (org keys only). */
+  activeKeyOrgId?: string | null;
+  /** Placeholder when nothing is selected. */
+  triggerPlaceholder?: string;
+  /** Empty-state override. */
+  emptyContent?: ReactNode;
 }) {
-  const { providerId, modelId, setProvider, setModel, setAddProviderOpen } = useChatStore();
+  const { modelId, setAddProviderOpen } = useChatStore();
   const [search, setSearch] = useState("");
   const router = useRouter();
 
-  const activeProvider = providers.find((p) => p.id === providerId);
   const activeModel = models.find((m) => m.id === modelId);
 
   const caps = activeModel
@@ -113,33 +138,46 @@ function UnifiedModelSelector({
     : [];
 
   const q = search.trim().toLowerCase();
+  const byId = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
 
-  const activeProviders = providers.filter((p) => p.is_active);
-  const activeModels = models.filter((m) => m.is_active);
-
-  const groups = activeProviders
-    .map((p) => {
-      const pModels = activeModels.filter(
-        (m) =>
-          m.provider_id === p.id &&
-          (!q ||
-            m.name.toLowerCase().includes(q) ||
-            m.model_id.toLowerCase().includes(q) ||
-            p.name.toLowerCase().includes(q)),
-      );
-      return { provider: p, models: pModels };
+  const groups = keyEntries
+    .map((entry) => {
+      // Join key-eligible ids with full registry rows for display.
+      const seen = new Set<string>();
+      const kModels: AIModel[] = [];
+      for (const km of entry.models ?? []) {
+        if (seen.has(km.id)) continue;
+        seen.add(km.id);
+        const full = byId.get(km.id);
+        if (!full || !full.is_active) continue;
+        if (
+          q &&
+          !full.name.toLowerCase().includes(q) &&
+          !full.model_id.toLowerCase().includes(q) &&
+          !entry.key.name.toLowerCase().includes(q)
+        )
+          continue;
+        kModels.push(full);
+      }
+      return { key: entry.key, models: kModels };
     })
-    .filter((g) => g.models.length > 0 || (q && g.provider.name.toLowerCase().includes(q)));
+    .filter((g) => g.models.length > 0 || (q && g.key.name.toLowerCase().includes(q)));
 
   const totalMatchingModels = groups.reduce((acc, g) => acc + g.models.length, 0);
-  // No active models at all (not just no search hit): the registry is empty
-  // or everything is disabled — point at provider setup instead of a dead end.
-  const registryEmpty = activeModels.length === 0;
+  // No servable models under any key (not just no search hit): point at key
+  // management instead of a dead end.
+  const registryEmpty = groups.every((g) => g.models.length === 0) && !q;
 
   function handleAddProvider() {
     // The wizard modal lives on the providers page: navigate there first,
     // then open it (same pattern as the command palette's Add Provider).
+    // Org keys land on the org providers section instead — the personal
+    // wizard must never see org credentials.
     onOpenChange(false);
+    if (activeKeyScope === "organization" && activeKeyOrgId) {
+      router.push(`/organizations/${activeKeyOrgId}?section=providers`);
+      return;
+    }
     router.push("/providers");
     setAddProviderOpen(true);
   }
@@ -159,12 +197,22 @@ function UnifiedModelSelector({
         >
           <Bot className="size-3 text-zinc-500" />
           <span className="max-w-44 truncate font-medium">
-            {activeModel ? activeModel.name : "Select model"}
+            {activeModel ? activeModel.name : (triggerPlaceholder ?? "Select model")}
           </span>
-          {activeProvider && (
+          {activeKeyName && (
             <span className="hidden sm:inline-flex rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.2 text-[9px] text-zinc-500 dark:text-zinc-400 font-normal">
-              {activeProvider.name}
+              <KeyRound className="mr-0.5 size-2.5 self-center" />
+              {activeKeyName}
             </span>
+          )}
+          {activeKeyScope && (
+            <Badge
+              variant="outline"
+              className="hidden text-[9px] px-1 py-0 font-normal sm:inline-flex"
+              data-testid="model-selector-key-scope"
+            >
+              {activeKeyScope === "organization" ? "Org" : "Personal"}
+            </Badge>
           )}
           {caps.length > 0 && (
             <span className="hidden items-center gap-1 md:flex">
@@ -183,7 +231,7 @@ function UnifiedModelSelector({
             <Search className="absolute left-2 size-3.5 text-zinc-400 pointer-events-none" />
             <input
               type="text"
-              placeholder="Search models or providers…"
+              placeholder="Search models or keys…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-7 w-full rounded border border-zinc-200 bg-transparent pl-7 pr-2 text-xs outline-none focus:border-zinc-400 dark:border-zinc-700 dark:focus:border-zinc-500"
@@ -194,7 +242,7 @@ function UnifiedModelSelector({
 
         {/* Scrollable list with min-height and max-height */}
         <div className="min-h-[220px] max-h-[380px] overflow-y-auto p-1.5">
-          {totalMatchingModels === 0 ? (
+          {totalMatchingModels === 0 ? (emptyContent ?? (
             <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-zinc-400">
               <Bot className="size-5 opacity-40" />
               {q ? (
@@ -228,23 +276,28 @@ function UnifiedModelSelector({
                 <span>No models found</span>
               )}
             </div>
-          ) : (
-            groups.map(({ provider, models: pModels }) => (
-              <div key={provider.id} className="mb-2 last:mb-0">
-                {/* Provider group header */}
+          )) : (
+            groups.map(({ key, models: kModels }) => (
+              <div key={key.id} className="mb-2 last:mb-0">
+                {/* Key group header */}
                 <div className="sticky top-0 z-10 flex items-center justify-between rounded bg-zinc-100/95 px-2 py-1 text-[11px] font-semibold text-zinc-600 backdrop-blur-sm dark:bg-zinc-900/95 dark:text-zinc-400">
-                  <span className="flex items-center gap-1.5 truncate">
-                    <Cpu className="size-3 text-zinc-400" />
-                    <span className="truncate">{provider.name}</span>
+                  <span className="flex items-center gap-1.5 truncate" title={key.scope === "organization" && key.org_name ? `${key.name} · ${key.org_name}` : key.name}>
+                    <KeyRound className="size-3 text-zinc-400" />
+                    <span className="truncate">{key.name}</span>
                   </span>
-                  <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 font-normal">
-                    {providerTypeLabel(provider.provider_type)}
-                  </Badge>
+                  <span className="flex shrink-0 items-center gap-1">
+                    <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal">
+                      {key.scope === "organization" ? "Org" : "Personal"}
+                    </Badge>
+                    <span className="text-[10px] font-normal text-zinc-400">
+                      {kModels.length} model{kModels.length === 1 ? "" : "s"}
+                    </span>
+                  </span>
                 </div>
 
-                {/* Models in provider */}
+                {/* Models servable under this key */}
                 <div className="mt-0.5 space-y-0.5">
-                  {pModels.map((m) => {
+                  {kModels.map((m) => {
                     const isSelected = modelId === m.id;
                     const mCaps = Object.entries(CAP_ICONS)
                       .filter(([k]) => (m as unknown as Record<string, boolean>)[k])
@@ -252,11 +305,8 @@ function UnifiedModelSelector({
 
                     return (
                       <DropdownMenuItem
-                        key={m.id}
-                        onClick={() => {
-                          setProvider(m.provider_id);
-                          setModel(m.id);
-                        }}
+                        key={`${key.id}:${m.id}`}
+                        onClick={() => onSelect(key.id, m)}
                         data-testid={`model-option-${m.id}`}
                         className={cn(
                           "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-xs transition-colors",
@@ -298,6 +348,38 @@ interface Rejection {
   suggestions: AIModel[];
 }
 
+/** Key-gating notice: same banner language as the upload warning above. */
+function KeyNotice({
+  title,
+  body,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  body: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div
+      className="mb-2 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-300"
+      data-testid="key-notice"
+      role="status"
+    >
+      <KeyRound className="mt-0.5 size-3.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{title}</p>
+        <p className="mt-0.5 text-sky-700 dark:text-sky-400">{body}</p>
+      </div>
+      {actionLabel && onAction && (
+        <Button size="sm" variant="outline" onClick={onAction} className="mt-0.5 shrink-0 text-[11px]">
+          {actionLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function ChatComposer({ streaming, disabled = false, continuityKind = null, onSend, onStop }: ChatComposerProps) {
   const {
     providerId,
@@ -310,13 +392,57 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
   } = useChatStore();
   const { data: providers = [], isPending: providersPending } = useProviders();
   const { data: models = [] , isPending: modelsPending } = useModels();
-  const { caps } = useModelCapabilities(models, modelId);
+  // --- BYOK key gating: the model list derives from the selected key.
+  // Per-key entries are full ModelRead rows (same shape as the registry),
+  // so org models render without depending on the personal-only listing.
+  const qc = useQueryClient();
+  const { data: chatKeys = [], isPending: keysPending } = useChatKeys();
+  const { keyId, problem: keyProblem, setKey, clearProblem } = useChatKeyStore();
+  // All keys' models at once: powers the unified key-grouped dropdown and
+  // keyboard cycling. Single-key views below derive from this map.
+  const { entries: keyEntries, isPending: keyEntriesPending } = useAllChatKeyModels(chatKeys);
+  // Scope-correct model union: personal registry rows plus every key's
+  // eligible models (full ModelRead rows, same shape). Org models never
+  // appear in the personal-only listing, so every id lookup below must
+  // use this union — never the registry alone.
+  const scopedModels = useMemo(() => {
+    const byId = new Map(models.map((m) => [m.id, m]));
+    for (const entry of keyEntries) {
+      for (const km of entry.models ?? []) byId.set(km.id, km);
+    }
+    return [...byId.values()];
+  }, [models, keyEntries]);
+  // Provider ids the session may validly reference: personal registry
+  // plus every key-eligible model's provider (org providers included).
+  const scopedProviderIds = useMemo(() => {
+    const ids = new Set(providers.map((p) => p.id));
+    for (const entry of keyEntries) {
+      for (const km of entry.models ?? []) ids.add(km.provider_id);
+    }
+    return ids;
+  }, [providers, keyEntries]);
+  const activeKeyEntry = keyEntries.find((e) => e.key.id === keyId);
+  const keyModels = activeKeyEntry?.models;
+  const keyModelsError = activeKeyEntry?.error ?? false;
+  const activeKey = activeKeyEntry?.key ?? chatKeys.find((k) => k.id === keyId);
+  const eligibleIds = useMemo(() => new Set((keyModels ?? []).map((m) => m.id)), [keyModels]);
+  const eligibleModels = useMemo(
+    () => (keyId ? scopedModels.filter((m) => eligibleIds.has(m.id)) : []),
+    [scopedModels, eligibleIds, keyId],
+  );
+  const orgContext = useOrgStore((s) => s.context);
+  const orgKey = orgContext.type === "org" ? orgContext.orgId : "personal";
+  const { caps } = useModelCapabilities(scopedModels, modelId);
   const kinds = uploadKinds(caps);
   const enterBehavior = useSettingsStore((s) => s.enterBehavior);
   const defaultThinkingLevel = useSettingsStore((s) => s.defaultThinkingLevel);
 
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [reasoningLevel, setReasoningLevel] = useState<string | null>(null);
+  // Display + send value: stored choice kept when the model supports it,
+  // else the provided default or empty. Null-safe: unknown models resolve
+  // to null and hide the control (see reasoningControl).
+  const resolvedReasoning = resolveReasoningValue(caps, reasoningLevel, defaultThinkingLevel);
   const [modelOpen, setModelOpen] = useState(false);
   const [rejection, setRejection] = useState<Rejection | null>(null);
   // Informational continuity chip, dismissed per conversation (local only).
@@ -325,7 +451,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
     !!continuityKind && !continuityDismissed[activeConversationId ?? ""];
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const ready = !!providerId && !!modelId && !disabled;
+  const ready = !!providerId && !!modelId && !!keyId && !keyProblem && !disabled;
   const uploading = attachments.some((a) => a.status === "uploading");
   const router = useRouter();
 
@@ -334,9 +460,13 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
   // reference and surface a one-time notice linking to provider setup.
   const staleNoticed = useRef(false);
   useEffect(() => {
-    if (staleNoticed.current || providersPending || modelsPending) return;
+    // Wait for every scope source (key list, registry, all key entries):
+    // validating against a partially loaded union would clear live org
+    // selections. Note useQueries([]) is instantly "settled", so the key
+    // list itself must gate too.
+    if (staleNoticed.current || keysPending || providersPending || modelsPending || keyEntriesPending) return;
     const store = useChatStore.getState();
-    if (store.providerId && !providers.some((p) => p.id === store.providerId)) {
+    if (store.providerId && !scopedProviderIds.has(store.providerId)) {
       staleNoticed.current = true;
       store.setProvider(null);
       toast.warning("Saved provider is no longer available", {
@@ -345,7 +475,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
       });
       return;
     }
-    if (store.modelId && !models.some((m) => m.id === store.modelId)) {
+    if (store.modelId && !scopedModels.some((m) => m.id === store.modelId)) {
       staleNoticed.current = true;
       store.setModel(null);
       toast.warning("Saved model is no longer available", {
@@ -353,7 +483,73 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
         action: { label: "Open providers", onClick: () => router.push("/providers") },
       });
     }
-  }, [providersPending, modelsPending, providers, models, router]);
+  }, [keysPending, providersPending, modelsPending, keyEntriesPending, providers, scopedModels, scopedProviderIds, router]);
+
+  // Persisted key validation: the key store survives key deletion/disable, so
+  // validate the saved id against the fetched list. Clear the dead reference
+  // with a one-time notice (same pattern as the provider/model stale check).
+  useEffect(() => {
+    if (keysPending || !keyId) return;
+    const entry = chatKeys.find((k) => k.id === keyId);
+    if (entry?.enabled) return;
+    setKey(null);
+    toast.warning("Selected API key is no longer available", {
+      description: entry
+        ? "That key was disabled. Pick another key to continue."
+        : "It was removed or revoked. Pick another key to continue.",
+      action: { label: "Manage API keys", onClick: () => router.push("/api-keys") },
+    });
+  }, [keysPending, chatKeys, keyId, setKey, router]);
+
+  // Model eligibility follows the key: a model valid under the previous key
+  // (or a stale persisted id) must not survive under a key that forbids it.
+  // Clear with notice — never auto-pick a replacement.
+  useEffect(() => {
+    if (!keyId || keyModels === undefined || modelsPending || !modelId) return;
+    if (eligibleIds.has(modelId)) {
+      // Same model, different scope: keep the explicit choice but re-align
+      // the provider (setProvider resets the model, so restore it after).
+      const kept = scopedModels.find((m) => m.id === modelId);
+      if (kept && kept.provider_id !== providerId) {
+        setProvider(kept.provider_id);
+        setModel(kept.id);
+      }
+      return;
+    }
+    setModel(null);
+    toast.warning("Model isn't available for this key", {
+      description: "The selected model isn't eligible for the active API key. Pick another model to continue.",
+    });
+  }, [keyId, keyModels, eligibleIds, modelId, scopedModels, modelsPending, providerId, setModel, setProvider]);
+
+  // Gateway key denial on send (flagged by the api layer): refresh both lists
+  // and request re-selection. Key denials clear the key only via the
+  // validation effect above (key gone/disabled) — never silently switched.
+  // Model denials clear the model; the key is unchanged.
+  useEffect(() => {
+    if (!keyProblem) return;
+    void qc.invalidateQueries({ queryKey: ["chat-keys"] });
+    if (keyId) void qc.invalidateQueries({ queryKey: ["chat-key-models", keyId] });
+    if (keyProblem === "model-not-allowed") setModel(null);
+  }, [keyProblem, keyId, qc, setModel]);
+
+  // Resolved by re-selection: an eligible model after a model denial.
+  // (Key changes resolve via setKey, which clears the problem itself.)
+  useEffect(() => {
+    if (keyProblem === "model-not-allowed" && modelId && eligibleIds.has(modelId)) clearProblem();
+  }, [keyProblem, modelId, eligibleIds, clearProblem]);
+
+  // Org context switch (or membership revocation elsewhere): eligibility is
+  // membership-scoped, so refresh the key list on change. Skips the first
+  // run — the initial fetch already covers mount.
+  const orgFirstRun = useRef(true);
+  useEffect(() => {
+    if (orgFirstRun.current) {
+      orgFirstRun.current = false;
+      return;
+    }
+    void qc.invalidateQueries({ queryKey: ["chat-keys"] });
+  }, [orgKey, qc]);
 
   // Model change: reset reasoning to the user's preferred level when the new
   // model offers it, and drop attachments its capabilities no longer support.
@@ -361,7 +557,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
   useEffect(() => {
     if (prevModelId.current === modelId) return;
     prevModelId.current = modelId;
-    setReasoningLevel(preferredReasoningLevel(caps, defaultThinkingLevel));
+    setReasoningLevel((prev) => resolveReasoningValue(caps, prev, defaultThinkingLevel));
     setRejection(null);
     setAttachments((prev) => {
       const kept = prev.filter((a) => kinds.includes(a.kind));
@@ -383,18 +579,41 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
       setModelOpen(true);
     }
     function switchModel() {
-      const active = models.filter((m) => m.is_active);
-      if (active.length === 0) return;
-      const index = active.findIndex((m) => m.id === useChatStore.getState().modelId);
-      const next = active[(index + 1 + active.length) % active.length];
+      // Cycle across every key's models (deduped, current key preferred);
+      // landing on a model also switches to its key.
+      const seen = new Set<string>();
+      const pairs: Array<{ keyId: string; model: AIModel }> = [];
+      const orderedEntries = [...keyEntries].sort((a, b) =>
+        a.key.id === useChatKeyStore.getState().keyId ? -1 : b.key.id === useChatKeyStore.getState().keyId ? 1 : 0,
+      );
+      for (const entry of orderedEntries) {
+        for (const km of entry.models ?? []) {
+          if (seen.has(km.id)) continue;
+          const full = scopedModels.find((m) => m.id === km.id);
+          if (!full || !full.is_active) continue;
+          seen.add(km.id);
+          pairs.push({ keyId: entry.key.id, model: full });
+        }
+      }
+      if (pairs.length === 0) return;
+      const index = pairs.findIndex((p) => p.model.id === useChatStore.getState().modelId);
+      const next = pairs[(index + 1 + pairs.length) % pairs.length];
+      if (!next) return;
       const store = useChatStore.getState();
-      store.setProvider(next.provider_id);
-      store.setModel(next.id);
+      useChatKeyStore.getState().setKey(next.keyId);
+      store.setProvider(next.model.provider_id);
+      store.setModel(next.model.id);
     }
     function cycleThinking() {
-      if (!caps.supportsReasoning) return;
-      const current = reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel);
-      const next = cycleReasoningLevel(caps.reasoningLevels, current);
+      const control = caps.reasoningControl;
+      if (!control) return;
+      if (control.kind === "toggle") {
+        setReasoningLevel((prev) => (prev === control.onValue ? null : control.onValue));
+        return;
+      }
+      if (control.kind !== "effort") return;
+      const current = reasoningLevel ?? resolveReasoningValue(caps, reasoningLevel, defaultThinkingLevel);
+      const next = cycleReasoningLevel(control.levels, current);
       if (next) setReasoningLevel(next);
     }
     window.addEventListener("tollma:focus-input", focusInput);
@@ -407,7 +626,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
       window.removeEventListener("tollma:switch-model", switchModel);
       window.removeEventListener("tollma:cycle-thinking", cycleThinking);
     };
-  }, [caps, reasoningLevel, defaultThinkingLevel, models]);
+  }, [caps, reasoningLevel, defaultThinkingLevel, keyEntries, scopedModels]);
 
   // Revoke image object URLs on unmount.
   useEffect(() => {
@@ -451,7 +670,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
 
   function reject(kind: AttachmentKind | null, fileName: string) {
     const message = unsupportedMessage(kind, fileName);
-    const suggestions = suggestModels(models, kind, modelId);
+    const suggestions = suggestModels(eligibleModels, kind, modelId);
     setRejection({ message, kind, suggestions });
     toast.error(message);
   }
@@ -533,15 +752,37 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
     setRejection(null);
   }
 
+  /**
+   * Single key-grouped pick: one click sets key + provider + model together.
+   * setKey clears any outstanding key problem (explicit choice wins).
+   */
+  function pickKeyModel(nextKeyId: string, m: AIModel) {
+    setKey(nextKeyId);
+    setProvider(m.provider_id);
+    setModel(m.id);
+    setModelOpen(false);
+  }
+
   function handleSend() {
     const text = draft.trim();
     const readyFiles = readyAttachments(attachments);
-    if ((!text && readyFiles.length === 0) || uploading || streaming || !ready) return;
+    if ((!text && readyFiles.length === 0) || uploading || streaming) return;
+    if (!keyId) {
+      toast.error("Select a model to send", {
+        description: "Pick a model above — its API key is selected automatically.",
+      });
+      return;
+    }
+    if (modelId && keyModels !== undefined && !keyModelsError && !eligibleIds.has(modelId)) {
+      toast.error("That model isn't available for this key", {
+        description: "Pick another model to continue.",
+      });
+      return;
+    }
+    if (!ready) return;
     onSend({
       text,
-      reasoningLevel: caps.supportsReasoning
-        ? (reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel))
-        : null,
+      reasoningLevel: resolvedReasoning,
       attachments: readyFiles.map(describeAttachment),
     });
     setDraft("");
@@ -612,6 +853,113 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
     };
   }, []);
 
+  // --- Key-state banner + model empty state (derived during render) ---
+  // Send stays disabled via `ready`; banners explain why and offer the fix.
+  function openKeyManagement() {
+    router.push("/api-keys");
+  }
+  let keyBanner: ReactNode = null;
+  if (keyProblem === "key-invalid") {
+    keyBanner = (
+      <KeyNotice
+        title="This API key is no longer valid"
+        body="It was revoked, disabled, expired, or your org access changed. Your key list was refreshed — pick another model to continue."
+      />
+    );
+  } else if (keyProblem === "model-not-allowed") {
+    keyBanner = (
+      <KeyNotice
+        title="That model isn't allowed for this key"
+        body="Pick another model to continue — your key is unchanged."
+      />
+    );
+  } else if (keyProblem === "key-required") {
+    keyBanner = (
+      <KeyNotice
+        title="An API key is required"
+        body="Select a model above — its API key is selected automatically."
+      />
+    );
+  } else if (!keysPending && chatKeys.length === 0) {
+    keyBanner = (
+      <KeyNotice
+        title="Chat needs an API key"
+        body="Create a key to start chatting — or ask your org admin for access."
+        actionLabel="Manage API keys"
+        onAction={openKeyManagement}
+      />
+    );
+  } else if (keyId && keyModelsError) {
+    keyBanner = (
+      <KeyNotice
+        title="Couldn't load this key's models"
+        body="The key list may be stale — retry to refresh it."
+        actionLabel="Retry"
+        onAction={() => void qc.invalidateQueries({ queryKey: ["chat-key-models", keyId] })}
+      />
+    );
+  } else if (keyId && keyModels !== undefined && keyModels.length === 0) {
+    keyBanner = (
+      <KeyNotice
+        title="This key has no eligible models"
+        body="No live models fall under this key's scope. Manage the key or pick another one."
+        actionLabel="Manage API keys"
+        onAction={openKeyManagement}
+      />
+    );
+  }
+
+  // Model dropdown empty state: explain the key gating instead of pointing
+  // at provider setup when the registry itself is fine.
+  const keyModelsPending = keyEntries.some((e) => e.pending);
+  const keyModelsFailed = keyEntries.filter((e) => e.error);
+  const listedTotal = keyEntries.reduce((n, e) => n + (e.models?.length ?? 0), 0);
+  let modelEmpty: ReactNode = null;
+  if (keysPending || (listedTotal === 0 && keyModelsPending)) {
+    modelEmpty = (
+      <div className="flex h-[200px] items-center justify-center px-4 text-center text-xs text-zinc-400">
+        <span>Loading models…</span>
+      </div>
+    );
+  } else if (chatKeys.length === 0) {
+    modelEmpty = (
+      <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-zinc-400">
+        <KeyRound className="size-5 opacity-40" />
+        <span className="font-medium text-zinc-500 dark:text-zinc-300">No API keys yet</span>
+        <span className="text-[11px]">Create a key to start chatting.</span>
+        <Button size="sm" onClick={openKeyManagement} className="mt-1 gap-1 text-[11px]">
+          <Plus className="size-3.5" />
+          Manage API keys
+        </Button>
+      </div>
+    );
+  } else if (keyModelsFailed.length > 0 && listedTotal === 0) {
+    modelEmpty = (
+      <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-zinc-400">
+        <span className="font-medium text-zinc-500 dark:text-zinc-300">Couldn&apos;t load models</span>
+        <button
+          type="button"
+          onClick={() => void qc.invalidateQueries({ queryKey: ["chat-key-models"] })}
+          className="font-medium text-tollma-600 underline underline-offset-2 hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  } else {
+    modelEmpty = (
+      <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-zinc-400">
+        <Bot className="size-5 opacity-40" />
+        <span className="font-medium text-zinc-500 dark:text-zinc-300">No eligible models</span>
+        <span className="text-[11px]">This key has no live models in scope.</span>
+        <Button size="sm" onClick={openKeyManagement} className="mt-1 gap-1 text-[11px]">
+          <Plus className="size-3.5" />
+          Manage API keys
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div
       className="relative border-t border-zinc-200 bg-white px-3 pb-3 pt-2 dark:border-zinc-800 dark:bg-zinc-950"
@@ -655,6 +1003,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
           </button>
         </div>
       )}
+      {keyBanner}
 
       <PromptInput
         onSubmit={(event) => {
@@ -734,20 +1083,27 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
         <PromptInputFooter className="pb-2">
           <PromptInputTools>
             <UnifiedModelSelector
-              providers={providers}
-              models={models}
+              keys={chatKeys}
+              keyEntries={keyEntries}
+              models={scopedModels}
               open={modelOpen}
               onOpenChange={setModelOpen}
+              onSelect={pickKeyModel}
+              activeKeyName={activeKey?.name ?? null}
+              activeKeyScope={activeKey?.scope ?? null}
+              activeKeyOrgId={activeKey?.org_id ?? null}
+              triggerPlaceholder="Select a model to start chatting…"
+              emptyContent={modelEmpty}
             />
 
-            {/* Thinking slider — hidden entirely unless the model reasons */}
-            {caps.supportsReasoning && (
-              <ReasoningSelector
-                levels={caps.reasoningLevels}
-                value={reasoningLevel ?? preferredReasoningLevel(caps, defaultThinkingLevel)}
+            {/* Thinking control — hidden entirely unless the model declares reasoning options */}
+            {caps.reasoningControl ? (
+              <ReasoningControl
+                control={caps.reasoningControl}
+                value={resolvedReasoning}
                 onChange={setReasoningLevel}
               />
-            )}
+            ) : null}
 
             {/* Single upload button — hidden for text-only models */}
             <AttachmentPicker

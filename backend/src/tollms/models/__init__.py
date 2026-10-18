@@ -12,6 +12,7 @@ from tollms.models.attachment import Attachment  # noqa: F401
 from tollms.models.conversation import Conversation  # noqa: F401
 from tollms.models.message import Message, Role  # noqa: F401
 from tollms.models.message_history import GenerationRun, MessageVersion  # noqa: F401
+from tollms.models.canonical_model import CanonicalModel  # noqa: F401
 from tollms.models.model_repository import RepositoryModel, RepositorySource, SyncRun  # noqa: F401
 from tollms.models.organization import (  # noqa: F401
     AuditLog,

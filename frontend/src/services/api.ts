@@ -11,6 +11,9 @@ import type {
   AnalyticsRangeParams,
   AnalyticsSummary,
   ChatAttachment,
+  ChatKey,
+  ChatKeyModel,
+  ChatKeyProblem,
   AnalyticsTimeseries,
   AnalyticsWidgets,
   AuthResponse,
@@ -42,6 +45,7 @@ import type {
   ValidationResult,
 } from "@/types";
 import { getAccessToken, setStoredAccessToken, useAuthStore } from "@/store/auth";
+import { useChatKeyStore } from "@/app/components/chat/chatKeyStore";
 
 // Server components resolve BACKEND_URL (service name); client components
 // fall back to NEXT_PUBLIC_API_URL (host-mapped port for the browser).
@@ -293,6 +297,8 @@ export async function streamChat(
   body: {
     provider_id: string;
     model_id: string;
+    /** In-app generation key. Defaults to the composer's selected key. */
+    key_id?: string | null;
     conversation_id?: string | null;
     message: string;
     reasoning_level?: string | null;
@@ -301,7 +307,15 @@ export async function streamChat(
   },
   cb: StreamCallbacks,
 ): Promise<void> {
-  return postStream("/api/v1/gateway/stream", body, cb);
+  // BYOK: every in-app generation carries the selected key. The composer owns
+  // selection; injecting here (rather than in each caller) guarantees no send
+  // path can submit a model without its key.
+  const selectedKeyId = body.key_id ?? useChatKeyStore.getState().keyId;
+  return postStream(
+    "/api/v1/gateway/stream",
+    selectedKeyId ? { ...body, key_id: selectedKeyId } : body,
+    cb,
+  );
 }
 
 /** Refresh recovery: reattach to a running generation (snapshot + live). */
@@ -421,7 +435,9 @@ async function consumeStream(res: Response, cb: StreamCallbacks): Promise<void> 
     return;
   }
   if (!res.ok || !res.body) {
-    cb.onError(`stream failed with ${res.status}`);
+    const failure = await readStreamFailure(res);
+    if (failure.problem) useChatKeyStore.getState().flagProblem(failure.problem);
+    cb.onError(failure.message);
     return;
   }
   const reader = res.body.getReader();
@@ -867,12 +883,39 @@ export async function exportConversations(payload: {
 
 export const getMessageHistory = (messageId: string) =>
   get<MessageHistory>(`/api/v1/messages/${messageId}/history`);
-export const editMessage = (messageId: string, content: string) =>
-  patch<MessageEditResult>(`/api/v1/messages/${messageId}`, { content });
-export const regenerateMessage = (messageId: string) =>
+/**
+ * BYOK: edits and regenerations carry the composer's selected key (same gate
+ * as chat send — see streamChat). Resolves from the chat key store unless an
+ * explicit id is passed. With no key selected the request never fires: the
+ * key-required notice goes up and the thrown 422 flows through the callers'
+ * existing toastApiError handling.
+ */
+function requireChatKeyId(explicit?: string | null): string {
+  const keyId = explicit ?? useChatKeyStore.getState().keyId;
+  if (keyId) return keyId;
+  useChatKeyStore.getState().flagProblem("key-required");
+  throw new ApiError(
+    422,
+    "Unprocessable Entity",
+    {
+      error: {
+        code: "KEY_REQUIRED",
+        message: "Select an API key above first — edits and regenerations carry the selected key.",
+        retryable: false,
+      },
+    },
+    "edit/regenerate without a selected chat key",
+  );
+}
+export const editMessage = (messageId: string, content: string, keyId?: string | null) =>
+  patch<MessageEditResult>(
+    `/api/v1/messages/${messageId}?key_id=${encodeURIComponent(requireChatKeyId(keyId))}`,
+    { content },
+  );
+export const regenerateMessage = (messageId: string, keyId?: string | null) =>
   post<{ conversation_id: string; generation_id: string; message_id: string; status: string }>(
     `/api/v1/messages/${messageId}/regenerate`,
-    {},
+    { key_id: requireChatKeyId(keyId) },
   );
 export const activateGeneration = (messageId: string, runId: string) =>
   post<{ message: ChatMessage; run: GenerationRun }>(
@@ -905,3 +948,39 @@ export const getRequestLogs = (params: { conversationId?: string; limit?: number
   if (params.limit) q.set("limit", String(params.limit));
   return get<RequestLogPage>(`/api/v1/request-logs?${q.toString()}`);
 };
+
+// --- Chat API keys (BYOK composer) -------------------------------------------
+
+export const listChatKeys = () => get<ChatKey[]>("/api/v1/chat/keys");
+export const listChatKeyModels = (keyId: string) =>
+  get<ChatKeyModel[]>(`/api/v1/chat/models?key_id=${encodeURIComponent(keyId)}`);
+
+/**
+ * Classify gateway key denials from the error envelope so the composer can
+ * refresh its lists and request re-selection. Key 404s read lowercase
+ * `api key <id> not found` — distinct from `conversation ...` / `generation
+ * ... not found`, which never classify here.
+ */
+export function classifyChatKeyProblem(status: number, data: unknown): ChatKeyProblem | null {
+  const raw = typeof data === "string" ? data : JSON.stringify(data ?? "");
+  if (status === 422 && raw.includes("KEY_REQUIRED")) return "key-required";
+  if (status === 404 && /api key \S+ not found/.test(raw)) return "key-invalid";
+  if (status === 403 && raw.includes("model_not_allowed")) return "model-not-allowed";
+  return null;
+}
+
+/** Non-OK stream-setup response → user-facing message + optional key problem. */
+async function readStreamFailure(res: Response): Promise<{ message: string; problem: ChatKeyProblem | null }> {
+  const fallback = `stream failed with ${res.status}`;
+  const text = await res.text().catch(() => "");
+  if (!text) return { message: fallback, problem: null };
+  let data: unknown = text;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { message: `${fallback}: ${text.slice(0, 200)}`, problem: null };
+  }
+  const err = (data as { error?: { message?: unknown } })?.error;
+  const message = typeof err?.message === "string" && err.message ? err.message : fallback;
+  return { message, problem: classifyChatKeyProblem(res.status, data) };
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { KeyRound, Loader2 } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge, Button, Card, CardContent, Checkbox, DataTable, type DataTableColumn,
@@ -13,7 +13,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   useJoinRequests, useOrgInvitations, useOrgKeys, useOrgMutations, useOrgSets,
 } from "@/hooks/useOrgs";
-import { useModels } from "@/hooks/useRegistry";
+import { KeyForm, type KeyFormResult } from "@/app/api-keys/components/KeyForm";
 import { copyWithToast } from "@/lib/clipboard";
 import { parseApiError } from "@/lib/errors";
 import { ApiError } from "@/services/api";
@@ -316,108 +316,37 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
   onCreated: (rawKey: string) => void;
 }) {
   const mut = useOrgMutations(orgId);
-  const models = useModels();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [assignee, setAssignee] = useState("");
-  const [budget, setBudget] = useState("");
-  const [pickedModels, setPickedModels] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  function toggleModel(id: string) {
-    setPickedModels((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
-  }
-
-  const budgetValue = budget.trim() === "" ? null : Number(budget);
-  const budgetValid = budget.trim() === "" || (Number.isFinite(budgetValue) && (budgetValue as number) >= 0);
-  const valid = name.trim().length >= 2 && assignee !== "" && budgetValid && !busy;
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await mut.createKey.mutateAsync({
-        name: name.trim(),
-        assignee_user_id: assignee,
-        description: description.trim() || undefined,
-        max_budget_usd: budget.trim() === "" ? null : Number(budget),
-        model_permissions: pickedModels.length > 0 ? pickedModels.map((id) => ({ model_id: id })) : undefined,
-      });
-      const raw = extractRawKey(res);
-      if (!raw) {
-        throw new Error("The server did not return a key secret. The key may still have been created — check the list.");
-      }
-      toast.success(`Key "${name.trim()}" created.`);
-      onCreated(raw);
-    } catch (e) {
-      setError(parseApiError(e).message);
-    } finally {
-      setBusy(false);
+  async function handleCreate(result: KeyFormResult) {
+    if (!result.assigneeUserId) {
+      throw new Error("Choose the member this key is assigned to.");
     }
+    const res = await mut.createKey.mutateAsync({
+      name: result.name,
+      assignee_user_id: result.assigneeUserId,
+      description: result.description ?? undefined,
+      max_budget_usd: result.policy?.max_budget_usd ?? null,
+      model_permissions: result.modelPermissions.map((p) => ({
+        model_id: p.model_id as string,
+        ...(p.provider_id ? { provider_id: p.provider_id as string } : {}),
+      })),
+    });
+    const raw = extractRawKey(res);
+    if (!raw) {
+      throw new Error("The server did not return a key secret. The key may still have been created — check the list.");
+    }
+    toast.success(`Key "${result.name}" created.`);
+    onCreated(raw);
   }
 
   return (
-    <Dialog open onOpenChange={(n) => { if (!n && !busy) onClose(); }}>
-      <DialogContent className="max-w-md p-4" data-testid="org-key-dialog">
-        <DialogTitle className="text-sm font-semibold">Create organization API key</DialogTitle>
-        <DialogDescription>
-          Keys are scoped to this organization and inherit its governance. The secret is shown once after creation.
-        </DialogDescription>
-        <div className="mt-3 space-y-3">
-          <Field label="Key name">
-            <Input value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. CI deploy key" maxLength={80} data-testid="org-key-name" />
-          </Field>
-          <Field label="Assignee (member)">
-            <Select value={assignee} onChange={(e) => setAssignee(e.target.value)}
-              data-testid="org-key-assignee">
-              <option value="">Select a member…</option>
-              {members.map((m) => (
-                <option key={m.user_id} value={m.user_id}>{m.email}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Budget cap in USD (optional)">
-            <Input value={budget} onChange={(e) => setBudget(e.target.value)}
-              placeholder="e.g. 25" inputMode="decimal" data-testid="org-key-budget" />
-          </Field>
-          <Field label="Model access (optional — empty means all org-visible models)">
-            <div className="max-h-48 space-y-1.5 overflow-y-auto rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800"
-              data-testid="org-key-models">
-              {models.isLoading && <p className="text-xs text-zinc-500">Loading models…</p>}
-              {models.isError && <p className="text-xs text-zinc-500">Models unavailable — the key will allow all models.</p>}
-              {(models.data ?? []).map((m) => (
-                <label key={m.id} data-testid={`org-key-model-${m.id}`}
-                  className="flex cursor-pointer items-center gap-2 text-xs">
-                  <Checkbox checked={pickedModels.includes(m.id)} onChange={() => toggleModel(m.id)} />
-                  <span className="truncate font-medium">{m.name}</span>
-                  <span className="ml-auto shrink-0 font-mono text-[10px] text-zinc-400">{m.model_id}</span>
-                </label>
-              ))}
-              {!models.isLoading && !models.isError && (models.data ?? []).length === 0 && (
-                <p className="text-xs text-zinc-500">No models registered.</p>
-              )}
-            </div>
-          </Field>
-          <Field label="Description (optional)">
-            <Input value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="What is this key for?" maxLength={300} data-testid="org-key-description" />
-          </Field>
-          {error && (
-            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
-              {error}
-            </p>
-          )}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-            <Button size="sm" onClick={() => void submit()} disabled={!valid} data-testid="org-key-submit">
-              {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />} Create key
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <KeyForm
+      mode="create"
+      scope="org"
+      assignees={members.map((m) => ({ id: m.user_id, email: m.email }))}
+      onCreate={handleCreate}
+      onClose={onClose}
+    />
   );
 }
 

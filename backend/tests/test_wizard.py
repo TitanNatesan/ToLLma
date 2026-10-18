@@ -14,6 +14,26 @@ from tollms.models.provider import ProviderType
 from tollms.api.providers.service import draft_validate
 
 
+def _modelsdev(*entries: tuple[str, str, dict]) -> dict:
+    """Build a models.dev payload from (provider, model_id, model_info) triples."""
+    payload: dict = {}
+    for provider, model_id, info in entries:
+        payload.setdefault(
+            provider, {"id": provider, "name": provider, "models": {}}
+        )["models"][model_id] = info
+    return payload
+
+
+def _chat_model(name: str, input_per_1m: float = 2.5) -> dict:
+    return {
+        "id": name,
+        "name": name,
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "limit": {"context": 128000, "output": 4096},
+        "cost": {"input": input_per_1m, "output": 10.0},
+    }
+
+
 def _models_transport(models: list[dict]) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": models})
@@ -45,12 +65,11 @@ def test_draft_validate_lists_models_without_persisting(db: Session, client: Tes
 def test_mapping_priorities(db: Session) -> None:
     run_sync(
         db,
-        litellm_data={
-            "groq/gpt-oss-20b": {"litellm_provider": "groq", "mode": "chat", "input_cost_per_token": 1e-06},
-            "openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"},
-        },
-        openrouter_data={"data": [{"id": "meta/gpt-oss-20b", "name": "GPT OSS"}]},
-        modelsdev_data={},
+        modelsdev_data=_modelsdev(
+            ("groq", "gpt-oss-20b", _chat_model("gpt-oss-20b", 1.0)),
+            ("openai", "gpt-4o", _chat_model("gpt-4o")),
+            ("meta", "gpt-oss-20b", {**_chat_model("gpt-oss-20b"), "name": "GPT OSS"}),
+        ),
     )
     assert detect_providers_from_url("https://api.groq.com/openai/v1") == ("groq",)
     assert detect_providers_from_url("http://localhost:11434/v1") == ("ollama",)
@@ -79,9 +98,7 @@ def test_register_is_atomic_with_match_stats(client: TestClient, db: Session, us
     user_factory()
     run_sync(
         db,
-        litellm_data={"openai/gpt-4o": {"input_cost_per_token": 2.5e-06, "litellm_provider": "openai", "mode": "chat"}},
-        openrouter_data={"data": []},
-        modelsdev_data={},
+        modelsdev_data=_modelsdev(("openai", "gpt-4o", _chat_model("gpt-4o"))),
     )
     payload = {
         "name": "WizProv",

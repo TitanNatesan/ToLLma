@@ -115,6 +115,20 @@ export interface ValidationResult {
   latency_ms: number;
 }
 
+/** Models.dev reasoning control passthrough (backend frozen contract).
+ *  Null when the model has none; absent in older responses — readers must
+ *  treat undefined as unknown and hide reasoning UI (null-safe, never crash).
+ *  Observed variants: {type:'effort', values:[...]}, {type:'budget_tokens',
+ *  min, max?, default?}, {type:'toggle'}. Missing/null means unknown: never
+ *  invent levels from this. */
+export interface ReasoningOption {
+  type: string;
+  values?: string[];
+  min?: number;
+  max?: number;
+  default?: string;
+}
+
 export interface AIModel {
   id: string;
   provider_id: string;
@@ -137,6 +151,7 @@ export interface AIModel {
   supports_reasoning: boolean;
   supports_embeddings: boolean;
   supports_streaming: boolean;
+  reasoning_options?: ReasoningOption[] | null;
   context_window: number | null;
   max_output_tokens: number | null;
   release_date: string | null;
@@ -704,3 +719,24 @@ export interface ApiErrorBody {
     timestamp: string;
   };
 }
+
+// --- Chat API keys (BYOK composer) -------------------------------------------
+// Mirrors backend ChatKeyRead / ChatModelRead (GET /api/v1/chat/keys,
+// GET /api/v1/chat/models). Never carries secrets or hashes.
+
+export type ChatKeyScope = "personal" | "organization";
+
+export interface ChatKey {
+  id: string;
+  name: string;
+  scope: ChatKeyScope;
+  org_id: string | null;
+  org_name: string | null;
+  enabled: boolean;
+  model_count: number;
+}
+
+export type ChatKeyModel = AIModel;
+
+/** Gateway key denials the composer must recover from (refresh + reselect). */
+export type ChatKeyProblem = "key-required" | "key-invalid" | "model-not-allowed";

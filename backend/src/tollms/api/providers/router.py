@@ -52,22 +52,22 @@ def create(data: ProviderCreate, db: Session = Depends(get_db), user: User = Dep
 
 @router.get("", response_model=list[ProviderRead])
 def list_all(active_only: bool = False, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> list[ProviderRead]:
-    return [_read(p) for p in service.list_providers(db, active_only=active_only, user_id=user.id)]
+    return [_read(p) for p in service.list_providers(db, active_only=active_only, user_id=user.id, personal_only=True)]
 
 
 @router.get("/{provider_id}", response_model=ProviderRead)
 def get(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ProviderRead:
-    return _read(service.get_provider(db, provider_id, user.id))
+    return _read(service.get_provider(db, provider_id, user.id, personal_only=True))
 
 
 @router.patch("/{provider_id}", response_model=ProviderRead)
 def update(provider_id: uuid.UUID, data: ProviderUpdate, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ProviderRead:
-    return _read(service.update_provider(db, provider_id, data, user.id))
+    return _read(service.update_provider(db, provider_id, data, user.id, personal_only=True))
 
 
 @router.delete("/{provider_id}", status_code=204)
 def delete(provider_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> None:
-    service.delete_provider(db, provider_id, user.id)
+    service.delete_provider(db, provider_id, user.id, personal_only=True)
 
 
 @router.post("/draft-validate", response_model=DraftValidationResult)

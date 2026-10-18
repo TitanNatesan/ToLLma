@@ -74,9 +74,21 @@ def _invalidate_provider_cache(provider_id: uuid.UUID) -> None:
     )
 
 
-def get_provider(db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None = None) -> Provider:
+def get_provider(
+    db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None = None,
+    *, personal_only: bool = False,
+) -> Provider:
+    """Fetch one provider or raise a 404 oracle (never leaks existence).
+
+    `personal_only` (personal registry endpoints): org-owned rows 404 even
+    for org members — use the org endpoints for org rows. Validate/discover
+    keep dual visibility (personal_only=False) because the org UI reuses
+    them perm-gated via `_require_org_provider_perm`.
+    """
     provider = db.get(Provider, provider_id)
     if provider is None or provider.is_deleted:
+        raise NotFoundError(f"provider {provider_id} not found")
+    if personal_only and provider.org_id is not None:
         raise NotFoundError(f"provider {provider_id} not found")
     if user_id is None:
         return provider  # unscoped (internal/tests): no ownership check
@@ -111,21 +123,29 @@ def _active_org_ids(db: Session, user_id: uuid.UUID) -> set[uuid.UUID]:
 
 
 def list_providers(
-    db: Session, *, active_only: bool = False, user_id: uuid.UUID | None = None
+    db: Session, *, active_only: bool = False, user_id: uuid.UUID | None = None,
+    personal_only: bool = False,
 ) -> list[Provider]:
     """Personal providers owned by `user_id` plus org providers of the
     caller's ACTIVE orgs (config visible; credentials stay masked at the
-    router — raw secrets are never serialized)."""
+    router — raw secrets are never serialized).
+
+    `personal_only` (personal registry endpoint): ONLY personal rows
+    (`org_id IS NULL AND user_id == caller`) — org rows never leak here.
+    """
     stmt = select(Provider).where(Provider.is_deleted.is_(False)).order_by(Provider.created_at)
     if user_id is not None:
         from sqlalchemy import and_, or_
 
-        org_ids = _active_org_ids(db, user_id)
         personal = and_(Provider.org_id.is_(None), Provider.user_id == user_id)
-        if org_ids:
-            stmt = stmt.where(or_(personal, Provider.org_id.in_(list(org_ids))))
-        else:
+        if personal_only:
             stmt = stmt.where(personal)
+        else:
+            org_ids = _active_org_ids(db, user_id)
+            if org_ids:
+                stmt = stmt.where(or_(personal, Provider.org_id.in_(list(org_ids))))
+            else:
+                stmt = stmt.where(personal)
     if active_only:
         stmt = stmt.where(Provider.is_active.is_(True))
     return list(db.scalars(stmt))
@@ -204,9 +224,12 @@ def _require_org_provider_perm(db: Session, provider: Provider, user_id: uuid.UU
 
 
 def update_provider(
-    db: Session, provider_id: uuid.UUID, data: ProviderUpdate, user_id: uuid.UUID | None = None
+    db: Session, provider_id: uuid.UUID, data: ProviderUpdate, user_id: uuid.UUID | None = None,
+    *, personal_only: bool = False,
 ) -> Provider:
-    provider = get_provider(db, provider_id, user_id)
+    # ProviderUpdate carries no user_id/org_id fields (service also reads
+    # only name/credentials/metadata/is_active): scope can never change here.
+    provider = get_provider(db, provider_id, user_id, personal_only=personal_only)
     if provider.org_id is not None and user_id is not None:
         _require_org_provider_perm(db, provider, user_id, "Providers.Update")
         if data.credentials is not None:
@@ -228,8 +251,11 @@ def update_provider(
     return provider
 
 
-def delete_provider(db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None = None) -> None:
-    provider = get_provider(db, provider_id, user_id)
+def delete_provider(
+    db: Session, provider_id: uuid.UUID, user_id: uuid.UUID | None = None,
+    *, personal_only: bool = False,
+) -> None:
+    provider = get_provider(db, provider_id, user_id, personal_only=personal_only)
     if provider.org_id is not None and user_id is not None:
         _require_org_provider_perm(db, provider, user_id, "Providers.Delete")
     provider.is_deleted = True

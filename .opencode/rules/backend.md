@@ -119,6 +119,16 @@ One module per table group: `conversation.py`, `message.py`, `provider.py`,
   (e.g. `Index(..., postgresql_where=text(...))`), so that
   `alembic check` stays green.
 
+## Model Catalog Source Policy
+
+Models.dev is the sole external source of model catalog metadata. Do not
+introduce LiteLLM, OpenRouter, or another external model catalog source for
+model discovery, pricing, capabilities, or synchronization. New model metadata
+requirements must first be evaluated against the official Models.dev schema
+(`https://models.dev/api.json`). Keep catalog metadata separate from provider
+credentials, provider-specific model registration, runtime adapters, and
+authorization. Missing upstream fields must not be fabricated.
+
 ## Invariants (CI-verifiable)
 
 - No `tollms.modules` package and no `tollms.modules.*` imports anywhere.

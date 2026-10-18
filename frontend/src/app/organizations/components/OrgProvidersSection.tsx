@@ -52,8 +52,9 @@ function isRotatePermError(e: unknown): boolean {
 const ROTATE_PERM_COPY =
   "Credential rotation also requires the Providers.RotateCredentials permission. Ask an organization admin to grant it.";
 
-export function OrgProvidersSection({ orgId, canManage, canRead }: {
+export function OrgProvidersSection({ orgId, orgName, canManage, canRead }: {
   orgId: string;
+  orgName?: string | null;
   canManage: boolean;
   canRead: boolean;
 }) {
@@ -234,6 +235,7 @@ export function OrgProvidersSection({ orgId, canManage, canRead }: {
             setCatalogPrefill(null);
           }}
           ownership={{ type: "org", orgId }}
+          orgName={orgName}
           existingNames={orgProviderNames}
           initialType={catalogPrefill?.family ?? null}
           initialName={catalogPrefill?.name ?? null}

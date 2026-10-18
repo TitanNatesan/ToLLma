@@ -16,7 +16,7 @@ ToLLma is a self-hosted, unified gateway and workspace for large language models
 
 - **One gateway, every provider** — OpenAI, Anthropic, Gemini, Vertex AI, Bedrock, and any OpenAI-compatible endpoint behind a single API.
 - **Provider management, not just proxying** — credential validation, model discovery, endpoint-aware routing, and per-model pricing/capability overrides.
-- **Model intelligence** — a continuously synced repository (LiteLLM + OpenRouter sources) that suggests pricing, limits, and capabilities when you register models.
+- **Model intelligence** — a continuously synced repository (Models.dev is the sole catalog source) that suggests pricing, limits, and capabilities when you register models.
 - **Usage tracking that is real** — per-message tokens and costs, conversation analytics, per-API-key analytics, and a platform admin dashboard.
 - **Built for agents next** — the unified request pipeline, API-key policies, and request ledger are the foundation for first-class agent support (Planned — see [docs/ROADMAP.md](docs/ROADMAP.md)).
 

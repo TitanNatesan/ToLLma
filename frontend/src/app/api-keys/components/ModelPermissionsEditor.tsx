@@ -118,6 +118,11 @@ export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermi
         icon={Boxes}
         title="No models registered"
         description="Register providers and models first, then grant this key access to specific models. An empty selection allows every enabled model."
+        action={
+          <Button size="sm" variant="outline" asChild className="gap-1 text-[11px]">
+            <a href="/providers">Configure a provider</a>
+          </Button>
+        }
         className="py-6"
       />
     );

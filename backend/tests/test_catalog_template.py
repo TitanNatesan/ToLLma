@@ -2,7 +2,7 @@
 
 Covers: template mapping counts + 404 + credential_fields shapes,
 personal/org creation from a catalog slug (stamp, prefill, caller-wins,
-cross-org 404), legacy ownerless-row invisibility, org perm gates on
+cross-org 404), other-owner-row invisibility, org perm gates on
 validate/discover/credential-rotate, conversation ref validation, and
 sync idempotency (incl. full models.dev raw payload survival).
 """
@@ -220,9 +220,12 @@ def test_create_org_from_slug_and_cross_org_404(
 # --- ownerless-row invisibility ------------------------------------------------------
 
 
-def _legacy_provider(db: Session) -> uuid.UUID:
+def _other_owner_provider(db: Session, owner_id: uuid.UUID) -> uuid.UUID:
+    """Provider owned by someone else: outside the caller's scope. (Both-null
+    ownerless rows are impossible now — ck_providers_owner_scope rejects them
+    at insert; see test_scope_isolation.)"""
     row = Provider(
-        user_id=None, org_id=None, name="Legacy",
+        user_id=owner_id, org_id=None, name="Legacy",
         provider_type=ProviderType.CUSTOM,
         credentials_encrypted=encrypt(json.dumps({"base_url": "http://mock"})),
     )
@@ -232,15 +235,16 @@ def _legacy_provider(db: Session) -> uuid.UUID:
     return row.id
 
 
-def test_ownerless_rows_invisible(client: TestClient, db: Session, user_factory) -> None:
+def test_other_owner_rows_invisible(client: TestClient, db: Session, user_factory) -> None:
     from tollms.api.keys.schemas import ApiKeyCreate, ModelPermissionIn
     from tollms.api.keys import service as keys_service
     from tollms.api.models.schemas import ModelCreate
     from tollms.api.models import service as models_service
 
+    other = user_factory("legacy-other@tollma.ai")
     user = user_factory()
     uid = uuid.UUID(user["id"])
-    legacy_id = _legacy_provider(db)
+    legacy_id = _other_owner_provider(db, uuid.UUID(other["id"]))
     # Unscoped internals can still register the model; scoped reads cannot see it.
     model = models_service.create_model(
         db, ModelCreate(provider_id=legacy_id, model_id="legacy-m", name="Legacy M",
@@ -364,14 +368,17 @@ def test_conversation_invalid_refs_404(
 def test_sync_idempotent_no_dupes(db: Session) -> None:
     from tollms.models.model_repository import RepositoryModel
 
-    litellm = {"openai/gpt-5": {
-        "litellm_provider": "openai", "mode": "chat",
-        "max_input_tokens": 1000, "max_output_tokens": 100,
-        "input_cost_per_token": 0.001, "output_cost_per_token": 0.002,
-    }}
-    openrouter = {"data": []}
     modelsdev = {"acme": dict(NPM_SAMPLE["acme"])}
-    kw = {"litellm_data": litellm, "openrouter_data": openrouter, "modelsdev_data": modelsdev}
+    modelsdev["acme"]["models"] = {
+        "gpt-5": {
+            "id": "gpt-5", "name": "GPT-5",
+            "modalities": {"input": ["text"], "output": ["text"]},
+            "limit": {"context": 1000, "output": 100},
+            "cost": {"input": 1000.0, "output": 2000.0},
+        },
+        "m1": {"name": "M1", "cost": {}, "limit": {}},
+    }
+    kw = {"modelsdev_data": modelsdev}
     first = sync_engine.run_sync(db, **kw)
     assert first.status == "done", first.error_details
     n_models = db.scalar(select(func.count()).select_from(RepositoryModel)) or 0
@@ -390,3 +397,4 @@ def test_sync_idempotent_no_dupes(db: Session) -> None:
     ).scalars().first()
     assert stored is not None
     assert stored.raw_source_payload["modelsdev"] == {"name": "M1", "cost": {}, "limit": {}}
+    assert stored.sources == ["modelsdev"]

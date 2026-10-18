@@ -8,6 +8,7 @@ import { Eye, EyeOff, Loader2, Lock, Mail, User as UserIcon } from "lucide-react
 import { Button } from "@/components/ui/primitives";
 import { Logo } from "@/components/ui/Logo";
 import { ApiError, googleLoginUrl, login, signup } from "@/services/api";
+import { toast } from "sonner";
 import { useAuthStore } from "@/store/auth";
 
 interface AuthCardProps {
@@ -119,6 +120,15 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
     return null;
   }
 
+  function peekInviteToken(): string | null {
+    if (inviteToken) return inviteToken;
+    try {
+      return window.sessionStorage.getItem("tollma_invite_token");
+    } catch {
+      return null;
+    }
+  }
+
   function afterAuth() {
     const token = consumeInviteToken();
     router.push(token ? `/organizations/invites?token=${encodeURIComponent(token)}` : "/");
@@ -143,6 +153,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   };
 
   async function handleLogin(e: React.FormEvent) {
+    if (loginBusy) return;
     e.preventDefault();
     setLoginError(null);
     setLoginBusy(true);
@@ -165,6 +176,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   }
 
   async function handleSignup(e: React.FormEvent) {
+    if (signupBusy) return;
     e.preventDefault();
     setSignupError(null);
     setSignupBusy(true);
@@ -178,15 +190,28 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       if (res.access_token) {
         setAccessToken(res.access_token);
       }
+      // Email verification gate: 2xx with verification_sent !== false
+      // (absent on old backends, whose signup always initiates) means a
+      // verification mail went out — toast and land on the login form,
+      // preserving invite context. Explicit false keeps legacy auto-login.
+      if (
+        (res as { verification_sent?: boolean }).verification_sent !== false
+      ) {
+        toast.success("verification mail is sent to ur email");
+        const invite = peekInviteToken();
+        router.push(
+          `/login${invite ? `?invite=${encodeURIComponent(invite)}` : ""}`,
+        );
+        return;
+      }
       afterAuth();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 422) {
-        setSignupError(
-          "That email is already registered or password needs 8+ characters.",
-        );
-      } else {
-        setSignupError("Signup failed. Please try again.");
-      }
+      const message =
+        err instanceof ApiError && err.status === 422
+          ? "That email is already registered or password needs 8+ characters."
+          : "Signup failed. Please try again.";
+      setSignupError(message);
+      toast.error(message);
     } finally {
       setSignupBusy(false);
     }

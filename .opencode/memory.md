@@ -3158,3 +3158,193 @@ Single-file domains: orgs service/router/schemas, keys lifecycle+analytics, secu
 
 ### Architecture Notes
 - Retained with reasons: gateway/public_gateway/auth/analytics/settings/generation (larger/riskier, single-theme or cohesive; documented candidates for future passes). providers/models still lazy-import facade trio — migrate to common.guards directly, then delete facade.
+
+---
+
+## 2026-10-17 — Task 1 (signup toast+redirect) + key/chat architecture investigations
+
+### Task 1 PASS (browser-verified)
+- Backend: AuthResponse.verification_sent (captured bool, account still created on SMTP failure). Migration c2d3e4f5a6b7 (api_keys.is_primary + partial UQ, messages.api_key_id FK). test_auth 24 pass incl. new SMTP-failure test.
+- Frontend: exact toast `verification mail is sent to ur email`, redirect /login w/ ?invite= preserved, double-submit guards, failure toasts, no success toast on 422.
+- Browser: fresh signup → toast + /login (2 clean runs); duplicate → stays /signup + "already registered", no success toast. Single POST observed (guard works).
+- Key finding: email sandbox latency ~20s — tests must poll, not assert instantly.
+
+### Investigations (3 parallel)
+- In-app chat is session-authed, keyless; provider creds used directly; model list = global registry; no key selector; org keys invisible in chat; revocation affects only external API.
+- Ledgers: api_request_logs has key attribution; request_logs.api_key_id always NULL in-app; messages lacks key/org; pricing shared calculate(); no pricing versioning.
+- External API fully key-authed with correct attribution; failure rows carry NULL usage (no fabrication).
+
+### Architecture decision (Tasks 2-8)
+ChatRequest gains optional key_id; gateway resolves via shared KeyContext (personal-owned or org-assigned+active member); eligible models = allow-list ∩ live ∩ scope providers; 422 KEY_REQUIRED when absent; new /chat/keys + /chat/models?key_id= endpoints; attribution writes messages/request_logs.api_key_id; primary key auto-created on first model, auto-adds new models, never removes except dead models/providers, never overrides explicit restrictions/revocation.
+
+---
+
+## 2026-10-17 — Key-gated chat (Tasks 2-8 backend+frontend, review fixes)
+
+### Requirement
+Primary-key lifecycle, eligible-key gating, per-key model filtering, org-key chat visibility, per-key/per-model usage attribution, external parity.
+
+### Root causes
+In-app chat was session-authed with no key concept (provider creds directly); model list = raw registry; request_logs.api_key_id always NULL; messages had no key column.
+
+### Implementation Summary
+- Migration c2d3e4f5a6b7 (api_keys.is_primary + partial UQ, messages.api_key_id FK) + d3e4f5a6b7c8 (runs.api_key_id).
+- Backend: ensure_primary_key + sync on model create, ChatRequest.key_id + _require_chat_key/_eligible_models/_enforce_key_model on all paths incl. regenerate/edit-regen (422/404-oracle/403), chat_keys/chat_models picker endpoints, attribution writes, M3 deny-all (rows-all-disabled → []), L1 pre-gate edits, L2 static denial messages.
+- Frontend: chatKeyStore + ChatKeySelector + useChatKeys, key injection into stream/regenerate/edit, state A-D handling, no silent switching.
+- Decisions: mid-flight revocation = accepted TOCTOU (completes, next request denied); no-regen edits stay keyless (owner-checked); M2 attachments hardening deferred (pre-existing, low exploit); empty allow-list = unrestricted (documented).
+
+### Testing
+- test_chat_keys 22 + edge 8 + full suite 714 green; alembic clean; OpenAPI builds.
+- Security review: 1 HIGH (regen bypass) + M3/L1/L2 fixed; M2/L3/L4 documented/deferred/minor.
+
+### Files Changed
+backend api/{gateway,keys,models,messages}, services/generation, models/{api_key,message,message_history? no — runs only}, alembic ×2, tests ×2; frontend chat/* + services/api + hooks/useChatKeys + types. Uncommitted.
+
+### Browser/E2E validation
+Pending at this entry — full user flows next (chat picker, org keys, external API, negatives, DB attribution).
+
+---
+
+## 2026-10-17 — Tasks 2-8 E2E validation + final gate (Task 1 done prior entry)
+
+### Browser E2E (agent-browser, mock LLM :4899, no Playwright files)
+- Signup→toast→/login (2 clean runs); duplicate → stays + "already registered", no success toast.
+- Primary key auto-created on provider register (2 model rows); picker shows "Primary key Personal 2 models"; model list = key's models only.
+- Chat send → streamed answer + usage; messages.api_key_id + request_logs key+org set, cost computed.
+- Org: member sees assigned "Member Key Org FlowOrg"; model list = org model only; send → attributed (key+user+org).
+- Key switching: restricted 2nd key → model list narrows to 1; picker counts correct.
+- No-key user: "Chat needs an API key" + CTA, send disabled; direct API without key → 422 KEY_REQUIRED; чужой key → 404 oracle.
+- External: personal + org key calls attributed; bad model rejected; revoked org key → in-app picker drops it (no silent switch), external 401 path covered by tests.
+- Regen: wrong-model key → 403; right key → success + same-key stamp. Member removal covered by tests (NotFoundError, personal lives).
+- Env note: background pytest flushes Valkey (kills dev sessions/verification tokens) — never run concurrent suites; verify-link failures during suite runs are infra noise, recheck quiet.
+
+### Security review disposition
+HIGH regen bypass FIXED (+tests); M1 mid-flight revocation = accepted TOCTOU (documented); M2 attachments hardening deferred (pre-existing, low exploit, server re-resolves); M3/L1/L2 fixed + tested; L4 comment fixed.
+
+### Testing
+- test_chat_keys 22 + edge 8 + full backend suite **714 passed** solo; alembic single head, check clean; tsc/eslint clean; vitest 130/130.
+- Migrations: c2d3e4f5a6b7 (is_primary + messages.api_key_id), d3e4f5a6b7c8 (runs.api_key_id).
+
+---
+
+## 2026-10-17 — Unified key-grouped model dropdown (single picker)
+
+### Requirement
+Replace separate key picker + model picker with one dropdown: keys as groups, models nested under each key; one click sets key+model.
+
+### Implementation
+- hooks/useChatKeys.ts: new useAllChatKeyModels (useQueries, same per-key query keys so caches unify); removed now-unused single-key useChatKeyModels export.
+- ChatComposer UnifiedModelSelector: groups by key (KeyRound + name + Personal/Org badge + org tooltip + model count), models joined to registry rows, search across model/key/provider, onSelect sets key+provider+model, trigger shows model + key chip, count badge logic preserved.
+- Deleted ChatKeySelector.tsx (was the only consumer site; no other refs).
+- Keyboard switch-model cycles all keys' models (deduped, current key preferred); attachment suggestions still key-scoped; banners/validation/ready semantics unchanged; copy updated (no more "select a key first").
+- Verified: grouped dropdown renders (3 headers, 2+1+2 options), one pick sets key+model (trigger chip), send succeeds with correct key attribution in DB, no-key user gets single "No API keys yet" dropdown (no stray picker). tsc/eslint/vitest green (130). No backend changes.
+
+---
+
+## 2026-10-17 — Shared wide key wizard (personal + org) + empty-model CTA
+
+### Requirement
+Enhance create-API-key wizard: wider two-column layout; same component for org keys with extra assignee field; no-models state links to provider configuration.
+
+### Implementation
+- `KeyForm` (personal): create mode now `max-w-5xl!` (Tailwind v4 important suffix — required because shared `cn()` is a naive join and the base `max-w-lg` otherwise wins by stylesheet order) with left column (Basics/Limits/Network) + right column (Model access, full height). Edit mode unchanged single column.
+- `KeyForm` new `scope: personal|org` + assignee props + `assigneeUserId` in result; org scope hides expiry/limits/network (org API has no such fields), shows required assignee select + simple budget input; per-scope copy.
+- `OrgOperationsSection.OrgKeyCreateDialog` replaced (~110 lines deleted) with thin `KeyForm scope="org"` wrapper mapping the shared result to `createOrgKey` (name/assignee/desc/max_budget/model ids). Same dialog, testids, secret flow.
+- `ModelPermissionsEditor` empty state gains "Configure a provider" link (`Button asChild` → `/providers`).
+- Verified: personal wide 2-col (1024px), org variant (1024px, assignee, no personal sections), full org create → secret + table row, e2e untouched (no asserted testids changed). tsc/eslint/vitest green.
+
+### Notes
+- Naive-join `cn()` means any `DialogContent className` max-w override is order-fragile; `!`-suffixed utilities are the deterministic escape hatch until `cn` gains tailwind-merge.
+
+---
+
+## 2026-10-18 — Strict personal/org provider scope isolation
+
+### Requirement
+Enforce strict scope isolation for provider credentials, registered providers, models, API keys, chat selection, gateway execution, and usage attribution. Every provider registration has exactly one owner scope; global catalog is metadata only.
+
+### Root causes found (audit)
+- No DB invariant: `providers` had nullable `user_id` + `org_id` with zero CHECK constraints; 2 live rows had both set (valid org rows, audit kept).
+- Personal registry endpoints (`GET /providers`, `/models` + by-id) returned org rows for any ACTIVE member; org rows mutable via personal prefix.
+- External API hole (principal): `_caller_org_ids` returned ALL active orgs of the key assignee and `_prepare` never pinned `provider.org_id == ctx.org_id` — an org-A key served the assignee's personal models and sibling-org (B) models; `GET /v1/models` listed them too. In-app gateway was already correctly pinned.
+- Dead `_owned_provider_ids` used audit-`user_id` semantics (wrong predicate, zero callers).
+- Frontend gap (latent until backend scoping landed): composer joined per-key models against the personal-only registry, hiding every org group; stale-selection guards validated against registry-only ids and fired before key entries resolved.
+
+### Implementation
+- Backend: `ck_providers_owner_scope` CHECK (`(org_id IS NULL AND user_id IS NOT NULL) OR (org_id IS NOT NULL)`) + migration `e4f5a6b7c8d9` (single head, pre-flight aborts on ownerless rows; both-set rows remain valid org rows); canonical rule ownership = `org_id` alone (`user_id` on org rows is creator audit).
+- `personal_only` flag on providers/models get/list/create/update/delete; personal routers pass it (org rows 404); validate/discover/refresh keep dual visibility (org UI reuse, perm-gated). Deleted dead `_owned_provider_ids`.
+- Public gateway: `_caller_org_ids` pinned (personal→[], org→`[ctx.org_id]`); `_prepare` scope pin (404 pre-policy); `list_public_models` key-org only. In-app plane untouched (already correct); in-app budget non-enforcement documented, unchanged.
+- `GET /api/v1/chat/models` now serves full `ModelRead` rows via shared `read_model()` mapper (moved into `api/models/schemas.py`, registry router delegates) so the composer never joins against the personal listing; deleted `ChatModelRead`.
+- Frontend: Personal badge on providers page; org name + org-scoped copy in wizard header; key-scope badge on composer trigger; org-key Add-provider fallback routes to org section; dead `ModelSelector.tsx` removed; wizard draft creds localStorage→sessionStorage + logout wipe.
+- Composer scope union: `scopedModels`/`scopedProviderIds` (registry + all key entries); selector join, caps, stale guards, eligibility re-align, keyboard cycling all use the union; stale guard additionally gates on `keysPending` (useQueries([]) settles instantly — the actual race found in browser testing).
+
+### Verification
+- `pytest` full suite **727 passed**; targeted `test_scope_isolation.py` **13 passed** (cross-user/org, global-id-only, disabled provider, removal, deletion, key/context switch, external attempts); `alembic check` clean; OpenAPI imports (166 paths — +2 from pre-existing staged key-gating work, scope work adds none).
+- Live external probes (2 users, 2 orgs, 3 providers sharing one model id, 3 keys; seed removed after): personal key lists 1 personal model; org-A key lists 1 org-A model; 4 cross-scope `/v1/chat/completions` → 404 pre-I/O; personal list/detail hide org rows (404 on direct ids).
+- Browser (agent-browser): Personal badge ✓; org page lists only org provider ✓; wizard "Organization: ScopeOrgA — credentials and models are org-scoped" ✓; composer shows both key groups with Org/Personal badges ✓; org select → Org trigger badge, persists across reload with zero toasts ✓ (two real races found and fixed: registry-only join hid org groups; stale guard fired before entries resolved).
+- Frontend: `tsc`/`eslint` clean, vitest **130/130**.
+- Seed data fully removed (0 users/orgs remain); no stray helper files; all work uncommitted.
+
+### Limitations
+- Live provider calls never tested (no paid calls; stub transports + dead-loopback CUSTOM rows only — rejections verified pre-I/O).
+- In-app (session) gateway still ledger-only for budgets (no `check_request`); documented divergence, unchanged.
+
+---
+
+## 2026-10-18 — Models.dev-only model catalog cutover
+
+### Requirement
+Models.dev as the sole external model-catalog source; remove LiteLLM/OpenRouter catalog integrations; keep runtime adapters and scope behavior; update backend.md policy + docs; tests + validation.
+
+### Architecture before → after
+Before: 3-source pipeline (`sources.py` LiteLLM GH json + OpenRouter /api/v1/models + models.dev api.json), merge priority litellm>openrouter>modelsdev, `run_sync(litellm_data, openrouter_data, modelsdev_data)`. After: single fetch of verified `https://models.dev/api.json` (provider-keyed, 232 providers, cost $/1M, limit/context, modalities, tool_call/reasoning/cache flags), `run_sync(db, *, modelsdev_data=None)`, single-source merge, same bookkeeping/deactivation-when-data/rewrite/catalog-sync semantics plus new fail-closed rule. Schema untouched (source-generic by design); scheduler still startup + every 6h; manual POST /sync unchanged (422 when busy).
+
+### Implementation
+- Backend: `services/model_repository/sources.py` (−221 lines: adapters/URLs/helpers removed, shared fetch + ModelsDev adapter + deduped logo const kept); `sync.py` (single-source, `SOURCE_URLS={"modelsdev"...}`, fail-closed `not merged` gates deactivation + attribution rewrite + catalog link/sync); `api/catalog/service.py` stats `sources=["modelsdev"]`; `api/models/schemas.py` new shared `read_model()` mapper (+`supports_video_generation`, pre-existing read-path gap now closed), registry router delegates; `api/gateway` chat picker serves full `ModelRead` (deleted `ChatModelRead`) so org models render without the personal listing; model docstrings updated. No DDL, no env changes (none existed), no dependency changes.
+- Preserved: gateway adapters (incl. OpenRouter/LiteLLM reasoning wire shapes), `mapping.py` CUSTOM URL hints, `canonical.py` openrouter/ prefix recursion, CUSTOM runtime, personal/org scope gates, media rate-card seeding, scheduler cadence.
+- Docs/rules: backend.md Models.dev-only policy; FEATURES/ARCHITECTURE (diagram + fail-closed note)/OPERATIONS/ROADMAP (also fixed stale 24h→6h)/README updated. README:74 + wizard CUSTOM copy intentionally keep LiteLLM/OpenRouter as gateway labels (runtime, not catalog).
+- Tests (tester): 8 files migrated to modelsdev-shaped fixtures; +4 new (empty-payload fail-closed, fetch-error attribution preservation, read_model parity, strengthened deactivated==0); negative `hasattr` guards for removed adapters/URLs.
+
+### Verification
+- Backend full suite **734 passed / 0 failed**; `alembic check` clean; OpenAPI builds; repo grep: zero catalog-fetch litellm/openrouter hits (only runtime/prefix/hint strings + negative test asserts).
+- Live `run_sync` vs real models.dev: **done, 0 created / 8944 updated / 0 deactivated / 0 errors**; lookup `openai/gpt-4o` price 0.0000025/token correct; catalog browser live: 232 providers, 205 gateway-supported, 8950 models.
+- Browser (agent-browser): catalog browse + wizard Configure prefill + platform step (no source picker) + chat load, zero errors; seed user removed after.
+- Security review: no non-models.dev catalog fetch; SSRF surface unchanged (hardcoded URL, test-only data injection); credentials never in catalog path; scope/auth untouched. Two review findings fixed (attribution wipe on fail-closed; video-flag drop) + one semantic hardening (fail-closed on clean-empty).
+- Frontend: no changes required (audit proved no source selectors); tsc/vitest not re-run (zero frontend diff).
+- Known flake: `test_progress_persists_while_running` failed once in an earlier full run, passes solo, unrelated (generations progress).
+
+### Notes
+- Cutover deactivates ~3.8k legacy litellm/openrouter-only `catalog_slug IS NULL` rows on next sync (existing recoverable semantics, not deletion); dev DB re-synced live so current rows are models.dev-native.
+
+---
+
+## 2026-10-18 — Normalized multi-endpoint Models.dev repository + dynamic reasoning
+
+### Requirement
+Rebuild the catalog around all Models.dev sources (api.json, models.json, catalog.json, logos): normalized providers/canonicals/associations/pricing/caps/reasoning; dynamic chat reasoning; no LiteLLM/OpenRouter remnants.
+
+### Findings (verified against live responses + attached snapshots)
+- catalog.json == {providers: api.json, models: models.json} byte-identical: redundant, fetched only as consistency check.
+- api.json: 232 providers, provider-SCOPED model keys, cost $/1M, limit {context,output}|{context,input,output}, polymorphic reasoning_options (effort values / budget_tokens min[/max] / toggle), canonical_model_id present ~68% (always resolving), absent ~32%.
+- models.json: 559 canonical entries keyed by full id, no cost.
+- `?type=all` matters (+51 entries); initial sync without it silently omitted specialized types (fixed).
+- Upstream mutates between fetches (6-model delta observed); sync is idempotent and heals.
+
+### Implementation
+- Backend: NEW `canonical_model` table (canonical_id UNIQUE) + migration (additive, no backfill — next sync populates); `model_repository` += canonical_id NULL (FK SET NULL, non-unique index), reasoning_options JSONB, extra_cost JSONB; audio/reasoning costs + limit.input + structured_output wired (were dead/hardcoded); attachment/temperature → metadata_ overflow.
+- Sync fetches all 3 endpoints (per-endpoint errors), upserts canonicals first, links associations only on evidence (run-set, else DB-persisted fallback, else NULL), fail-closed on empty merge OR any fetch failure (deactivation/rewrite/catalog-sync skipped; upserts proceed), catalog.json verified-not-used.
+- APIs: canonical list/detail + offerings, filters (family/modality/tool_call/reasoning/open_weights/min_context), ModelRead/ChatModelRead/suggest carry reasoning_options; `read_model` maps supports_video_generation (pre-existing read-path gap closed).
+- Gateway: `validated_reasoning_level` at all 3 adapter sites (unknown→None/off instead of adapter medium/high fallback; absent options→legacy passthrough).
+- Frontend: ReasoningControl (effort verbatim scale / budget min input / toggle switch / hidden when null), model-switch remap + validation, send gating; ModelForm preserves reasoning_options into registered-model metadata (was dropping the top-level suggest field).
+- Docs: NEW docs/model-repository/models-dev-source-schema.md; ARCHITECTURE/FEATURES/OPERATIONS/ROADMAP/README updated.
+
+### Verification
+- Backend full suite **752 passed**; `alembic check` clean; OpenAPI builds.
+- Live sync: 559 canonicals, 6143 linked, 5477 with reasoning options, 0 errors; lookup pricing correct; second run idempotent.
+- Browser: catalog (232 providers/8950 models, no source controls), wizard Configure prefill, chat reasoning scale renders catalog values (Low·Medium·High·Xhigh·Max) + intelligence panel lists them; selections persist across reload.
+- Independent reviewer round: fixed attribution wipe on fail-closed, video-flag drop, clean-empty deactivation; hardened fetch-error gating + canonical fallback + server-side level validation in response.
+- Frontend vitest **152/152**, tsc/eslint clean. Seed users removed; work uncommitted.
+
+### Notes
+- Residual accepted risk: a valid-but-truncated snapshot with zero errors still deactivates (no principled cardinality signal); documented.
+- M2/M3 reviewer notes (no UI clear for stale options; flush outside per-row try) accepted as documented behavior.

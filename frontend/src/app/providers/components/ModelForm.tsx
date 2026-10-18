@@ -150,6 +150,13 @@ export function ModelForm({
           CAPS.map(([k]) => [k, !!(suggested as Record<string, unknown>)[k]]),
         ),
         meta: metaFromRecord({ metadata: (suggested as Record<string, unknown>).metadata }),
+        // Top-level reasoning_options (see fromSuggested): preserve for chat.
+        existingMetadata: {
+          ...(((suggested as Record<string, unknown>).metadata ?? {}) as Record<string, unknown>),
+          ...(Array.isArray((suggested as Record<string, unknown>).reasoning_options)
+            ? { reasoning_options: (suggested as Record<string, unknown>).reasoning_options }
+            : {}),
+        },
       };
     });
       toast.success(`Imported ${entry.display_name ?? entry.model_key} from repository`);
@@ -455,6 +462,14 @@ export function fromSuggested(
     repository_model_key: repositoryModelKey,
     caps: Object.fromEntries(CAPS.map(([k]) => [k, !!suggested[k]])),
     meta: metaFromRecord({ metadata: suggested.metadata }),
-    existingMetadata: { ...((suggested.metadata ?? {}) as Record<string, unknown>) },
+    // reasoning_options rides at the top level of the suggest payload
+    // (not inside metadata): carry it into existingMetadata so the
+    // submit payload preserves it for the chat reasoning controls.
+    existingMetadata: {
+      ...((suggested.metadata ?? {}) as Record<string, unknown>),
+      ...(Array.isArray(suggested.reasoning_options)
+        ? { reasoning_options: suggested.reasoning_options }
+        : {}),
+    },
   };
 }

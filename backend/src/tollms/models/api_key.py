@@ -32,6 +32,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
+    from tollms.models.message import Message
     from tollms.models.organization import Organization
 
 
@@ -60,6 +61,17 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
             unique=True,
             postgresql_where=text("is_deleted = false AND org_id IS NOT NULL"),
         ),
+        # One primary key per personal user: only personal (org_id IS NULL),
+        # live, primary rows participate — org keys and non-primary
+        # personal keys are unconstrained.
+        Index(
+            "uq_api_keys_primary_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text(
+                "is_deleted = false AND org_id IS NULL AND is_primary = true"
+            ),
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -80,6 +92,11 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
     # SHA-256 hex of the raw key. The raw value is shown exactly once at creation.
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Personal-key default for password-less flows. At most one live
+    # primary per personal user (see uq_api_keys_primary_per_user).
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rotation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -101,6 +118,7 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
     model_permissions: Mapped[list["ApiKeyModelPermission"]] = relationship(
         back_populates="api_key", cascade="all, delete-orphan"
     )
+    messages: Mapped[list["Message"]] = relationship(back_populates="api_key")
 
 
 class ApiKeyPolicy(TimestampedModel):

@@ -31,6 +31,7 @@ from tollms.core.exceptions import (
     AuthenticationError,
     ErrorCode,
     ForbiddenError,
+    NotFoundError,
     ProviderError,
     ValidationError,
     classify_provider_failure,
@@ -530,24 +531,16 @@ def _require_chat_capabilities(model, unified: UnifiedRequest) -> None:
 
 
 def _caller_org_ids(db: Session, ctx: KeyContext) -> list:
-    """ACTIVE org ids of the key's assignee (org scope for model resolution).
+    """Org scope for model resolution, pinned to the key itself.
 
-    Local Membership query (models only — `api.*` imports would invert the
-    layering). Personal keys resolve personal scope only.
+    Personal key -> [] (personal scope only). Org key -> exactly
+    [ctx.org_id] (the key's own org ONLY — never the assignee's other ACTIVE
+    orgs). `authenticate` already 401s org keys whose assignee lost ACTIVE
+    membership, so the pin needs no live membership re-check here.
     """
     if getattr(ctx, "org_id", None) is None:
         return []
-    from tollms.models.organization import Membership, MembershipState
-
-    return list(
-        db.scalars(
-            select(Membership.org_id).where(
-                Membership.user_id == ctx.user_id,
-                Membership.is_deleted.is_(False),
-                Membership.state == MembershipState.ACTIVE.value,
-            )
-        )
-    )
+    return [ctx.org_id]
 
 
 def _prepare(
@@ -558,6 +551,15 @@ def _prepare(
         db, unified.model_identifier, ctx.user_id, org_ids=_caller_org_ids(db, ctx) or None,
     )
     provider, model = resolved.provider, resolved.model
+    # Scope pin (404, no existence oracle beyond scope): org keys serve only
+    # their own org's providers; personal keys serve only their own personal
+    # rows. The resolver already scopes this way — the pin holds even if
+    # resolution ever widens.
+    if ctx.org_id is not None:
+        if provider.org_id != ctx.org_id:
+            raise NotFoundError(f"model not found: {unified.model_identifier}")
+    elif provider.org_id is not None or provider.user_id != ctx.user_id:
+        raise NotFoundError(f"model not found: {unified.model_identifier}")
     if not ctx.model_allowed(provider.id, model.id):
         raise ForbiddenError("model_not_allowed")
     _require_capability(model, unified.endpoint)
@@ -1186,12 +1188,13 @@ def key_identity(db: Session, ctx: KeyContext) -> dict:
 
 def list_public_models(db: Session, ctx: KeyContext) -> list[tuple[Provider, AIModel]]:
     """Active models the key is allowed to call: the assignee's personal rows
-    plus org providers of the assignee's ACTIVE orgs."""
-    from sqlalchemy import and_, or_
+    (personal key) or exactly the key's own org rows (org key)."""
+    from sqlalchemy import and_
 
-    org_ids = _caller_org_ids(db, ctx)
-    personal = (Provider.org_id.is_(None), Provider.user_id == ctx.user_id)
-    scope = or_(and_(*personal), Provider.org_id.in_(org_ids)) if org_ids else and_(*personal)
+    if ctx.org_id is not None:
+        scope = (Provider.org_id == ctx.org_id)
+    else:
+        scope = and_(Provider.org_id.is_(None), Provider.user_id == ctx.user_id)
     rows = db.execute(
         select(Provider, AIModel)
         .join(AIModel, AIModel.provider_id == Provider.id)

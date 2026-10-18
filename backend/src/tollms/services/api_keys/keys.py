@@ -436,3 +436,8 @@ def authenticate(db: Session, raw_key: str) -> KeyContext | None:
     except Exception:
         logger.warning("api key context cache write failed", exc_info=True)
     return ctx
+
+
+def is_tombstoned(key_hash: str) -> bool:
+    """Public read of the revocation marker (known-id checks; raw auth uses `authenticate`)."""
+    return _is_tombstoned(key_hash)

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from tollms.api.conversations.schemas import ConversationCreate
 from tollms.api.conversations.service import add_message, create_conversation, get_message, list_messages
 from tollms.api.gateway import service as gateway_service
+from tollms.api.keys.service import ensure_primary_key
 from tollms.api.gateway.schemas import ChatRequest
 from tollms.models.message import MessageStatus, Role
 from tollms.services import generation as generation_engine
@@ -115,8 +116,14 @@ def test_edit_message_regenerates_following_response(
     provider = provider_factory()
     model = model_factory(provider["id"])
     _conversation, user_message, assistant = _seed(db, client, provider, model)
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    key_id = ensure_primary_key(db, user_id).id
 
-    r = client.patch(f"/api/v1/messages/{user_message.id}", json={"content": "edited prompt"})
+    r = client.patch(
+        f"/api/v1/messages/{user_message.id}",
+        params={"key_id": str(key_id)},
+        json={"content": "edited prompt"},
+    )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["regeneration_started"] is True
@@ -143,6 +150,7 @@ def test_regeneration_preserves_every_run(
             ChatRequest(
                 provider_id=uuid.UUID(provider["id"]),
                 model_id=uuid.UUID(model["id"]),
+                key_id=ensure_primary_key(db, user_id).id,
                 conversation_id=conversation.id,
                 message="go",
             ),
@@ -163,7 +171,8 @@ def test_regeneration_preserves_every_run(
 
     async def _regen():
         result = await gateway_service.start_regeneration(
-            db, started.message_id, user_id=user_id
+            db, started.message_id, user_id=user_id,
+            key_id=ensure_primary_key(db, user_id).id,
         )
         active = generation_engine.manager.get(result.message_id)
         if active is not None and active.task is not None:
@@ -205,6 +214,7 @@ def test_activate_generation_switches_visible_response(
             ChatRequest(
                 provider_id=uuid.UUID(provider["id"]),
                 model_id=uuid.UUID(model["id"]),
+                key_id=ensure_primary_key(db, user_id).id,
                 conversation_id=conversation.id,
                 message=message,
             ),
@@ -220,7 +230,8 @@ def test_activate_generation_switches_visible_response(
 
     async def _regen():
         result = await gateway_service.start_regeneration(
-            db, started.message_id, user_id=user_id
+            db, started.message_id, user_id=user_id,
+            key_id=ensure_primary_key(db, user_id).id,
         )
         active = generation_engine.manager.get(result.message_id)
         if active is not None and active.task is not None:

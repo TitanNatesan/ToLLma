@@ -316,12 +316,19 @@ def test_org_providers_scope_and_visibility(client: TestClient, db, user_factory
     assert "s3cr3t" not in str(body) and "credentials_encrypted" not in str(body)
     org_pid = body["id"]
 
-    # V1 list shows personal + org providers for members; raw secrets never leak.
+    # Personal registry boundary: the V1 list shows ONLY personal rows, even
+    # for members; org rows are served by the org endpoints (secrets masked).
     mine = {p["id"]: p for p in client.get("/api/v1/providers").json()}
-    assert personal.json()["id"] in mine and org_pid in mine
+    assert personal.json()["id"] in mine and org_pid not in mine
     theirs = {p["id"]: p for p in sub.get("/api/v1/providers").json()}
-    assert org_pid in theirs and personal.json()["id"] not in theirs
-    assert "s3cr3t" not in sub.get("/api/v1/providers").text
+    assert org_pid not in theirs and personal.json()["id"] not in theirs
+    org_list = {p["id"] for p in client.get(f"{ORG}/{oid}/providers").json()}
+    assert org_pid in org_list and personal.json()["id"] not in org_list
+    assert "s3cr3t" not in sub.get(f"{ORG}/{oid}/providers").text
+    # Personal detail/update/delete on an org row are 404 (use org endpoints).
+    assert sub.get(f"/api/v1/providers/{org_pid}").status_code == 404
+    assert sub.patch(f"/api/v1/providers/{org_pid}", json={"name": "x"}).status_code == 404
+    assert sub.delete(f"/api/v1/providers/{org_pid}").status_code == 404
 
     # Strangers see neither.
     stranger = _mkuser("stranger")
@@ -365,15 +372,13 @@ def test_gateway_org_attribution(client: TestClient, db, user_factory, provider_
     org = _mkorg(client)
     oid = org["id"]
 
-    prov = client.post(f"{ORG}/{oid}/providers", json={
+    prov = client.post(f"{ORG}/{oid}/providers/register", json={
         "name": "OrgGW", "provider_type": "CUSTOM",
-        "credentials": {"base_url": "http://mock"}})
+        "credentials": {"base_url": "http://mock"},
+        "models": [{"model_id": "org-model", "name": "Org Model",
+                    "endpoint_type": "chat_completions",
+                    "input_price": "1", "output_price": "2"}]})
     assert prov.status_code == 201, prov.text
-    model = client.post("/api/v1/models", json={
-        "provider_id": prov.json()["id"], "model_id": "org-model",
-        "name": "Org Model", "endpoint_type": "chat_completions",
-        "input_price": "1", "output_price": "2"})
-    assert model.status_code == 201, model.text
 
     org_key = _issue(client, oid, root_id)
     personal = client.post("/api/v1/keys", json={"name": "pattr"})
@@ -552,17 +557,24 @@ def test_org_analytics_removed_badge(client: TestClient, db, user_factory) -> No
 # --- org-key model scope (key-org binding) ---------------------------------------
 
 
-def _org_provider_with_model(c: TestClient, oid: str, name: str) -> tuple[str, str]:
-    p = c.post(f"{ORG}/{oid}/providers", json={
+def _org_provider_with_model(c: TestClient, db, oid: str, name: str) -> tuple[str, str]:
+    """Org provider + one model via the org flow (register wizard). The
+    personal /api/v1/models endpoint can no longer target org providers."""
+    from tollms.models.registered_model import AIModel
+
+    p = c.post(f"{ORG}/{oid}/providers/register", json={
         "name": name, "provider_type": "CUSTOM",
-        "credentials": {"base_url": "http://mock"}})
+        "credentials": {"base_url": "http://mock"},
+        "models": [{"model_id": f"{name}-model", "name": f"{name} Model",
+                    "endpoint_type": "chat_completions",
+                    "input_price": "1", "output_price": "2"}]})
     assert p.status_code == 201, p.text
     pid = p.json()["id"]
-    m = c.post("/api/v1/models", json={
-        "provider_id": pid, "model_id": f"{name}-model", "name": f"{name} Model",
-        "endpoint_type": "chat_completions", "input_price": "1", "output_price": "2"})
-    assert m.status_code == 201, m.text
-    return pid, m.json()["id"]
+    mid = db.scalar(select(AIModel.id).where(
+        AIModel.provider_id == uuid.UUID(pid),
+        AIModel.model_id == f"{name}-model"))
+    assert mid is not None
+    return pid, str(mid)
 
 
 def test_org_key_rejects_cross_org_models(client: TestClient, db, user_factory) -> None:
@@ -570,8 +582,8 @@ def test_org_key_rejects_cross_org_models(client: TestClient, db, user_factory) 
     user_factory()
     org_a = _mkorg(client, "ScopeA")["id"]
     org_b = _mkorg(client, "ScopeB")["id"]
-    _, model_b = _org_provider_with_model(client, org_b, "ProvB")
-    _, model_a = _org_provider_with_model(client, org_a, "ProvA")
+    _, model_b = _org_provider_with_model(client, db, org_b, "ProvB")
+    _, model_a = _org_provider_with_model(client, db, org_a, "ProvA")
     me_id = _me(client)["id"]
 
     bad = client.post(f"{ORG}/{org_a}/keys", json={
@@ -590,7 +602,7 @@ def test_personal_key_rejects_org_models(client: TestClient, db, user_factory) -
     """Personal keys can never carry org-provider models (scope-aware)."""
     user_factory()
     org = _mkorg(client)["id"]
-    _, model_o = _org_provider_with_model(client, org, "OrgOnly")
+    _, model_o = _org_provider_with_model(client, db, org, "OrgOnly")
     r = client.post("/api/v1/keys", json={
         "name": "personal-sneak", "model_permissions": [{"model_id": model_o}]})
     assert r.status_code == 422, r.text
@@ -701,8 +713,13 @@ def test_org_provider_register_atomic_happy(client: TestClient, db, user_factory
     row = db.get(Provider, uuid.UUID(pid))
     assert row.org_id == uuid.UUID(oid) and row.user_id == uuid.UUID(root_id)
 
-    models = client.get("/api/v1/models", params={"provider_id": pid}).json()
-    assert sorted(m["model_id"] for m in models) == ["m1", "m2"]
+    from tollms.models.registered_model import AIModel
+
+    # Personal registry boundary: org models never leak onto V1.
+    assert client.get("/api/v1/models", params={"provider_id": pid}).json() == []
+    models = db.scalars(select(AIModel).where(
+        AIModel.provider_id == uuid.UUID(pid))).all()
+    assert sorted(m.model_id for m in models) == ["m1", "m2"]
 
     audit = _audit_row(db, oid, "provider.created")
     assert audit is not None
@@ -712,7 +729,7 @@ def test_org_provider_register_atomic_happy(client: TestClient, db, user_factory
     dup = client.post(f"{ORG}/{oid}/providers/register", json=_reg_payload())
     assert dup.status_code == 422, dup.text
     assert len(client.get(f"{ORG}/{oid}/providers").json()) == 1
-    assert len(client.get("/api/v1/models", params={"provider_id": pid}).json()) == 2
+    assert client.get("/api/v1/models", params={"provider_id": pid}).json() == []
 
 
 def test_org_register_name_scopes_independent(client: TestClient, db, user_factory) -> None:
@@ -788,7 +805,18 @@ def test_org_register_invalid_model_atomic(client: TestClient, db, user_factory)
 
 
 def test_org_model_perm_gates(client: TestClient, db, user_factory) -> None:
+    """Org model perm gates, behind the personal registry boundary.
+
+    The personal /api/v1/models endpoints 404 every org-scoped op (even for
+    perm-holding members — org models are managed via the org flow); the
+    Providers.* perm gates still fire at the service layer.
+    """
+    from tollms.api.models import service as models_service
+    from tollms.api.models.schemas import ModelCreate, ModelUpdate
+    from tollms.core.exceptions import NotFoundError
+
     user_factory()
+    root_id = uuid.UUID(_me(client)["id"])
     oid = _mkorg(client)["id"]
     full = _make_set(client, oid, "ProvFull",
                      ["Providers.Create", "Providers.Read", "Providers.Update", "Providers.Delete"])
@@ -796,6 +824,8 @@ def test_org_model_perm_gates(client: TestClient, db, user_factory) -> None:
     empowered = _mkuser("fullmodel")
     _invite_and_accept(client, bare, db, oid, [_member_set_id(client, oid)])
     _invite_and_accept(client, empowered, db, oid, [full])
+    bare_id = uuid.UUID(_me(bare)["id"])
+    empowered_id = uuid.UUID(_me(empowered)["id"])
 
     prov = client.post(f"{ORG}/{oid}/providers", json={
         "name": "Gated", "provider_type": "CUSTOM",
@@ -803,25 +833,40 @@ def test_org_model_perm_gates(client: TestClient, db, user_factory) -> None:
     assert prov.status_code == 201, prov.text
     pid = prov.json()["id"]
 
-    seed = client.post("/api/v1/models", json={
-        "provider_id": pid, "model_id": "seed", "name": "Seed",
-        "endpoint_type": "chat_completions"})
-    assert seed.status_code == 201, seed.text
-    mid = seed.json()["id"]
+    # Seed via the service-level org flow (dual visibility, perm-gated).
+    seed = models_service.create_model(
+        db, ModelCreate(provider_id=uuid.UUID(pid), model_id="seed", name="Seed",
+                        endpoint_type="chat_completions"),
+        user_id=root_id)
+    mid = str(seed.id)
 
     payload = {"provider_id": pid, "model_id": "x", "name": "X",
                "endpoint_type": "chat_completions"}
-    # Visible but perm-less: all three ops are 404.
+    # Personal endpoints 404 org rows for everyone (boundary, not the perm).
     assert bare.post("/api/v1/models", json=payload).status_code == 404
     assert bare.patch(f"/api/v1/models/{mid}", json={"name": "Nope"}).status_code == 404
     assert bare.delete(f"/api/v1/models/{mid}").status_code == 404
-    assert client.get(f"/api/v1/models/{mid}").status_code == 200
+    assert client.get(f"/api/v1/models/{mid}").status_code == 404
+    assert empowered.post("/api/v1/models", json=payload).status_code == 404
+    assert empowered.patch(f"/api/v1/models/{mid}", json={"name": "Nope"}).status_code == 404
+    assert empowered.delete(f"/api/v1/models/{mid}").status_code == 404
+
+    # Service-layer perm gates: perm-less member gets the 404 oracle.
+    with pytest.raises(NotFoundError):
+        models_service.create_model(
+            db, ModelCreate(provider_id=uuid.UUID(pid), model_id="x", name="X",
+                            endpoint_type="chat_completions"),
+            user_id=bare_id)
 
     # Perm-holding member: all three ops succeed.
-    created = empowered.post("/api/v1/models", json=payload)
-    assert created.status_code == 201, created.text
-    assert empowered.patch(f"/api/v1/models/{mid}", json={"name": "Renamed"}).status_code == 200
-    assert empowered.delete(f"/api/v1/models/{created.json()['id']}").status_code == 204
+    created = models_service.create_model(
+        db, ModelCreate(provider_id=uuid.UUID(pid), model_id="x", name="X",
+                        endpoint_type="chat_completions"),
+        user_id=empowered_id)
+    renamed = models_service.update_model(
+        db, seed.id, ModelUpdate(name="Renamed"), user_id=empowered_id)
+    assert renamed.name == "Renamed"
+    models_service.delete_model(db, created.id, user_id=empowered_id)
 
     audit = _audit_row(db, oid, "model.created")
     assert audit is not None and audit.target["provider_id"] == pid

@@ -90,6 +90,8 @@ interface ProviderWizardModalProps {
    * omitted the personal provider list is used.
    */
   existingNames?: string[];
+  /** Org display name for the header scope line (org runs only). */
+  orgName?: string | null;
 }
 
 const PROVIDER_METAS: Record<
@@ -279,7 +281,8 @@ interface Draft {
 
 function loadDraft(): Draft | null {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    // sessionStorage: draft creds never survive past the tab session.
+    const raw = sessionStorage.getItem(DRAFT_KEY);
     return raw ? (JSON.parse(raw) as Draft) : null;
   } catch {
     return null;
@@ -391,13 +394,14 @@ export function ProviderWizardModal({
   initialBaseUrl,
   ownership,
   existingNames,
+  orgName,
 }: ProviderWizardModalProps) {
   const { data: providers = [] } = useProviders();
   const pm = useProviderMutations();
   const queryClient = useQueryClient();
   const { setSelectedProviderId } = useChatStore();
   const isEditing = !!editingProvider;
-  // Org runs never touch the personal draft (shared localStorage key) or the
+  // Org runs never touch the personal draft (shared sessionStorage key) or the
   // personal provider list — scope switches transport + names only.
   const orgId = ownership?.type === "org" ? ownership.orgId : null;
 
@@ -444,7 +448,7 @@ export function ProviderWizardModal({
   useEffect(() => {
     if (!open || isEditing || orgId || step > 2) return;
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, type, description, creds, step }));
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ name, type, description, creds, step }));
     } catch {
       /* storage full/blocked: draft stays in memory */
     }
@@ -679,7 +683,7 @@ export function ProviderWizardModal({
         modelsCreated = r.models_created;
       }
       try {
-        localStorage.removeItem(DRAFT_KEY);
+        sessionStorage.removeItem(DRAFT_KEY);
       } catch {
         /* ignore */
       }
@@ -744,6 +748,16 @@ export function ProviderWizardModal({
                       ? "Provider is only connected after step 5 — nothing is saved before that"
                       : "Provider is only registered after step 5 — nothing is saved before that"}
                 </p>
+                {orgId && (
+                  <p
+                    className="mt-1 text-xs font-medium text-zinc-600 dark:text-zinc-300"
+                    data-testid="wizard-org-scope"
+                  >
+                    {orgName
+                      ? `Organization: ${orgName} \u2014 credentials and models are org-scoped`
+                      : "Organization \u2014 credentials and models are org-scoped"}
+                  </p>
+                )}
               </div>
               {!isEditing && (
                 <Badge variant="outline" className="text-xs font-mono shrink-0 whitespace-nowrap px-2.5 py-1">

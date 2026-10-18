@@ -16,6 +16,7 @@ import {
   DialogDescription,
   DialogTitle,
   Input,
+  Select,
   Separator,
   Switch,
   Textarea,
@@ -42,10 +43,23 @@ export interface KeyFormResult {
   policy: ApiKeyPolicyInput | null;
   ipRules: ApiKeyIpRuleInput[];
   modelPermissions: ApiKeyModelPermissionInput[];
+  /** Organization assignee (org scope only). */
+  assigneeUserId: string | null;
+}
+
+export interface KeyAssignee {
+  id: string;
+  email: string;
 }
 
 interface KeyFormProps {
   mode: "create" | "edit";
+  /** "org" hides personal-only sections (limits, network, expiry) and
+      requires an assignee; the org caller maps the shared result shape. */
+  scope?: "personal" | "org";
+  assignees?: KeyAssignee[];
+  assigneeId?: string;
+  onAssigneeChange?: (id: string) => void;
   apiKey?: ApiKey | null;
   onCreate?: (result: KeyFormResult) => Promise<void>;
   onUpdate?: (id: string, body: ApiKeyUpdateInput) => Promise<void>;
@@ -120,8 +134,9 @@ function Section({
 }
 
 /** Create (full) and edit (metadata) dialog for a user API key. */
-export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormProps) {
+export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAssigneeChange, apiKey, onCreate, onUpdate, onClose }: KeyFormProps) {
   const editing = mode === "edit" && !!apiKey;
+  const isOrg = scope === "org" && !editing;
 
   const [name, setName] = useState(apiKey?.name ?? "");
   const [description, setDescription] = useState(apiKey?.description ?? "");
@@ -134,8 +149,13 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
   const [allow, setAllow] = useState("");
   const [deny, setDeny] = useState("");
   const [modelPermissions, setModelPermissions] = useState<ApiKeyModelPermissionInput[]>([]);
+  const [orgAssignee, setOrgAssignee] = useState(assigneeId ?? "");
+  const [orgBudget, setOrgBudget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const effectiveAssignee = assigneeId ?? orgAssignee;
+  const setEffectiveAssignee = onAssigneeChange ?? setOrgAssignee;
 
   function applyExpiryPreset(preset: ExpiryPreset) {
     setExpiryPreset(preset);
@@ -154,9 +174,20 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
       setError("Name is required.");
       return;
     }
+    if (isOrg && !effectiveAssignee) {
+      setError("Choose the member this key is assigned to.");
+      return;
+    }
     if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
       setError("Expiration must be in the future.");
       return;
+    }
+    if (isOrg && orgBudget.trim() !== "") {
+      const budgetValue = Number(orgBudget);
+      if (!Number.isFinite(budgetValue) || budgetValue < 0) {
+        setError("Budget cap must be a non-negative number.");
+        return;
+      }
     }
 
     const parsedIp = editing ? { rules: [] as ApiKeyIpRuleInput[], invalid: [] as string[] } : parseIpRules(allow, deny);
@@ -181,9 +212,12 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
           name: trimmedName,
           description: description.trim() || null,
           expires_at: expiresIso,
-          policy: hasPolicyValues(policy) ? policy : null,
+          policy: isOrg
+            ? (orgBudget.trim() === "" ? null : { ...policy, max_budget_usd: Number(orgBudget) })
+            : hasPolicyValues(policy) ? policy : null,
           ipRules: parsedIp.rules,
           modelPermissions,
+          assigneeUserId: isOrg ? effectiveAssignee || null : null,
         });
       }
     } catch (e) {
@@ -193,6 +227,8 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
     }
   }
 
+  const wide = !editing;
+
   return (
     <Dialog
       open
@@ -200,24 +236,55 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
         if (!next && !busy) onClose();
       }}
     >
-      <DialogContent className="max-w-3xl p-5" data-testid="key-form-dialog">
+      <DialogContent className={wide ? "max-w-5xl! p-5" : "max-w-3xl p-5"} data-testid="key-form-dialog">
         <DialogTitle className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          {editing ? "Edit API key" : "Create API key"}
+          {editing ? "Edit API key" : isOrg ? "Create organization API key" : "Create API key"}
         </DialogTitle>
         <DialogDescription asChild>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
             {editing
               ? "Update the key's metadata. Limits, network rules and model access are managed from the key's details panel."
-              : "The secret is shown once after creation — copy it into your secret manager."}
+              : isOrg
+                ? "Keys are scoped to this organization and inherit its governance. The secret is shown once after creation."
+                : "The secret is shown once after creation — copy it into your secret manager."}
           </p>
         </DialogDescription>
 
-        <div className="mt-4 space-y-5">
+        <div className={wide ? "mt-4 grid gap-x-6 gap-y-5 md:grid-cols-2" : "mt-4 space-y-5"}>
+          <div className="min-w-0 space-y-5">
           <Section
             icon={KeyRound}
             title="Basics"
-            description="Name, lifetime and an optional note for your team."
+            description={
+              isOrg
+                ? "Name, assignee, budget and an optional note."
+                : "Name, lifetime and an optional note for your team."
+            }
           >
+            {isOrg && (
+              <div className="flex min-w-0 flex-col gap-1">
+                <label
+                  htmlFor="key-assignee-input"
+                  className="text-[10px] font-medium uppercase tracking-wider text-zinc-400"
+                >
+                  Assignee (member)
+                </label>
+                <Select
+                  id="key-assignee-input"
+                  value={effectiveAssignee}
+                  onChange={(event) => setEffectiveAssignee(event.target.value)}
+                  disabled={busy}
+                  data-testid="key-assignee-input"
+                >
+                  <option value="">Select a member…</option>
+                  {(assignees ?? []).map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.email}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
             <div className="flex min-w-0 flex-col gap-1">
               <label
                 htmlFor="key-name-input"
@@ -236,6 +303,7 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
                 data-testid="key-name-input"
               />
             </div>
+            {!isOrg && (
             <div className="flex min-w-0 flex-col gap-1">
               <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-zinc-400">
                 <CalendarClock className="size-3" />
@@ -261,6 +329,7 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
                 />
               )}
             </div>
+            )}
             <div className="flex min-w-0 flex-col gap-1">
               <label
                 htmlFor="key-description-input"
@@ -292,30 +361,65 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
           {!editing && (
             <>
               <Separator />
-              <Section
-                icon={SlidersHorizontal}
-                title="Limits"
-                description="Leave a field empty for unlimited. Budget resets on the selected window."
-              >
-                <PolicyForm value={policy} onChange={setPolicy} disabled={busy} />
-              </Section>
+              {isOrg ? (
+                <Section
+                  icon={SlidersHorizontal}
+                  title="Budget"
+                  description="Hard cap in USD for this key. Leave empty for unlimited."
+                >
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <label
+                      htmlFor="key-budget-input"
+                      className="text-[10px] font-medium uppercase tracking-wider text-zinc-400"
+                    >
+                      Budget cap in USD (optional)
+                    </label>
+                    <Input
+                      id="key-budget-input"
+                      value={orgBudget}
+                      onChange={(event) => setOrgBudget(event.target.value)}
+                      placeholder="e.g. 25"
+                      inputMode="decimal"
+                      disabled={busy}
+                      className="h-9 text-sm"
+                      data-testid="key-budget-input"
+                    />
+                  </div>
+                </Section>
+              ) : (
+                <Section
+                  icon={SlidersHorizontal}
+                  title="Limits"
+                  description="Leave a field empty for unlimited. Budget resets on the selected window."
+                >
+                  <PolicyForm value={policy} onChange={setPolicy} disabled={busy} />
+                </Section>
+              )}
 
-              <Separator />
-              <Section
-                icon={Network}
-                title="Network access"
-                description="Restrict which sources may use this key. Empty lists allow every source."
-              >
-                <IpRulesEditor
-                  allow={allow}
-                  deny={deny}
-                  onAllowChange={setAllow}
-                  onDenyChange={setDeny}
-                  disabled={busy}
-                />
-              </Section>
+              {!isOrg && (
+                <>
+                  <Separator />
+                  <Section
+                    icon={Network}
+                    title="Network access"
+                    description="Restrict which sources may use this key. Empty lists allow every source."
+                  >
+                    <IpRulesEditor
+                      allow={allow}
+                      deny={deny}
+                      onAllowChange={setAllow}
+                      onDenyChange={setDeny}
+                      disabled={busy}
+                    />
+                  </Section>
+                </>
+              )}
+            </>
+          )}
+          </div>
 
-              <Separator />
+          {!editing && (
+          <div className="min-w-0 space-y-5 md:border-l md:border-zinc-200 md:pl-6 dark:md:border-zinc-800">
               <Section
                 icon={ShieldCheck}
                 title="Model access"
@@ -327,7 +431,7 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
                   disabled={busy}
                 />
               </Section>
-            </>
+          </div>
           )}
         </div>
 

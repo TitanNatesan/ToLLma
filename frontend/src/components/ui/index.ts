@@ -18,7 +18,6 @@ export * from "./SettingsPanel";
 export * from "./Sidebar";
 export * from "./CommandPalette";
 export * from "./ShortcutsOverlay";
-export * from "./ModelSelector";
 export * from "./ProviderSelector";
 export * from "./Logo";
 export * from "./ProviderLogo";

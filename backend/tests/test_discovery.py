@@ -150,18 +150,16 @@ def test_validate_persists_but_discover_only_caches(db: Session, provider_factor
     assert len(list_models(db, provider_id=uuid.UUID(p["id"]))) == 1
 
 
-def test_bedrock_converse_discovery_sets_converse_endpoint(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tollms.api.providers.service import create_provider
-    from tollms.api.providers.schemas import ProviderCreate
+def test_bedrock_converse_discovery_sets_converse_endpoint(
+    db: Session, provider_factory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tollms.services.gateway.adapters.base import DiscoveredModel
 
-    p = create_provider(
-        db,
-        ProviderCreate(
-            name="BedrockTest",
-            provider_type=ProviderType.BEDROCK_CONVERSE,
-            credentials={"access_key": "ak", "secret_key": "sk", "region": "us-east-1"},
-        ),
+    # Personal provider via HTTP: owned row (both-null rows are rejected by
+    # ck_providers_owner_scope).
+    p = provider_factory(
+        "BedrockTest", ptype="BEDROCK_CONVERSE",
+        creds={"access_key": "ak", "secret_key": "sk", "region": "us-east-1"},
     )
 
     async def _mock_discover(self):
@@ -177,7 +175,7 @@ def test_bedrock_converse_discovery_sets_converse_endpoint(db: Session, monkeypa
 
     monkeypatch.setattr(BedrockAdapter, "discover_models", _mock_discover)
 
-    res = asyncio.run(discover_provider_models(db, p.id))
+    res = asyncio.run(discover_provider_models(db, uuid.UUID(p["id"])))
     assert res.total == 1
     info = res.discovered[0]
     assert info.endpoint_type == "converse"

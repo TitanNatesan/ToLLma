@@ -67,6 +67,13 @@ def _uid(client: TestClient) -> uuid.UUID:
     return uuid.UUID(client.get("/auth/me").json()["id"])
 
 
+def _kid(db: Session, uid: uuid.UUID) -> uuid.UUID:
+    """In-app key for gateway calls (auto-created on first model)."""
+    from tollms.api.keys.service import ensure_primary_key
+
+    return ensure_primary_key(db, uid).id
+
+
 def _chat_transport(captured: list, transcript: str | None = None) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/audio/transcriptions"):
@@ -225,7 +232,7 @@ def test_gateway_image_reaches_provider(
     m = model_factory(p["id"], supports_vision=True)
     aid = _upload(client, "cat.png", PNG, "image/png").json()["attachment_id"]
     captured: list[dict] = []
-    req = ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
+    req = ChatRequest(key_id=_kid(db, _uid(client)), provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
                       message="what is this?", attachment_ids=[uuid.UUID(aid)])
     result = asyncio.run(run_chat(db, req, _chat_transport(captured), user_id=_uid(client)))
     assert result.content == "Hello world"
@@ -248,7 +255,7 @@ def test_gateway_document_text_injected(
     captured: list[dict] = []
     asyncio.run(run_chat(
         db,
-        ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
+        ChatRequest(key_id=_kid(db, _uid(client)), provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
                     message="summarize", attachment_ids=[uuid.UUID(aid)]),
         _chat_transport(captured),
         user_id=_uid(client),
@@ -265,7 +272,7 @@ def test_gateway_rejects_unsupported_and_transcribes(
     try:
         asyncio.run(run_chat(
             db,
-            ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
+            ChatRequest(key_id=_kid(db, _uid(client)), provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
                         message="hi", attachment_ids=[uuid.UUID(aid)]),
             _chat_transport([]),
             user_id=_uid(client),
@@ -282,7 +289,7 @@ def test_gateway_rejects_unsupported_and_transcribes(
     captured: list[dict] = []
     asyncio.run(run_chat(
         db,
-        ChatRequest(provider_id=uuid.UUID(po["id"]), model_id=uuid.UUID(mo["id"]),
+        ChatRequest(key_id=_kid(db, _uid(client)), provider_id=uuid.UUID(po["id"]), model_id=uuid.UUID(mo["id"]),
                     message="transcribe", attachment_ids=[uuid.UUID(aa)]),
         _chat_transport(captured, transcript="hello there"),
         user_id=_uid(client),
@@ -301,7 +308,8 @@ def test_history_reinjects_image_on_next_turn(
     p = provider_factory("Mock")
     m = model_factory(p["id"], supports_vision=True)
     aid = _upload(client, "cat.png", PNG, "image/png").json()["attachment_id"]
-    base = {"provider_id": uuid.UUID(p["id"]), "model_id": uuid.UUID(m["id"])}
+    base = {"provider_id": uuid.UUID(p["id"]), "model_id": uuid.UUID(m["id"]),
+            "key_id": _kid(db, _uid(client))}
     first = asyncio.run(run_chat(
         db, ChatRequest(**base, message="first", attachment_ids=[uuid.UUID(aid)]), _chat_transport([]),
         user_id=_uid(client)))
@@ -325,7 +333,7 @@ def test_stream_links_attachments(
         events = []
         stream = run_stream(
             db,
-            ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
+            ChatRequest(key_id=_kid(db, _uid(client)), provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
                         message="hi", attachment_ids=[uuid.UUID(aid)]),
             _chat_transport([]),
             user_id=_uid(client),
@@ -346,7 +354,7 @@ def test_unknown_attachment_id_404s(client: TestClient, db: Session, provider_fa
     try:
         asyncio.run(run_chat(
             db,
-            ChatRequest(provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
+            ChatRequest(key_id=_kid(db, _uid(client)), provider_id=uuid.UUID(p["id"]), model_id=uuid.UUID(m["id"]),
                         message="hi", attachment_ids=[uuid.uuid4()]),
             _chat_transport([]),
             user_id=_uid(client),

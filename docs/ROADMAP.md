@@ -8,7 +8,7 @@ The complete, verified V1 scope (backend suite green, frontend tsc/eslint/vitest
 
 - **Gateway core** — 6 provider families, endpoint-aware routing, unified request pipeline, generation lifecycle (cancel/persist/recover), scheduled jobs.
 - **Chat** — streaming, reasoning display, attachments (multimodal), in-chat image/video generation, regeneration + generation history, branching, message edit/version history, exports (MD/JSON/PDF), full-text search, shares.
-- **Providers & models** — validation, discovery, registration wizard, repository-backed intelligence (LiteLLM + OpenRouter, 24h sync), cost/capability engines, prompt-caching plans, media rate cards.
+- **Providers & models** — validation, discovery, registration wizard, repository-backed intelligence (Models.dev, startup + 6h sync), cost/capability engines, prompt-caching plans, media rate cards.
 - **Public API** — `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`, `/v1/images/generations`, `/v1/images/edits`, `/v1/videos/generations`, `/v1/me`; SDK-compatibility tests.
 - **API keys** — budgets (hard, no overage), rate limits, IP allow/deny, per-model permissions, per-key analytics + network intelligence, admin API-keys section.
 - **Analytics** — user analytics + exports (CSV/XLSX/JSON), platform admin dashboard (usage, tokens, costs, cache, media, errors, health, models, providers, users, API keys) with live health SSE.

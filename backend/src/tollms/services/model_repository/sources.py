@@ -8,7 +8,7 @@ so new upstream fields survive without schema changes.
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -18,9 +18,9 @@ from tollms.services.model_repository.canonical import split_canonical
 
 logger = logging.getLogger(__name__)
 
-LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
-MODELS_DEV_URL = "https://models.dev/api.json"
+MODELS_DEV_URL = "https://models.dev/api.json?type=all"
+MODELS_DEV_MODELS_URL = "https://models.dev/models.json?type=all"
+MODELS_DEV_CATALOG_URL = "https://models.dev/catalog.json?type=all"
 _FETCH_TIMEOUT = 60.0
 _FETCH_ATTEMPTS = 2
 
@@ -43,15 +43,6 @@ def _int(value: Any) -> int | None:
         return None
 
 
-def _date_from_ts(value: Any) -> date | None:
-    try:
-        if not value:
-            return None
-        return datetime.fromtimestamp(int(value), tz=timezone.utc).date()
-    except (ValueError, TypeError, OSError):
-        return None
-
-
 @dataclass
 class NormalizedModel:
     """One source's view of a canonical model. Merge happens in service.py."""
@@ -60,7 +51,6 @@ class NormalizedModel:
     model_key: str  # canonical: {provider}/{model}, lowercase
     canonical_name: str
     display_name: str | None = None
-    family: str | None = None
     family: str | None = None
     provider: str = "unknown"
     provider_model_id: str = ""
@@ -80,6 +70,29 @@ class NormalizedModel:
     max_video_length: int | None = None
     pricing: dict[str, Decimal | None] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
+    # Normalized Models.dev catalog (models.json-linked) fields. models.dev
+    # path only: other sources never set these.
+    canonical_id: str | None = None
+    reasoning_options: list[dict[str, Any]] | None = None
+    extra_cost: dict[str, Any] | None = None
+    # Overflow for upstream scalar caps with no dedicated column
+    # (attachment, temperature). Never dropped.
+    metadata_: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class NormalizedCanonical:
+    """One models.json entry: canonical record, no cost. Merge happens in sync."""
+
+    canonical_id: str  # full id, e.g. anthropic/claude-haiku-4-5
+    name: str
+    description: str | None = None
+    family: str | None = None
+    release_date: date | None = None
+    last_updated: date | None = None
+    open_weights: bool | None = None
+    knowledge: str | None = None
+    metadata_: dict[str, Any] = field(default_factory=dict)
 
 
 def _fetch_with_retry(url: str) -> dict[str, Any]:
@@ -127,19 +140,6 @@ _ENDPOINT_ALIASES = {
     "video_generation": "video/generations",
 }
 
-# LiteLLM `mode` -> wire endpoints when the entry carries no explicit list.
-_LITELLM_MODE_ENDPOINTS = {
-    "chat": ["chat_completions"],
-    "completion": ["chat_completions"],
-    "responses": ["responses"],
-    "embedding": ["embeddings"],
-    "image_generation": ["images/generations"],
-    "image_edit": ["images/edits"],
-    "video_generation": ["video/generations"],
-    "audio_transcription": ["audio/transcriptions"],
-    "audio_speech": ["audio/speech"],
-}
-
 
 def normalize_endpoint(label: Any) -> str | None:
     """Normalize an upstream endpoint label ("/v1/chat/completions", "embedding")."""
@@ -152,9 +152,9 @@ def normalize_endpoint(label: Any) -> str | None:
 
 
 def derive_endpoints(
-    *, mode: str | None = None, supported: Any = None, in_modalities=(), out_modalities=()
+    *, supported: Any = None, in_modalities=(), out_modalities=()
 ) -> list[str]:
-    """Endpoint set for a model: explicit upstream list first, else modality/mode."""
+    """Endpoint set for a model: explicit upstream list first, else modalities."""
     endpoints: list[str] = []
     if isinstance(supported, (list, tuple)):
         for raw in supported:
@@ -163,10 +163,6 @@ def derive_endpoints(
                 endpoints.append(normalized)
     if endpoints:
         return endpoints
-    if mode:
-        for endpoint in _LITELLM_MODE_ENDPOINTS.get(str(mode).strip().lower(), []):
-            if endpoint not in endpoints:
-                endpoints.append(endpoint)
     inputs = {str(m).lower() for m in in_modalities}
     outputs = {str(m).lower() for m in out_modalities}
     if not endpoints and "text" in outputs:
@@ -188,7 +184,7 @@ def endpoint_capabilities(
     """Capability view derived from the endpoint set (repository read model).
 
     Image/video generation accept either an explicit generation endpoint or the
-    modality flag (OpenRouter reports modalities, not endpoints).
+    modality flag (the upstream reports modalities, not endpoints).
     """
     return {
         "supports_responses": "responses" in endpoints,
@@ -198,188 +194,12 @@ def endpoint_capabilities(
     }
 
 
-class LiteLLMSourceAdapter:
-    """Adapter for the LiteLLM pricing/context-window JSON."""
-
-    name = "litellm"
-
-    def fetch(self) -> dict[str, Any]:
-        return _fetch_with_retry(LITELLM_URL)
-
-    def normalize(self, data: dict[str, Any]) -> list[NormalizedModel]:
-        out: list[NormalizedModel] = []
-        for full_key, info in data.items():
-            if not isinstance(info, dict):
-                continue
-            try:
-                model = self._normalize_one(str(full_key), info)
-            except Exception:
-                logger.warning("litellm: skipping unparseable entry %r", full_key)
-                continue
-            if model is not None:
-                out.append(model)
-        return out
-
-    def _normalize_one(self, full_key: str, info: dict[str, Any]) -> NormalizedModel | None:
-        if not full_key or full_key.startswith("sample_spec"):
-            return None
-        fallback = str(info.get("litellm_provider", "unknown")).split("/")[0].strip().lower() or "unknown"
-        key, provider, provider_model_id = _split_key(full_key, fallback)
-        if not provider_model_id:
-            return None
-        mode = str(info.get("mode", "chat"))
-        in_modalities = info.get("supported_input_modalities") or []
-        out_modalities = info.get("supported_output_modalities") or []
-        endpoints = derive_endpoints(
-            mode=mode,
-            supported=info.get("supported_endpoints"),
-            in_modalities=in_modalities,
-            out_modalities=out_modalities,
-        )
-        primary = endpoints[0] if endpoints else "chat_completions"
-        caps = {
-            "supports_text_input": True,
-            "supports_text_output": mode != "embedding",
-            "supports_chat": bool({"chat_completions", "responses", "messages", "converse"} & set(endpoints)),
-            "supports_vision_input": bool(info.get("supports_vision")) or "image" in in_modalities,
-            "supports_image_output": mode == "image_generation" or "image" in out_modalities,
-            "supports_audio_input": bool(info.get("supports_audio_input")),
-            "supports_audio_output": bool(info.get("supports_audio_output")),
-            "supports_video_input": bool(info.get("supports_video_input")),
-            "supports_video_output": False,
-            "supports_reasoning": bool(info.get("supports_reasoning")),
-            "supports_tool_calling": bool(info.get("supports_function_calling") or info.get("supports_parallel_function_calling")),
-            "supports_structured_output": bool(info.get("supports_response_schema")),
-            "supports_streaming": mode in ("chat", "completion", "responses"),
-            "supports_embeddings": mode == "embedding",
-            "supports_prompt_caching": bool(info.get("supports_prompt_caching")),
-            **endpoint_capabilities(
-                endpoints,
-                image_output=mode == "image_generation" or "image" in out_modalities,
-            ),
-        }
-        return NormalizedModel(
-            source=self.name,
-            model_key=key,
-            canonical_name=full_key,
-            provider=provider,
-            provider_model_id=provider_model_id,
-            endpoint_type="embeddings" if primary == "embeddings" else "chat_completions",
-            primary_endpoint=primary,
-            supported_endpoints=endpoints,
-            context_window=_int(info.get("max_input_tokens")) or _int(info.get("max_tokens")),
-            max_input_tokens=_int(info.get("max_input_tokens")),
-            max_output_tokens=_int(info.get("max_output_tokens")),
-            pricing={
-                "input_cost": _cost(info.get("input_cost_per_token")),
-                "output_cost": _cost(info.get("output_cost_per_token")),
-                "cache_read_cost": _cost(info.get("cache_read_input_token_cost")),
-                "cache_write_cost": _cost(info.get("cache_creation_input_token_cost")),
-            },
-            caps=caps,
-            raw=dict(info),
-        )
-
-
-class OpenRouterSourceAdapter:
-    """Adapter for the OpenRouter /api/v1/models listing."""
-
-    name = "openrouter"
-
-    def fetch(self) -> dict[str, Any]:
-        return _fetch_with_retry(OPENROUTER_URL)
-
-    def normalize(self, data: dict[str, Any]) -> list[NormalizedModel]:
-        models = data.get("data")
-        if not isinstance(models, list):
-            return []
-        out: list[NormalizedModel] = []
-        for info in models:
-            if not isinstance(info, dict):
-                continue
-            try:
-                model = self._normalize_one(info)
-            except Exception:
-                logger.warning("openrouter: skipping unparseable entry %r", info.get("id"))
-                continue
-            if model is not None:
-                out.append(model)
-        return out
-
-    def _normalize_one(self, info: dict[str, Any]) -> NormalizedModel | None:
-        model_id = str(info.get("id", "")).strip()
-        if not model_id:
-            return None
-        key, provider, provider_model_id = _split_key(model_id)
-        arch = info.get("architecture") or {}
-        in_modalities = [str(m).lower() for m in (arch.get("input_modalities") or [])]
-        out_modalities = [str(m).lower() for m in (arch.get("output_modalities") or [])]
-        params = [str(p) for p in (info.get("supported_parameters") or [])]
-        pricing = info.get("pricing") or {}
-        top = info.get("top_provider") or {}
-        endpoints = derive_endpoints(
-            supported=info.get("supported_endpoints"),
-            in_modalities=in_modalities,
-            out_modalities=out_modalities,
-        )
-        primary = endpoints[0] if endpoints else "chat_completions"
-        caps = {
-            "supports_text_input": "text" in in_modalities or not in_modalities,
-            "supports_text_output": "text" in out_modalities or not out_modalities,
-            "supports_chat": bool({"chat_completions", "responses"} & set(endpoints)),
-            "supports_vision_input": "image" in in_modalities,
-            "supports_image_output": "image" in out_modalities,
-            "supports_audio_input": "audio" in in_modalities,
-            "supports_audio_output": "audio" in out_modalities,
-            "supports_video_input": "video" in in_modalities,
-            "supports_video_output": "video" in out_modalities,
-            "supports_reasoning": any("reasoning" in p for p in params),
-            "supports_tool_calling": any(p in ("tools", "tool_choice") for p in params),
-            "supports_structured_output": any(p in ("response_format", "structured_outputs") for p in params),
-            "supports_streaming": True,
-            "supports_embeddings": False,
-            "supports_prompt_caching": _cost(pricing.get("discount")) is not None,
-            **endpoint_capabilities(
-                endpoints,
-                image_output="image" in out_modalities,
-                video_output="video" in out_modalities,
-            ),
-        }
-        return NormalizedModel(
-            source=self.name,
-            model_key=key,
-            canonical_name=model_id,
-            display_name=str(info.get("name") or model_id),
-            provider=provider,
-            provider_model_id=provider_model_id,
-            description=str(info.get("description") or "") or None,
-            release_date=_date_from_ts(info.get("created")),
-            endpoint_type="embeddings" if primary == "embeddings" else "chat_completions",
-            primary_endpoint=primary,
-            supported_endpoints=endpoints,
-            context_window=_int(info.get("context_length")),
-            max_input_tokens=_int(info.get("context_length")),
-            max_output_tokens=_int(top.get("max_completion_tokens")),
-            pricing={
-                "input_cost": _cost(pricing.get("prompt")),
-                "output_cost": _cost(pricing.get("completion")),
-                "cache_read_cost": None,
-                "cache_write_cost": None,
-                "image_input_cost": _cost(pricing.get("image")),
-                "audio_input_cost": _cost(pricing.get("audio")),
-            },
-            caps=caps,
-            raw=dict(info),
-        )
-
-
 class ModelsDevSourceAdapter:
     """Adapter for the models.dev community catalog (api.json).
 
     Shape: {provider_id: {name, models: {model_id: {...}}}}. Costs are USD
-    per 1M tokens and are converted to per-token to match the other sources.
-    Provider/model ids intentionally reuse the shared ``{provider}/{model}``
-    key space so entries merge with LiteLLM/OpenRouter rows canonically.
+    per 1M tokens and are converted to per-token for storage.
+    Provider/model ids use the shared ``{provider}/{model}`` key space.
     """
 
     name = "modelsdev"
@@ -417,8 +237,8 @@ class ModelsDevSourceAdapter:
         slug = normalize_modelsdev_slug(provider_id)
         key, _, provider_model_id = _split_key(f"{slug}/{model_id}", slug or "unknown")
         provider = slug
-        # Full provider/model identity (matches litellm/openrouter convention):
-        # bare model ids collide across providers in source attribution.
+        # Full provider/model identity: bare model ids collide across
+        # providers in source attribution.
         full_id = f"{provider_id.strip()}/{model_id}"
         modalities = info.get("modalities") or {}
         in_modalities = [str(m).lower() for m in (modalities.get("input") or []) if isinstance(m, str)]
@@ -432,6 +252,10 @@ class ModelsDevSourceAdapter:
             return amount / Decimal(1_000_000) if amount is not None else None
 
         limit = info.get("limit") or {}
+        if not isinstance(limit, dict):
+            limit = {}
+        if not isinstance(cost, dict):
+            cost = {}
         caps = {
             "supports_text_input": "text" in in_modalities or not in_modalities,
             "supports_text_output": "text" in out_modalities or not out_modalities,
@@ -444,7 +268,7 @@ class ModelsDevSourceAdapter:
             "supports_video_output": "video" in out_modalities,
             "supports_reasoning": bool(info.get("reasoning")),
             "supports_tool_calling": bool(info.get("tool_call")),
-            "supports_structured_output": False,
+            "supports_structured_output": bool(info.get("structured_output")),
             "supports_streaming": True,
             "supports_embeddings": primary == "embeddings",
             "supports_prompt_caching": per_token(cost.get("cache_read")) is not None,
@@ -454,11 +278,43 @@ class ModelsDevSourceAdapter:
                 video_output="video" in out_modalities,
             ),
         }
+        # Upstream cost overflow with no dedicated column (tiers,
+        # context_over_200k). NULL when empty — never fabricated.
+        extra_cost: dict[str, Any] | None = None
+        if isinstance(cost, dict):
+            overflow = {}
+            if cost.get("tiers") is not None:
+                overflow["tiers"] = cost.get("tiers")
+            if cost.get("context_over_200k") is not None:
+                overflow["context_over_200k"] = cost.get("context_over_200k")
+            extra_cost = overflow or None
+        # Polymorphic upstream reasoning options, passthrough (None when absent).
+        raw_options = info.get("reasoning_options")
+        reasoning_options: list[dict[str, Any]] | None = None
+        if isinstance(raw_options, list) and raw_options:
+            reasoning_options = [dict(o) for o in raw_options if isinstance(o, dict)] or None
+        # Overflow scalar caps with no dedicated column. Never dropped.
+        metadata_: dict[str, Any] = {}
+        if "attachment" in info:
+            metadata_["attachment"] = info.get("attachment")
+        if "temperature" in info:
+            metadata_["temperature"] = info.get("temperature")
+        raw_canonical = info.get("canonical_model_id")
+        canonical_id = (
+            str(raw_canonical).strip()
+            if isinstance(raw_canonical, str) and str(raw_canonical).strip()
+            else None
+        )
+        max_input = _int(limit.get("input"))
+        if max_input is None:
+            max_input = _int(limit.get("context"))
+        raw_fam = info.get("family")
         return NormalizedModel(
             source=self.name,
             model_key=key,
             canonical_name=full_id,
             display_name=str(info.get("name") or model_id),
+            family=str(raw_fam)[:128] if isinstance(raw_fam, str) and raw_fam.strip() else None,
             provider=provider,
             provider_model_id=provider_model_id,
             description=None,
@@ -467,7 +323,7 @@ class ModelsDevSourceAdapter:
             primary_endpoint=primary,
             supported_endpoints=endpoints,
             context_window=_int(limit.get("context")),
-            max_input_tokens=_int(limit.get("context")),
+            max_input_tokens=max_input,
             max_output_tokens=_int(limit.get("output")),
             pricing={
                 "input_cost": per_token(cost.get("input")),
@@ -475,10 +331,68 @@ class ModelsDevSourceAdapter:
                 "cache_read_cost": per_token(cost.get("cache_read")),
                 "cache_write_cost": per_token(cost.get("cache_write")),
                 "image_input_cost": None,
-                "audio_input_cost": None,
+                "audio_input_cost": per_token(cost.get("input_audio")),
+                "audio_output_cost": per_token(cost.get("output_audio")),
+                "reasoning_cost": per_token(cost.get("reasoning")),
             },
             caps=caps,
             raw=dict(info),
+            canonical_id=canonical_id,
+            reasoning_options=reasoning_options,
+            extra_cost=extra_cost,
+            metadata_=metadata_,
+        )
+
+    def fetch_models(self) -> dict[str, Any]:
+        return _fetch_with_retry(MODELS_DEV_MODELS_URL)
+
+    def fetch_catalog(self) -> dict[str, Any]:
+        return _fetch_with_retry(MODELS_DEV_CATALOG_URL)
+
+    def normalize_canonical(self, data: dict[str, Any]) -> list[NormalizedCanonical]:
+        """Parse models.json entries into canonical records (no cost)."""
+        out: list[NormalizedCanonical] = []
+        if not isinstance(data, dict):
+            return out
+        for entry_id, info in data.items():
+            if not isinstance(info, dict):
+                continue
+            try:
+                record = self._normalize_canonical_one(str(entry_id), info)
+            except Exception:
+                logger.warning("modelsdev: skipping unparseable canonical entry %r", entry_id)
+                continue
+            if record is not None:
+                out.append(record)
+        return out
+
+    def _normalize_canonical_one(self, entry_id: str, info: dict[str, Any]) -> NormalizedCanonical | None:
+        key = entry_id.strip()
+        if not key:
+            return None
+        name = info.get("name")
+        name_str = str(name).strip() if isinstance(name, (str, int, float)) and str(name).strip() else key
+        description = info.get("description")
+        family = info.get("family")
+        knowledge = info.get("knowledge")
+        open_weights = info.get("open_weights")
+        return NormalizedCanonical(
+            canonical_id=key,
+            name=name_str[:255],
+            description=str(description) if isinstance(description, str) and description else None,
+            family=str(family)[:128] if isinstance(family, str) and family.strip() else None,
+            release_date=_parse_date(info.get("release_date")),
+            last_updated=_parse_date(info.get("last_updated")),
+            open_weights=bool(open_weights) if isinstance(open_weights, bool) else None,
+            knowledge=str(knowledge) if isinstance(knowledge, str) and knowledge else None,
+            metadata_={
+                k: v
+                for k, v in info.items()
+                if k not in {
+                    "id", "name", "description", "family", "release_date",
+                    "last_updated", "open_weights", "knowledge",
+                }
+            },
         )
 
 
