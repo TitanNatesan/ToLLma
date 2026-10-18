@@ -3348,3 +3348,26 @@ Rebuild the catalog around all Models.dev sources (api.json, models.json, catalo
 ### Notes
 - Residual accepted risk: a valid-but-truncated snapshot with zero errors still deactivates (no principled cardinality signal); documented.
 - M2/M3 reviewer notes (no UI clear for stale options; flush outside per-row try) accepted as documented behavior.
+
+---
+
+## 2026-10-18 — Unified Personal/Organization workspace UI refactor
+
+### Requirement
+Scope-aware unified workspace: switcher (Personal default + accessible orgs), permission-aware org nav, 4-step provider wizard (Credentials & Validation combined), shared provider/key UI across scopes, scope-aware data/routing, legacy UI cleanup.
+
+### Implementation
+- Agent A (nav/shell): NEW global `SidebarWorkspaceSwitcher` (Personal row + collapsible org group + New organization link; Links preserve native navigation); `Sidebar.tsx` scope-aware body + `SidebarPersonalNav` direct render; org scope shows `SidebarOrgNav` everywhere; `SidebarOrgNav` permission-filtered (root sees all); dead `SidebarOrgSwitcher` deleted; `store/org.ts` setContext invalidates scope caches, reconcile resets + invalidates; AppShell `ScopeSync` registers client, reconciles on load, redirects org-scope /providers|/api-keys to org sections; **deleted `SidebarWorkspaces.tsx`** (superseded).
+- Agent C (wizard/keys): wizard 5→4 steps (`Credentials & Validation` merged with inline validate+result, single gate `credsReady && validation?.valid`, renumbered models/finish, draft still excludes validation); deleted `OrgProviderEditDialog` (wizard EditBody routes org updates incl. rotate-perm copy); NEW `useProviderHealthActions` shared by personal + org; org raw-key dialog replaced by shared `RawKeyDialog`; org key-create documents field subset (no backend change); personal KeyForm edit branch untouched.
+- Agent D (org pages): `[id]/page` syncs context from URL, 401→login / 403→`org-forbidden` / 404→ErrorState+retry, legacy redirect after error guard; all 7 sub-sections distinguish 403 (permission empty state) vs 404; `useOrgs` additive `isNotFoundError/isForbiddenError/apiErrorStatus`.
+- Orchestrator fixes from review: stale-validation clearing on creds/type change + selection reset on mapping failure; `validated` deactivation/redirect hardening; reconcile+setContext cache invalidation incl. `["orgs"]`; `InvitationsTab` Members.Read gate + 403/404 branches; switcher Links + aria-controls/region + remount-on-scope; AppShell org-scope redirects; updated stale e2e specs (tester: wizard/helpers/live-openai/providers/navigation/org-sidebar-key-models).
+- Verified no backend changes (git diff: frontend-only).
+
+### Verification
+- Frontend: `tsc` clean (incl. fixing pre-existing test cast), `eslint` clean, vitest **152/152**; e2e specs statically collected (139 tests, no collection errors; full browser e2e not run per standing rule — agent-browser used instead).
+- Browser (agent-browser, seeded 1 user + 2 orgs + providers, seed removed after): Personal default with 5 personal nav items; switcher lists both orgs; org-A full 10-section nav; org-B (no grants) only Overview/Budgets/Settings; direct ?section=members → permission gate (no table); org-context /providers → redirect to org section with read gate; wizard Step 2 of 4 combined step, failed validation keeps Next disabled; personal + org key creation via shared KeyForm (assignee field org-side), show-once secrets, table rows scoped correctly both directions; refresh persistence verified.
+- Reviewer: HIGH wizard stale-validation + selected-clear fixed; MEDIUM scope-invalidation/redirect/nav-leak fixed, InvitationsTab gated; LOW nits (placeholders, quotes, motion, busy slot, focus rings) deferred as pre-existing patterns.
+
+### Notes
+- Full provider registration E2E (valid credentials → register → chat) BLOCKED: no usable provider credentials in this environment (dead-loopback only); wizard transport paths unchanged and e2e specs updated for the new flow.
+- Backend suite not re-run (zero backend changes); scope isolation + catalog suites unaffected.

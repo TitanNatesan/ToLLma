@@ -8,24 +8,35 @@ test.describe("org sidebar + key model lifecycle", () => {
   test("management pages show workspaces, chat keeps conversations", async ({ page }) => {
     await apiLoginAs(page, "side");
     await page.goto("/organizations");
-    await expect(page.getByTestId("sidebar-workspaces")).toBeVisible({ timeout: 20000 });
-    await expect(page.getByTestId("sidebar-context-personal")).toBeVisible();
-    await expect(page.getByTestId("sidebar-new-organization")).toBeVisible();
+    await expect(page.getByTestId("sidebar-workspace-switcher")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-ws-personal")).toBeVisible();
+    // The org list is collapsible: expand it before asserting its entries.
+    if ((await page.getByTestId("sidebar-ws-orgs").count()) === 0) {
+      await page.getByTestId("sidebar-ws-orgs-toggle").click();
+    }
+    const newOrg = page.getByTestId("sidebar-ws-new-organization");
+    await expect(newOrg).toBeVisible();
+    await expect(newOrg).toHaveAttribute("href", "/organizations");
     // No conversation chrome on management pages.
     await expect(page.getByTestId("left-sidebar")).toContainText("Organizations");
     await page.goto("/api-keys");
-    await expect(page.getByTestId("sidebar-workspaces")).toBeVisible({ timeout: 20000 });
-    // Chat keeps the conversation sidebar.
+    await expect(page.getByTestId("sidebar-workspace-switcher")).toBeVisible({ timeout: 20000 });
+    // Chat keeps the conversation sidebar alongside the global switcher.
     await page.goto("/");
-    await expect(page.getByTestId("sidebar-workspaces")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-workspace-switcher")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("conversation-search")).toBeVisible({ timeout: 20000 });
   });
 
   test("workspace list, switching, empty state", async ({ page, request }) => {
     const { email } = await apiLoginAs(page, "side-orgs");
     void email;
-    // Empty state for a user with no orgs.
+    // Empty state for a user with no orgs (org list is collapsible).
     await page.goto("/organizations");
-    await expect(page.getByTestId("sidebar-orgs-empty")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-workspace-switcher")).toBeVisible({ timeout: 20000 });
+    if ((await page.getByTestId("sidebar-ws-orgs").count()) === 0) {
+      await page.getByTestId("sidebar-ws-orgs-toggle").click();
+    }
+    await expect(page.getByTestId("sidebar-ws-orgs-empty")).toBeVisible({ timeout: 20000 });
     // Create two orgs via UI.
     for (const name of ["Sidebar Org A", "Sidebar Org B"]) {
       await page.getByTestId("org-create-open").click();
@@ -33,7 +44,7 @@ test.describe("org sidebar + key model lifecycle", () => {
       await page.getByTestId("org-create-submit").click();
       await expect(page.getByTestId("org-create-dialog")).toBeHidden({ timeout: 20000 });
     }
-    const items = page.locator('[data-testid^="sidebar-context-org-"]');
+    const items = page.locator('[data-testid^="sidebar-ws-org-"]');
     await expect(items).toHaveCount(2, { timeout: 20000 });
     // Switch context by clicking the second org.
     await items.nth(1).click();

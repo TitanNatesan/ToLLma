@@ -7,10 +7,9 @@ import {
 } from "@/components/ui";
 import { AreaChart, BarList, DonutChart } from "@/components/charts";
 import { OrgBudgetCard } from "./OrgBudgetCard";
-import { useOrgAnalyticsOverview, useOrgBudget } from "@/hooks/useOrgs";
+import { isForbiddenError, isNotFoundError, useOrgAnalyticsOverview, useOrgBudget } from "@/hooks/useOrgs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { parseApiError } from "@/lib/errors";
-import { ApiError } from "@/services/api";
 import type { OrgAnalyticsOverview, OrgAnalyticsPoint, OrgAnalyticsRow } from "@/types/orgs";
 
 function num(v: number | string | null | undefined): number | null {
@@ -118,10 +117,6 @@ function rangeFor(preset: Preset): { from: string; to: string; label: string } {
   return { from: from.toISOString(), to: to.toISOString(), label: def.label };
 }
 
-function isNotFound(e: unknown): boolean {
-  return e instanceof ApiError && e.status === 404;
-}
-
 function Stat({ label, value, rangeLabel, testId }: { label: string; value: string; rangeLabel: string; testId?: string }) {
   return (
     <Card data-testid={testId}>
@@ -161,13 +156,17 @@ export function OrgAnalyticsDashboard({ orgId, canView, canSeeCost, canReadBudge
   }
 
   if (overview.isLoading) return <LoadingState message="Loading analytics…" />;
-  if (overview.isError && isNotFound(overview.error)) {
+  if (overview.isError && isForbiddenError(overview.error)) {
     return (
-      <div className="space-y-2.5">
-        <EmptyState icon={BarChart3} title="Analytics aren't available yet"
-          description="The organization analytics service is still rolling out." />
-        <OrgBudgetCard orgId={orgId} canRead={canReadBudget} canEdit={canEditBudget} />
-      </div>
+      <EmptyState icon={BarChart3} title="Analytics unavailable" testId="org-analytics-forbidden"
+        description="You need Analytics.ViewUsage permission to view organization analytics." />
+    );
+  }
+  if (overview.isError && isNotFoundError(overview.error)) {
+    return (
+      <ErrorState title="Analytics not found"
+        message={overview.error ? parseApiError(overview.error).message : "No data."}
+        onRetry={() => void overview.refetch()} />
     );
   }
   if (overview.isError || !overview.data) {

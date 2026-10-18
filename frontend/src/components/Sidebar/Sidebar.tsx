@@ -7,9 +7,10 @@ import { motion } from "framer-motion";
 import { ShieldCheck } from "lucide-react";
 import { useChatStore } from "@/store/chat";
 import { useAuthStore } from "@/store/auth";
+import { useOrgStore } from "@/store/org";
 import { cn } from "@/lib/utils";
 import { SidebarHeader } from "./SidebarHeader";
-import { SidebarNavigation } from "./SidebarNavigation";
+import { SidebarNavigation, SidebarPersonalNav } from "./SidebarNavigation";
 import { SidebarAdmin, ADMIN_SECTION_IDS, type AdminSectionId } from "./SidebarAdmin";
 import { SidebarSettings, SETTINGS_SECTION_IDS, type SettingsSectionId } from "./SidebarSettings";
 import { SidebarConversations } from "./SidebarConversations";
@@ -17,7 +18,7 @@ import { SidebarProviders } from "./SidebarProviders";
 import { SidebarAnalytics } from "./SidebarAnalytics";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarOrgNav } from "./SidebarOrgNav";
-import { SidebarWorkspaces } from "./SidebarWorkspaces";
+import { SidebarWorkspaceSwitcher } from "./SidebarWorkspaceSwitcher";
 
 /** Hash fragment follows for section navigators (fragment navigation fires hashchange). */
 function subscribeSectionHash(callback: () => void) {
@@ -74,12 +75,17 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const toggleNav = () => setNavPath((p) => (p === pathname ? null : pathname));
 
   const isProvidersPage = pathname === "/providers" || pathname.startsWith("/providers/");
+  const isApiKeysPage = pathname === "/api-keys";
+  const isApiDocsPage = pathname === "/api-docs" || pathname.startsWith("/api-docs/");
+  const isOrgsListPage = pathname === "/organizations";
   const isAnalyticsPage = pathname === "/analytics" || pathname.startsWith("/analytics/");
   const isSettingsPage = pathname === "/settings" || pathname.startsWith("/settings/");
-  const isOrgsPage = pathname === "/organizations" || pathname.startsWith("/organizations/");
-  const isApiKeysPage = pathname === "/api-keys" || pathname.startsWith("/api-keys/");
   const orgSegment = pathname.split("/")[2] ?? "";
   const isOrgDetailPage = /^\/organizations\/[^/]+$/.test(pathname) && orgSegment !== "invites";
+  const context = useOrgStore((s) => s.context);
+  // Org scope wins everywhere; URL-derived org is a fallback until the detail
+  // page writes the context itself (it owns setContext on direct visits).
+  const scopeOrgId = context.type === "org" ? context.orgId : isOrgDetailPage ? orgSegment : null;
 
   // Resizing state
   const [isResizing, setIsResizing] = useState(false);
@@ -108,17 +114,15 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const currentWidth = leftSidebarOpen ? sidebarWidth : 0;
   const ariaLabel = isAdminPage
     ? "Admin navigation"
-    : isOrgDetailPage
+    : scopeOrgId
       ? "Organization sections"
-      : isOrgsPage || isApiKeysPage
-        ? "Organizations"
-        : isProvidersPage
-          ? "Provider list"
-          : isAnalyticsPage
-            ? "Analytics"
-            : isSettingsPage
-              ? "Settings"
-              : "Conversations";
+      : isProvidersPage
+        ? "Provider list"
+        : isAnalyticsPage
+          ? "Analytics"
+          : isSettingsPage
+            ? "Settings"
+            : "Conversations";
 
   // Below md the sidebar becomes an off-canvas overlay so page content keeps
   // the full viewport width (analytics/settings need it).
@@ -138,25 +142,34 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
     >
       <SidebarHeader onOpenCommandPalette={onOpenCommandPalette} />
 
-      {/* Route-aware context (the only scrollable region; footer stays put) */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* Workspace scope (global, all routes). Remounts on scope change so
+          the accordion's initial open state tracks the active scope. */}
+      <SidebarWorkspaceSwitcher
+        key={context.type === "org" ? `org-${context.orgId}` : "personal"}
+      />
+
+      {/* Route-aware context (the only scrollable region; footer stays put).
+          Org scope replaces the body with the org section tree everywhere. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         {isAdminPage ? (
           isPlatformAdmin ? (
             <SidebarAdmin activeId={adminActiveId} />
           ) : null
-        ) : isOrgDetailPage ? (
-          <SidebarOrgNav orgId={orgSegment} />
-        ) : isOrgsPage || isApiKeysPage ? (
-          <SidebarWorkspaces />
+        ) : scopeOrgId ? (
+          <SidebarOrgNav orgId={scopeOrgId} />
         ) : isProvidersPage ? (
           <SidebarProviders />
         ) : isAnalyticsPage ? (
           <SidebarAnalytics />
         ) : isSettingsPage ? (
           <SidebarSettings activeId={settingsActiveId} />
+        ) : isOrgsListPage || isApiKeysPage || isApiDocsPage ? (
+          /* Switcher + personal nav below carry these pages; no route list needed. */
+          <p className="px-3 py-2 text-[11px] text-zinc-400">Select a section below to navigate.</p>
         ) : (
           <SidebarConversations />
         )}
+        {context.type === "personal" && !isAdminPage && <SidebarPersonalNav />}
       </div>
 
       <SidebarNavigation open={navOpen} />

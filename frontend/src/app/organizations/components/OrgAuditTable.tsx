@@ -9,7 +9,7 @@ import {
 import { auditTargetRows, describeAuditEvent, REDACTED } from "./auditDescriptions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { getAuditPage } from "@/services/orgs";
-import { ORG_KEYS } from "@/hooks/useOrgs";
+import { ORG_KEYS, isForbiddenError, isNotFoundError } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import type { AuditEntry } from "@/types/orgs";
 
@@ -158,7 +158,16 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
       </div>
 
       {query.isLoading && <LoadingState message="Loading audit log…" />}
-      {query.isError && (
+      {query.isError && isForbiddenError(query.error) && (
+        <EmptyState title="Audit log unavailable" testId="org-audit-forbidden"
+          description="You need Audit.Read permission to view the audit log." />
+      )}
+      {query.isError && isNotFoundError(query.error) && (
+        <ErrorState title="Audit log not found"
+          message={parseApiError(query.error).message}
+          onRetry={() => void query.refetch()} />
+      )}
+      {query.isError && !isForbiddenError(query.error) && !isNotFoundError(query.error) && (
         <ErrorState title="Could not load audit log"
           message={parseApiError(query.error).message}
           onRetry={() => void query.refetch()} />

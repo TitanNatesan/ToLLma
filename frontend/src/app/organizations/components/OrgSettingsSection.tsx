@@ -8,7 +8,7 @@ import {
   Badge, Button, Card, CardContent, EmptyState, Field, Input, LoadingState,
 } from "@/components/ui";
 import { ConfirmDialog } from "./Dialogs";
-import { useOrgBudget, useOrgMutations } from "@/hooks/useOrgs";
+import { isForbiddenError, isNotFoundError, useOrgBudget, useOrgMutations } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import type { Organization } from "@/types/orgs";
 
@@ -259,8 +259,18 @@ function BudgetsTab({ orgId }: { orgId: string }) {
           </Link>
         </div>
         {budget.isLoading && <div className="mt-3"><LoadingState message="Loading budget…" /></div>}
-        {budget.isError && (
-          <p className="mt-3 text-xs text-zinc-500">Budget pools aren&apos;t available yet.</p>
+        {budget.isError && isForbiddenError(budget.error) && (
+          <p className="mt-3 text-xs text-zinc-500">You need Budgets.Read permission to view budget pools.</p>
+        )}
+        {budget.isError && isNotFoundError(budget.error) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <p className="text-xs text-zinc-500">Budget pools weren&apos;t found for this organization.</p>
+            <Button size="sm" variant="outline" onClick={() => void budget.refetch()}
+              data-testid="org-budgets-retry">Retry</Button>
+          </div>
+        )}
+        {budget.isError && !isForbiddenError(budget.error) && !isNotFoundError(budget.error) && (
+          <p className="mt-3 text-xs text-zinc-500">{parseApiError(budget.error).message}</p>
         )}
         {budget.data && (
           <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">

@@ -22,7 +22,6 @@ test("wizard maps, edits and registers with match stats", async ({ page, request
   await page.getByTestId("provider-type").selectOption("CUSTOM");
   await page.getByTestId("wiz-next").click();
   await page.getByTestId("cred-base_url").fill(MOCK_URL);
-  await page.getByTestId("wiz-next").click();
   await page.getByTestId("wiz-validate").click();
   await expect(page.getByTestId("wiz-validation-result")).toContainText("Validation successful", { timeout: 20000 });
   await page.getByTestId("wiz-next").click();

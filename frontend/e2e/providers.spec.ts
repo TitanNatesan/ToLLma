@@ -1,4 +1,4 @@
-// Scenario 1: wizard registration + persistence (nothing saved before step 5).
+// Scenario 1: wizard registration + persistence (nothing saved before step 4).
 import { expect, test } from "@playwright/test";
 import { API, MOCK_URL, wizardRegister, apiLoginAs } from "./helpers";
 import { startMockLLM } from "./mock-server";

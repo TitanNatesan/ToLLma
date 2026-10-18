@@ -9,7 +9,7 @@ import {
 } from "@/components/ui";
 import { AssignSetsDialog, ConfirmDialog } from "./Dialogs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useMembers, useOrgAnalyticsOverview, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
+import { isForbiddenError, isNotFoundError, useMembers, useOrgAnalyticsOverview, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import type { Member } from "@/types/orgs";
 
@@ -165,7 +165,16 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
       </div>
 
       {members.isLoading && <LoadingState message="Loading members…" />}
-      {members.isError && (
+      {members.isError && isForbiddenError(members.error) && (
+        <EmptyState title="Members unavailable" testId="org-members-forbidden"
+          description="You need Members.Read permission to view organization members." />
+      )}
+      {members.isError && isNotFoundError(members.error) && (
+        <ErrorState title="Organization not found"
+          message={parseApiError(members.error).message}
+          onRetry={() => void members.refetch()} />
+      )}
+      {members.isError && !isForbiddenError(members.error) && !isNotFoundError(members.error) && (
         <ErrorState title="Could not load members"
           message={parseApiError(members.error).message}
           onRetry={() => void members.refetch()} />

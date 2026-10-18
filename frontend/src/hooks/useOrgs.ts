@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as orgApi from "@/services/orgs";
+import { ApiError } from "@/services/api";
 import type { OrgProviderCreateInput } from "@/types/orgs";
 
 export const ORG_KEYS = {
@@ -23,6 +24,19 @@ export const ORG_KEYS = {
   notifications: ["notifications"],
   unread: ["notifications", "unread"],
 } as const;
+
+/** Additive status helpers for scope-isolation UI (no signature changes elsewhere). */
+export function isNotFoundError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
+export function isForbiddenError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403;
+}
+
+export function apiErrorStatus(error: unknown): number {
+  return error instanceof ApiError ? error.status : 0;
+}
 
 export function useOrgs() {
   return useQuery({ queryKey: ORG_KEYS.list, queryFn: orgApi.listOrgs, staleTime: 0, refetchOnWindowFocus: true });

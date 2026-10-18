@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, LogOut } from "lucide-react";
+import { ArrowLeft, LogOut, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import {
   Button, Card, CardContent, EmptyState, ErrorState, LoadingState, PageHeader, SectionHeader,
@@ -19,7 +19,8 @@ import { OrgAnalyticsDashboard } from "../components/OrgAnalyticsDashboard";
 import { OrgAuditTable } from "../components/OrgAuditTable";
 import { OrgSettingsSection } from "../components/OrgSettingsSection";
 import { OrgBudgetCard } from "../components/OrgBudgetCard";
-import { useJoinRequests, useMembers, useOrg, useOrgInvitations, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
+import { apiErrorStatus, useJoinRequests, useMembers, useOrg, useOrgInvitations, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
+import { useOrgStore } from "@/store/org";
 import { parseApiError } from "@/lib/errors";
 import type { Organization } from "@/types/orgs";
 import type { OrgSection } from "@/components/Sidebar/SidebarOrgNav";
@@ -56,6 +57,29 @@ function OrgDashboardInner() {
   const data = org.data;
   const can = (code: string) => !!data && (data.is_root || data.permissions.includes(code));
   const qc = useQueryClient();
+  const setContext = useOrgStore((st) => st.setContext);
+  const activeContext = useOrgStore((st) => st.context);
+  const orgStatus = org.isError ? apiErrorStatus(org.error) : null;
+
+  // Deep links/bookmarks sync into workspace state once the org resolves.
+  useEffect(() => {
+    if (data) setContext({ type: "org", orgId: data.id, orgName: data.name });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.id]);
+
+  // Reconcile-safe reset on load failure: drop the stale org context only
+  // when it points at this URL — never clobber an unrelated context.
+  useEffect(() => {
+    if (org.isError && activeContext.type === "org" && activeContext.orgId === orgId) {
+      setContext({ type: "personal" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org.isError, orgId]);
+
+  // Unauthenticated: the refresh-and-retry already failed — go sign in.
+  useEffect(() => {
+    if (orgStatus === 401) router.replace("/login");
+  }, [orgStatus, router]);
 
   // Section switches don't remount (same page, new searchParam), so queries
   // would otherwise keep serving the previously fetched list. Refetch the
@@ -67,11 +91,12 @@ function OrgDashboardInner() {
   }, [section, orgId]);
 
   // Legacy ?section=keys|requests|invitations → ?section=operations&tab=…
+  // Never redirect on error: the error guard below owns that render.
   useEffect(() => {
-    if (LEGACY_TABS[section]) {
+    if (!org.isError && LEGACY_TABS[section]) {
       router.replace(`/organizations/${orgId}?section=operations&tab=${LEGACY_TABS[section]}`);
     }
-  }, [section, orgId, router]);
+  }, [section, orgId, router, org.isError]);
 
   async function run(p: Promise<unknown>, ok: string) {
     try {
@@ -83,7 +108,35 @@ function OrgDashboardInner() {
   }
 
   if (org.isLoading) return <LoadingState />;
-  if (org.isError || !data) return <ErrorState />;
+  if (org.isError || !data) {
+    if (orgStatus === 401) return <LoadingState message="Signing you in…" />;
+    if (orgStatus === 403) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center p-6 text-center" data-testid="org-forbidden">
+          <EmptyState icon={ShieldAlert} title="You don't have access to this organization"
+            description="It exists, but your account isn't a member or lacks permission to view it. Ask an organization admin for an invitation."
+            action={
+              <Button size="sm" variant="outline" onClick={() => router.push("/organizations")}
+                data-testid="org-back">
+                <ArrowLeft className="size-3.5" aria-hidden /> Back to organizations
+              </Button>
+            } />
+        </div>
+      );
+    }
+    if (orgStatus === 404) {
+      return (
+        <ErrorState title="Organization not found"
+          message="It may have been deleted, or the link is wrong."
+          onRetry={() => void org.refetch()} />
+      );
+    }
+    return (
+      <ErrorState title="Could not load organization"
+        message={org.error ? parseApiError(org.error).message : undefined}
+        onRetry={() => void org.refetch()} />
+    );
+  }
 
   if (LEGACY_TABS[section]) return <LoadingState message="Opening operations…" />;
 
@@ -167,6 +220,7 @@ function OrgDashboardInner() {
               canReadKeys: data.is_root || can("Keys.Read"),
               canRevokeKeys: can("Keys.Revoke") || can("Keys.Delete"),
               canInvite: can("Members.Invite"),
+              canReadInvitations: data.is_root || can("Members.Read"),
               canReviewRequests: data.is_root || can("Members.Approve") || can("Members.Update"),
             }} />
         )}

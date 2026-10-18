@@ -76,8 +76,10 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
 }
 
 /**
- * Full 5-step wizard registration against the mock LLM (CUSTOM, base_url only).
- * Pass onlyModelIds to register a subset (deselects everything else first).
+ * Full 4-step wizard registration against the mock LLM (CUSTOM, base_url only).
+ * Step 2 ("Credentials & Validation") validates inline, then a single Next
+ * reaches step 3 ("Models"). Pass onlyModelIds to register a subset
+ * (deselects everything else first).
  */
 export async function wizardRegister(
   page: Page,
@@ -91,7 +93,6 @@ export async function wizardRegister(
   if (opts.type) await page.getByTestId("provider-type").selectOption(opts.type);
   await page.getByTestId("wiz-next").click();
   if (opts.baseUrl) await page.getByTestId("cred-base_url").fill(opts.baseUrl);
-  await page.getByTestId("wiz-next").click();
   await page.getByTestId("wiz-validate").click();
   await expect(page.getByTestId("wiz-validation-result")).toContainText("Validation successful", {
     timeout: 20000,

@@ -10,7 +10,7 @@ import {
 } from "@/components/ui";
 import { ConfirmDialog, TextPromptDialog } from "./Dialogs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useOrgMutations, useOrgSets, usePermissionCatalog } from "@/hooks/useOrgs";
+import { isForbiddenError, isNotFoundError, useOrgMutations, useOrgSets, usePermissionCatalog } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import { PERMISSION_GROUPS, type PermissionSet } from "@/types/orgs";
 
@@ -172,7 +172,16 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
       <p className="mb-2 text-xs text-zinc-500">System sets are immutable — clone them to customize. Grants can never exceed your own permissions.</p>
 
       {sets.isLoading && <LoadingState message="Loading permission sets…" />}
-      {sets.isError && (
+      {sets.isError && isForbiddenError(sets.error) && (
+        <EmptyState title="Permission sets unavailable" testId="org-sets-forbidden"
+          description="You need PermissionSets.Read permission to view organization permission sets." />
+      )}
+      {sets.isError && isNotFoundError(sets.error) && (
+        <ErrorState title="Permission sets not found"
+          message={parseApiError(sets.error).message}
+          onRetry={() => void sets.refetch()} />
+      )}
+      {sets.isError && !isForbiddenError(sets.error) && !isNotFoundError(sets.error) && (
         <ErrorState title="Could not load permission sets"
           message={parseApiError(sets.error).message}
           onRetry={() => void sets.refetch()} />

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, usePathname, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   BarChart3,
   Building2,
@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useOrgs } from "@/hooks/useOrgs";
+import { useOrg, useOrgs } from "@/hooks/useOrgs";
 
 export type OrgSection =
   | "overview" | "members" | "teams" | "sets" | "providers" | "operations"
@@ -45,14 +45,53 @@ const ITEMS: Item[] = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
-/** Nested enterprise navigation for an organization workspace. Replaces all
- * horizontal org tabs; Phase B modules appear disabled so the tree never
- * needs a redesign when they land. */
+/** Nested enterprise navigation for an organization workspace, filtered by
+ * the viewer's effective permissions (`useOrg` detail: `{is_root,
+ * permissions[]}`). Codes mirror the org detail page: root sees everything;
+ * Budgets/Settings show for any member (content gates itself); Overview is
+ * always visible. Loading fails open (backend still 404s non-members);
+ * error (non-member oracle) collapses to Overview — reconcile() flips the
+ * scope to Personal right after. */
 export function SidebarOrgNav({ orgId }: { orgId: string }) {
   const params = useSearchParams();
   const active = (params.get("section") ?? "overview") as OrgSection;
   const orgs = useOrgs();
   const org = (orgs.data ?? []).find((o) => o.id === orgId);
+  const detail = useOrg(orgId);
+
+  const root = detail.data?.is_root ?? false;
+  const perms = detail.data?.permissions ?? [];
+  const can = (...codes: string[]) => root || codes.some((c) => perms.includes(c));
+
+  let visible = ITEMS;
+  if (detail.isError) {
+    visible = ITEMS.filter((item) => item.id === "overview");
+  } else if (detail.data) {
+    visible = ITEMS.filter((item) => {
+      switch (item.id) {
+        case "overview":
+        case "budgets":
+        case "settings":
+          return true;
+        case "analytics":
+          return can("Analytics.ViewUsage", "Organization.ViewAnalytics");
+        case "members":
+          return can("Members.Read");
+        case "teams":
+          return can("Teams.Read");
+        case "sets":
+          return can("PermissionSets.Read");
+        case "providers":
+          return can("Providers.Read");
+        case "operations":
+          return can("Keys.Read", "Members.Read", "Members.Invite", "Members.Approve", "Members.Update");
+        case "audit":
+          return can("Audit.Read");
+        default:
+          return true;
+      }
+    });
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="sidebar-org-nav">
@@ -67,7 +106,7 @@ export function SidebarOrgNav({ orgId }: { orgId: string }) {
       </div>
       <nav aria-label="Organization sections" className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         <div className="space-y-0.5">
-          {ITEMS.map((item) => {
+          {visible.map((item) => {
             const Icon = item.icon;
             const isActive = active === item.id;
             const href = `/organizations/${orgId}?section=${item.id}`;
@@ -104,47 +143,6 @@ export function SidebarOrgNav({ orgId }: { orgId: string }) {
           })}
         </div>
       </nav>
-    </div>
-  );
-}
-
-/** Personal space + organization switcher block above the section tree. */
-export function SidebarOrgSwitcher() {
-  const pathname = usePathname();
-  const params = useParams<{ id?: string }>();
-  const orgs = useOrgs();
-  const list = orgs.data ?? [];
-
-  return (
-    <div className="shrink-0 border-b border-zinc-200 px-2 py-2 dark:border-zinc-800" data-testid="sidebar-org-switcher">
-      <Link href="/organizations" data-testid="sidebar-org-personal"
-        className={cn(
-          "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
-          pathname === "/organizations"
-            ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-            : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
-        )}>
-        <Building2 className="size-3.5 shrink-0" aria-hidden />
-        <span>Organizations</span>
-      </Link>
-      {list.slice(0, 8).map((o) => {
-        const isActive = params.id === o.id;
-        return (
-          <Link key={o.id} href={`/organizations/${o.id}`} data-testid={`sidebar-org-${o.slug}`}
-            aria-current={isActive ? "page" : undefined}
-            className={cn(
-              "mt-0.5 flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
-              isActive
-                ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
-            )}>
-            <span className="flex size-5 shrink-0 items-center justify-center rounded bg-zinc-200 text-[10px] font-bold dark:bg-zinc-700">
-              {o.name.slice(0, 1).toUpperCase()}
-            </span>
-            <span className="truncate">{o.name}</span>
-          </Link>
-        );
-      })}
     </div>
   );
 }

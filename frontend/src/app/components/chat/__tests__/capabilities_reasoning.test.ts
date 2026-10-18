@@ -47,7 +47,7 @@ function withOptions(options: ReasoningOption[] | null | undefined): AIModel {
   const base = model();
   if (options === undefined) {
     // Leave the key absent: pre-contract response (legacy metadata path).
-    const { reasoning_options: _drop, ...rest } = base as Record<string, unknown>;
+    const { reasoning_options: _drop, ...rest } = base as unknown as Record<string, unknown>;
     void _drop;
     return rest as unknown as AIModel;
   }

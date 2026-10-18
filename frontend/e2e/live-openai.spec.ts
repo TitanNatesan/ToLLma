@@ -50,7 +50,6 @@ test("live: OpenAI provider registration and model matrix", async ({ page }) => 
   await page.getByTestId("provider-platform-OPENAI").click();
   await page.getByTestId("wiz-next").click();
   await page.getByTestId("cred-api_key").fill(OPENAI_KEY);
-  await page.getByTestId("wiz-next").click();
   await page.getByTestId("wiz-validate").click();
   await expect(page.getByTestId("wiz-validation-result")).toContainText("Validation successful", {
     timeout: 120_000,

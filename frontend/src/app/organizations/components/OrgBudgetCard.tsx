@@ -7,7 +7,7 @@ import {
   Button, Card, CardContent, Dialog, DialogContent, DialogDescription,
   DialogTitle, EmptyState, ErrorState, Field, Input, LoadingState,
 } from "@/components/ui";
-import { useOrgBudget, useOrgMutations } from "@/hooks/useOrgs";
+import { isForbiddenError, useOrgBudget, useOrgMutations } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import { ApiError } from "@/services/api";
 import type { OrgBudget } from "@/types/orgs";
@@ -89,10 +89,16 @@ export function OrgBudgetCard({ orgId, canRead, canEdit }: {
         </div>
 
         {budget.isLoading && <LoadingState message="Loading budget…" />}
-        {budget.isError && isNotFound(budget.error) && (
-          <p className="mt-2 text-xs text-zinc-500">Budget pools aren&apos;t available yet.</p>
+        {budget.isError && isForbiddenError(budget.error) && (
+          <EmptyState title="Budgets unavailable" testId="org-budget-forbidden"
+            description="You need Budgets.Read permission to view budget pools." />
         )}
-        {budget.isError && !isNotFound(budget.error) && (
+        {budget.isError && isNotFound(budget.error) && (
+          <ErrorState title="Budget pools not found"
+            message={parseApiError(budget.error).message}
+            onRetry={() => void budget.refetch()} />
+        )}
+        {budget.isError && !isNotFound(budget.error) && !isForbiddenError(budget.error) && (
           <ErrorState title="Could not load budget"
             message={parseApiError(budget.error).message}
             onRetry={() => void budget.refetch()} />

@@ -11,7 +11,7 @@ import {
 import { ConfirmDialog } from "./Dialogs";
 import { PermissionSetPicker, PickerReview } from "./PermissionSetPicker";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useOrgAudit, useOrgMutations, usePermissionCatalog, useTeam, useTeamMutations, useTeams } from "@/hooks/useOrgs";
+import { isForbiddenError, useOrgAudit, useOrgMutations, usePermissionCatalog, useTeam, useTeamMutations, useTeams } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import { ApiError } from "@/services/api";
 import { PERMISSION_GROUPS, type Member, type PermissionSet, type Team } from "@/types/orgs";
@@ -20,6 +20,10 @@ const PAGE_SIZE = 15;
 
 function isNotFound(e: unknown): boolean {
   return e instanceof ApiError && e.status === 404;
+}
+
+function isForbidden(e: unknown): boolean {
+  return isForbiddenError(e);
 }
 
 function dateLabel(iso?: string | null): string {
@@ -172,11 +176,18 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
       </div>
 
       {teams.isLoading && <LoadingState message="Loading teams…" />}
-      {teams.isError && isNotFound(teams.error) && (
-        <EmptyState title="Teams aren't available" testId="org-teams-unavailable"
-          description="This may mean you don't have team access, or the teams service is still rolling out. Members and settings are unaffected." />
+      {teams.isError && isForbidden(teams.error) && (
+        <EmptyState title="Teams unavailable" testId="org-teams-forbidden"
+          description="You need Teams.Read permission to view organization teams. Members and settings are unaffected." />
       )}
-      {teams.isError && !isNotFound(teams.error) && (
+      {teams.isError && isNotFound(teams.error) && (
+        <div data-testid="org-teams-unavailable">
+          <ErrorState title="Teams not found"
+            message={parseApiError(teams.error).message}
+            onRetry={() => void teams.refetch()} />
+        </div>
+      )}
+      {teams.isError && !isNotFound(teams.error) && !isForbidden(teams.error) && (
         <ErrorState title="Could not load teams"
           message={parseApiError(teams.error).message}
           onRetry={() => void teams.refetch()} />
@@ -340,11 +351,16 @@ function TeamDetailDrawer({ orgId, teamId, members, sets, perms, labels, isRoot,
       title={detail.data?.name ?? "Team"}
       subtitle={detail.data ? `${detail.data.member_count} member${detail.data.member_count === 1 ? "" : "s"}` : undefined}>
       {detail.isLoading && <LoadingState message="Loading team…" />}
-      {detail.isError && isNotFound(detail.error) && (
-        <EmptyState title="Team isn't available"
-          description="It may have been deleted, you may not have team access, or the teams service is still rolling out." />
+      {detail.isError && isForbidden(detail.error) && (
+        <EmptyState title="Team unavailable"
+          description="You need Teams.Read permission to view this team." />
       )}
-      {detail.isError && !isNotFound(detail.error) && (
+      {detail.isError && isNotFound(detail.error) && (
+        <ErrorState title="Team not found"
+          message={parseApiError(detail.error).message}
+          onRetry={() => void detail.refetch()} />
+      )}
+      {detail.isError && !isNotFound(detail.error) && !isForbidden(detail.error) && (
         <ErrorState title="Could not load team"
           message={parseApiError(detail.error).message}
           onRetry={() => void detail.refetch()} />

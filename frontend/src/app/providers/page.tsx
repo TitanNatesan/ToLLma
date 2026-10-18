@@ -24,6 +24,7 @@ import {
   useProviderMutations,
   useProviders,
 } from "@/hooks/useRegistry";
+import { useProviderHealthActions } from "@/hooks/useProviderHealth";
 import { useChatStore } from "@/store/chat";
 import { ProviderWizardModal } from "./components/ProviderWizardModal";
 import { ModelDetailDrawer } from "./components/ModelDetailDrawer";
@@ -100,8 +101,10 @@ export default function ProvidersPage() {
   } = useChatStore();
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
   const [discoverMsg, setDiscoverMsg] = useState<Record<string, string>>({});
+  const { busy, runValidate, runDiscover } = useProviderHealthActions({
+    onDiscovered: (id, message) => setDiscoverMsg((prev) => ({ ...prev, [id]: message })),
+  });
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
   const [drawerModel, setDrawerModel] = useState<AIModel | null>(null);
@@ -166,31 +169,6 @@ export default function ProvidersPage() {
       m.name.toLowerCase().includes(registeredSearch.toLowerCase()) ||
       m.model_id.toLowerCase().includes(registeredSearch.toLowerCase()),
   );
-
-  async function runValidate(id: string) {
-    setBusy(`validate:${id}`);
-    try {
-      const r = await pm.validate.mutateAsync(id);
-      r.valid
-        ? toast.success("Credentials valid", { description: `${r.latency_ms.toFixed(0)}ms` })
-        : toast.error("Credentials invalid", { description: r.message });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function runDiscover(id: string) {
-    setBusy(`discover:${id}`);
-    try {
-      const d = await pm.discover.mutateAsync(id);
-      setDiscoverMsg((s) => ({ ...s, [id]: d.message }));
-      toast.success("Model discovery finished", { description: d.message });
-    } catch (e) {
-      toast.error("Discovery failed", { description: e instanceof Error ? e.message : "Error" });
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function confirmDeleteProvider() {
     if (!deleteProviderTarget) return;

@@ -5,16 +5,16 @@ import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge, Button, Card, CardContent, Checkbox, DataTable, type DataTableColumn,
-  DetailPanel, Dialog, DialogContent, DialogDescription, DialogTitle,
-  EmptyState, ErrorState, Field, Input, LoadingState, SearchInput, Select,
+  DetailPanel,
+  EmptyState, ErrorState, LoadingState, SearchInput, Select,
 } from "@/components/ui";
+import { RawKeyDialog } from "@/app/api-keys/components/RawKeyDialog";
 import { AssignSetsDialog, ConfirmDialog } from "./Dialogs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   useJoinRequests, useOrgInvitations, useOrgKeys, useOrgMutations, useOrgSets,
 } from "@/hooks/useOrgs";
 import { KeyForm, type KeyFormResult } from "@/app/api-keys/components/KeyForm";
-import { copyWithToast } from "@/lib/clipboard";
 import { parseApiError } from "@/lib/errors";
 import { ApiError } from "@/services/api";
 import type { Invitation, Member, OrgKey } from "@/types/orgs";
@@ -49,6 +49,7 @@ export interface OpsPerms {
   canReadKeys: boolean;
   canRevokeKeys: boolean;
   canInvite: boolean;
+  canReadInvitations: boolean;
   canReviewRequests: boolean;
 }
 
@@ -99,7 +100,7 @@ export function OrgOperationsSection({ orgId, members, perms, initialTab }: {
         <RequestsTab orgId={orgId} canReview={perms.canReviewRequests} />
       )}
       {tab === "invitations" && (
-        <InvitationsTab orgId={orgId} canManage={perms.canInvite} />
+        <InvitationsTab orgId={orgId} canManage={perms.canInvite} canRead={perms.canReadInvitations} />
       )}
     </div>
   );
@@ -156,7 +157,7 @@ function KeysTab({ orgId, members, perms }: { orgId: string; members: Member[]; 
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [revoking, setRevoking] = useState<OrgKey | null>(null);
-  const [rawKey, setRawKey] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ rawKey: string; name: string } | null>(null);
 
   const debounced = useDebouncedValue(search.trim(), 300);
   const keys = useOrgKeys(orgId, {
@@ -270,9 +271,9 @@ function KeysTab({ orgId, members, perms }: { orgId: string; members: Member[]; 
       {createOpen && (
         <OrgKeyCreateDialog orgId={orgId} members={members}
           onClose={() => setCreateOpen(false)}
-          onCreated={(raw) => {
+          onCreated={(raw, name) => {
             setCreateOpen(false);
-            setRawKey(raw);
+            setCreated({ rawKey: raw, name });
           }} />
       )}
 
@@ -282,29 +283,15 @@ function KeysTab({ orgId, members, perms }: { orgId: string; members: Member[]; 
         onClose={() => setRevoking(null)}
         onConfirm={() => revoke().then(() => setRevoking(null))} />
 
-      <Dialog open={rawKey !== null} onOpenChange={(n) => { if (!n) setRawKey(null); }}>
-        <DialogContent className="max-w-md p-4" data-testid="org-key-raw">
-          <DialogTitle className="text-sm font-semibold">Copy your key now</DialogTitle>
-          <DialogDescription>
-            This secret is shown <strong>exactly once</strong> and can never be retrieved again.
-            Copy it now and store it somewhere safe.
-          </DialogDescription>
-          <div className="mt-3 flex items-center gap-2">
-            <Input readOnly value={rawKey ?? ""} data-testid="org-key-raw-value"
-              className="font-mono text-xs" onFocus={(e) => e.target.select()} />
-            <Button size="sm" variant="outline"
-              onClick={() => void copyWithToast(rawKey ?? "", "Key copied to clipboard.")}
-              data-testid="org-key-raw-copy">
-              Copy
-            </Button>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <Button size="sm" onClick={() => setRawKey(null)} data-testid="org-key-raw-done">
-              I saved it
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {created && (
+        <RawKeyDialog
+          open
+          rawKey={created.rawKey}
+          keyName={created.name}
+          reason="create"
+          onClose={() => setCreated(null)}
+        />
+      )}
     </div>
   );
 }
@@ -313,7 +300,7 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
   orgId: string;
   members: Member[];
   onClose: () => void;
-  onCreated: (rawKey: string) => void;
+  onCreated: (rawKey: string, keyName: string) => void;
 }) {
   const mut = useOrgMutations(orgId);
 
@@ -321,6 +308,7 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
     if (!result.assigneeUserId) {
       throw new Error("Choose the member this key is assigned to.");
     }
+    // OrgKeyCreateInput accepts only name/assignee/description/budget/model_permissions — expiry, IP rules and full policy have no org representation, so KeyForm scope="org" hides them and the rest is dropped here.
     const res = await mut.createKey.mutateAsync({
       name: result.name,
       assignee_user_id: result.assigneeUserId,
@@ -336,7 +324,7 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
       throw new Error("The server did not return a key secret. The key may still have been created — check the list.");
     }
     toast.success(`Key "${result.name}" created.`);
-    onCreated(raw);
+    onCreated(raw, result.name);
   }
 
   return (
@@ -526,7 +514,7 @@ function deliveryOf(i: Invitation): string {
 
 type InvStatus = "all" | "pending" | "accepted" | "rejected" | "expired" | "closed";
 
-function InvitationsTab({ orgId, canManage }: { orgId: string; canManage: boolean }) {
+function InvitationsTab({ orgId, canManage, canRead }: { orgId: string; canManage: boolean; canRead: boolean }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<InvStatus>("all");
   const [page, setPage] = useState(0);
@@ -545,6 +533,10 @@ function InvitationsTab({ orgId, canManage }: { orgId: string; canManage: boolea
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const visible = rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+
+  if (!canRead) {
+    return <EmptyState title="Invitations" description="You need the Members.Read permission to view invitations." testId="org-invitations-forbidden" />;
+  }
 
   async function run(p: Promise<unknown>, ok: string) {
     try {
@@ -614,7 +606,12 @@ function InvitationsTab({ orgId, canManage }: { orgId: string; canManage: boolea
       </div>
 
       {invitations.isLoading && <LoadingState message="Loading invitations…" />}
-      {invitations.isError && (
+      {invitations.isError && isNotFound(invitations.error) && (
+        <ErrorState title="Invitations not found"
+          message={parseApiError(invitations.error).message}
+          onRetry={() => void invitations.refetch()} />
+      )}
+      {invitations.isError && !isNotFound(invitations.error) && (
         <ErrorState title="Could not load invitations"
           message={parseApiError(invitations.error).message}
           onRetry={() => void invitations.refetch()} />
