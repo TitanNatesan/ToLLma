@@ -14,6 +14,7 @@ import { AccountSecuritySection } from "./components/AccountSecuritySection";
 import { DangerZoneSection } from "./components/DangerZoneSection";
 import { SessionsSection } from "./components/SessionsSection";
 import { ProvidersSection } from "./components/ProvidersSection";
+import { OrganizationsSection } from "./components/OrganizationsSection";
 
 /** Settings: profile, appearance (accent system), chat prefs, password, sessions. */
 export default function SettingsPage() {
@@ -29,7 +30,7 @@ export default function SettingsPage() {
 
   return (
     <PageContainer
-      header={<PageHeader title="Settings" subtitle="Account, appearance, chat behavior and sessions." />}
+      header={<PageHeader title="Settings" subtitle="Account, appearance, chat behavior, providers, and organizations." />}
       testId="settings-page"
     >
           <SettingsCard
@@ -84,6 +85,15 @@ export default function SettingsPage() {
             testId="settings-section-providers"
           >
             <ProvidersSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="organizations"
+            title="Organizations"
+            description="Workspaces you belong to. Create, join, or switch."
+            testId="settings-section-organizations"
+          >
+            <OrganizationsSection />
           </SettingsCard>
 
           <SettingsCard

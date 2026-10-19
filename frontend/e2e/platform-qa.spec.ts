@@ -49,8 +49,8 @@ async function uiLogin(page: Page, email: string) {
   const me = await page.request.get(`${API}/auth/me`);
   expect(me.ok(), `identity ${email}`).toBeTruthy();
   expect((await me.json()).email).toBe(email);
-  await page.goto("/organizations");
-  await expect(page.getByTestId("organizations-page")).toBeVisible({ timeout: 30000 });
+  await page.goto("/settings#organizations");
+  await expect(page.getByTestId("settings-organizations")).toBeVisible({ timeout: 30000 });
 }
 
 async function mkPersona(browser: Browser, request: APIRequestContext, email: string) {
@@ -68,6 +68,14 @@ async function shot(page: Page, name: string) {
 async function dash(page: Page, orgId: string, section: string) {
   await page.goto(`/organizations/${orgId}?section=${section}`);
   await expect(page.getByTestId(`org-section-${section}`)).toBeVisible({ timeout: 20000 });
+}
+
+async function dashOps(page: Page, orgId: string, tab: "requests" | "invitations") {
+  await page.goto(`/organizations/${orgId}?section=operations&tab=${tab}`);
+  await expect(page.getByTestId("org-section-operations")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("org-operations")).toBeVisible({ timeout: 20000 });
+  await page.getByTestId(`org-ops-tab-${tab}`).click();
+  await expect(page.getByTestId(`org-ops-tab-${tab}`)).toHaveAttribute("aria-selected", "true");
 }
 
 async function myOrgId(page: Page, name: string): Promise<string> {
@@ -104,7 +112,7 @@ async function ensureMemberUI(rootPage: Page, orgId: string, email: string) {
  * Same-named orgs from earlier runs are indistinguishable by name, so the
  * slug shown on each card is the only correct discriminator. */
 async function acceptInviteForSlugUI(page: Page, slug: string, orgName: string) {
-  await page.goto("/organizations?view=inbox");
+  await page.goto("/settings#organizations");
   const card = page.locator('[data-testid^="org-invite-"]').filter({ hasText: `/${slug}` }).first();
   await card.waitFor({ timeout: 15000 }).catch(() => null);
   // Idempotent: already a member from a prior run means no card — skip ahead.
@@ -112,8 +120,8 @@ async function acceptInviteForSlugUI(page: Page, slug: string, orgName: string) 
     await card.getByRole("button", { name: "Accept" }).click();
     await expect(card).toHaveCount(0, { timeout: 20000 });
   }
-  await page.goto("/organizations");
-  await expect(page.getByTestId("organizations-page")).toContainText(orgName, { timeout: 20000 });
+  await page.goto("/settings#organizations");
+  await expect(page.getByTestId("settings-organizations")).toContainText(orgName, { timeout: 20000 });
 }
 
 /** Set exactly the given set names on a member via the UI assign dialog. */
@@ -158,7 +166,7 @@ async function setMemberSetsUI(rootPage: Page, orgId: string, email: string, wan
 
 async function acceptInviteUI(page: Page, slug: string) {
   expect(slug, "invite filter slug non-empty").toBeTruthy();
-  await page.goto("/organizations?view=inbox");
+  await page.goto("/settings#organizations");
   const card = page.locator('[data-testid^="org-invite-"]').filter({ hasText: `/${slug}` }).first();
   await card.waitFor({ timeout: 15000 }).catch(() => null);
   if (await card.count()) {
@@ -184,6 +192,16 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
     S.org1slug = await orgSlugOf(root.page, S.org1);
     S.org2slug = "x";
     await expect(root.page.getByTestId("org-context-personal")).toBeVisible();
+    // Workspace selection lives in the chevron button showing the current name.
+    await expect(root.page.getByTestId("workspace-menu-trigger")).toBeVisible();
+    await expect(root.page.getByTestId("workspace-menu-trigger")).toHaveRole("button");
+    await expect(root.page.getByTestId("workspace-menu-trigger")).toContainText("Personal");
+    await root.page.getByTestId("workspace-menu-trigger").click();
+    await expect(root.page.getByTestId("workspace-menu")).toBeVisible();
+    await expect(root.page.getByTestId("workspace-menu-personal")).toBeVisible();
+    expect(await root.page.locator('[data-testid^="workspace-menu-org-"]').count()).toBeGreaterThanOrEqual(2);
+    await expect(root.page.getByTestId("workspace-menu").locator('a[href="/settings#organizations"]')).toHaveCount(1);
+    await root.page.keyboard.press("Escape");
     await shot(root.page, "qa-orgs");
     // Second root sees only their own org.
     const r2 = await mkPersona(browser, request, U("second-root"));
@@ -293,8 +311,8 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
     await dash(root.page, S.org1!, "members");
     const card = root.page.locator('[data-testid^="org-member-"]').filter({ hasText: U("existing-user") }).first();
     await expect(card).toContainText("Member Manager", { timeout: 20000 });
-    await member.page.goto("/organizations");
-    await expect(member.page.getByTestId("organizations-page")).toContainText("ToLLma QA Organization");
+    await member.page.goto("/settings#organizations");
+    await expect(member.page.getByTestId("settings-organizations")).toContainText("ToLLma QA Organization");
     await expect(member.page.getByTestId("org-context-personal")).toBeVisible();
     // Reject path.
     await dash(root.page, S.org1!, "members");
@@ -302,13 +320,13 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
     await root.page.getByTestId("org-invite-email").fill(U("existing-reject"));
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
-    await rejecter.page.goto("/organizations?view=inbox");
+    await rejecter.page.goto("/settings#organizations");
     const rcard = rejecter.page.locator('[data-testid^="org-invite-"]').filter({ hasText: "ToLLma QA Organization" }).first();
     if (await rcard.count()) {
       await rcard.getByRole("button", { name: "Reject" }).click();
       await expect(rcard).toHaveCount(0, { timeout: 20000 });
     }
-    await rejecter.page.goto("/organizations");
+    await rejecter.page.goto("/settings#organizations");
     await expect(rejecter.page.getByTestId(`org-card-${S.org1slug}`)).toHaveCount(0, { timeout: 20000 });
     // Direct access denied after rejection.
     const denied = await rejecter.page.request.get(`${API}/api/v1/orgs/${S.org1}`);
@@ -336,12 +354,12 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
     const decliner = await mkPersona(browser, request, U("new-user-reject"));
-    await decliner.page.goto("/organizations?view=inbox");
+    await decliner.page.goto("/settings#organizations");
     const dcard = decliner.page.locator('[data-testid^="org-invite-"]').filter({ hasText: `/${S.org1slug}` }).first();
     await expect(dcard).toBeVisible({ timeout: 20000 });
     await dcard.getByRole("button", { name: "Reject" }).click();
     await expect(dcard).toHaveCount(0, { timeout: 20000 });
-    await decliner.page.goto("/organizations");
+    await decliner.page.goto("/settings#organizations");
     // Slug-scoped: older same-named orgs may legitimately list the user.
     await expect(decliner.page.getByTestId(`org-card-${S.org1slug}`)).toHaveCount(0, { timeout: 20000 });
     // Resend: invite resend-target, resend via UI, accept works.
@@ -351,7 +369,11 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
     await root.page.getByTestId("org-invite-email").fill(U("resend-target"));
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
-    await dash(root.page, S.org1!, "invitations");
+    await dashOps(root.page, S.org1!, "invitations");
+    // Operations exposes only requests + invitations (keys moved to /api-keys).
+    await expect(root.page.getByTestId("org-ops-tab-requests")).toBeVisible();
+    await expect(root.page.getByTestId("org-ops-tab-invitations")).toBeVisible();
+    await expect(root.page.getByTestId("org-ops-tab-keys")).toHaveCount(0);
     const icard = root.page.locator('[data-testid^="org-inv-"]').filter({ hasText: U("resend-target") }).first();
     await expect(icard).toBeVisible({ timeout: 30000 });
     {
@@ -359,7 +381,7 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
       await root.page.getByTestId(`org-inv-resend-${iid}`).click();
       await expect(root.page.getByText("fresh link")).toBeVisible({ timeout: EMAIL_TIMEOUT });
     }
-    await target.page.goto("/organizations?view=inbox");
+    await target.page.goto("/settings#organizations");
     const tcard = target.page.locator('[data-testid^="org-invite-"]').filter({ hasText: `/${S.org1slug}` }).first();
     await expect(tcard).toBeVisible({ timeout: 20000 });
     await tcard.getByRole("button", { name: "Accept" }).click();
@@ -428,10 +450,58 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
     expect(m1.status()).toBe(200);
     const m2 = await multi.page.request.get(`${API}/api/v1/orgs/${S.org2}/members`);
     expect(m2.status()).toBe(404);
-    // Switcher shows Personal + both orgs.
-    await multi.page.goto("/organizations");
-    await expect(multi.page.getByTestId("organizations-page")).toContainText("ToLLma QA Organization");
-    await expect(multi.page.getByTestId("organizations-page")).toContainText("ToLLma Isolation Organization");
+    // Workspace menu shows Personal + both orgs.
+    await multi.page.goto("/settings#organizations");
+    await expect(multi.page.getByTestId("settings-organizations")).toContainText("ToLLma QA Organization");
+    await expect(multi.page.getByTestId("settings-organizations")).toContainText("ToLLma Isolation Organization");
+    await expect(multi.page.getByTestId("workspace-menu-trigger")).toHaveRole("button");
+    await multi.page.getByTestId("workspace-menu-trigger").click();
+    await expect(multi.page.getByTestId("workspace-menu")).toBeVisible();
+    await expect(multi.page.getByTestId("workspace-menu-personal")).toBeVisible();
+    expect(await multi.page.locator('[data-testid^="workspace-menu-org-"]').count()).toBeGreaterThanOrEqual(2);
+    await multi.page.keyboard.press("Escape");
+    // Final nav rule: org scope shows ONLY the org nav (personal hidden).
+    await multi.page.goto(`/organizations/${S.org1}`);
+    await expect(multi.page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await expect(multi.page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await expect(multi.page.getByTestId("sidebar-org-toggle")).toHaveCount(0);
+    await expect(multi.page.getByTestId("sidebar-org-nav").getByRole("button")).toHaveCount(0);
+    await expect(multi.page.getByTestId("sidebar-org-overview")).toBeVisible();
+    // Unified hrefs use exact pathnames (Chat links home).
+    await expect(multi.page.getByTestId("sidebar-org-chat")).toBeVisible();
+    await expect(multi.page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");
+    await expect(multi.page.getByTestId("sidebar-org-providers")).toHaveAttribute("href", "/providers");
+    await expect(multi.page.getByTestId("sidebar-org-keys")).toHaveAttribute("href", "/api-keys");
+    await expect(multi.page.getByTestId("sidebar-org-analytics")).toHaveAttribute("href", "/analytics");
+    await expect(multi.page.getByTestId("sidebar-org-docs")).toHaveAttribute("href", "/docs");
+    // Workspace chevron tracks the org scope.
+    await expect(multi.page.getByTestId("workspace-menu-trigger")).not.toContainText("Personal");
+    // Unified items render (limited-member sees at least the unified + overview).
+    await expect(multi.page.getByTestId("sidebar-org-overview")).toBeVisible();
+    await expect(multi.page.getByTestId("sidebar-org-chat")).toBeVisible();
+    await expect(multi.page.getByTestId("sidebar-org-providers")).toBeVisible();
+    await expect(multi.page.getByTestId("sidebar-org-analytics")).toBeVisible();
+    // Chat highlights on "/" in org scope; return so the screenshot stays on the dashboard.
+    await multi.page.goto("/");
+    await expect(multi.page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await expect(multi.page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await expect(multi.page.getByTestId("sidebar-org-chat")).toHaveAttribute("aria-current", "page");
+    // Collapsed rail mirrors the permission-filtered org set.
+    await multi.page.getByTestId("left-sidebar-toggle").click();
+    await expect(multi.page.getByTestId("sidebar-reveal-rail")).toBeVisible({ timeout: 20000 });
+    await expect(multi.page.getByTestId("rail-expand")).toHaveAttribute("aria-label", "Expand sidebar");
+    for (const section of ["overview", "chat", "providers", "analytics"] as const) {
+      await expect(multi.page.getByTestId(`rail-org-${section}`)).toBeVisible();
+    }
+    await expect(multi.page.getByTestId("rail-org-chat")).toHaveAttribute("aria-current", "page");
+    await expect(multi.page.getByTestId("rail-nav-toggle")).toHaveAttribute("aria-label", "Hide navigation");
+    await multi.page.getByTestId("rail-profile-menu").click();
+    await expect(multi.page.getByTestId("workspace-menu")).toBeVisible();
+    await multi.page.keyboard.press("Escape");
+    await multi.page.getByTestId("rail-expand").click();
+    await expect(multi.page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await multi.page.goto(`/organizations/${S.org1}`);
+    await expect(multi.page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
     await shot(multi.page, "qa-multiorg");
     // Suspension via UI: blocked, then restored. Button flips prove the
     // mutations settled before API state is asserted (no commit races).
@@ -451,7 +521,7 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
     await root.page.getByTestId("org-confirm-action").click();
     await expect(mcard).toHaveCount(0, { timeout: 20000 });
     expect((await multi.page.request.get(`${API}/api/v1/orgs/${S.org1}`)).status()).toBe(404);
-    await multi.page.goto("/organizations");
+    await multi.page.goto("/settings#organizations");
     await expect(multi.page.getByTestId(`org-card-${S.org1slug}`)).toHaveCount(0, { timeout: 20000 });
     expect((await multi.page.request.get(`${API}/auth/me`)).status()).toBe(200);
     // Root protection on both layers.
@@ -514,11 +584,16 @@ test.describe("platform QA: orgs, users, permissions, admin", () => {
 
   test("session isolation across users", async ({ browser, request }) => {
     const a = await mkPersona(browser, request, U("root"));
-    await a.page.getByTestId("profile-settings-btn").click().catch(() => null);
+    await expect(a.page.getByTestId("sidebar-nav-settings")).toHaveAttribute("href", "/settings");
+    // Personal Chat entry links home.
+    await expect(a.page.getByTestId("sidebar-nav-chat")).toHaveAttribute("href", "/");
+    // Log out is the last nav row (not the footer).
+    await expect(a.page.getByTestId("logout-btn")).toContainText("Log out");
+    await expect(a.page.getByTestId("sidebar-footer").getByTestId("logout-btn")).toHaveCount(0);
     await a.page.getByTestId("logout-btn").click();
     await expect(a.page.getByTestId("login-page")).toBeVisible({ timeout: 20000 });
     const b = await mkPersona(browser, request, U("second-root"));
-    await b.page.goto("/organizations");
+    await b.page.goto("/settings#organizations");
     await expect(b.page.getByTestId(`org-card-${S.org1slug}`)).toHaveCount(0, { timeout: 20000 });
     await a.ctx.close();
     await b.ctx.close();

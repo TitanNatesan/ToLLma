@@ -24,6 +24,8 @@ interface ChatState {
   streaming: boolean;
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
+  /** Bottom-anchored nav lists visible (both expanded sidebar and collapsed rail read this). */
+  navVisible: boolean;
   sidebarWidth: number;
   rightSidebarWidth: number;
   draft: string;
@@ -44,6 +46,7 @@ interface ChatState {
   setStreaming: (b: boolean) => void;
   setLeftSidebar: (open: boolean) => void;
   setRightSidebar: (open: boolean) => void;
+  setNavVisible: (visible: boolean) => void;
   setSidebarWidth: (w: number) => void;
   setRightSidebarWidth: (w: number) => void;
   setDraft: (text: string) => void;
@@ -71,6 +74,7 @@ export const useChatStore = create<ChatState>()(
       streaming: false,
       leftSidebarOpen: true,
       rightSidebarOpen: true,
+      navVisible: true,
       sidebarWidth: 260,
       rightSidebarWidth: 380,
       draft: "",
@@ -90,6 +94,7 @@ export const useChatStore = create<ChatState>()(
       setStreaming: (streaming) => set({ streaming }),
       setLeftSidebar: (leftSidebarOpen) => set({ leftSidebarOpen }),
       setRightSidebar: (rightSidebarOpen) => set({ rightSidebarOpen }),
+      setNavVisible: (navVisible) => set({ navVisible }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
       setRightSidebarWidth: (rightSidebarWidth) => set({ rightSidebarWidth }),
       setDraft: (draft) => set({ draft }),

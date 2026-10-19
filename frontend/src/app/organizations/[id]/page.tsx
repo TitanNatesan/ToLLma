@@ -14,8 +14,6 @@ import { OrgMembersTable } from "../components/OrgMembersTable";
 import { OrgTeamsTable } from "../components/OrgTeamsTable";
 import { OrgSetsTable } from "../components/OrgSetsTable";
 import { OrgOperationsSection, type OpsTab } from "../components/OrgOperationsSection";
-import { OrgProvidersSection } from "../components/OrgProvidersSection";
-import { OrgAnalyticsDashboard } from "../components/OrgAnalyticsDashboard";
 import { OrgAuditTable } from "../components/OrgAuditTable";
 import { OrgSettingsSection } from "../components/OrgSettingsSection";
 import { OrgBudgetCard } from "../components/OrgBudgetCard";
@@ -26,7 +24,6 @@ import type { Organization } from "@/types/orgs";
 import type { OrgSection } from "@/components/Sidebar/SidebarOrgNav";
 
 const LEGACY_TABS: Record<string, OpsTab> = {
-  keys: "keys",
   requests: "requests",
   invitations: "invitations",
 };
@@ -91,12 +88,25 @@ function OrgDashboardInner() {
   }, [section, orgId]);
 
   // Legacy ?section=keys|requests|invitations → ?section=operations&tab=…
-  // Never redirect on error: the error guard below owns that render.
+  // Consolidation: providers, analytics, and org API keys moved to dedicated
+  // pages (?section=providers → /providers, ?section=analytics → /analytics,
+  // ?section=operations&tab=keys → /api-keys). Context is already org, so the
+  // unified pages render org data. Never redirect on error: the error guard
+  // below owns that render.
   useEffect(() => {
-    if (!org.isError && LEGACY_TABS[section]) {
+    if (org.isError) return;
+    if (LEGACY_TABS[section]) {
       router.replace(`/organizations/${orgId}?section=operations&tab=${LEGACY_TABS[section]}`);
+    } else if (section === "providers") {
+      router.replace("/providers");
+    } else if (section === "analytics") {
+      router.replace("/analytics");
+    } else if (section === "operations" && tabParam === "keys") {
+      router.replace("/api-keys");
+    } else if (section === "keys") {
+      router.replace("/api-keys");
     }
-  }, [section, orgId, router, org.isError]);
+  }, [section, tabParam, orgId, router, org.isError]);
 
   async function run(p: Promise<unknown>, ok: string) {
     try {
@@ -116,7 +126,7 @@ function OrgDashboardInner() {
           <EmptyState icon={ShieldAlert} title="You don't have access to this organization"
             description="It exists, but your account isn't a member or lacks permission to view it. Ask an organization admin for an invitation."
             action={
-              <Button size="sm" variant="outline" onClick={() => router.push("/organizations")}
+              <Button size="sm" variant="outline" onClick={() => router.push("/settings#organizations")}
                 data-testid="org-back">
                 <ArrowLeft className="size-3.5" aria-hidden /> Back to organizations
               </Button>
@@ -139,15 +149,20 @@ function OrgDashboardInner() {
   }
 
   if (LEGACY_TABS[section]) return <LoadingState message="Opening operations…" />;
+  if (section === "providers") return <LoadingState message="Opening providers…" />;
+  if (section === "keys") return <LoadingState message="Opening API keys…" />;
+  if (section === "operations" && tabParam === "keys") {
+    return <LoadingState message="Opening API keys…" />;
+  }
 
   const titles: Record<string, string> = {
     overview: "Overview", members: "Members", teams: "Teams", sets: "Permission Sets",
-    providers: "Providers", operations: "Operations", budgets: "Budgets",
-    analytics: "Analytics", audit: "Audit Log", settings: "Settings",
+    operations: "Operations", budgets: "Budgets",
+    audit: "Audit Log", settings: "Settings",
   };
 
   const initialTab: OpsTab =
-    tabParam === "requests" || tabParam === "invitations" || tabParam === "keys" ? tabParam : "keys";
+    tabParam === "requests" || tabParam === "invitations" ? tabParam : "requests";
 
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="org-dashboard">
@@ -156,7 +171,7 @@ function OrgDashboardInner() {
         subtitle={<span className="font-mono">/{data.slug}{data.is_root ? " · root" : ""}</span>}
         actions={
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => router.push("/organizations")}
+            <Button size="sm" variant="outline" onClick={() => router.push("/settings#organizations")}
               data-testid="org-back">
               <ArrowLeft className="size-3.5" aria-hidden /> All organizations
             </Button>
@@ -231,20 +246,6 @@ function OrgDashboardInner() {
           <OrgSettingsSection orgId={orgId} org={data} canManage={can("Organization.Settings")} />
         )}
 
-        {section === "providers" && (
-          <OrgProvidersSection orgId={orgId} orgName={data.name}
-            canManage={data.is_root || can("Providers.Create") || can("Providers.Update")}
-            canRead={data.is_root || can("Providers.Read")} />
-        )}
-
-        {section === "analytics" && (
-          <OrgAnalyticsDashboard orgId={orgId}
-            canView={data.is_root || can("Analytics.ViewUsage") || can("Organization.ViewAnalytics")}
-            canSeeCost={data.is_root || can("Analytics.ViewCost")}
-            canReadBudget={data.is_root || can("Budgets.Read")}
-            canEditBudget={data.is_root || can("Budgets.Update")} />
-        )}
-
         {section === "budgets" && (
           <OrgBudgetCard orgId={orgId}
             canRead={data.is_root || can("Budgets.Read")}
@@ -261,7 +262,7 @@ function OrgDashboardInner() {
         description="Your membership ends immediately. Your personal account and assets are unaffected."
         onClose={() => setLeaving(false)}
         onConfirm={() => run(
-          mut.leave.mutateAsync(orgId).then(() => router.push("/organizations")),
+          mut.leave.mutateAsync(orgId).then(() => router.push("/settings#organizations")),
           "You left the organization.",
         ).then(() => setLeaving(false))} />
     </div>

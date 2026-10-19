@@ -138,3 +138,7 @@ authorization. Missing upstream fields must not be fabricated.
   no giant routers, no circular imports.
 - `python -c "from tollms.main import app; app.openapi()"` succeeds with no
   duplicate (path, method) registrations after any router move.
+
+## Service decomposition
+
+When a service.py module begins accumulating unrelated responsibilities or becomes difficult to navigate, split it into multiple cohesive service modules in the same feature directory. Each module must have a meaningful name reflecting its business responsibility. Prefer clear boundaries, single-purpose functions, and small, composable services over a single large service file. Do not split files arbitrarily based on line count alone; use responsibility, complexity, cohesion, and testability as the primary criteria. Keep public interfaces and dependency direction clear, avoid circular imports, and preserve a thin router layer.

@@ -71,7 +71,7 @@ function InvitesInner() {
     try {
       await mut.rejectInvite.mutateAsync(t);
       toast.success("Invitation declined.");
-      router.push("/organizations");
+      router.push("/settings#organizations");
     } catch (e) {
       toast.error(parseApiError(e).message);
     }

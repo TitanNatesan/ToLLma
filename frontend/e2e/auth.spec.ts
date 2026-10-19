@@ -30,9 +30,13 @@ test("signup, verify, login, me, logout", async ({ page }) => {
   await page.goto(`/verify?token=${encodeURIComponent(token)}`);
   await expect(page.getByTestId("verify-ok")).toBeVisible({ timeout: 15000 });
 
-  // Logout returns to login and kills the session.
+  // Logout returns to login and kills the session (log out is a nav row now).
   await page.goto("/");
-  await page.getByTestId("logout-btn").click();
+  const logoutBtn = page.getByTestId("logout-btn");
+  await expect(logoutBtn).toBeVisible();
+  await expect(logoutBtn).toContainText("Log out");
+  await expect(page.getByTestId("sidebar-footer").getByTestId("logout-btn")).toHaveCount(0);
+  await logoutBtn.click();
   await expect(page).toHaveURL(/\/login/);
   await page.goto("/providers");
   await expect(page).toHaveURL(/\/login/);
@@ -40,10 +44,60 @@ test("signup, verify, login, me, logout", async ({ page }) => {
 
 test("login rejects bad credentials", async ({ page }) => {
   await page.goto("/login");
+  // Restyle: labels are htmlFor-linked to their inputs.
+  await expect(page.locator('label[for="login-email"]')).toBeVisible();
+  await expect(page.locator('label[for="login-password"]')).toBeVisible();
+  await expect(page.getByTestId("login-email")).toHaveAttribute("id", "login-email");
+  await expect(page.getByTestId("login-password")).toHaveAttribute("id", "login-password");
+  // Restyle: show/hide toggle exposes an accessible name.
+  await expect(page.locator("#login-password ~ button")).toHaveAttribute(
+    "aria-label",
+    /show password|hide password/i,
+  );
+  // Restyle: trust row under the form.
+  await expect(page.getByTestId("login-page")).toContainText("Encrypted credentials");
+  await expect(page.getByTestId("login-page")).toContainText("SSO via Google");
   await page.getByTestId("login-email").fill("nobody@tollma.ai");
   await page.getByTestId("login-password").fill("wrongpass1");
   await page.getByTestId("login-submit").click();
   await expect(page.getByTestId("login-error")).toBeVisible();
+  // Restyle: errors surface via role=alert.
+  await expect(page.getByTestId("login-error")).toHaveAttribute("role", "alert");
+  await expect(page.getByTestId("login-page").getByRole("alert")).toBeVisible();
+});
+
+test("signup restyle: labels, toggle, strength meter, trust row", async ({ page }) => {
+  await page.goto("/signup");
+  await expect(page.getByTestId("signup-page")).toBeVisible();
+  // Labels are htmlFor-linked to their inputs.
+  await expect(page.locator('label[for="signup-name"]')).toBeVisible();
+  await expect(page.locator('label[for="signup-email"]')).toBeVisible();
+  await expect(page.locator('label[for="signup-password"]')).toBeVisible();
+  await expect(page.getByTestId("signup-password")).toHaveAttribute("id", "signup-password");
+  await expect(page.getByTestId("signup-password")).toHaveAttribute(
+    "aria-describedby",
+    "signup-strength",
+  );
+  // Show/hide toggle exposes an accessible name.
+  await expect(page.locator("#signup-password ~ button")).toHaveAttribute(
+    "aria-label",
+    /show password|hide password/i,
+  );
+  // Strength meter is hidden until typing, then appears with a rating label.
+  await expect(page.locator("#signup-strength")).toHaveCount(0);
+  await page.getByTestId("signup-password").fill("Password123");
+  await expect(page.locator("#signup-strength")).toBeVisible();
+  await expect(page.locator("#signup-strength")).toContainText(/weak|okay|strong|very strong/i);
+  // Trust row under the form.
+  await expect(page.getByTestId("signup-page")).toContainText("Encrypted credentials");
+  await expect(page.getByTestId("signup-page")).toContainText("SSO via Google");
+  // NOTE: the caps-lock warning ("Caps lock is on") is driven by
+  // getModifierState("CapsLock") on keyup — OS-level state that is flaky
+  // under headless Chromium, so it is intentionally not asserted here.
+  // NOTE: the post-signup toast now reads "Verification email sent — check
+  // your inbox to continue." but it only fires when SMTP delivers
+  // (verification_sent=true); the suite's SMTP-down path auto-logs-in
+  // instead, so the toast is not asserted.
 });
 
 test("users only see their own providers", async ({ page }) => {

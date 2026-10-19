@@ -53,6 +53,9 @@ import {
 } from "@/hooks/useAnalytics";
 import { downloadAnalyticsExport, formatExportTruncationNotice } from "@/services/api";
 import { useAnalyticsWidgets } from "@/hooks/useIntelligence";
+import { useOrg } from "@/hooks/useOrgs";
+import { OrgAnalyticsDashboard } from "@/app/organizations/components/OrgAnalyticsDashboard";
+import { useOrgStore } from "@/store/org";
 import { AnalyticsWidgetsPanel } from "./components/AnalyticsWidgetsPanel";
 import { fmtCompactTokens, fmtTokens } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -89,6 +92,101 @@ const INSIGHT_STYLES: Record<string, string> = {
 };
 
 export default function AnalyticsPage() {
+  const context = useOrgStore((s) => s.context);
+  if (context.type === "org") {
+    return <OrgAnalyticsView orgId={context.orgId} orgName={context.orgName} />;
+  }
+  return <PersonalAnalyticsView />;
+}
+
+/** Org scope: identical page chrome (PageContainer + PageHeader + scope chip),
+ *  org data via the shared OrgAnalyticsDashboard (same charts, same gates). */
+function OrgAnalyticsView({ orgId, orgName }: { orgId: string; orgName: string }) {
+  const org = useOrg(orgId);
+  const data = org.data;
+  const can = (code: string) => !!data && (data.is_root || data.permissions.includes(code));
+  const canView =
+    !!data && (data.is_root || can("Analytics.ViewUsage") || can("Organization.ViewAnalytics"));
+  const canSeeCost = !!data && (data.is_root || can("Analytics.ViewCost"));
+  const canReadBudget = !!data && (data.is_root || can("Budgets.Read"));
+  const canEditBudget = !!data && (data.is_root || can("Budgets.Update"));
+
+  const header = (
+    <PageHeader
+      title="Analytics"
+      subtitle="Usage, spend, tokens and performance intelligence — computed server-side."
+      badges={
+        <Badge variant="secondary" data-testid="analytics-scope">
+          {orgName}
+        </Badge>
+      }
+    />
+  );
+
+  if (org.isLoading) {
+    return (
+      <PageContainer
+        header={header}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
+      >
+        <div className="mt-10">
+          <LoadingState message="Loading organization…" />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  if (org.isError || !data) {
+    return (
+      <PageContainer
+        header={header}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
+      >
+        <div className="mt-6">
+          <ErrorState
+            title="Organization unavailable"
+            message={org.error instanceof Error ? org.error.message : "Could not load organization."}
+            onRetry={() => void org.refetch()}
+          />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  // Same permission empty-state pattern as the org analytics section.
+  if (!canView) {
+    return (
+      <PageContainer
+        header={header}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
+      >
+        <div className="mt-6">
+          <EmptyState
+            title="Analytics"
+            description="You need usage-analytics permission to view organization analytics."
+          />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  return (
+    <PageContainer header={header} testId="analytics-page">
+      <OrgAnalyticsDashboard
+        orgId={orgId}
+        canView={canView}
+        canSeeCost={canSeeCost}
+        canReadBudget={canReadBudget}
+        canEditBudget={canEditBudget}
+      />
+    </PageContainer>
+  );
+}
+
+function PersonalAnalyticsView() {
   const router = useRouter();
   const timezone = useMemo(() => browserTimezone(), []);
 
@@ -187,6 +285,11 @@ export default function AnalyticsPage() {
     <PageHeader
       title="Analytics"
       subtitle="Usage, spend, tokens and performance intelligence — computed server-side."
+      badges={
+        <Badge variant="secondary" data-testid="analytics-scope">
+          Personal
+        </Badge>
+      }
       actions={
         <AnalyticsRangePicker
           preset={preset}

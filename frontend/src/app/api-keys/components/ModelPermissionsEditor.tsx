@@ -32,6 +32,12 @@ interface ModelPermissionsEditorProps {
   value: ApiKeyModelPermissionInput[];
   onChange: (value: ApiKeyModelPermissionInput[]) => void;
   disabled?: boolean;
+  /** Override the personal registry (e.g. org-scoped models/providers). */
+  models?: AIModel[];
+  providers?: Array<{ id: string; name: string; provider_type: string }>;
+  isPending?: boolean;
+  /** Where the empty-state CTA navigates. Defaults to the personal registry. */
+  configureHref?: string;
 }
 
 /**
@@ -39,9 +45,12 @@ interface ModelPermissionsEditorProps {
  * enabled toggle plus optional per-model budget/RPM/TPM. Provider-wide rules
  * (`model_id` null) returned by the API are preserved and editable too.
  */
-export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermissionsEditorProps) {
-  const { data: models = [], isPending } = useModels();
-  const { data: providers = [] } = useProviders();
+export function ModelPermissionsEditor({ value, onChange, disabled, models: modelsOverride, providers: providersOverride, isPending: isPendingOverride, configureHref = "/providers" }: ModelPermissionsEditorProps) {
+  const { data: personalModels = [], isPending: personalPending } = useModels();
+  const { data: personalProviders = [] } = useProviders();
+  const models = modelsOverride ?? personalModels;
+  const providers = providersOverride ?? personalProviders;
+  const isPending = isPendingOverride ?? personalPending;
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -120,7 +129,7 @@ export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermi
         description="Register providers and models first, then grant this key access to specific models. An empty selection allows every enabled model."
         action={
           <Button size="sm" variant="outline" asChild className="gap-1 text-[11px]">
-            <a href="/providers">Configure a provider</a>
+            <a href={configureHref}>Configure a provider</a>
           </Button>
         }
         className="py-6"

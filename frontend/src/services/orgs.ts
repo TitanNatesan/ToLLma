@@ -21,6 +21,7 @@ import type {
   TeamCreateInput,
 } from "@/types/orgs";
 import type { User } from "@/types";
+import type { AIModel } from "@/types";
 
 const BASE = "/api/v1/orgs";
 const NOTIF = "/api/v1/notifications";
@@ -321,6 +322,15 @@ export function revokeOrgKey(orgId: string, keyId: string): Promise<void> {
 
 export function listOrgProviders(orgId: string): Promise<OrgProvider[]> {
   return req<OrgProvider[]>(`${BASE}/${orgId}/providers`);
+}
+
+export function listOrgProviderModels(orgId: string, providerId: string): Promise<AIModel[]> {
+  return req<AIModel[]>(`${BASE}/${orgId}/providers/${providerId}/models`);
+}
+
+/** All active models across the org's live providers (key-picker support). */
+export function listOrgModels(orgId: string): Promise<AIModel[]> {
+  return req<AIModel[]>(`${BASE}/${orgId}/models`);
 }
 
 export function createOrgProvider(orgId: string, payload: OrgProviderCreateInput): Promise<OrgProvider> {

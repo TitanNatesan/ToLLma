@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as orgApi from "@/services/orgs";
 import { ApiError } from "@/services/api";
-import type { OrgProviderCreateInput } from "@/types/orgs";
+import type { OrgKeyCreateInput, OrgProviderCreateInput } from "@/types/orgs";
 
 export const ORG_KEYS = {
   list: ["orgs"],
@@ -15,6 +15,7 @@ export const ORG_KEYS = {
   audit: (id: string) => ["orgs", id, "audit"],
   keys: (id: string) => ["orgs", id, "keys"],
   providers: (id: string) => ["orgs", id, "providers"],
+  models: (id: string) => ["orgs", id, "models"],
   budget: (id: string) => ["orgs", id, "budget"],
   analyticsOverview: (id: string) => ["orgs", id, "analytics", "overview"],
   teams: (id: string) => ["orgs", id, "teams"],
@@ -42,8 +43,8 @@ export function useOrgs() {
   return useQuery({ queryKey: ORG_KEYS.list, queryFn: orgApi.listOrgs, staleTime: 0, refetchOnWindowFocus: true });
 }
 
-export function useOrg(id: string) {
-  return useQuery({ queryKey: ORG_KEYS.detail(id), queryFn: () => orgApi.getOrg(id), staleTime: 0, refetchOnWindowFocus: true });
+export function useOrg(id: string, options?: { enabled?: boolean }) {
+  return useQuery({ queryKey: ORG_KEYS.detail(id), queryFn: () => orgApi.getOrg(id), staleTime: 0, refetchOnWindowFocus: true, enabled: options?.enabled ?? true });
 }
 
 export function useOrgSearch(q: string) {
@@ -142,6 +143,29 @@ export function useOrgProviders(orgId: string, options?: { enabled?: boolean }) 
   return useQuery({
     queryKey: ORG_KEYS.providers(orgId),
     queryFn: () => orgApi.listOrgProviders(orgId),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useOrgProviderModels(orgId: string, providerId: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ["orgs", orgId, "providers", providerId ?? "", "models"],
+    queryFn: () => orgApi.listOrgProviderModels(orgId, providerId as string),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: (options?.enabled ?? true) && !!providerId,
+  });
+}
+
+/** All active models across the org's live providers (key-picker support). */
+export function useOrgModels(orgId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ORG_KEYS.models(orgId),
+    queryFn: () => orgApi.listOrgModels(orgId),
     staleTime: 0,
     refetchOnWindowFocus: true,
     retry: false,
@@ -361,7 +385,7 @@ export function useOrgMutations(orgId?: string) {
       onSuccess: () => inv(),
     }),
     createKey: useMutation({
-      mutationFn: (p: { name: string; assignee_user_id: string; description?: string; max_budget_usd?: number | null; model_permissions?: Array<{ model_id: string; provider_id?: string }> }) =>
+      mutationFn: (p: OrgKeyCreateInput) =>
         orgApi.createOrgKey(orgId ?? "", p),
       onSuccess: () => inv(),
     }),

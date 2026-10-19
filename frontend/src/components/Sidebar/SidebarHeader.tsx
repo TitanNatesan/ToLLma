@@ -67,7 +67,7 @@ export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?:
         <Search className="size-3.5" />
       </button>
       <button
-        onClick={() => router.push("/organizations?view=inbox")}
+        onClick={() => router.push("/settings#organizations")}
         className="relative flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
         title="Notifications"
         data-testid="sidebar-notifications-btn"

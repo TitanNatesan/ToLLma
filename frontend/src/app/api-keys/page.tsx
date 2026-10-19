@@ -24,6 +24,7 @@ import {
   rotateApiKey,
   updateApiKey,
 } from "@/services/apiKeys";
+import { OrgKeysPanel } from "./components/OrgKeysPanel";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { KeyDetailsPanel } from "./components/KeyDetailsPanel";
 import { KeyEditDrawer } from "./components/KeyEditDrawer";
@@ -31,6 +32,8 @@ import { KeyForm, type KeyFormResult } from "./components/KeyForm";
 import { KeyTable } from "./components/KeyTable";
 import { RawKeyDialog } from "./components/RawKeyDialog";
 import type { ApiKey } from "@/types/apiKeys";
+import { useMembers, useOrg } from "@/hooks/useOrgs";
+import { useOrgStore } from "@/store/org";
 
 /** Rolling window used to compare spend against `policy.max_budget_usd`. */
 const BUDGET_PRESET = "last_30d" as const;
@@ -41,8 +44,8 @@ interface RawKeyState {
   reason: "create" | "rotate";
 }
 
-/** User API keys: list, create/edit, rotate, enable/disable, delete, analytics. */
-export default function ApiKeysPage() {
+/** Personal API keys: list, create/edit, rotate, enable/disable, delete, analytics. */
+function PersonalApiKeysPage() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [editKeyId, setEditKeyId] = useState<string | null>(null);
@@ -279,4 +282,59 @@ export default function ApiKeysPage() {
       )}
     </>
   );
+}
+
+/** Organization API keys: identical page shell, org data. Gates mirror the
+ * old operations KeysTab (root or Keys.Read to view, Keys.Create to create,
+ * Keys.Revoke/Delete to revoke). Separate query keys + remount per scope, so
+ * personal and org rows can never mix. */
+function OrgApiKeysPage({ orgId, orgName }: { orgId: string; orgName: string }) {
+  const org = useOrg(orgId);
+  const members = useMembers(orgId);
+  const data = org.data;
+  const can = (code: string) => !!data && (data.is_root || data.permissions.includes(code));
+  const perms = {
+    canCreateKeys: can("Keys.Create"),
+    canReadKeys: !!data && (data.is_root || data.permissions.includes("Keys.Read")),
+    canRevokeKeys: can("Keys.Revoke") || can("Keys.Delete"),
+  };
+
+  return (
+    <PageContainer
+      header={
+        <PageHeader
+          title="API Keys"
+          subtitle={`Scoped to ${orgName} — governed by organization policy.`}
+          badges={
+            <Badge variant="secondary" className="text-[10px]" data-testid="api-keys-scope-chip">
+              Organization · {orgName}
+            </Badge>
+          }
+        />
+      }
+      testId="api-keys-page"
+    >
+      {org.isPending && <LoadingState message="Loading organization…" className="py-16" />}
+      {!org.isPending && org.isError && (
+        <ErrorState
+          title="Could not load organization"
+          message={apiKeyErrorMessage(org.error)}
+          onRetry={() => void org.refetch()}
+        />
+      )}
+      {!org.isPending && !org.isError && (
+        <OrgKeysPanel orgId={orgId} members={members.data ?? []} perms={perms} />
+      )}
+    </PageContainer>
+  );
+}
+
+/** Scope-aware entry: personal keeps today's behavior exactly; an org context
+ * renders the identical shell with org data (the old operations KeysTab UI). */
+export default function ApiKeysPage() {
+  const context = useOrgStore((s) => s.context);
+  if (context.type === "org") {
+    return <OrgApiKeysPage key={context.orgId} orgId={context.orgId} orgName={context.orgName} />;
+  }
+  return <PersonalApiKeysPage />;
 }

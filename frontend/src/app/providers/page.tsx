@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  EmptyState,
   ErrorState,
   LoadingState,
   SearchInput,
@@ -25,7 +26,15 @@ import {
   useProviders,
 } from "@/hooks/useRegistry";
 import { useProviderHealthActions } from "@/hooks/useProviderHealth";
+import {
+  isNotFoundError,
+  useOrgMutations,
+  useOrgProviderModels,
+  useOrgProviders,
+  useOrgs,
+} from "@/hooks/useOrgs";
 import { useChatStore } from "@/store/chat";
+import { useOrgStore } from "@/store/org";
 import { ProviderWizardModal } from "./components/ProviderWizardModal";
 import { ModelDetailDrawer } from "./components/ModelDetailDrawer";
 import { RegisterModelDrawer } from "./components/RegisterModelDrawer";
@@ -39,6 +48,7 @@ import {
 import type { AIModel, DiscoveredModelInfo, Provider, ProviderType } from "@/types";
 import { CatalogBrowserDialog } from "./components/CatalogBrowser";
 import {
+  Building2,
   CheckCircle2,
   Cpu,
   KeyRound,
@@ -80,12 +90,49 @@ const MATCH_BADGE: Record<string, string> = {
 };
 
 export default function ProvidersPage() {
-  const providersQuery = useProviders();
-  const modelsQuery = useModels();
-  const providers = providersQuery.data ?? [];
+  // Scope: personal workspace behaves exactly as before; an org context
+  // reuses this identical UI with org data (each scope reads its own list
+  // query, so org rows never mix with personal rows and vice versa).
+  const context = useOrgStore((st) => st.context);
+  const isOrg = context.type === "org";
+  const orgId = isOrg ? context.orgId : null;
+  const orgName = isOrg ? context.orgName : null;
+
+  // The org list carries the viewer's effective perms (is_root/permissions),
+  // the same fields the org dashboard gates on — no extra detail fetch.
+  const orgs = useOrgs();
+  const orgEntry = orgId ? (orgs.data ?? []).find((o) => o.id === orgId) : undefined;
+  const canOrg = (code: string) =>
+    !!orgEntry && (orgEntry.is_root || orgEntry.permissions.includes(code));
+  // Gates mirror the deleted OrgProvidersSection call site (verified before
+  // delete): read needs Providers.Read; manage needs Create (Update kept —
+  // the old call site granted it too, so updaters keep their Edit button).
+  const canRead = !isOrg || canOrg("Providers.Read");
+  const canManage = !isOrg || canOrg("Providers.Create") || canOrg("Providers.Update");
+
+  const personalProvidersQuery = useProviders();
+  const orgProvidersQuery = useOrgProviders(orgId ?? "", { enabled: isOrg && canRead });
+  // The org endpoint returns the same ProviderRead shape as personal, so the
+  // workspace below consumes it directly (cast only — no remap to drift).
+  // Memoized so the scope-derived list keeps a stable identity for downstream
+  // memos (the scope branch itself is render-time derivation, no waterfall).
+  const providers: Provider[] = useMemo(
+    () =>
+      isOrg
+        ? ((orgProvidersQuery.data ?? []) as unknown as Provider[])
+        : (personalProvidersQuery.data ?? []),
+    [isOrg, orgProvidersQuery.data, personalProvidersQuery.data],
+  );
+  const providersQuery = isOrg ? orgProvidersQuery : personalProvidersQuery;
+  // Personal model endpoints 404 org rows (personal_only); org models are
+  // registered atomically in the wizard — so org scope skips the list and
+  // the register/edit/toggle/delete controls below stay personal-only.
+  const modelsQuery = useModels(undefined, undefined, { enabled: !isOrg });
   const allModels = modelsQuery.data ?? [];
   const pm = useProviderMutations();
   const mm = useModelMutations();
+  const orgMut = useOrgMutations(orgId ?? undefined);
+  const orgProviderNames = useMemo(() => providers.map((pr) => pr.name), [providers]);
 
   const {
     selectedProviderId,
@@ -102,9 +149,23 @@ export default function ProvidersPage() {
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [discoverMsg, setDiscoverMsg] = useState<Record<string, string>>({});
-  const { busy, runValidate, runDiscover } = useProviderHealthActions({
+  const { busy, runValidate, runDiscover, track } = useProviderHealthActions({
     onDiscovered: (id, message) => setDiscoverMsg((prev) => ({ ...prev, [id]: message })),
   });
+
+  // Org enable/disable (the personal page has no provider toggle; the
+  // deleted org section did — preserved here so the capability survives).
+  async function runToggleProvider(pr: Provider, active: boolean) {
+    if (!orgId) return;
+    await track(`toggle:${pr.id}`, async () => {
+      try {
+        await orgMut.updateOrgProvider.mutateAsync({ providerId: pr.id, payload: { is_active: active } });
+        toast.success(active ? `"${pr.name}" enabled.` : `"${pr.name}" disabled.`);
+      } catch (e) {
+        toast.error(parseApiError(e).message);
+      }
+    });
+  }
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
   const [drawerModel, setDrawerModel] = useState<AIModel | null>(null);
@@ -126,7 +187,10 @@ export default function ProvidersPage() {
       : providers[0]?.id ?? null;
 
   const selected = providers.find((p) => p.id === activeId) ?? null;
-  const selectedModels = allModels.filter((m) => m.provider_id === activeId);
+  const orgModelsQuery = useOrgProviderModels(orgId ?? "", activeId, { enabled: isOrg && canRead });
+  const selectedModels = isOrg
+    ? (orgModelsQuery.data ?? [])
+    : allModels.filter((m) => m.provider_id === activeId);
 
   // Discovery cache (written by Refresh; never registers anything by itself).
   const discovery = (() => {
@@ -172,10 +236,33 @@ export default function ProvidersPage() {
 
   async function confirmDeleteProvider() {
     if (!deleteProviderTarget) return;
-    await pm.remove.mutateAsync(deleteProviderTarget.id);
+    if (isOrg && orgId) {
+      await orgMut.deleteOrgProvider.mutateAsync(deleteProviderTarget.id);
+    } else {
+      await pm.remove.mutateAsync(deleteProviderTarget.id);
+    }
     if (selectedProviderId === deleteProviderTarget.id) setSelectedProviderId(null);
     setDeleteProviderTarget(null);
-    toast.success("Provider deleted");
+    toast.success(isOrg ? `Provider "${deleteProviderTarget.name}" removed.` : "Provider deleted");
+  }
+
+  // Org scope without read permission mirrors the deleted section's gate.
+  if (isOrg && !canRead) {
+    if (orgs.isPending) {
+      return (
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden p-8">
+          <LoadingState message="Loading organization…" />
+        </div>
+      );
+    }
+    return (
+      <div className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden p-8">
+        <EmptyState
+          title="Providers"
+          description="You need provider-read permission to view organization providers."
+        />
+      </div>
+    );
   }
 
   async function confirmDeleteModel() {
@@ -195,12 +282,20 @@ export default function ProvidersPage() {
         {providersQuery.isPending ? (
           <LoadingState message="Loading providers…" className="flex-1 py-16" />
         ) : providersQuery.error ? (
-          <ErrorState
-            title="Could not load providers"
-            message={parseApiError(providersQuery.error).message}
-            onRetry={() => void providersQuery.refetch()}
-            className="flex-1"
-          />
+          isOrg && isNotFoundError(providersQuery.error) ? (
+            <EmptyState
+              title="Providers aren't available yet"
+              description="The organization provider service is still rolling out. Personal providers keep working."
+              className="flex-1"
+            />
+          ) : (
+            <ErrorState
+              title="Could not load providers"
+              message={parseApiError(providersQuery.error).message}
+              onRetry={() => void providersQuery.refetch()}
+              className="flex-1"
+            />
+          )
         ) : !selected ? (
           <div className="relative flex flex-1 items-center justify-center p-8">
             {!leftSidebarOpen && (
@@ -234,14 +329,16 @@ export default function ProvidersPage() {
                 <p className="text-xs text-zinc-500">
                   Choose a provider from the sidebar to validate credentials, discover models, and register models.
                 </p>
-                <Button
-                  size="sm"
-                  onClick={() => setAddProviderOpen(true)}
-                  className="gap-1.5 text-xs mt-2"
-                >
-                  <Plus className="size-3.5" />
-                  Add Provider
-                </Button>
+                {(!isOrg || canManage) && (
+                  <Button
+                    size="sm"
+                    onClick={() => setAddProviderOpen(true)}
+                    className="gap-1.5 text-xs mt-2"
+                  >
+                    <Plus className="size-3.5" />
+                    Add Provider
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -276,38 +373,91 @@ export default function ProvidersPage() {
                     <Badge variant="outline" className="text-xs">
                       {providerTypeLabel(selected.provider_type)}
                     </Badge>
-                    <Badge
-                      variant="secondary"
-                      className="text-xs"
-                      data-testid="provider-scope-personal"
-                      title="Personal providers are visible only to you"
-                    >
-                      Personal
-                    </Badge>
+                    {isOrg ? (
+                      <Badge
+                        variant="secondary"
+                        className="text-xs"
+                        data-testid="provider-scope-org"
+                        title="Organization providers are shared with every member"
+                      >
+                        {orgName ?? "Organization"}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="secondary"
+                        className="text-xs"
+                        data-testid="provider-scope-personal"
+                        title="Personal providers are visible only to you"
+                      >
+                        Personal
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 gap-1.5 text-xs"
-                      onClick={() => {
-                        setEditingProvider(selected);
-                        setAddProviderOpen(true);
-                      }}
-                    >
-                      <Pencil className="size-3.5" />
-                      <span>Edit</span>
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                      onClick={() => setDeleteProviderTarget(selected)}
-                      data-testid={`provider-delete-${selected.id}`}
-                      title="Delete provider"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                    {isOrg && canManage && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 text-xs"
+                          onClick={() => setCatalogOpen(true)}
+                          data-testid="org-prov-browse-catalog"
+                        >
+                          Browse catalog
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-8 gap-1.5 text-xs"
+                          onClick={() => {
+                            setEditingProvider(null);
+                            setCatalogPrefill(null);
+                            setAddProviderOpen(true);
+                          }}
+                          data-testid="org-prov-create-open"
+                        >
+                          <Building2 className="size-3.5" />
+                          <span>New</span>
+                        </Button>
+                      </>
+                    )}
+                    {(!isOrg || canManage) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={() => {
+                          setEditingProvider(selected);
+                          setAddProviderOpen(true);
+                        }}
+                      >
+                        <Pencil className="size-3.5" />
+                        <span>Edit</span>
+                      </Button>
+                    )}
+                    {isOrg && (
+                      <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+                        <Switch
+                          checked={selected.is_active !== false}
+                          onCheckedChange={(v) => void runToggleProvider(selected, v)}
+                          disabled={busy !== null || !canManage}
+                          aria-label={`Enable ${selected.name}`}
+                          data-testid={`org-prov-toggle-${selected.id}`}
+                        />
+                        <span className="text-[10px]">{selected.is_active !== false ? "On" : "Off"}</span>
+                      </label>
+                    )}
+                    {(!isOrg || canManage) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
+                        onClick={() => setDeleteProviderTarget(selected)}
+                        data-testid={`provider-delete-${selected.id}`}
+                        title="Delete provider"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -370,34 +520,36 @@ export default function ProvidersPage() {
                 </div>
 
                 {/* Operations Toolbar: only Validate + Refresh models */}
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-xs"
-                    onClick={() => runValidate(selected.id)}
-                    disabled={busy !== null}
-                    data-testid={`validate-${selected.id}`}
-                  >
-                    <CheckCircle2 className="size-3.5 text-tollma-500" />
-                    {busy === `validate:${selected.id}` ? "Checking…" : "Validate"}
-                  </Button>
+                {(!isOrg || canManage) && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-xs"
+                      onClick={() => runValidate(selected.id)}
+                      disabled={busy !== null}
+                      data-testid={`validate-${selected.id}`}
+                    >
+                      <CheckCircle2 className="size-3.5 text-tollma-500" />
+                      {busy === `validate:${selected.id}` ? "Checking…" : "Validate"}
+                    </Button>
 
-                  <Button variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-xs"
-                    onClick={() => runDiscover(selected.id)}
-                    disabled={busy !== null}
-                    data-testid={`discover-${selected.id}`}
-                  >
-                    <RefreshCw
-                      className={cn(
-                        "size-3.5 text-tollma-500",
-                        busy === `discover:${selected.id}` && "animate-spin",
-                      )}
-                    />
-                    {busy === `discover:${selected.id}` ? "Discovering…" : "Refresh models"}
-                  </Button>
-                </div>
+                    <Button variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-xs"
+                      onClick={() => runDiscover(selected.id)}
+                      disabled={busy !== null}
+                      data-testid={`discover-${selected.id}`}
+                    >
+                      <RefreshCw
+                        className={cn(
+                          "size-3.5 text-tollma-500",
+                          busy === `discover:${selected.id}` && "animate-spin",
+                        )}
+                      />
+                      {busy === `discover:${selected.id}` ? "Discovering…" : "Refresh models"}
+                    </Button>
+                  </div>
+                )}
 
                 {discoverMsg[selected.id] && (
                   <div
@@ -547,30 +699,32 @@ export default function ProvidersPage() {
                           })()}
                         </p>
                       </div>
-                      <div className="flex gap-1.5">
-                        <Button
-                          size="sm"
-                          className="h-7 text-[11px]"
-                          onClick={() => {
-                            setRegisterInfo(m);
-                            setRegisterStep(2);
-                          }}
-                          data-testid={`register-${m.model_id}`}
-                        >
-                          Register
-                        </Button>
-                        <Button variant="outline"
-                          size="sm"
-                          className="h-7 text-[11px]"
-                          onClick={() => {
-                            setRegisterInfo(m);
-                            setRegisterStep(0);
-                          }}
-                          data-testid={`available-details-${m.model_id}`}
-                        >
-                          View Details
-                        </Button>
-                      </div>
+                      {!isOrg && (
+                        <div className="flex gap-1.5">
+                          <Button
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            onClick={() => {
+                              setRegisterInfo(m);
+                              setRegisterStep(2);
+                            }}
+                            data-testid={`register-${m.model_id}`}
+                          >
+                            Register
+                          </Button>
+                          <Button variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            onClick={() => {
+                              setRegisterInfo(m);
+                              setRegisterStep(0);
+                            }}
+                            data-testid={`available-details-${m.model_id}`}
+                          >
+                            View Details
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {available.length === 0 && (
@@ -608,7 +762,7 @@ export default function ProvidersPage() {
                 />
 
                 {/* Inline edit form (registered models only) */}
-                {showEditForm && editingModel && (
+                {!isOrg && showEditForm && editingModel && (
                   <div className="mt-3">
                     <ModelForm
                       initial={fromModel(editingModel)}
@@ -728,7 +882,9 @@ export default function ProvidersPage() {
 
                   {selectedModels.length === 0 && !showEditForm && (
                     <p className="text-xs text-zinc-400 py-8 text-center" data-testid="no-registered-models">
-                      No registered models — discover above, then Register from Available Models.
+                      {isOrg
+                        ? "No registered models yet — models are added when the provider is connected."
+                        : "No registered models — discover above, then Register from Available Models."}
                     </p>
                   )}
                 </div>
@@ -785,6 +941,9 @@ export default function ProvidersPage() {
         initialName={catalogPrefill?.name ?? null}
         catalogSlug={catalogPrefill?.slug ?? null}
         initialBaseUrl={catalogPrefill?.baseUrl ?? null}
+        ownership={isOrg && orgId ? { type: "org" as const, orgId } : undefined}
+        orgName={isOrg ? orgName : undefined}
+        existingNames={isOrg ? orgProviderNames : undefined}
         onSaved={(p, discMsg) => {
           setSelectedProviderId(p.id);
           if (discMsg) {
@@ -817,17 +976,21 @@ export default function ProvidersPage() {
       <ConfirmDialog
         open={!!deleteProviderTarget}
         destructive
-        title={`Delete “${deleteProviderTarget?.name ?? ""}”?`}
+        title={isOrg ? `Remove provider “${deleteProviderTarget?.name ?? ""}”?` : `Delete “${deleteProviderTarget?.name ?? ""}”?`}
         description={
-          <>
-            This permanently removes the provider
-            {selectedModels.length > 0 && deleteProviderTarget?.id === selected?.id
-              ? ` and its ${selectedModels.length} registered model${selectedModels.length === 1 ? "" : "s"}`
-              : ""}
-            . Chats using these models will need a new model. This action cannot be undone.
-          </>
+          isOrg ? (
+            "Members lose access to this shared provider immediately. Personal providers are unaffected."
+          ) : (
+            <>
+              This permanently removes the provider
+              {selectedModels.length > 0 && deleteProviderTarget?.id === selected?.id
+                ? ` and its ${selectedModels.length} registered model${selectedModels.length === 1 ? "" : "s"}`
+                : ""}
+              . Chats using these models will need a new model. This action cannot be undone.
+            </>
+          )
         }
-        confirmLabel="Delete provider"
+        confirmLabel={isOrg ? "Remove provider" : "Delete provider"}
         onConfirm={confirmDeleteProvider}
         onClose={() => setDeleteProviderTarget(null)}
       />

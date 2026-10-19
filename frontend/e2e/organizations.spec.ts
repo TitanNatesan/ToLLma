@@ -31,12 +31,12 @@ test.describe("organizations phase A", () => {
   test.setTimeout(120000);
   test("scenario 1: create organization (UI)", async ({ page, request }) => {
     await signupVerified(request, "org-create");
-    await page.goto("/organizations");
+    await page.goto("/settings#organizations");
     await page.getByTestId("org-create-open").click();
     const name = `E2E Org ${Date.now()}`;
     await page.getByTestId("org-create-name").fill(name);
     await page.getByTestId("org-create-submit").click();
-    await expect(page.getByTestId("organizations-page")).toContainText(name);
+    await expect(page.getByTestId("settings-organizations")).toContainText(name);
   });
 
   test("scenario 2+4: invite existing user, accept via inbox (UI)", async ({ page, request, playwright }) => {
@@ -71,8 +71,8 @@ test.describe("organizations phase A", () => {
     expect(members.ok()).toBeTruthy();
     expect((await members.json()).map((m: { email: string }) => m.email)).toContain(inviteeEmail);
     // UI: root's inbox shows the acceptance notification.
-    await page.goto("/organizations?view=inbox");
-    await expect(page.getByTestId("org-inbox")).toContainText("joined");
+    await page.goto("/settings#organizations");
+    await expect(page.getByTestId("settings-org-inbox")).toContainText("joined");
   });
 
   test("scenario 4: accept invitation via inbox UI", async ({ page, request }) => {
@@ -86,12 +86,12 @@ test.describe("organizations phase A", () => {
     });
     expect(inv.ok(), await inv.text()).toBeTruthy();
     const invId = (await inv.json()).id as string;
-    await page.goto("/organizations?view=inbox");
-    await expect(page.getByTestId("org-inbox")).toContainText(org.name);
+    await page.goto("/settings#organizations");
+    await expect(page.getByTestId("settings-org-inbox")).toContainText(org.name);
     await page.getByTestId(`org-invite-accept-${invId}`).click();
     await expect(page.getByTestId(`org-invite-${invId}`)).toHaveCount(0);
-    await page.goto("/organizations");
-    await expect(page.getByTestId("organizations-page")).toContainText(org.name);
+    await page.goto("/settings#organizations");
+    await expect(page.getByTestId("settings-organizations")).toContainText(org.name);
   });
 
   test("scenario 3: invite new user (API)", async ({ request }) => {
@@ -181,21 +181,54 @@ test.describe("organizations phase A", () => {
   test("scenario 10: organization switching (UI)", async ({ page, request }) => {
     await orgAs(page.request, `Switch A ${Date.now()}`);
     await orgAs(page.request, `Switch B ${Date.now()}`);
-    await page.goto("/organizations");
-    await expect(page.getByTestId("org-context-card")).toContainText("Switch A");
-    await page.getByTestId("org-context-personal").click();
+    await page.goto("/settings#organizations");
+    await expect(page.getByTestId("settings-organizations")).toContainText("Switch A");
+    await expect(page.getByTestId("settings-organizations")).toContainText("Switch B");
+    await expect(page.getByTestId("org-context-personal")).toBeVisible();
+    // Chevron workspace menu lists both orgs and switches context to the detail page.
+    const wsTrigger = page.getByTestId("workspace-menu-trigger");
+    await expect(wsTrigger).toHaveRole("button");
+    await expect(wsTrigger).toHaveAttribute("aria-label", /current workspace/i);
+    await expect(wsTrigger).toContainText("Personal");
+    await wsTrigger.click();
+    await expect(page.getByTestId("workspace-menu")).toBeVisible();
+    // Redesigned menu: "Workspaces" label, identity header, per-item descriptions.
+    await expect(page.getByTestId("workspace-menu")).toContainText("Workspaces");
+    await expect(page.getByTestId("workspace-menu")).toContainText("@tollma.ai");
+    await expect(page.getByTestId("workspace-menu-personal")).toContainText("Private to you");
+    const menuOrgs = page.locator('[data-testid^="workspace-menu-org-"]');
+    await expect.poll(async () => menuOrgs.count(), { timeout: 20000 }).toBeGreaterThanOrEqual(2);
+    await expect(menuOrgs.first()).toContainText("· root");
+    await menuOrgs.first().click();
+    await expect(page).toHaveURL(/\/organizations\/[0-9a-f-]{36}/, { timeout: 20000 });
+    await expect(page.getByTestId("workspace-menu-trigger")).not.toContainText("Personal");
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await page.goto("/settings#organizations");
     await expect(page.getByTestId("org-context-personal")).toBeVisible();
   });
 
   test("scenario 11: sidebar section navigation (UI)", async ({ page }) => {
     const org = await orgAs(page.request, `Nav Org ${Date.now()}`);
     await page.goto(`/organizations/${org.id}`);
-    // Nested sidebar replaces horizontal tabs: no tab bar exists.
+    // Final nav rule: org scope shows ONLY the org nav (personal hidden).
     await expect(page.getByTestId("sidebar-org-nav")).toBeVisible();
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-workspace-switcher")).toHaveCount(0);
     await expect(page.getByTestId("org-section-overview")).toBeVisible();
-    // Phase B modules render disabled with a "soon" badge.
-    await expect(page.getByTestId("sidebar-org-teams")).toContainText("soon");
-    await expect(page.getByTestId("sidebar-org-analytics")).toContainText("soon");
+    // Unified org nav: all 13 items (Chat second).
+    for (const section of ["overview", "chat", "providers", "keys", "analytics", "docs", "members", "teams", "sets", "operations", "budgets", "audit", "settings"] as const) {
+      await expect(page.getByTestId(`sidebar-org-${section}`)).toBeVisible();
+    }
+    // Unified hrefs use exact pathnames.
+    await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");
+    await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("href", "/providers");
+    await expect(page.getByTestId("sidebar-org-keys")).toHaveAttribute("href", "/api-keys");
+    await expect(page.getByTestId("sidebar-org-analytics")).toHaveAttribute("href", "/analytics");
+    await expect(page.getByTestId("sidebar-org-docs")).toHaveAttribute("href", "/docs");
+    // ORG header block (name/slug) has no toggle.
+    await expect(page.getByTestId("sidebar-org-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-org-nav").getByRole("button")).toHaveCount(0);
     // Click Members in the sidebar; section + active state follow.
     await page.getByTestId("sidebar-org-members").click();
     await expect(page.getByTestId("org-section-members")).toBeVisible();
@@ -208,6 +241,77 @@ test.describe("organizations phase A", () => {
     await page.getByTestId("sidebar-org-settings").click();
     await expect(page.getByTestId("org-settings")).toContainText("Danger Zone");
     await expect(page.getByTestId("org-settings")).toContainText("Privacy");
+    // Operations has only requests + invitations tabs.
+    await page.getByTestId("sidebar-org-operations").click();
+    await expect(page.getByTestId("org-operations")).toBeVisible();
+    await expect(page.getByTestId("org-ops-tab-requests")).toBeVisible();
+    await expect(page.getByTestId("org-ops-tab-invitations")).toBeVisible();
+    await expect(page.getByTestId("org-ops-tab-keys")).toHaveCount(0);
+    // Legacy deep links redirect to the unified pages.
+    await page.goto(`/organizations/${org.id}?section=providers`);
+    await expect(page).toHaveURL(/\/providers/, { timeout: 20000 });
+    await page.goto(`/organizations/${org.id}?section=analytics`);
+    await expect(page).toHaveURL(/\/analytics/, { timeout: 20000 });
+    await page.goto(`/organizations/${org.id}?section=operations&tab=keys`);
+    await expect(page).toHaveURL(/\/api-keys/, { timeout: 20000 });
+    await page.goto(`/organizations/${org.id}?section=keys`);
+    await expect(page).toHaveURL(/\/api-keys/, { timeout: 20000 });
+    // Chat entry links home and highlights on "/" in org scope.
+    await page.goto("/");
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");
+    // Collapsed rail mirrors the org nav set with active state.
+    await page.getByTestId("left-sidebar-toggle").click();
+    await expect(page.getByTestId("sidebar-reveal-rail")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("rail-expand")).toHaveAttribute("aria-label", "Expand sidebar");
+    await expect(page.getByTestId("rail-command-palette")).toHaveAttribute("aria-label", "Open command palette");
+    await expect(page.getByTestId("rail-notifications")).toHaveAttribute("aria-label", /Notifications/);
+    for (const section of ["overview", "chat", "providers", "keys", "analytics", "docs", "members", "teams", "sets", "operations", "budgets", "audit", "settings"] as const) {
+      await expect(page.getByTestId(`rail-org-${section}`)).toBeVisible();
+    }
+    await expect(page.getByTestId("rail-org-chat")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("rail-nav-toggle")).toHaveAttribute("aria-label", "Hide navigation");
+    await page.getByTestId("rail-profile-menu").click();
+    await expect(page.getByTestId("workspace-menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByTestId("rail-expand").click();
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("aria-current", "page");
+  });
+
+  test("scenario 12: unified org scope pages render org data (UI)", async ({ page }) => {
+    const org = await orgAs(page.request, `Scope Org ${Date.now()}`);
+    const prov = await page.request.post(`${API}/api/v1/orgs/${org.id}/providers`, {
+      data: { name: `ScopeProv ${Date.now()}`, provider_type: "CUSTOM", credentials: { base_url: "http://mock" } },
+    });
+    expect(prov.ok(), await prov.text()).toBeTruthy();
+    const provName = (await prov.json()).name as string;
+    await page.goto(`/organizations/${org.id}`);
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await page.goto("/providers");
+    await expect(page.getByTestId("provider-scope-org")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("provider-scope-org")).toContainText(org.name);
+    await expect(page.locator("section[aria-label='Provider list']").getByText(provName)).toBeVisible();
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible();
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("href", "/providers");
+    await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("aria-current", "page");
+    await page.goto("/api-keys");
+    await expect(page.getByTestId("api-keys-scope-chip")).toContainText("Organization");
+    await expect(page.getByTestId("org-keys")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-org-keys")).toHaveAttribute("href", "/api-keys");
+    await expect(page.getByTestId("sidebar-org-keys")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await page.goto("/analytics");
+    await expect(page.getByTestId("analytics-scope")).toContainText(org.name);
+    await expect(page.getByTestId("sidebar-org-analytics")).toHaveAttribute("href", "/analytics");
+    await expect(page.getByTestId("sidebar-org-analytics")).toHaveAttribute("aria-current", "page");
+    await page.goto("/docs");
+    await expect(page.getByTestId("sidebar-org-docs")).toHaveAttribute("href", "/docs");
+    await expect(page.getByTestId("sidebar-org-docs")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
   });
 
   test("cross-org isolation (API)", async ({ page, request }) => {

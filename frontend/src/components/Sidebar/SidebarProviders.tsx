@@ -6,13 +6,17 @@ import { ProviderLogo } from "@/components/ui/ProviderLogo";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useOrgProviders, useOrgs } from "@/hooks/useOrgs";
 import { logoForProviderType } from "@/services/catalog";
 import { useChatStore } from "@/store/chat";
+import { useOrgStore } from "@/store/org";
 import { PROVIDER_TYPES, providerTypeLabel } from "@/app/providers/fields";
 import type { ProviderType } from "@/types";
 import { cn } from "@/lib/utils";
 
-/** Providers context: search, type filter, provider list, add action. */
+/** Providers context: search, type filter, provider list, add action.
+ * Scope-aware: org scope lists the org's providers (same UI, org data);
+ * per-model counts come from the personal registry only. */
 export function SidebarProviders() {
   const {
     providerSearch,
@@ -25,8 +29,23 @@ export function SidebarProviders() {
     setCatalogOpen,
   } = useChatStore();
 
-  const { data: providers = [], isLoading: providersLoading } = useProviders();
-  const { data: allModels = [] } = useModels();
+  const context = useOrgStore((s) => s.context);
+  const isOrg = context.type === "org";
+  const orgId = isOrg ? context.orgId : null;
+  const orgs = useOrgs();
+  const orgEntry = orgId ? (orgs.data ?? []).find((o) => o.id === orgId) : undefined;
+  const orgName = orgEntry?.name ?? (isOrg ? context.orgName : null);
+  const canOrg = (code: string) =>
+    !!orgEntry && (orgEntry.is_root || orgEntry.permissions.includes(code));
+  const canRead = !isOrg || canOrg("Providers.Read");
+  const canManage = !isOrg || canOrg("Providers.Create") || canOrg("Providers.Update");
+
+  const { data: personalProviders = [], isLoading: providersLoading } = useProviders();
+  const { data: allModels = [] } = useModels(undefined, undefined, { enabled: !isOrg });
+  const orgProvidersQuery = useOrgProviders(orgId ?? "", { enabled: isOrg && canRead });
+  // Org rows share the ProviderRead serializer shape; no remap to drift.
+  const providers = (isOrg ? (orgProvidersQuery.data ?? []) : personalProviders) as typeof personalProviders;
+  const loading = isOrg ? orgProvidersQuery.isLoading : providersLoading;
 
   const filteredProviders = providers.filter((p) => {
     const matchSearch =
@@ -38,8 +57,9 @@ export function SidebarProviders() {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="Provider list">
-      {/* Header & Add Provider Action */}
-      <div className="flex items-center justify-between px-3 py-2">
+      {/* Header & actions: title row, then full-width action row so the
+          buttons never truncate in the narrow sidebar. */}
+      <div className="px-3 py-2">
         <div className="flex items-center gap-1.5">
           <Cpu className="size-3.5 text-zinc-500" />
           <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
@@ -48,8 +68,13 @@ export function SidebarProviders() {
           <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
             {providers.length}
           </Badge>
+          {isOrg && (
+            <Badge variant="outline" className="px-1.5 py-0 text-[10px]" data-testid="provider-list-org-scope" title="Showing organization providers">
+              {orgName ?? "Organization"}
+            </Badge>
+          )}
         </div>
-        <div className="flex gap-1.5">
+        <div className="mt-2 grid grid-cols-2 gap-1.5">
         <Button
           size="sm"
           variant="outline"
@@ -61,6 +86,7 @@ export function SidebarProviders() {
           <BookOpen className="size-3" aria-hidden />
           <span>Catalog</span>
         </Button>
+        {canManage && (
         <Button
           size="sm"
           onClick={() => setAddProviderOpen(true)}
@@ -70,6 +96,7 @@ export function SidebarProviders() {
           <Plus className="size-3" />
           <span>Add</span>
         </Button>
+        )}
         </div>
       </div>
 
@@ -102,7 +129,7 @@ export function SidebarProviders() {
 
       {/* Providers list */}
       <div className="flex-1 overflow-y-auto p-2 pt-0 space-y-1.5 min-h-[300px]">
-        {providersLoading && (
+        {loading && (
           <p className="p-4 text-center text-xs text-zinc-400">Loading providers…</p>
         )}
 
@@ -143,17 +170,19 @@ export function SidebarProviders() {
                         : "Unvalidated"
                   }
                 />
+                {!isOrg && (
                 <span data-testid={`model-count-${p.id}`} className="font-mono">
                   {count} model{count === 1 ? "" : "s"}
                 </span>
+                )}
               </div>
             </div>
           );
         })}
 
-        {filteredProviders.length === 0 && !providersLoading && (
+        {filteredProviders.length === 0 && !loading && (
           <div className="py-8 text-center text-xs text-zinc-400">
-            No providers found
+            {isOrg && !canRead ? "You need provider-read permission to view organization providers." : "No providers found"}
           </div>
         )}
       </div>

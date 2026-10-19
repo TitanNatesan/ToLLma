@@ -42,9 +42,12 @@ test("platform admin sees one section at a time with hash navigation", async ({ 
   if (!response.ok()) throw new Error(`admin login failed: ${response.status()}`);
 
   await page.goto("/admin");
-  // The app nav region is revealed by the profile-settings toggle.
-  await page.getByTestId("profile-settings-btn").click();
+  // Final IA: the admin nav renders directly on /admin — the profile gear
+  // is a plain link to /settings, never a nav toggle.
+  await expect(page.getByTestId("sidebar-nav-settings")).toHaveAttribute("href", "/settings");
   await expect(page.getByTestId("sidebar-admin-nav")).toBeVisible({ timeout: 20_000 });
+  // The bottom-anchored personal nav does not render on the admin page.
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
 
   // The sidebar is now a dedicated admin section navigator, not conversations.
   await expect(page.getByTestId("sidebar-admin")).toBeVisible({ timeout: 20_000 });

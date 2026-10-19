@@ -897,3 +897,164 @@ def test_org_provider_rotate_creds_perm(client: TestClient, db, user_factory) ->
     grant = client.post(f"{ORG}/{oid}/members/{sub_id}/sets", json={"set_ids": [rotator]})
     assert grant.status_code == 200, grant.text
     assert sub.patch(f"{ORG}/{oid}/providers/{pid}", json=creds).status_code == 200
+
+
+# --- org keys: full personal field parity ------------------------------------
+
+
+def _issue_full(client: TestClient, oid: str, assignee: str, **kw) -> dict:
+    payload = {
+        "assignee_user_id": assignee,
+        "name": f"full-{uuid.uuid4().hex[:6]}",
+        "description": "ops key",
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+        "policy": {
+            "max_budget_usd": "42.50",
+            "budget_reset_days": 30,
+            "rpm": 100,
+            "rph": 1000,
+            "rpd": 10000,
+            "tpm": 50000,
+            "tpd": 500000,
+            "daily_spend_limit": "5.00",
+            "monthly_spend_limit": "100.00",
+        },
+        "ip_rules": [
+            {"type": "allow", "cidr": "203.0.113.0/24"},
+            {"type": "deny", "cidr": "198.51.100.7"},
+        ],
+        "model_permissions": [
+            {"provider_id": None, "model_id": None, "enabled": True},
+        ],
+        **kw,
+    }
+    r = client.post(f"{ORG}/{oid}/keys", json=payload)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_org_key_create_full_fields(client: TestClient, db, user_factory) -> None:
+    """Org keys accept the full personal field set: expiry, limits, rate
+    limits, spend caps, IP rules and per-model caps."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    r = client.post(f"{ORG}/{oid}/providers/register", json=_reg_payload())
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    from tollms.models.registered_model import AIModel as _AIModel
+    mids = [str(m.id) for m in db.scalars(select(_AIModel).where(
+        _AIModel.provider_id == uuid.UUID(pid))).all()]
+    assert len(mids) == 2
+
+    created = _issue_full(
+        client, oid, root_id,
+        model_permissions=[
+            {"provider_id": pid, "model_id": mids[0], "enabled": True,
+             "max_budget": "10.00", "rpm": 60, "tpm": 20000},
+        ],
+    )
+    key = created["key"]
+    assert key["org_id"] == oid
+    assert key["assignee_user_id"] == root_id
+    assert key["expires_at"] is not None
+    pol = key["policy"]
+    assert Decimal(pol["max_budget_usd"]) == Decimal("42.50")
+    assert pol["budget_reset_days"] == 30
+    assert pol["rpm"] == 100 and pol["rph"] == 1000 and pol["rpd"] == 10000
+    assert pol["tpm"] == 50000 and pol["tpd"] == 500000
+    assert Decimal(pol["daily_spend_limit"]) == Decimal("5.00")
+    assert Decimal(pol["monthly_spend_limit"]) == Decimal("100.00")
+    cidrs = sorted(i["cidr"] for i in key["ip_rules"])
+    assert cidrs == ["198.51.100.7/32", "203.0.113.0/24"]
+    perms = key["model_permissions"]
+    assert len(perms) == 1 and perms[0]["model_id"] == mids[0]
+    assert Decimal(perms[0]["max_budget"]) == Decimal("10.00")
+    assert perms[0]["rpm"] == 60 and perms[0]["tpm"] == 20000
+
+    stored = db.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(key["id"])))
+    assert stored.expires_at is not None
+    assert stored.ip_rules is not None and len(stored.ip_rules) == 2
+    assert key_engine.authenticate(db, created["raw_key"]) is not None
+
+
+def test_org_key_rejects_past_expiry_and_bad_cidr(client: TestClient, db, user_factory) -> None:
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    r = client.post(f"{ORG}/{oid}/keys", json={
+        "assignee_user_id": root_id, "name": "old", "expires_at": past})
+    assert r.status_code == 422, r.text
+
+    r = client.post(f"{ORG}/{oid}/keys", json={
+        "assignee_user_id": root_id, "name": "badip",
+        "ip_rules": [{"type": "allow", "cidr": "not-an-ip"}]})
+    assert r.status_code in (400, 422), r.text
+
+
+def test_org_key_policy_budget_counts_toward_cap(client: TestClient, db, user_factory) -> None:
+    """The org max_spend cap applies to policy.max_budget_usd, not only the
+    legacy top-level field."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    assert client.patch(f"{ORG}/{oid}/budget", json={"max_spend": "10.00"}).status_code == 200
+
+    created = _issue_full(client, oid, root_id,
+                          policy={"max_budget_usd": "6.00", "rpm": 10})
+    assert Decimal(created["key"]["policy"]["max_budget_usd"]) == Decimal("6.00")
+
+    r = client.post(f"{ORG}/{oid}/keys", json={
+        "assignee_user_id": root_id, "name": "over",
+        "policy": {"max_budget_usd": "5.00"}})
+    assert r.status_code == 422, r.text
+
+    # Legacy top-level field keeps working and mixes with policy caps.
+    got = client.get(f"{ORG}/{oid}/budget").json()
+    assert Decimal(got["allocated"]) == Decimal("6.00")
+    _issue(client, oid, root_id, max_budget_usd="4.00")
+    got = client.get(f"{ORG}/{oid}/budget").json()
+    assert Decimal(got["allocated"]) == Decimal("10.00")
+
+
+def test_org_models_lists_only_org_models(client: TestClient, db, user_factory) -> None:
+    """GET /orgs/{id}/models returns live models of that org's providers."""
+    from tollms.models.registered_model import AIModel as _AIModel
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+
+    personal = client.post("/api/v1/providers", json={
+        "name": "Personal", "provider_type": "CUSTOM",
+        "credentials": {"base_url": "http://mock"}})
+    assert personal.status_code == 201, personal.text
+    ppid = personal.json()["id"]
+    pm = client.post("/api/v1/models", json={
+        "provider_id": ppid, "model_id": "p1", "name": "P1",
+        "endpoint_type": "chat_completions"})
+    assert pm.status_code == 201, pm.text
+
+    r = client.post(f"{ORG}/{oid}/providers/register", json=_reg_payload())
+    assert r.status_code == 201, r.text
+
+    listed = client.get(f"{ORG}/{oid}/models")
+    assert listed.status_code == 200, listed.text
+    got = listed.json()
+    assert {m["model_id"] for m in got} == {"m1", "m2"}
+    assert all(m["provider_id"] == r.json()["id"] for m in got)
+
+    # Strangers and other orgs see nothing.
+    stranger = _mkuser("outsider")
+    assert stranger.get(f"{ORG}/{oid}/models").status_code == 404
+    other_oid = _mkorg(stranger)["id"]
+    assert stranger.get(f"{ORG}/{other_oid}/models").json() == []
+
+    # Removing the provider's models empties the listing (soft-delete path).
+    for m in db.scalars(select(_AIModel).where(
+            _AIModel.provider_id == uuid.UUID(r.json()["id"]))).all():
+        m.is_deleted = True
+    db.commit()
+    assert client.get(f"{ORG}/{oid}/models").json() == []

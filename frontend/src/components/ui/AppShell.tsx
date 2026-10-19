@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import React, { Suspense, useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Sidebar } from "@/components/Sidebar/Sidebar";
 import { SidebarReveal } from "@/components/Sidebar/SidebarReveal";
@@ -19,9 +18,6 @@ import { OfflineBanner } from "./OfflineBanner";
  * longer access once the membership list loads. */
 function ScopeSync() {
   const qc = useQueryClient();
-  const router = useRouter();
-  const pathname = usePathname();
-  const context = useOrgStore((s) => s.context);
   const orgs = useOrgs();
 
   useEffect(() => {
@@ -35,17 +31,10 @@ function ScopeSync() {
     }
   }, [orgs.data]);
 
-  // Org scope owns providers/keys through its dashboard sections: landing
-  // on the personal routes with an org context would show personal data
-  // under org navigation, so redirect to the matching org section.
-  useEffect(() => {
-    if (context.type !== "org") return;
-    if (pathname === "/providers") {
-      router.replace(`/organizations/${context.orgId}?section=providers`);
-    } else if (pathname === "/api-keys") {
-      router.replace(`/organizations/${context.orgId}?section=operations&tab=keys`);
-    }
-  }, [context, pathname, router]);
+  // NOTE: legacy cross-route redirects for removed org sections
+  // (?section=providers|analytics, operations&tab=keys) live in the org
+  // detail page effect, which correctly skips them on 401/403/404. They
+  // must not live here: ScopeSync cannot tell a bad org id from a good one.
 
   return null;
 }
@@ -74,7 +63,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Collapsed-state rail (desktop): the single shared reveal control.
           In normal flow so it is never clipped or lost across routes. */}
-      {!leftSidebarOpen && <SidebarReveal />}
+      {!leftSidebarOpen && (
+        <Suspense fallback={null}>
+          <SidebarReveal onOpenCommandPalette={() => setCmdOpen(true)} />
+        </Suspense>
+      )}
 
       {/* Off-canvas backdrop below md; tapping it closes the sidebar. */}
       {leftSidebarOpen && (

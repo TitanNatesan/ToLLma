@@ -79,3 +79,41 @@ test("repository search, filters, and manual sync", async ({ request }) => {
   expect(after[0].id).toBe(sync.id);
   expect(after.length).toBeGreaterThanOrEqual(before.length);
 });
+
+test("model hero card shows name, endpoint badge, caps, and context usage", async ({ page }) => {
+  await apiLoginAs(page, "intelhero");
+  const stamp = Date.now();
+  const { id: providerId } = await apiCreateProvider(page.request, `pw-hero-prov-${stamp}`);
+  const { id: modelId } = await apiCreateModel(page.request, providerId, `pw-hero-model-${stamp}`, "2", "8", {
+    context_window: 128000,
+    supports_reasoning: true,
+    supports_streaming: true,
+    supports_tool_calling: true,
+    supports_vision: true,
+  });
+
+  await page.goto("/");
+  await selectProviderModel(page, providerId, modelId);
+
+  // Hero card: model name + provider, endpoint badge moved here from the header.
+  const hero = page.getByTestId("intelligence-model");
+  await expect(hero).toBeVisible();
+  await expect(hero).toContainText(`pw-hero-model-${stamp}`);
+  await expect(hero).toContainText(`pw-hero-prov-${stamp}`);
+  await expect(hero).toContainText("Chat Completions");
+  // Capability chips for the flags set at creation, plus the thinking-levels line.
+  const caps = page.getByTestId("intelligence-caps");
+  await expect(caps).toBeVisible();
+  await expect(caps).toContainText("Reasoning");
+  await expect(caps).toContainText("Tools");
+  await expect(caps).toContainText("Streaming");
+  await expect(caps).toContainText("Vision");
+  await expect(hero).toContainText("Thinking:");
+
+  // Context-usage progress bar inside the conversation section (model has a window).
+  const panel = page.getByTestId("right-sidebar");
+  const usage = panel.getByTestId("intelligence-context-usage");
+  await expect(usage).toBeVisible();
+  await expect(usage.getByRole("progressbar")).toBeVisible();
+  await expect(usage).toContainText("context used");
+});

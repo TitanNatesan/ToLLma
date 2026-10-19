@@ -8,9 +8,11 @@ import { useChatStore } from "@/store/chat";
 import { Badge, Button, Tooltip } from "@/components/ui";
 import {
   Brain,
+  Check,
   Cpu,
   Database,
   Layers,
+  MessageSquarePlus,
   PanelRightClose,
   Sparkles,
   Workflow,
@@ -19,6 +21,8 @@ import { cn } from "@/lib/utils";
 import { fmtCompactTokens, fmtCost, fmtPrice, fmtTokens } from "@/lib/utils";
 import { getModelCapabilities, mediaRates } from "@/app/components/chat/capabilities";
 import { endpointLabel } from "@/app/providers/fields";
+import { logoForProviderType } from "@/services/catalog";
+import { ProviderLogo } from "@/components/ui/ProviderLogo";
 
 export const INTELLIGENCE_MIN_WIDTH = 320;
 export const INTELLIGENCE_MAX_WIDTH = 700;
@@ -74,6 +78,36 @@ function StatRow({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+function CapabilityChip({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-tollma-500/30 bg-tollma-50 px-1.5 py-px text-[10px] font-medium text-tollma-700 dark:border-tollma-500/30 dark:bg-tollma-950 dark:text-tollma-300">
+      <Check className="size-2.5" aria-hidden />
+      {label}
+    </span>
+  );
+}
+
+function ContextUsageBar({ used, limit }: { used: number; limit: number }) {
+  const pct = Math.min(100, Math.max(0, (used / Math.max(limit, 1)) * 100));
+  const nearCap = pct >= 85;
+  return (
+    <div className="pt-1.5" data-testid="intelligence-context-usage">
+      <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" role="progressbar"
+        aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}
+        aria-label={`Context usage ${fmtTokens(used)} of ${fmtCompactTokens(limit)} tokens`}>
+        <div
+          className={`h-full rounded-full transition-[width] ${nearCap ? "bg-amber-500" : "bg-tollma-500"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+        <span className="font-mono">{fmtTokens(used)}</span> of{" "}
+        <span className="font-mono">{fmtCompactTokens(limit)}</span> context used
+      </p>
     </div>
   );
 }
@@ -181,11 +215,6 @@ export function IntelligencePanel() {
               </h2>
             </div>
             <div className="flex items-center gap-1.5">
-              {model && (
-                <Badge variant="outline" className="text-[9px] px-1 py-0">
-                  {endpointLabel(model.primary_endpoint ?? model.endpoint_type)}
-                </Badge>
-              )}
               <Tooltip content="Hide Intelligence">
                 <Button
                   size="sm"
@@ -203,6 +232,48 @@ export function IntelligencePanel() {
 
           {/* Scrollable Content — starts with Current Conversation */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {/* 0. Selected model hero */}
+            {model && (
+              <section
+                aria-label="Selected model"
+                data-testid="intelligence-model"
+                className="rounded-lg border border-zinc-200 bg-gradient-to-b from-zinc-50 to-white p-3 dark:border-zinc-800 dark:from-zinc-900/60 dark:to-transparent"
+              >
+                <div className="flex items-center gap-2.5">
+                  <ProviderLogo
+                    logoUrl={logoForProviderType(provider?.provider_type ?? null)}
+                    name={model.name}
+                    size="md"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100" title={model.name}>
+                      {model.name}
+                    </p>
+                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                      {provider?.name ?? "Unknown provider"}
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="shrink-0 text-[9px] px-1 py-0">
+                    {endpointLabel(model.primary_endpoint ?? model.endpoint_type)}
+                  </Badge>
+                </div>
+                {(caps.supportsReasoning || caps.supportsVision || caps.supportsToolCalling || caps.supportsStreaming || caps.supportsAudioInput || caps.supportsFiles) && (
+                  <div className="mt-2 flex flex-wrap gap-1" data-testid="intelligence-caps">
+                    {caps.supportsReasoning && <CapabilityChip label="Reasoning" />}
+                    {caps.supportsToolCalling && <CapabilityChip label="Tools" />}
+                    {caps.supportsStreaming && <CapabilityChip label="Streaming" />}
+                    {caps.supportsVision && <CapabilityChip label="Vision" />}
+                    {caps.supportsAudioInput && <CapabilityChip label="Audio" />}
+                    {caps.supportsFiles && <CapabilityChip label="Files" />}
+                  </div>
+                )}
+                {caps.supportsReasoning && caps.reasoningLevels.length > 0 && (
+                  <p className="mt-1.5 text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    Thinking: <span className="font-medium capitalize text-zinc-700 dark:text-zinc-300">{caps.reasoningLevels.join(" · ")}</span>
+                  </p>
+                )}
+              </section>
+            )}
             {/* 1. Current Conversation — top priority */}
             <Section title="Current Conversation" icon={Workflow} testid="intelligence-conversation">
               <div className="flex flex-col gap-1" data-testid="usage-summary">
@@ -227,6 +298,12 @@ export function IntelligencePanel() {
                   value={<span data-testid="usage-cost" className="text-tollma-600 dark:text-tollma-400 font-bold">{fmtCost(usage?.total_cost)}</span>}
                   mono
                 />
+                {model?.context_window ? (
+                  <ContextUsageBar
+                    used={usage?.total_tokens ?? 0}
+                    limit={model.context_window}
+                  />
+                ) : null}
               </div>
 
               {/* By provider breakdown */}
@@ -446,9 +523,14 @@ export function IntelligencePanel() {
             </Section>
 
             {!provider && !model && (
-              <p className="text-xs text-zinc-400 p-2">
-                Select a provider and model in the chat composer to see details here.
-              </p>
+              <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-zinc-300 px-4 py-6 text-center dark:border-zinc-800">
+                <span className="flex size-9 items-center justify-center rounded-full bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
+                  <MessageSquarePlus className="size-4" aria-hidden />
+                </span>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Select a provider and model in the chat composer to see details here.
+                </p>
+              </div>
             )}
           </div>
         </div>

@@ -1,3 +1,9 @@
+import type {
+  ApiKeyIpRuleInput,
+  ApiKeyModelPermissionInput,
+  ApiKeyPolicyInput,
+} from "./apiKeys";
+
 export interface Organization {
   id: string;
   name: string;
@@ -237,14 +243,20 @@ export interface OrgKey {
   used_at?: string | null;
   expires_at?: string | null;
   created_at: string;
+  policy?: ApiKeyPolicyInput | null;
+  ip_rules?: ApiKeyIpRuleInput[];
 }
 
 export interface OrgKeyCreateInput {
   assignee_user_id: string;
   name: string;
   description?: string;
+  expires_at?: string | null;
+  /** Legacy single-field cap; used only when `policy` is absent. */
   max_budget_usd?: number | null;
-  model_permissions?: Array<{ model_id: string; provider_id?: string }>
+  policy?: ApiKeyPolicyInput | null;
+  ip_rules?: ApiKeyIpRuleInput[];
+  model_permissions?: ApiKeyModelPermissionInput[];
 }
 
 /** Create response: the raw secret appears exactly once. */

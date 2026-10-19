@@ -51,8 +51,8 @@ async function mkIdentity(browser: Browser, request: APIRequestContext, email: s
   const me = await page.request.get(`${API}/auth/me`);
   expect(me.ok(), `identity check for ${email}`).toBeTruthy();
   expect((await me.json()).email, `logged in as ${email}`).toBe(email);
-  await page.goto("/organizations");
-  await expect(page.getByTestId("organizations-page")).toBeVisible({ timeout: 30000 });
+  await page.goto("/settings#organizations");
+  await expect(page.getByTestId("settings-organizations")).toBeVisible({ timeout: 30000 });
   return { ctx, page };
 }
 
@@ -65,6 +65,14 @@ async function openOrgDashboard(page: Page, orgId: string, section: string) {
   await expect(page.getByTestId(`org-section-${section}`)).toBeVisible({ timeout: 20000 });
 }
 
+async function openOrgOperations(page: Page, orgId: string, tab: "requests" | "invitations") {
+  await page.goto(`/organizations/${orgId}?section=operations&tab=${tab}`);
+  await expect(page.getByTestId("org-section-operations")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("org-operations")).toBeVisible({ timeout: 20000 });
+  await page.getByTestId(`org-ops-tab-${tab}`).click();
+  await expect(page.getByTestId(`org-ops-tab-${tab}`)).toHaveAttribute("aria-selected", "true");
+}
+
 function joinResultButton(page: Page) {
   return page
     .locator("[data-testid^='org-join-']:not([data-testid='org-join-open']):not([data-testid='org-join-search']):not([data-testid='org-join-dialog']):not([data-testid='org-join-results'])")
@@ -74,7 +82,7 @@ function joinResultButton(page: Page) {
 /** UI-only slate cleanup: revoke all pending invites / reject all pending
  * requests matching an email so reruns start clean (all real clicks). */
 async function clearPendingInvitesFor(page: Page, orgId: string, email: string) {
-  await openOrgDashboard(page, orgId, "invitations");
+  await openOrgOperations(page, orgId, "invitations");
   for (let i = 0; i < 5; i++) {
     const card = page.locator('[data-testid^="org-inv-"]').filter({ hasText: email })
       .filter({ hasText: "pending" }).first();
@@ -97,7 +105,8 @@ async function clearMembersExceptRoot(page: Page, orgId: string) {
   }
 }
 
-async function clearPendingRequestsFor(page: Page, orgId: string, email: string) {  await openOrgDashboard(page, orgId, "requests");
+async function clearPendingRequestsFor(page: Page, orgId: string, email: string) {
+  await openOrgOperations(page, orgId, "requests");
   for (let i = 0; i < 5; i++) {
     const card = page.locator('[data-testid^="org-req-"]').filter({ hasText: email }).first();
     if (!(await card.count())) break;
@@ -109,16 +118,16 @@ async function clearPendingRequestsFor(page: Page, orgId: string, email: string)
 test.describe("org invitation & join validation", () => {
   test("prep: root + Titan Test Organization via UI", async ({ browser, request }) => {
     const { ctx, page } = await mkIdentity(browser, request, "root@test.tollma.ai");
-    if (!(await page.getByTestId("organizations-page").textContent())?.includes(ORG_NAME)) {
+    if (!(await page.getByTestId("settings-organizations").textContent())?.includes(ORG_NAME)) {
       await page.getByTestId("org-create-open").click();
       await page.getByTestId("org-create-name").fill(ORG_NAME);
       await page.getByTestId("org-create-description").fill("Validation org for invitation flows");
       await page.getByTestId("org-create-industry").fill("Testing");
       await page.getByTestId("org-create-submit").click();
-      await expect(page.getByTestId("organizations-page")).toContainText(ORG_NAME, { timeout: 20000 });
+      await expect(page.getByTestId("settings-organizations")).toContainText(ORG_NAME, { timeout: 20000 });
     }
     const href = await page
-      .getByTestId("organizations-page")
+      .getByTestId("settings-organizations")
       .locator("a[href*='/organizations/']")
       .first()
       .getAttribute("href");
@@ -126,9 +135,51 @@ test.describe("org invitation & join validation", () => {
     expect(state.orgId, "org id captured").toBeTruthy();
     await openOrgDashboard(page, state.orgId!, "overview");
     await expect(page.getByTestId("sidebar-org-nav")).toContainText(/titan-test-organization-/, { timeout: 20000 });
+    // Final nav rule: org scope shows ONLY the org nav (personal hidden).
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-workspace-switcher")).toHaveCount(0);
+    // Unified org nav: all 13 items (Chat second) with exact-pathname unified hrefs.
+    for (const section of ["overview", "chat", "providers", "keys", "analytics", "docs", "members", "teams", "sets", "operations", "budgets", "audit", "settings"] as const) {
+      await expect(page.getByTestId(`sidebar-org-${section}`)).toBeVisible();
+    }
+    await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");
+    await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("href", "/providers");
+    await expect(page.getByTestId("sidebar-org-keys")).toHaveAttribute("href", "/api-keys");
+    await expect(page.getByTestId("sidebar-org-analytics")).toHaveAttribute("href", "/analytics");
+    await expect(page.getByTestId("sidebar-org-docs")).toHaveAttribute("href", "/docs");
+    // ORG header block (name/slug) has no toggle.
+    await expect(page.getByTestId("sidebar-org-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-org-nav").getByRole("button")).toHaveCount(0);
+    // Chat entry links home and highlights on "/" in org scope.
+    await page.goto("/");
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");
+    await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("aria-current", "page");
+    // Collapsed rail mirrors the org nav set with active state.
+    await page.getByTestId("left-sidebar-toggle").click();
+    await expect(page.getByTestId("sidebar-reveal-rail")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("rail-expand")).toHaveAttribute("aria-label", "Expand sidebar");
+    await expect(page.getByTestId("rail-command-palette")).toHaveAttribute("aria-label", "Open command palette");
+    await expect(page.getByTestId("rail-notifications")).toHaveAttribute("aria-label", /Notifications/);
+    for (const section of ["overview", "chat", "providers", "keys", "analytics", "docs", "members", "teams", "sets", "operations", "budgets", "audit", "settings"] as const) {
+      await expect(page.getByTestId(`rail-org-${section}`)).toBeVisible();
+    }
+    await expect(page.getByTestId("rail-org-chat")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("rail-nav-toggle")).toHaveAttribute("aria-label", "Hide navigation");
+    await page.getByTestId("rail-profile-menu").click();
+    await expect(page.getByTestId("workspace-menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByTestId("rail-expand").click();
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await openOrgDashboard(page, state.orgId!, "overview");
+    // Chevron workspace button shows the current org; the identity block stays put.
+    await expect(page.getByTestId("workspace-menu-trigger")).toHaveRole("button");
+    await expect(page.getByTestId("workspace-menu-trigger")).toHaveAttribute("aria-label", /current workspace/i);
     const navText = await page.getByTestId("sidebar-org-nav").textContent();
     state.orgSlug = navText?.match(/\/([a-z0-9-]+)/)?.[1];
     expect(state.orgSlug, "org slug captured").toBeTruthy();
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible();
     await clearMembersExceptRoot(page, state.orgId!);
     await openOrgDashboard(page, state.orgId!, "overview");
     await shot(page, "01-root-org-overview");
@@ -145,15 +196,15 @@ test.describe("org invitation & join validation", () => {
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
     await shot(root.page, "02-root-invite-sent");
-    await invited.page.goto("/organizations?view=inbox");
-    await expect(invited.page.getByTestId("org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
+    await invited.page.goto("/settings#organizations");
+    await expect(invited.page.getByTestId("settings-org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
     const card = inviteCard(invited.page, state.orgSlug!);
     await expect(card).toBeVisible({ timeout: 20000 });
     await shot(invited.page, "03-invitee-inbox");
     await card.getByRole("button", { name: "Accept" }).click();
     await expect(card).toHaveCount(0, { timeout: 20000 });
-    await invited.page.goto("/organizations");
-    await expect(invited.page.getByTestId("organizations-page")).toContainText(ORG_NAME, { timeout: 20000 });
+    await invited.page.goto("/settings#organizations");
+    await expect(invited.page.getByTestId("settings-organizations")).toContainText(ORG_NAME, { timeout: 20000 });
     await shot(invited.page, "04-invitee-joined");
     await root.ctx.close();
     await invited.ctx.close();
@@ -168,14 +219,14 @@ test.describe("org invitation & join validation", () => {
     await root.page.getByTestId("org-invite-email").fill("existing-reject@test.tollma.ai");
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
-    await decliner.page.goto("/organizations?view=inbox");
-    await expect(decliner.page.getByTestId("org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
+    await decliner.page.goto("/settings#organizations");
+    await expect(decliner.page.getByTestId("settings-org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
     const card = inviteCard(decliner.page, state.orgSlug!);
     await expect(card).toBeVisible({ timeout: 20000 });
     await card.getByRole("button", { name: "Reject" }).click();
     await expect(card).toHaveCount(0, { timeout: 20000 });
-    await decliner.page.goto("/organizations");
-    await expect(decliner.page.getByTestId("organizations-page")).not.toContainText(ORG_NAME);
+    await decliner.page.goto("/settings#organizations");
+    await expect(decliner.page.getByTestId("settings-organizations")).not.toContainText(ORG_NAME);
     await shot(decliner.page, "05-invitee-declined");
     await root.ctx.close();
     await decliner.ctx.close();
@@ -211,14 +262,14 @@ test.describe("org invitation & join validation", () => {
     await page.getByTestId("login-email").fill("newuser@test.tollma.ai");
     await page.getByTestId("login-password").fill(PW);
     await page.getByTestId("login-submit").click();
-    await page.goto("/organizations");
-    await expect(page.getByTestId("organizations-page")).toBeVisible({ timeout: 30000 });
+    await page.goto("/settings#organizations");
+    await expect(page.getByTestId("settings-organizations")).toBeVisible({ timeout: 30000 });
     await page.goto(`/organizations/invites?token=${token}`);
     await expect(page.getByTestId("org-invite-landing")).toContainText(ORG_NAME, { timeout: 20000 });
     await shot(page, "07-newuser-invite-landing");
     await page.getByTestId("org-invite-landing-accept").click();
-    await page.goto("/organizations");
-    await expect(page.getByTestId("organizations-page")).toContainText(ORG_NAME, { timeout: 20000 });
+    await page.goto("/settings#organizations");
+    await expect(page.getByTestId("settings-organizations")).toContainText(ORG_NAME, { timeout: 20000 });
     // Personal space still exists (context switcher shows Personal).
     await expect(page.getByTestId("org-context-personal")).toBeVisible();
     await shot(page, "08-newuser-joined");
@@ -240,8 +291,8 @@ test.describe("org invitation & join validation", () => {
     await newcomer.page.goto(`/organizations/invites?token=${token}`);
     await expect(newcomer.page.getByTestId("org-invite-landing")).toContainText(ORG_NAME, { timeout: 20000 });
     await newcomer.page.getByTestId("org-invite-landing-reject").click();
-    await newcomer.page.goto("/organizations");
-    await expect(newcomer.page.getByTestId("organizations-page")).not.toContainText(ORG_NAME);
+    await newcomer.page.goto("/settings#organizations");
+    await expect(newcomer.page.getByTestId("settings-organizations")).not.toContainText(ORG_NAME);
     await root.ctx.close();
     await newcomer.ctx.close();
   });
@@ -258,7 +309,7 @@ test.describe("org invitation & join validation", () => {
     await shot(requester.page, "09-join-search");
     await joinBtn.click();
     await expect(requester.page.getByTestId("org-join-dialog")).toBeHidden({ timeout: 20000 });
-    await openOrgDashboard(root.page, state.orgId!, "requests");
+    await openOrgOperations(root.page, state.orgId!, "requests");
     const reqCard = root.page.locator('[data-testid^="org-req-"]').filter({ hasText: "request@test.tollma.ai" }).first();
     await expect(reqCard).toBeVisible({ timeout: 20000 });
     await shot(root.page, "10-root-requests");
@@ -266,8 +317,8 @@ test.describe("org invitation & join validation", () => {
     await expect(root.page.getByTestId("org-approve-dialog")).toBeVisible({ timeout: 10000 });
     await root.page.getByTestId("org-assign-submit").click();
     await expect(reqCard).toHaveCount(0, { timeout: EMAIL_TIMEOUT });
-    await requester.page.goto("/organizations");
-    await expect(requester.page.getByTestId("organizations-page")).toContainText(ORG_NAME, { timeout: 20000 });
+    await requester.page.goto("/settings#organizations");
+    await expect(requester.page.getByTestId("settings-organizations")).toContainText(ORG_NAME, { timeout: 20000 });
     await shot(requester.page, "11-requester-joined");
     await requester.ctx.close();
     await root.ctx.close();
@@ -284,13 +335,13 @@ test.describe("org invitation & join validation", () => {
     await expect(joinBtn).toBeVisible({ timeout: 20000 });
     await joinBtn.click();
     await expect(requester.page.getByTestId("org-join-dialog")).toBeHidden({ timeout: 20000 });
-    await openOrgDashboard(root.page, state.orgId!, "requests");
+    await openOrgOperations(root.page, state.orgId!, "requests");
     const reqCard = root.page.locator('[data-testid^="org-req-"]').filter({ hasText: "request-reject@test.tollma.ai" }).first();
     await expect(reqCard).toBeVisible({ timeout: 20000 });
     await reqCard.getByRole("button", { name: "Reject" }).click();
     await expect(reqCard).toHaveCount(0, { timeout: EMAIL_TIMEOUT });
-    await requester.page.goto("/organizations");
-    await expect(requester.page.getByTestId("organizations-page")).not.toContainText(ORG_NAME);
+    await requester.page.goto("/settings#organizations");
+    await expect(requester.page.getByTestId("settings-organizations")).not.toContainText(ORG_NAME);
     await requester.ctx.close();
     await root.ctx.close();
   });
@@ -304,7 +355,7 @@ test.describe("org invitation & join validation", () => {
     await root.page.getByTestId("org-invite-email").fill("resend-ui@test.tollma.ai");
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
-    await openOrgDashboard(root.page, state.orgId!, "invitations");
+    await openOrgOperations(root.page, state.orgId!, "invitations");
     const invCard = root.page.locator('[data-testid^="org-inv-"]').filter({ hasText: "resend-ui@test.tollma.ai" }).first();
     await expect(invCard).toBeVisible({ timeout: 20000 });
     const invId = (await invCard.getAttribute("data-testid"))?.replace("org-inv-", "");
@@ -312,8 +363,8 @@ test.describe("org invitation & join validation", () => {
     await expect(root.page.getByText("fresh link")).toBeVisible({ timeout: EMAIL_TIMEOUT });
     await shot(root.page, "12-resent");
     // Target accepts with the fresh link via the real inbox UI.
-    await target.page.goto("/organizations?view=inbox");
-    await expect(target.page.getByTestId("org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
+    await target.page.goto("/settings#organizations");
+    await expect(target.page.getByTestId("settings-org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
     const card = inviteCard(target.page, state.orgSlug!);
     await expect(card).toBeVisible({ timeout: 20000 });
     await card.getByRole("button", { name: "Accept" }).click();

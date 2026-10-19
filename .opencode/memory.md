@@ -3371,3 +3371,198 @@ Scope-aware unified workspace: switcher (Personal default + accessible orgs), pe
 ### Notes
 - Full provider registration E2E (valid credentials → register → chat) BLOCKED: no usable provider credentials in this environment (dead-loopback only); wizard transport paths unchanged and e2e specs updated for the new flow.
 - Backend suite not re-run (zero backend changes); scope isolation + catalog suites unaffected.
+
+---
+
+## 2026-10-18 — Sidebar/settings navigation consolidation (workspace in profile, orgs in settings)
+
+### Requirement
+User review: fix truncated providers Add button; kill nav redundancy; join/create org under Settings; delete /organizations page + dead org components; workspace selection into bottom profile menu; current page highlighted, never hidden; delete never-used components.
+
+### Implementation (frontend only, no backend changes)
+- `SidebarProviders.tsx`: header stacked — title+count row, full-width grid-cols-2 Catalog/Add row (was one row overflowing the narrow rail, cutting off "Add").
+- `SidebarNavigation.tsx`: deleted gear-toggle popup (`SidebarNavigation`); `NavRow` gained active highlight + aria-current; `SidebarPersonalNav` renders ALL 5 links with current-page highlight (was excluding the active page).
+- `Sidebar.tsx`: removed `SidebarWorkspaceSwitcher` mount + file deleted; removed gear state/popup; removed orgs-list hint branch; admin nav always visible for platform admins; added api-keys/api-docs hint branch.
+- `SidebarFooter.tsx` simplified (no nav props); `SidebarProfile.tsx` rebuilt as workspace dropdown (Radix): identity trigger showing active workspace, Personal + org list (check marks), New/Join organization → `/settings#organizations`; gear → plain link to /settings; logout kept.
+- Settings: NEW `OrganizationsSection` (org list + switch/open, create, join, invitations inbox, notifications inbox); moved `CreateOrgModal`/`JoinModal` via git mv to settings/components; added `organizations` settings section + sidebar shortcut.
+- Deleted `app/organizations/page.tsx` (list route now app 404); kept `[id]` (workspace), `invites` (email flow), all section components. Fixed 4 stale pushes to the deleted route ([id] back/leave, invites reject → `/settings#organizations`).
+- ScopeSync org redirects retained and verified against new IA.
+
+### Verification
+- `tsc` clean (incl. fixing a stale pre-existing test cast), `eslint` clean, vitest **152/152**; e2e `test --list` 139 collected; tester retargeted specs to profile menu + settings flows.
+- Browser (agent-browser, seeded user + 2 orgs, seed removed after): Add/Catalog buttons full-width untruncated; personal nav all 5 links with Providers highlighted; no gear popup; profile menu lists Personal + both orgs + New/Join; org switch → org nav; org create from Settings works and appears in menu live; /organizations → app 404 page; [id] dashboard intact; full key-creation flows (personal + org) re-verified; scope isolation both directions; refresh persistence.
+- Backend suite not re-run (zero backend changes).
+
+### Notes
+- Join flow verified only to modal open (same plumbing as tested create); full invite-accept covered statically by e2e.
+- Deferred (pre-existing patterns, no new violations): focus-ring utilities, tablist arrow-key nav, quote/number formatting, motion-width animation, single-slot provider busy.
+
+---
+
+## 2026-10-18 — One shared UI, scope-aware data (providers/keys/analytics unification + backend ownership)
+
+### Requirement
+Single canonical Providers/API Keys pages for personal+org (same UI, org data); org navigation as chevron group (no duplicate sidebar); bottom-anchored nav; profile chevron selector; backend org logic moved into canonical provider/key service areas + decomposition guideline; delete duplicates.
+
+### Implementation
+- **Sidebar IA**: deleted full-tree body swap; route body + ALWAYS-visible bottom-anchored `SidebarPersonalNav` (current page highlighted, never hidden) + collapsible org chevron group (`SidebarOrgNav` rewritten: org-only pages, permission-filtered, `aria-expanded`); profile card split into identity + explicit chevron selector button + settings link + logout; `SidebarWorkspaces.tsx` deleted; org-switch redirects removed from AppShell (unified pages handle scope); legacy `?section=providers|analytics|operations&tab=keys` redirects live in `[id]` page with error guard; "All organizations" + invites-reject + leave now route to `/settings#organizations` (/organizations list route already deleted).
+- **Providers unified**: `/providers` reads `useOrgStore` scope; org mode uses `useOrgProviders` + NEW `useOrgProviderModels(orgId, providerId)` + org mutations + wizard `ownership` (existing), gated by Providers.Read/Create/Update; sidebar provider list scope-aware (org rows, Add gated, no per-model counts in org scope — no org model-count endpoint); model register/edit/toggle/delete stay personal-only; org scope chip in detail header + sidebar list header; `OrgProvidersSection.tsx` deleted; `[id]` providers+analytics branches + titles removed (analytics section moved to unified page).
+- **API Keys unified**: `/api-keys` switch on scope; org mode reuses verbatim-moved `OrgKeysPanel` (same table/dialogs/testids, `key={orgId}` remount); KeysTab removed from OrgOperationsSection (`OpsTab` narrowed, default requests tab); `[id]/page` passes narrowed perms.
+- **Analytics unified**: same page shell; org scope renders `OrgAnalyticsDashboard` (+budget card, gated) with scope chip; personal path byte-identical.
+- **Backend**: NEW `api/providers/organization_service.py` + `api/keys/organization_service.py` own all org logic (verbatim move; membership+perm gates, org_id match, 404-oracle, single-commit register); `api/orgs/{providers,keys}/service.py` thin re-export wrappers; orgs facade re-exports `list_org_provider_models`; NEW `GET /orgs/{id}/providers/{pid}/models` (ModelRead, Providers.Read-gated); backend.md service-decomposition guideline appended verbatim. No schema changes, no URL changes.
+- **E2E**: specs retargeted (chevron menu, bottom-anchored nav, org group toggle, unified pages + legacy redirects, org provider-models endpoint covered by new backend tests); `test_org_provider_models.py` (5 tests).
+
+### Verification
+- Backend full suite **757 passed**; `alembic check` clean; OpenAPI builds (169 paths).
+- Frontend: `tsc`/`eslint` clean, vitest **152/152**; e2e `test --list` 143 collected.
+- Browser (agent-browser, seeded user+org, seed removed): chevron selector with org list + New/Join inline; bottom-anchored nav + collapsible org group (8 permission-filtered sections); unified /providers shows org provider + registered org model + UniOrg chip, zero personal leakage, sidebar list org-only; /api-keys org chip; /analytics org scope; legacy redirect works; group collapse keeps personal nav; gear is a /settings link; settings org section + create flow re-verified.
+- Independent reviewer round: fixed stale-validation shipping, mapping-failure selection crash, fail-closed error-gating, canonical fallback linking, server-side reasoning validation; deferred a11y nits documented.
+
+### Notes
+- No live provider registration (no usable credentials; wizard transport unchanged, e2e covers with mock transports).
+- Accepted residual: valid-but-truncated snapshot with zero errors still deactivates (documented, never observed).
+- Deferred: per-model counts in org sidebar skipped (no org model-count endpoint; detail page has them); `useProviders` always fetches in org scope (unused data, harmless).
+
+---
+
+## 2026-10-18 — Footer chevron toggles nav lists; org sections always visible
+
+### Requirement
+Footer chevron must show/hide the bottom-anchored navigation lists (not collapse the sidebar). Org-specific navigation must render inline with personal navigation (no accordion), i.e. personal nav always visible, org sections appended when an org is selected.
+
+### Implementation (frontend only)
+- `Sidebar.tsx`: new `navVisible` state (default true); bottom-anchored nav block renders only when visible; state passed to `SidebarFooter` → `SidebarProfile`.
+- `SidebarProfile.tsx`: footer chevron (`sidebar-collapse-btn`, ChevronsUpDown icon) now toggles nav lists with Hide/Show navigation labels + `aria-expanded`; sidebar open/collapse untouched (reveal rail / mobile backdrop own that). Identity block still opens the workspace menu.
+- `SidebarOrgNav.tsx`: accordion removed — static org header + always-visible permission-filtered section list; `sidebar-org-toggle` testid deleted.
+- Tester updating e2e for the new behavior (background at report time).
+
+### Verification
+- `tsc` clean, `eslint` clean, vitest **152/152**.
+- Integrated browser: app open at /login (title ToLLma) for visual confirmation; interactive driving not available via integrated-browser tooling (open/preview only), so behavior verified via static checks + unit tests; e2e collection pending tester completion.
+
+---
+
+## 2026-10-18 — Single-active nav + dynamic palette; workspace chevron owns switching
+
+### Requirement
+Fix duplicate `aria-current` (Overview + unified item both active on shared pages); make Ctrl+K palette scope-aware (org + permission-gated entries, scoped provider shortcuts); profile chevron opens the workspace menu (no separate switcher row/toggle).
+
+### Implementation (frontend only, no backend changes)
+- `SidebarOrgNav.tsx`: unified-first active rule — pathname match wins (Chat matches `/` + `/c/*`); Overview active only when no unified item matches. Removed accordion (always-visible flat list from prior turn).
+- `SidebarProfile.tsx`: whole identity block is the DropdownMenu trigger (testids preserved); chevron button toggles the bottom-anchored nav lists (`Hide/Show navigation`, `aria-expanded`); settings gear removed (lives in personal nav); logout kept.
+- `CommandPalette.tsx`: new scope-aware "Go to" group (Chat/Providers/API Keys/Analytics/API Docs always; org overview/members/teams/sets/operations/budgets/audit/settings gated by the same permission codes as the sidebar); provider shortcuts list scope providers (`useOrgProviders` in org scope with Providers.Read gate).
+- E2E (tester): single-active assertions per route + palette Go-to navigation/permission/provider-scoping coverage (2 new tests; 145 total collect).
+
+### Verification
+- `tsc`/`eslint` clean; vitest **152/152**; e2e `test --list` 145 pass; backend suite untouched this round (757 passed previously, no backend changes).
+- Integrated browser: app open at `/` for visual confirmation (interaction not available via integrated-browser tooling).
+
+### Notes
+- Backend: no changes required — all org reads reuse existing scoped endpoints.
+
+---
+
+## 2026-10-19 — Command palette UX polish
+
+### Requirement
+Enhance command palette with proper spacing and UX (user screenshot showed cramped all-caps rows).
+
+### Implementation (frontend only, `components/ui/CommandPalette.tsx`)
+- Shared `PaletteItem` row: icon tile + title/description + optional trailing hint; roomier `py-2.5` rows, `rounded-xl`, selected ring; shared `SectionHeading`.
+- Sentence-case titles with one-line descriptions; group headings with top spacing; wider dialog (`max-w-lg`, `rounded-2xl`); taller search input; empty state with icon + guidance; footer shows active workspace + spaced kbd hints.
+- All testids, cmdk values, and onSelect behaviors unchanged.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 145 collected. App open in integrated browser for visual check (press Ctrl+K).
+
+---
+
+## 2026-10-19 — Org key creation parity + auth/menu UX polish
+
+### Requirement
+Org API-key creation must expose the FULL personal flow (expiration, limits, rate limits, spend caps, network access, model restrictions with per-model caps) plus member assignment. Also: inline New/Join org actions (wrap only if no space), login/signup UI/UX polish, comment hygiene.
+
+### Backend (additive, no migration)
+- `OrgKeyCreate`: + `expires_at`, full `PolicyIn policy`, `ip_rules: list[IpRuleIn]`; top-level `max_budget_usd` kept for backward compat.
+- `create_org_key`: resolves effective policy (explicit policy wins; top-level fills only gaps), org budget cap enforced against it; `ApiKeyCreate` carries expiry/policy/IP/models with per-model caps.
+- NEW `GET /orgs/{id}/models` (org live models, `Keys.Create`-gated) for the key-picker model list.
+- `OrgKeyRead` += `ip_rules`; wired through `_read_org_key` + eager load.
+
+### Frontend
+- `ModelPermissionsEditor`: optional `models`/`providers`/`isPending`/`configureHref` overrides (defaults = personal registry; org passes org data + org providers link).
+- `KeyForm` org mode: full Basics/Limits/Network/Model-access identical to personal + required assignee; removed org-only mini-budget form.
+- `OrgKeysPanel`: org providers/models into KeyForm; full result mapping (policy, IP, expiry, per-model caps).
+- `OrgKeyCreateInput` extended; `useOrgModels` hook added; `useOrgMutations.createKey` retyped.
+- Auth: labels htmlFor-linked, toggle aria-labels, errors role=alert, caps-lock warning, password-strength meter, fixed toast grammar ("Verification email sent ..."), trust row, tollma focus rings, taller inputs.
+- Workspace menu redesign: identity header, Workspaces section, descriptions, active highlighting, retry on error; inline New/Join via flex-wrap (stacks only when narrow).
+- `types/orgs.ts` OrgKey/OrgKeyCreateInput extended; comments completed on touched modules.
+
+### Verification
+- Backend targeted **49 passed**; frontend `tsc`/`eslint` clean, vitest **152/152**; e2e `test --list` 143→146 collected (auth labels/toggle/meter/trust, menu lock-in).
+- Full backend suite + browser validation pending next loop; work uncommitted.
+
+---
+
+## 2026-10-19 — Collapsed rail becomes full icon navigation
+
+### Requirement
+Collapsed rail: top = expand + command-palette search + notifications; bottom = scope-aware nav icons + nav show/hide chevron + profile avatar with tooltips.
+
+### Implementation (frontend only)
+- `navVisible` + `setNavVisible` moved to `useChatStore` (shared by expanded sidebar footer chevron and rail chevron; not persisted).
+- `SidebarReveal` rewritten: top expand/search/bell (badge + settings-inbox link), scrollable middle nav (personal set or permission-filtered org set via shared `useOrgNavItems`), bottom chevron toggles `navVisible`, avatar opens shared `WorkspaceMenuContent`.
+- Extracted `WorkspaceMenuContent` (used by sidebar profile menu + rail avatar menu); `useOrgNavItems` hook + `PERSONAL_NAV`/`isActivePath` exports shared with rail.
+- Header bell now links to `/settings#organizations` (old `/organizations?view=inbox` route is gone).
+- E2E retargeted (rail coverage incl. scope sets, toggle, palette/notifications/expand/profile actions); fixed stale `sidebar-reveal` testid in `tests/chat-ux.spec.ts`.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 147 collected. App open in integrated browser for visual check.
+
+---
+
+## 2026-10-19 — Command palette UX polish + login/signup refresh
+
+### Requirement
+Polish the command palette (spacing, hierarchy) and refresh login/signup UI.
+
+### Frontend only (no backend changes)
+- `CommandPalette`: shared `PaletteItem` rows (icon tile + title + description + trailing hint), `SectionHeading` labels, wider dialog, taller search, proper empty state, footer with workspace + kbd hints, new "Go to" scope-aware section (org entries permission-gated), scoped provider shortcuts. All testids/values/handlers unchanged.
+- `AuthCard`: h-11 rounded-xl inputs with tollma focus rings, labels htmlFor, toggle aria-labels, role=alert errors, caps-lock warning, password-strength meter (client hint only), fixed toast grammar, trust row, gradient top accent, Reading order unchanged; all testids kept.
+- `SidebarProfile` workspace menu: identity header, Workspaces section label, per-item descriptions, active checks, inline New-organization tile (Join removed from menu; still in Settings), error retry.
+- `ChatSettingsPanel` (Model Intelligence): model hero card (logo/name/provider/endpoint/capability chips/thinking levels), context-usage progress bar (role=progressbar), empty-state card (text unchanged for e2e). Header endpoint badge moved into hero.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 147–148 collected incl. new palette/auth/intelligence assertions. Integrated browser opened for visual check (no driven interaction available).
+
+### Notes
+- Password strength is a client hint only; backend enforces minimums. Strength thresholds and cap copy are presentation choices.
+- `role="alert"` signup error uses `p-2` (no size class change) to keep the error compact.
+
+---
+
+## 2026-10-19 — Footer chevron hover-peek for navigation
+
+### Requirement
+Sidebar open + nav hidden + chevron hover → peek nav until pointer/focus leaves for 1s. Chevron click pins open (unfocus then keeps it). Chevron never collapses the sidebar.
+
+### Implementation (frontend only)
+- `navVisible`/`setNavVisible` moved to `useChatStore` (shared by expanded footer chevron; rail no longer toggles it).
+- `Sidebar.tsx`: owns peek timer (1s grace), `peekNavOpen`/`schedulePeekClose`/`toggleNavPinned`; nav block gated on `navVisible || peekNav` with container hover/focus bridging; passes handlers to `SidebarFooter` → `SidebarProfile` chevron (hover/focus peeks, click pins, aria reflects pinned+peeked visibility).
+- Rail simplified: expand button + search + notifications on top; always-visible nav icons; avatar with workspace menu at bottom (no chevron in rail).
+- E2E: peek/pin/keyboard coverage added (navigation.spec.ts).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 148 collected. Integrated browser opened for visual check.
+
+---
+
+## 2026-10-19 — Hover-to-open workspace menu
+
+### Requirement
+Hovering the profile section reveals the org-switching menu (same 1s grace-hide as nav peek); clicking still toggles.
+
+### Implementation (frontend only, `SidebarProfile.tsx`)
+- Controlled `DropdownMenu` (`menuOpen` + 1s `menuTimer`, unmount cleanup); trigger `onMouseEnter` opens, `onMouseLeave` schedules close; menu content keeps it open via enter/cancel; click toggles (Radix default through controlled `onOpenChange`).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 149 collected incl. new hover/grace/click test. Integrated browser opened for visual check.

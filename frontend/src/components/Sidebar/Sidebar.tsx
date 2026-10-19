@@ -10,7 +10,7 @@ import { useAuthStore } from "@/store/auth";
 import { useOrgStore } from "@/store/org";
 import { cn } from "@/lib/utils";
 import { SidebarHeader } from "./SidebarHeader";
-import { SidebarNavigation, SidebarPersonalNav } from "./SidebarNavigation";
+import { SidebarPersonalNav, SidebarLogoutNav } from "./SidebarNavigation";
 import { SidebarAdmin, ADMIN_SECTION_IDS, type AdminSectionId } from "./SidebarAdmin";
 import { SidebarSettings, SETTINGS_SECTION_IDS, type SettingsSectionId } from "./SidebarSettings";
 import { SidebarConversations } from "./SidebarConversations";
@@ -18,7 +18,6 @@ import { SidebarProviders } from "./SidebarProviders";
 import { SidebarAnalytics } from "./SidebarAnalytics";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarOrgNav } from "./SidebarOrgNav";
-import { SidebarWorkspaceSwitcher } from "./SidebarWorkspaceSwitcher";
 
 /** Hash fragment follows for section navigators (fragment navigation fires hashchange). */
 function subscribeSectionHash(callback: () => void) {
@@ -49,6 +48,9 @@ function settingsSectionFromHash(hash: string): SettingsSectionId {
 /**
  * Primary application navigation (ChatGPT-style).
  * Content switches on the active route; the header and profile footer persist.
+ * Layout: scrollable middle = route-aware body ONLY; bottom-anchored section
+ * = personal nav always + (when an org is selected) the collapsible org
+ * group. Nothing ever swaps the body.
  *
  *   /c/*, /      -> conversations context + full nav
  *   /admin*      -> admin section navigator (platform admins only)
@@ -59,6 +61,43 @@ function settingsSectionFromHash(hash: string): SettingsSectionId {
 export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => void }) {
   const pathname = usePathname();
   const { leftSidebarOpen, sidebarWidth, setSidebarWidth } = useChatStore();
+  // Bottom-anchored navigation visibility. The footer chevron toggles (pins)
+  // it; hovering the chevron while hidden only peeks until pointer + focus
+  // leave the chevron/nav area for 1s. The sidebar itself is unaffected.
+  const navVisible = useChatStore((s) => s.navVisible);
+  const setNavVisible = useChatStore((s) => s.setNavVisible);
+  const [peekNav, setPeekNav] = useState(false);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearPeekTimer = () => {
+    if (peekTimer.current !== null) {
+      clearTimeout(peekTimer.current);
+      peekTimer.current = null;
+    }
+  };
+
+  useEffect(() => () => {
+    if (peekTimer.current !== null) clearTimeout(peekTimer.current);
+  }, []);
+
+  // Peek: hovering the chevron while nav is hidden shows the nav
+  // temporarily. Clicking pins it open (unfocus then keeps it visible).
+  const peekNavOpen = () => {
+    if (useChatStore.getState().navVisible) return;
+    clearPeekTimer();
+    setPeekNav(true);
+  };
+  const schedulePeekClose = () => {
+    if (useChatStore.getState().navVisible) return;
+    clearPeekTimer();
+    peekTimer.current = setTimeout(() => setPeekNav(false), 1000);
+  };
+  const toggleNavPinned = () => {
+    clearPeekTimer();
+    setPeekNav(false);
+    setNavVisible(!useChatStore.getState().navVisible);
+  };
+  const navShown = navVisible || peekNav;
   const user = useAuthStore((s) => s.user);
   const isPlatformAdmin = user?.platform_role === "platform_admin";
   const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
@@ -67,17 +106,9 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const settingsHash = useSyncExternalStore(subscribeSectionHash, getSectionHash, getSectionHashServer);
   const settingsActiveId = settingsSectionFromHash(settingsHash);
 
-  // Navigation links stay hidden until the profile gear toggles them open.
-  // navPath records which route the menu was opened on; navigating away
-  // (stale path) collapses it again on the next render.
-  const [navPath, setNavPath] = useState<string | null>(null);
-  const navOpen = navPath === pathname;
-  const toggleNav = () => setNavPath((p) => (p === pathname ? null : pathname));
-
   const isProvidersPage = pathname === "/providers" || pathname.startsWith("/providers/");
   const isApiKeysPage = pathname === "/api-keys";
-  const isApiDocsPage = pathname === "/api-docs" || pathname.startsWith("/api-docs/");
-  const isOrgsListPage = pathname === "/organizations";
+  const isApiDocsPage = pathname.startsWith("/api-docs/") || pathname === "/docs";
   const isAnalyticsPage = pathname === "/analytics" || pathname.startsWith("/analytics/");
   const isSettingsPage = pathname === "/settings" || pathname.startsWith("/settings/");
   const orgSegment = pathname.split("/")[2] ?? "";
@@ -114,9 +145,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const currentWidth = leftSidebarOpen ? sidebarWidth : 0;
   const ariaLabel = isAdminPage
     ? "Admin navigation"
-    : scopeOrgId
-      ? "Organization sections"
-      : isProvidersPage
+    : isProvidersPage
         ? "Provider list"
         : isAnalyticsPage
           ? "Analytics"
@@ -142,38 +171,54 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
     >
       <SidebarHeader onOpenCommandPalette={onOpenCommandPalette} />
 
-      {/* Workspace scope (global, all routes). Remounts on scope change so
-          the accordion's initial open state tracks the active scope. */}
-      <SidebarWorkspaceSwitcher
-        key={context.type === "org" ? `org-${context.orgId}` : "personal"}
-      />
-
-      {/* Route-aware context (the only scrollable region; footer stays put).
-          Org scope replaces the body with the org section tree everywhere. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+      {/* Route-aware context: the only scrollable region. On org detail
+          routes the [id] page content lives in the main panel, so the body
+          shows nothing org-specific. */}
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         {isAdminPage ? (
           isPlatformAdmin ? (
             <SidebarAdmin activeId={adminActiveId} />
           ) : null
-        ) : scopeOrgId ? (
-          <SidebarOrgNav orgId={scopeOrgId} />
         ) : isProvidersPage ? (
           <SidebarProviders />
         ) : isAnalyticsPage ? (
           <SidebarAnalytics />
         ) : isSettingsPage ? (
           <SidebarSettings activeId={settingsActiveId} />
-        ) : isOrgsListPage || isApiKeysPage || isApiDocsPage ? (
-          /* Switcher + personal nav below carry these pages; no route list needed. */
+        ) : isApiKeysPage || isApiDocsPage ? (
+          /* Personal nav below carries these pages; no route list needed. */
           <p className="px-3 py-2 text-[11px] text-zinc-400">Select a section below to navigate.</p>
         ) : (
           <SidebarConversations />
         )}
-        {context.type === "personal" && !isAdminPage && <SidebarPersonalNav />}
       </div>
 
-      <SidebarNavigation open={navOpen} />
-      {navOpen && isPlatformAdmin && (
+      {/* Bottom-anchored nav above the footer: personal links always, plus
+          the org group when an org is selected. Never scrolls, never swaps
+          the body above. Hidden only via the footer chevron. */}
+      {/* Bottom-anchored nav: org scope shows ONLY the org navigation
+          (unified pages included); personal scope shows the personal nav.
+          Hidden only via the footer chevron. */}
+      {!isAdminPage && navShown && (
+        <div
+          className="shrink-0 border-t border-zinc-200 dark:border-zinc-800"
+          onMouseEnter={peekNavOpen}
+          onMouseLeave={schedulePeekClose}
+          onFocus={peekNavOpen}
+          onBlur={schedulePeekClose}
+        >
+          {scopeOrgId ? (
+            <SidebarOrgNav orgId={scopeOrgId} />
+          ) : (
+            <SidebarPersonalNav />
+          )}
+          <div className="border-t border-zinc-200 dark:border-zinc-800">
+            <SidebarLogoutNav />
+          </div>
+        </div>
+      )}
+
+      {isPlatformAdmin && (
         <nav
           aria-label="Platform administration"
           className="border-t border-zinc-200 px-2 py-2 dark:border-zinc-800"
@@ -194,7 +239,12 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
           </Link>
         </nav>
       )}
-      <SidebarFooter navOpen={navOpen} onToggleNav={toggleNav} />
+      <SidebarFooter
+        navOpen={navShown}
+        onToggleNav={toggleNavPinned}
+        onPeekNav={peekNavOpen}
+        onUnpeekNav={schedulePeekClose}
+      />
     </div>
   );
 

@@ -21,7 +21,8 @@ def issue_org_key(org_id: uuid.UUID, data: OrgKeyCreate, db: Session = Depends(g
     key, raw_key = service.create_org_key(
         db, user.id, org_id, assignee_user_id=data.assignee_user_id, name=data.name,
         description=data.description, max_budget_usd=data.max_budget_usd,
-        model_permissions=data.model_permissions,
+        policy=data.policy, ip_rules=data.ip_rules,
+        expires_at=data.expires_at, model_permissions=data.model_permissions,
     )
     return OrgKeyCreated(key=key, raw_key=raw_key)
 
