@@ -226,7 +226,8 @@ def update_model(
     *, personal_only: bool = False,
 ) -> AIModel:
     model = get_model(db, model_id, user_id, personal_only=personal_only)
-    _require_org_perm(db, db.get(Provider, model.provider_id), user_id, "Providers.Update")
+    owner_provider = db.get(Provider, model.provider_id)
+    _require_org_perm(db, owner_provider, user_id, "Providers.Update")
     changes = data.model_dump(exclude_unset=True)
     if changes.keys() & {"endpoint_type", "primary_endpoint", "supported_endpoints"}:
         enum, primary, endpoints = normalize_endpoints(
@@ -244,6 +245,30 @@ def update_model(
             setattr(model, field, value)
     db.commit()
     db.refresh(model)
+    if (
+        "is_active" in changes
+        and owner_provider is not None
+        and owner_provider.org_id is None
+    ):
+        # Personal model toggles move its primary-key allow-list row:
+        # disable prunes, re-enable re-syncs. Best-effort — the update
+        # already committed. Org models never touch the personal primary.
+        try:
+            from tollms.api.keys import service as _key_service
+
+            owner = user_id if user_id is not None else owner_provider.user_id
+            if owner is not None:
+                if changes["is_active"]:
+                    _key_service.sync_primary_model(
+                        db, user_id=owner, provider_id=model.provider_id,
+                        model_id=model.id,
+                    )
+                else:
+                    _key_service.prune_primary_model(
+                        db, user_id=owner, model_id=model.id
+                    )
+        except Exception:
+            logger.exception("primary key sync failed for model %s", model.id)
     logger.info("model updated: %s", model.id)
     return model
 
@@ -253,10 +278,22 @@ def delete_model(
     *, personal_only: bool = False,
 ) -> None:
     model = get_model(db, model_id, user_id, personal_only=personal_only)
-    _require_org_perm(db, db.get(Provider, model.provider_id), user_id, "Providers.Delete")
+    owner_provider = db.get(Provider, model.provider_id)
+    _require_org_perm(db, owner_provider, user_id, "Providers.Delete")
     model.is_deleted = True
     model.deleted_at = datetime.now(timezone.utc)
     model.is_active = False
     db.commit()
+    if owner_provider is not None and owner_provider.org_id is None:
+        # Personal model: drop its primary-key allow-list row. Best-effort —
+        # the delete already committed. Org models never touch it.
+        try:
+            from tollms.api.keys import service as _key_service
+
+            owner = user_id if user_id is not None else owner_provider.user_id
+            if owner is not None:
+                _key_service.prune_primary_model(db, user_id=owner, model_id=model.id)
+        except Exception:
+            logger.exception("primary key prune failed for model %s", model.id)
     logger.info("model soft-deleted: %s", model.id)
     emit("model.deleted", model_id=str(model_id), user_id=str(user_id))

@@ -13,7 +13,7 @@ test("wizard registers only on finish, then persists", async ({ page, request })
   await page.goto("/providers");
   await page.getByTestId("add-provider").click();
   await page.getByTestId("provider-name").fill(name);
-  await page.getByTestId("provider-type").selectOption("CUSTOM");
+  await page.getByTestId("provider-platform-CUSTOM").click();
   // Abandon at step 1: nothing may be persisted.
   await page.keyboard.press("Escape");
   const list = await (await page.request.get(`${API}/api/v1/providers`)).json();

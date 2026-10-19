@@ -7,7 +7,7 @@ import * as SeparatorPrimitive from "@radix-ui/react-separator";
 import * as DialogPrimitives from "@radix-ui/react-dialog";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check } from "lucide-react";
 import { Toaster as SonnerToaster } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -139,58 +139,11 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   );
 }
 
-export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
-  sizeVariant?: "default" | "sm";
-  wrapperClassName?: string;
-}
-
-export function Select({
-  className,
-  wrapperClassName,
-  sizeVariant = "default",
-  children,
-  disabled,
-  ...props
-}: SelectProps) {
-  const widthClasses = className
-    ?.split(/\s+/)
-    .filter((c) => /^(w-|max-w-|min-w-|flex-)/.test(c))
-    .join(" ");
-
-  return (
-    <div
-      className={cn(
-        "relative inline-flex items-center",
-        widthClasses || "w-full",
-        disabled && "opacity-50",
-        wrapperClassName,
-      )}
-    >
-      <select
-        disabled={disabled}
-        className={cn(
-          "w-full appearance-none rounded-md border text-zinc-900 transition-colors cursor-pointer",
-          "border-zinc-300 bg-white hover:border-zinc-400 shadow-xs",
-          "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/40 focus-visible:border-tollma-500 dark:focus-visible:ring-tollma-500/40",
-          "disabled:cursor-not-allowed",
-          sizeVariant === "sm" ? "h-8 pl-2.5 pr-7 text-xs" : "h-9 pl-3 pr-8 text-sm",
-          "[&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-900 dark:[&>option]:text-zinc-100",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-      </select>
-      <ChevronDown
-        className={cn(
-          "pointer-events-none absolute right-2 text-zinc-400 dark:text-zinc-500 shrink-0",
-          sizeVariant === "sm" ? "size-3.5" : "size-4",
-        )}
-      />
-    </div>
-  );
-}
+// --- custom dropdown select (button trigger + listbox, no native <select>) ---
+// Lives in ./select.tsx so the interactive control keeps its own "use client"
+// boundary; server components importing the rest of this file stay server-side.
+export { Select, parseSelectOptions } from "./select";
+export type { ParsedSelectOption, SelectProps } from "./select";
 
 export interface CheckboxProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {

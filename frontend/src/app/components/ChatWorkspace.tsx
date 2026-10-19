@@ -42,7 +42,7 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { Sparkles } from "lucide-react";
-import type { ActiveGeneration, ChatMessage, MessageStatus, SearchResult } from "@/types";
+import type { ActiveGeneration, ChatMessage, Conversation as ConversationData, MessageStatus, SearchResult, StreamDone } from "@/types";
 
 const PENDING_SEND_KEY = "tollma-pending-send";
 
@@ -182,6 +182,39 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   // when on, a plain scroll container when the user opted out.
   const autoScroll = useSettingsStore((s) => s.autoScroll);
 
+  /**
+   * Merge the done-envelope into the cached conversation so generated media
+   * appears immediately. The message may be absent from cache (draft sends
+   * never fetched it) — then this is a no-op and the refetch below provides
+   * it. The refetch always overwrites with server truth, so a stale merge can
+   * never win over persistence.
+   */
+  const mergeDoneIntoCache = useCallback((convId: string | null, done: StreamDone) => {
+    if (!convId || !done.message_id) return;
+    // Assistant attachments are append-only: an empty envelope list carries
+    // no information, so only a non-empty list merges (never clobbers).
+    const attachments = (done.attachments?.length ?? 0) > 0 ? done.attachments : undefined;
+    if (attachments === undefined && done.content === undefined && done.status === undefined) return;
+    qc.setQueryData<ConversationData>(["conversation", convId], (cached) => {
+      if (!cached) return cached;
+      const idx = cached.messages.findIndex((m) => m.id === done.message_id);
+      if (idx === -1) return cached;
+      const prev = cached.messages[idx];
+      const next: ChatMessage = {
+        ...prev,
+        ...(done.content !== undefined ? { content: done.content } : null),
+        ...(done.status !== undefined ? { status: done.status } : null),
+        ...(attachments !== undefined ? { attachments } : null),
+      };
+      if (next.content === prev.content && next.status === prev.status && next.attachments === prev.attachments) {
+        return cached;
+      }
+      const messages = [...cached.messages];
+      messages[idx] = next;
+      return { ...cached, messages };
+    });
+  }, [qc]);
+
   /** Terminal state for any watched stream: drop local overlays, reload truth. */
   const finishGeneration = useCallback((convId: string | null, status?: MessageStatus | null, error?: string | null) => {
     setStreaming(false);
@@ -237,7 +270,13 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       if (mid) updateOptimisticStreaming(mid, d);
     },
     onDone: (done) => {
-      finishGeneration(useChatStore.getState().activeConversationId, done.status, done.error);
+      // Inline attachments land in the live message immediately (no reload);
+      // the refetch inside finishGeneration then confirms server truth. The
+      // merge and the overlay clear batch in one tick, so the text-only
+      // optimistic row can never render over the merged persisted row.
+      const convId = useChatStore.getState().activeConversationId;
+      mergeDoneIntoCache(convId, done);
+      finishGeneration(convId, done.status, done.error);
     },
     onError: (m) => {
       const convId = useChatStore.getState().activeConversationId;
@@ -255,6 +294,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     addOptimistic,
     setOptimisticContent,
     updateOptimisticStreaming,
+    mergeDoneIntoCache,
     finishGeneration,
     setStreaming,
     clearOptimistic,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BookOpen, CheckCircle2, MinusCircle, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -17,12 +17,16 @@ import {
   LoadingState,
   ProviderLogo,
   Select,
+  Tooltip,
 } from "@/components/ui";
 import { useCatalogProviders, useCatalogStats } from "@/hooks/useCatalog";
 import { parseApiError } from "@/lib/errors";
 import { apiBaseHost } from "./ConnectionTemplateFields";
 import type { CatalogProvider } from "@/types/catalog";
 import type { ProviderType } from "@/types";
+
+/** One full catalog page (4-col xl grid x 3 rows) fits ~90vh without scrolling. */
+const PAGE_SIZE = 12;
 
 /** Provider catalog browser: search + gateway filter + paginated cards with
  * logos. Catalog entries never hold credentials. Gateway-supported rows
@@ -36,11 +40,26 @@ export function CatalogBrowser({ onConfigure }: {
   const [committed, setCommitted] = useState("");
   const [gateway, setGateway] = useState<"all" | "supported" | "catalog-only">("all");
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<"name" | "models">("name");
   const stats = useCatalogStats();
-  const query = useCatalogProviders({ search: committed, gateway, page });
-  const items = query.data?.items ?? [];
+  const query = useCatalogProviders({ search: committed, gateway, page, pageSize: PAGE_SIZE });
   const total = query.data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / 24));
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // Client-side sort of the current page (server order is opaque).
+  const items = useMemo(() => {
+    const rows = [...(query.data?.items ?? [])];
+    if (sort === "models") rows.sort((a, b) => b.model_count - a.model_count);
+    else rows.sort((a, b) => a.name.localeCompare(b.name));
+    return rows;
+  }, [query.data, sort]);
+  const filtersActive = search !== "" || committed !== "" || gateway !== "all" || sort !== "name";
+  function clearFilters() {
+    setSearch("");
+    setCommitted("");
+    setGateway("all");
+    setSort("name");
+    setPage(1);
+  }
 
   function submitSearch() {
     setPage(1);
@@ -48,7 +67,7 @@ export function CatalogBrowser({ onConfigure }: {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3" data-testid="catalog-browser">
+    <div className="flex flex-col gap-3" data-testid="catalog-browser">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex min-w-52 flex-1 items-center gap-2">
           <Input
@@ -78,6 +97,18 @@ export function CatalogBrowser({ onConfigure }: {
           <option value="supported">Gateway supported</option>
           <option value="catalog-only">Catalog only</option>
         </Select>
+        <Select
+          value={sort}
+          onChange={(e) => {
+            setSort(e.target.value as typeof sort);
+            setPage(1);
+          }}
+          data-testid="catalog-sort"
+          aria-label="Sort providers"
+        >
+          <option value="name">Name</option>
+          <option value="models">Model count</option>
+        </Select>
       </div>
 
       <p className="text-[11px] text-zinc-500" data-testid="catalog-stats">
@@ -85,6 +116,24 @@ export function CatalogBrowser({ onConfigure }: {
           ? `${stats.data.active_providers} providers · ${stats.data.gateway_supported_providers} gateway-supported · ${stats.data.total_models} models`
           : "Loading catalog…"}
       </p>
+
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-zinc-500" data-testid="catalog-results-count">
+          {query.data
+            ? `Showing ${items.length} of ${total} provider${total === 1 ? "" : "s"}`
+            : "Searching catalog…"}
+        </p>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-[11px]"
+          disabled={!filtersActive}
+          onClick={clearFilters}
+          data-testid="catalog-clear-filters"
+        >
+          Clear filters
+        </Button>
+      </div>
 
       {query.isLoading && <LoadingState />}
       {query.isError && (
@@ -97,7 +146,7 @@ export function CatalogBrowser({ onConfigure }: {
         <EmptyState title="No providers match" description="Adjust the search or filters." />
       )}
 
-      <div className="grid gap-2.5 overflow-y-auto pb-2 sm:grid-cols-2">
+      <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {items.map((p) => (
           <CatalogCard key={p.id} provider={p} onConfigure={onConfigure} />
         ))}
@@ -140,87 +189,93 @@ function CatalogCard({ provider: p, onConfigure }: {
   onConfigure: (provider: CatalogProvider, viaCustom: boolean) => void;
 }) {
   const supported = p.gateway_supported && !!p.gateway_family;
-  const host = apiBaseHost(p.api_base_url);
+  const host = apiBaseHost(p.api_base_url ?? null);
   const envVars = p.env_vars ?? [];
   const shownEnvs = envVars.slice(0, 3);
   return (
     <Card data-testid={`catalog-card-${p.slug}`}>
-      <CardContent className="flex gap-3 p-3.5">
-        <ProviderLogo logoUrl={p.logo_url} name={p.name} size="md" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{p.name}</p>
-          <p className="truncate font-mono text-[11px] text-zinc-500">/{p.slug}</p>
-          {host && (
-            <p className="truncate font-mono text-[11px] text-zinc-500" data-testid={`catalog-host-${p.slug}`}>
-              {host}
-            </p>
-          )}
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            {supported ? (
-              <Badge variant="default" className="gap-1 text-[10px]" title="Request-ready: ToLLma has a gateway adapter for this provider">
-                <CheckCircle2 className="size-3" aria-hidden /> Gateway supported
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="gap-1 text-[10px]" title="Catalog-only: discoverable, but ToLLma has no dedicated adapter for this provider yet">
-                <MinusCircle className="size-3" aria-hidden /> Catalog only
-              </Badge>
-            )}
-            <span className="text-[11px] text-zinc-500">
-              {p.model_count} model{p.model_count === 1 ? "" : "s"}
-            </span>
+      <CardContent className="flex h-full flex-col gap-2 p-3.5">
+        <div className="flex items-start gap-2.5">
+          <ProviderLogo logoUrl={p.logo_url} name={p.name} size="md" />
+          <div className="min-w-0 flex-1">
+            <p className="break-words text-sm font-semibold text-zinc-900 dark:text-zinc-100">{p.name}</p>
+            <p className="break-all font-mono text-[11px] text-zinc-500">/{p.slug}</p>
           </div>
-          {shownEnvs.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1" data-testid={`catalog-env-${p.slug}`}>
-              {shownEnvs.map((e) => (
-                <code key={e} className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                  {e}
-                </code>
-              ))}
-              {envVars.length > shownEnvs.length && (
-                <span className="text-[10px] text-zinc-400">+{envVars.length - shownEnvs.length} more</span>
-              )}
-            </div>
+        </div>
+        {host && (
+          <p className="break-all font-mono text-[11px] text-zinc-500" data-testid={`catalog-host-${p.slug}`}>
+            {host}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {supported ? (
+            <Badge variant="default" className="gap-1 text-[10px]" title="Request-ready: ToLLma has a gateway adapter for this provider">
+              <CheckCircle2 className="size-3" aria-hidden /> Gateway supported
+            </Badge>
+          ) : (
+            <Badge variant="secondary" className="gap-1 text-[10px]" title="Catalog-only: discoverable, but ToLLma has no dedicated adapter for this provider yet">
+              <MinusCircle className="size-3" aria-hidden /> Catalog only
+            </Badge>
           )}
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {supported ? (
-              <Button
-                size="sm"
-                onClick={() => onConfigure(p, false)}
-                data-testid={`catalog-configure-${p.slug}`}
-              >
+        </div>
+        <p className="break-words text-[11px] text-zinc-500">
+          {gatewayFamilyLabel(p.gateway_family)} · {p.model_count} model{p.model_count === 1 ? "" : "s"}
+        </p>
+        {shownEnvs.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1" data-testid={`catalog-env-${p.slug}`}>
+            {shownEnvs.map((e) => (
+              <code key={e} className="break-all rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                {e}
+              </code>
+            ))}
+            {envVars.length > shownEnvs.length && (
+              <span className="text-[10px] text-zinc-400">+{envVars.length - shownEnvs.length} more</span>
+            )}
+          </div>
+        )}
+        <div className="mt-auto flex items-center gap-1.5 pt-1">
+          {supported ? (
+            <Button
+              size="sm"
+              className="flex-1"
+              onClick={() => onConfigure(p, false)}
+              data-testid={`catalog-configure-${p.slug}`}
+            >
+              Configure
+            </Button>
+          ) : (
+            <>
+              <Button size="sm" variant="outline" className="flex-1" disabled title="No executable gateway yet — configuration will be kept">
                 Configure
               </Button>
-            ) : (
-              <>
-                <Button size="sm" variant="outline" disabled title="No executable gateway yet — configuration will be kept">
-                  Configure
+              {p.api_base_url && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => onConfigure(p, true)}
+                  data-testid={`catalog-configure-custom-${p.slug}`}
+                  title="Configure via the Custom (OpenAI-compatible) gateway using this provider's API base URL"
+                >
+                  Via Custom
                 </Button>
-                {p.api_base_url && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onConfigure(p, true)}
-                    data-testid={`catalog-configure-custom-${p.slug}`}
-                    title="Configure via the Custom (OpenAI-compatible) gateway using this provider's API base URL"
-                  >
-                    Via Custom
-                  </Button>
-                )}
-              </>
-            )}
-            {p.doc_url && (
+              )}
+            </>
+          )}
+          {p.doc_url && (
+            <Tooltip content={`${p.name} documentation`}>
               <a
                 href={p.doc_url}
                 target="_blank"
                 rel="noreferrer"
                 aria-label={`${p.name} documentation`}
                 data-testid={`catalog-doc-${p.slug}`}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
               >
                 <BookOpen className="size-3.5" aria-hidden />
               </a>
-            )}
-          </div>
+            </Tooltip>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -235,14 +290,17 @@ export function CatalogBrowserDialog({ open, onClose, onConfigure }: {
 }) {
   return (
     <Dialog open={open} onOpenChange={(n) => { if (!n) onClose(); }}>
-      <DialogContent className="max-w-3xl p-4" data-testid="catalog-dialog">
+      <DialogContent
+        className="max-w-6xl h-auto max-h-none overflow-visible origin-center [@media_(max-height:760px)]:scale-[0.94] [@media_(max-height:680px)]:scale-[0.88] [@media_(max-height:620px)]:scale-[0.82] p-4"
+        data-testid="catalog-dialog"
+      >
         <DialogTitle className="text-sm font-semibold">Provider catalog</DialogTitle>
         <DialogDescription>
           Discovery metadata from Models.dev. Catalog entries never hold credentials;
           gateway-supported providers configure directly, others go through the
           Custom gateway where an API base URL is known.
         </DialogDescription>
-        <div className="mt-3 max-h-[70vh] overflow-hidden">
+        <div className="mt-3">
           {open && (
             <CatalogBrowser
               onConfigure={(p, viaCustom) => {

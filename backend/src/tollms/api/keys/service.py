@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from tollms.api.keys.schemas import (
@@ -281,11 +281,14 @@ def prepare_key_parts(
 def persist_key(
     db: Session, parts: _KeyParts, *, user_id: uuid.UUID,
     org_id: uuid.UUID | None = None, issued_by: uuid.UUID | None = None,
+    is_primary: bool = False, is_default: bool = False,
 ) -> tuple[ApiKey, str]:
     """Insert the key row; returns (row, raw_key) with the raw value shown once.
 
     Personal keys pass ``org_id=None``; org keys pass the org, the assignee as
-    ``user_id`` and the granting caller as ``issued_by``.
+    ``user_id`` and the granting caller as ``issued_by``. Org issuance never
+    sets the flags (defaults False); personal creation promotes via
+    ``set_default_key`` after persist.
     """
     raw_key, key_prefix, key_hash = key_engine.generate_key()
     api_key = ApiKey(
@@ -297,6 +300,8 @@ def persist_key(
         key_prefix=key_prefix,
         key_hash=key_hash,
         expires_at=parts.expires_at,
+        is_primary=is_primary,
+        is_default=is_default,
     )
     if parts.policy_values is not None:
         api_key.policy = ApiKeyPolicy(**parts.policy_values)
@@ -309,10 +314,14 @@ def persist_key(
 
 
 def create_key(db: Session, data: ApiKeyCreate, user_id: uuid.UUID) -> tuple[ApiKey, str]:
-    """Create a personal key; returns (row, raw_key) shown exactly once."""
+    """Create a personal key; returns (row, raw_key) shown exactly once.
+
+    The new key takes the default slot (most-recent personal); the primary
+    key, when one exists, is untouched.
+    """
     parts = prepare_key_parts(db, data, user_id)
     api_key, raw_key = persist_key(db, parts, user_id=user_id)
-    return get_key(db, api_key.id, user_id), raw_key
+    return set_default_key(db, api_key.id, user_id), raw_key
 
 
 def update_key(db: Session, key_id: uuid.UUID, data: ApiKeyUpdate, user_id: uuid.UUID) -> ApiKey:
@@ -338,6 +347,9 @@ def update_key(db: Session, key_id: uuid.UUID, data: ApiKeyUpdate, user_id: uuid
 def delete_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> None:
     key = get_key(db, key_id, user_id)
     key_hash = key.key_hash
+    was_default = bool(key.is_default)
+    # NOTE: is_primary stays on the dead row; ensure_primary_key recreates
+    # a live primary lazily.
     key.is_deleted = True
     key.deleted_at = datetime.now(timezone.utc)
     key.deleted_by = user_id
@@ -348,6 +360,23 @@ def delete_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> None:
     key_engine.write_tombstone(key_hash)
     logger.info("api key deleted: %s", key_id)
     emit("key.deleted", key_id=str(key_id), user_id=str(user_id))
+    if was_default:
+        try:
+            candidate = db.scalar(
+                select(ApiKey)
+                .where(
+                    ApiKey.user_id == user_id,
+                    ApiKey.org_id.is_(None),
+                    ApiKey.is_deleted.is_(False),
+                )
+                .order_by(ApiKey.created_at.desc())
+            )
+            if candidate is not None:
+                set_default_key(db, candidate.id, user_id)
+            # else: no live personal key remains — leave no default;
+            # the next create/ensure re-establishes it.
+        except Exception:
+            logger.exception("api key default promote failed: user_id=%s", user_id)
 
 
 def rotate_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> tuple[ApiKey, str]:
@@ -438,35 +467,115 @@ def find_primary_key(db: Session, user_id: uuid.UUID) -> ApiKey | None:
     )
 
 
+def find_default_key(db: Session, user_id: uuid.UUID) -> ApiKey | None:
+    """Live personal default owned by `user_id`, if any."""
+    return db.scalar(
+        select(ApiKey).where(
+            ApiKey.user_id == user_id,
+            ApiKey.org_id.is_(None),
+            ApiKey.is_default.is_(True),
+            ApiKey.is_deleted.is_(False),
+        )
+    )
+
+
+def set_default_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> ApiKey:
+    """Make one live personal key the default (most-recent slot).
+
+    Unsets every other live personal default of the owner, sets the target,
+    commits and drops the target's cached context. 404-oracle on foreign keys.
+
+    Race-safe: the claim runs in a savepoint; a lost
+    `uq_api_keys_default_per_user` race expires the rolled-back flag and
+    returns the concurrent winner instead of 500.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    key = get_key(db, key_id, user_id)
+    try:
+        with db.begin_nested():
+            db.execute(
+                update(ApiKey)
+                .where(
+                    ApiKey.user_id == user_id,
+                    ApiKey.org_id.is_(None),
+                    ApiKey.is_deleted.is_(False),
+                    ApiKey.is_default.is_(True),
+                    ApiKey.id != key_id,
+                )
+                .values(is_default=False)
+            )
+            key.is_default = True
+            db.flush()
+    except IntegrityError:
+        db.expire(key)
+        winner = find_default_key(db, user_id)
+        if winner is not None:
+            logger.info("api default key race lost, winner kept: %s", winner.id)
+            return winner
+        raise
+    db.commit()
+    key_engine.invalidate_context(key.key_hash)
+    logger.info("api default key set: %s", key_id)
+    return get_key(db, key_id, user_id)
+
+
+def backfill_missing_primaries(db: Session) -> int:
+    """Ensure every live user owns a live personal primary. Returns count created."""
+    from tollms.models.user import User
+
+    made = 0
+    for uid in db.scalars(select(User.id).where(User.is_deleted.is_(False))):
+        try:
+            if find_primary_key(db, uid) is None:
+                ensure_primary_key(db, uid)
+                made += 1
+        except Exception:
+            logger.exception("primary key backfill failed: user_id=%s", uid)
+    logger.info("primary key backfill: %d ensured", made)
+    return made
+
+
 def ensure_primary_key(db: Session, user_id: uuid.UUID, *, commit: bool = True) -> ApiKey:
     """Fetch the live personal primary, creating it (unrestricted) if missing.
 
     Idempotent under concurrency: creation runs in a savepoint so a lost
     partial-UQ race rolls back only the insert, then re-fetches the winner.
+    A primary with no live personal default adopts the slot (same savepoint
+    discipline: a lost default race expires the rolled-back flag and keeps
+    the concurrent winner).
     """
     from sqlalchemy.exc import IntegrityError
 
     key = find_primary_key(db, user_id)
-    if key is not None:
-        return key
-    _raw, key_prefix, key_hash = key_engine.generate_key()
-    candidate = ApiKey(
-        user_id=user_id,
-        org_id=None,
-        name=PRIMARY_KEY_NAME,
-        key_prefix=key_prefix,
-        key_hash=key_hash,
-        is_primary=True,
-    )
-    try:
-        with db.begin_nested():
-            db.add(candidate)
-            db.flush()
-    except IntegrityError:
-        pass  # another transaction won the race; refetch below
-    key = find_primary_key(db, user_id)
-    if key is None:  # pragma: no cover - defensive; UQ guarantees a winner
-        raise ValidationError("could not establish a primary API key")
+    if key is None:
+        _raw, key_prefix, key_hash = key_engine.generate_key()
+        candidate = ApiKey(
+            user_id=user_id,
+            org_id=None,
+            name=PRIMARY_KEY_NAME,
+            key_prefix=key_prefix,
+            key_hash=key_hash,
+            is_primary=True,
+        )
+        try:
+            with db.begin_nested():
+                db.add(candidate)
+                db.flush()
+        except IntegrityError:
+            pass  # another transaction won the race; refetch below
+        key = find_primary_key(db, user_id)
+        if key is None:  # pragma: no cover - defensive; UQ guarantees a winner
+            raise ValidationError("could not establish a primary API key")
+    if find_default_key(db, user_id) is None:
+        try:
+            with db.begin_nested():
+                key.is_default = True
+                db.flush()
+        except IntegrityError:
+            # Another key took the default slot concurrently; drop the
+            # rolled-back flag so the commit below stays clean.
+            db.expire(key)
     if commit:
         db.commit()
         db.refresh(key)
@@ -520,3 +629,53 @@ def sync_primary_model(
         db.commit()
     logger.info("api primary key synced model: key=%s model=%s", key.id, model_id)
     return key
+
+
+def prune_primary_provider_models(
+    db: Session, *, user_id: uuid.UUID, provider_id: uuid.UUID
+) -> int:
+    """Delete the owner's primary-key allow-list rows for one provider.
+
+    Strictly scoped to ``find_primary_key(user_id)`` — a missing primary is
+    a no-op. Returns the deleted row count.
+    """
+    key = find_primary_key(db, user_id)
+    if key is None:
+        return 0
+    result = db.execute(
+        delete(ApiKeyModelPermission).where(
+            ApiKeyModelPermission.api_key_id == key.id,
+            ApiKeyModelPermission.provider_id == provider_id,
+        )
+    )
+    db.commit()
+    key_engine.invalidate_context(key.key_hash)
+    logger.info(
+        "api primary key pruned provider: key=%s provider=%s rows=%s",
+        key.id, provider_id, result.rowcount,
+    )
+    return result.rowcount or 0
+
+
+def prune_primary_model(db: Session, *, user_id: uuid.UUID, model_id: uuid.UUID) -> int:
+    """Delete the owner's primary-key allow-list rows for one model.
+
+    Same scope/no-op contract as ``prune_primary_provider_models``.
+    Returns the deleted row count.
+    """
+    key = find_primary_key(db, user_id)
+    if key is None:
+        return 0
+    result = db.execute(
+        delete(ApiKeyModelPermission).where(
+            ApiKeyModelPermission.api_key_id == key.id,
+            ApiKeyModelPermission.model_id == model_id,
+        )
+    )
+    db.commit()
+    key_engine.invalidate_context(key.key_hash)
+    logger.info(
+        "api primary key pruned model: key=%s model=%s rows=%s",
+        key.id, model_id, result.rowcount,
+    )
+    return result.rowcount or 0

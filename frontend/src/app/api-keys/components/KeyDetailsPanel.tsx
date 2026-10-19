@@ -105,6 +105,36 @@ const KeyDetailsContent = memo(function KeyDetailsContent({
       label={`Details for ${apiKey.name}`}
     >
       <div className="space-y-4">
+        {(apiKey.is_primary || apiKey.is_default) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {apiKey.is_primary && (
+              <Badge
+                variant="secondary"
+                className="text-[10px]"
+                data-testid={`key-details-primary-${apiKey.id}`}
+                title="Primary is your automatic system key"
+              >
+                Primary
+              </Badge>
+            )}
+            {apiKey.is_default && (
+              <Badge
+                variant="success"
+                className="text-[10px]"
+                data-testid={`key-details-default-${apiKey.id}`}
+                title="Default is the most-recent key used for new requests"
+              >
+                Default
+              </Badge>
+            )}
+            <span
+              className="text-[11px] text-zinc-500 dark:text-zinc-400"
+              data-testid="key-primary-default-explainer"
+            >
+              Primary is automatic. Default is the most-recent key.
+            </span>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
           <Meta label="Status" value={<ApiKeyStatusPill status={status} />} />
           <Meta label="Prefix" value={<span className="font-mono">{apiKey.key_prefix}</span>} />

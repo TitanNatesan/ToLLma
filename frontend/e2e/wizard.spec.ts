@@ -1,6 +1,6 @@
 // Provider registration wizard: mapping, edit drawer, bulk edit, summary.
 import { expect, test } from "@playwright/test";
-import { API, MOCK_URL, apiLoginAs } from "./helpers";
+import { API, MOCK_URL, apiLoginAs, selectDropdown } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
@@ -19,7 +19,7 @@ test("wizard maps, edits and registers with match stats", async ({ page, request
   });
   await page.getByTestId("add-provider").click();
   await page.getByTestId("provider-name").fill(name);
-  await page.getByTestId("provider-type").selectOption("CUSTOM");
+  await page.getByTestId("provider-platform-CUSTOM").click();
   await page.getByTestId("wiz-next").click();
   await page.getByTestId("cred-base_url").fill(MOCK_URL);
   await page.getByTestId("wiz-validate").click();
@@ -30,10 +30,10 @@ test("wizard maps, edits and registers with match stats", async ({ page, request
   // Mapping ran: mock ids are unknown to the repository.
   await expect(page.getByTestId("wiz-selection-count")).toContainText("2 of 2");
   // Both mock ids matched as fallback (no repository entry).
-  await page.getByTestId("wiz-match-filter").selectOption("fallback");
+  await selectDropdown(page, "wiz-match-filter", "fallback");
   await expect(page.getByTestId("wiz-model-mock-disc-a")).toBeVisible();
   await expect(page.getByTestId("wiz-model-mock-disc-b")).toBeVisible();
-  await page.getByTestId("wiz-match-filter").selectOption("ALL");
+  await selectDropdown(page, "wiz-match-filter", "ALL");
 
   // Search narrows the list.
   await page.getByTestId("wiz-model-search").fill("disc-b");

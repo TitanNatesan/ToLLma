@@ -69,6 +69,16 @@ export async function selectProviderModel(page: Page, _providerId: string, model
   await page.getByTestId(`model-option-${modelId}`).click();
 }
 
+/**
+ * Selects a value in the shared custom popover dropdown (no native <select>).
+ * The trigger keeps its data-testid; options render as `{testId}-option-{value}`.
+ * Clicking an option selects it and closes the popover.
+ */
+export async function selectDropdown(page: Page, testId: string, value: string): Promise<void> {
+  await page.getByTestId(testId).click();
+  await page.getByTestId(`${testId}-option-${value}`).click();
+}
+
 export async function sendMessage(page: Page, text: string): Promise<void> {
   await page.getByTestId("chat-input").fill(text);
   await expect(page.getByTestId("send-button")).toBeEnabled();
@@ -90,7 +100,7 @@ export async function wizardRegister(
   await page.reload();
   await page.getByTestId("add-provider").click();
   await page.getByTestId("provider-name").fill(opts.name);
-  if (opts.type) await page.getByTestId("provider-type").selectOption(opts.type);
+  if (opts.type) await page.getByTestId(`provider-platform-${opts.type}`).click();
   await page.getByTestId("wiz-next").click();
   if (opts.baseUrl) await page.getByTestId("cred-base_url").fill(opts.baseUrl);
   await page.getByTestId("wiz-validate").click();

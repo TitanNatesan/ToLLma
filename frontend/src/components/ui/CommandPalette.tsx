@@ -3,6 +3,9 @@
 import { useCallback, useState, type ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
+import { toast } from "sonner";
+import { logout } from "@/services/api";
+import { useAuthStore } from "@/store/auth";
 import { Dialog, DialogContent } from "./primitives";
 import { useChatStore } from "@/store/chat";
 import { useConversations } from "@/hooks/useChat";
@@ -16,6 +19,7 @@ import {
   Building2,
   CornerDownLeft,
   KeyRound,
+  LogOut,
   MessageSquare,
   Pin,
   Plus,
@@ -96,6 +100,20 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     setLeftSidebar,
     setAddProviderOpen,
   } = useChatStore();
+  const reset = useAuthStore((s) => s.reset);
+
+  // Mirrors SidebarNavigation SidebarLogoutNav: logout, then reset the auth
+  // store, then land on the chat home.
+  async function onLogout() {
+    try {
+      await logout();
+    } finally {
+      reset();
+      router.push("/");
+    }
+    toast.success("Logged out");
+    onClose();
+  }
   const { data: convs = [] } = useConversations("");
   const { data: providers = [] } = useProviders();
   const [query, setQuery] = useState("");
@@ -268,6 +286,21 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 </div>
               </Command.Group>
             )}
+
+            {/* Session */}
+            <Command.Group>
+              <SectionHeading>Session</SectionHeading>
+              <div className="space-y-0.5">
+                <PaletteItem
+                  value="log out sign out session"
+                  onSelect={() => void onLogout()}
+                  testId="palette-logout"
+                  icon={LogOut}
+                  title="Log out"
+                  description="Sign out of this workspace"
+                />
+              </div>
+            </Command.Group>
 
             {/* Recent Conversations */}
             {filteredConvs.length > 0 && (

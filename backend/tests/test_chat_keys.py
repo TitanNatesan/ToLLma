@@ -59,7 +59,10 @@ def _primary_rows(db: Session, uid: uuid.UUID) -> list[ApiKey]:
 def test_primary_auto_created_on_first_model(db: Session, user_factory, provider_factory, model_factory) -> None:
     user = user_factory()
     uid = uuid.UUID(user["id"])
-    assert _primary_rows(db, uid) == []
+    primaries = _primary_rows(db, uid)
+    assert len(primaries) == 1  # auto-provisioned on signup
+    assert primaries[0].name == "Primary key" and primaries[0].is_primary is True
+    assert primaries[0].is_default is True
 
     p = provider_factory("P1")
     m = model_factory(p["id"])
@@ -191,7 +194,10 @@ def test_wrong_user_key_404(client: TestClient, db: Session, user_factory, provi
     user_factory("intruder@tollma.ai")  # client now authed as intruder
     r = client.get(f"/api/v1/chat/models?key_id={key_id}")
     assert r.status_code == 404, r.text
-    assert client.get("/api/v1/chat/keys").json() == []
+    intruder_keys = client.get("/api/v1/chat/keys").json()
+    assert str(key_id) not in [k["id"] for k in intruder_keys]
+    assert len(intruder_keys) == 1  # intruder's own signup primary
+    assert intruder_keys[0]["name"] == "Primary key" and intruder_keys[0]["scope"] == "personal"
 
 
 def test_model_outside_allow_list_403(db: Session, client: TestClient, user_factory, provider_factory, model_factory) -> None:
@@ -297,7 +303,10 @@ def test_cross_org_and_lapsed_membership_404(client: TestClient, db: Session, us
     # Assignee with ACTIVE membership resolves (no models yet, but no 404).
     assert gateway_service.chat_models_for_key(db, key_id, uuid.UUID(member_id)) == []
     member_keys = gateway_service.chat_keys(db, uuid.UUID(member_id))
-    assert [str(k.id) for k in member_keys] == [str(key_id)]
+    member_ids = [str(k.id) for k in member_keys]
+    assert str(key_id) in member_ids  # org key present alongside the signup primary
+    assert len(member_ids) == 2
+    assert {k.scope for k in member_keys} == {"organization", "personal"}
     assert member_keys[0].scope == "organization" and member_keys[0].org_name == "ChatKeys Org"
 
     # Outsider (owner of another scope, non-member) gets the oracle.
@@ -315,7 +324,9 @@ def test_cross_org_and_lapsed_membership_404(client: TestClient, db: Session, us
     assert db.get(ApiKey, key_id).is_deleted is False
     with pytest.raises(NotFoundError):
         gateway_service.chat_models_for_key(db, key_id, uuid.UUID(member_id))
-    assert gateway_service.chat_keys(db, uuid.UUID(member_id)) == []
+    lapsed_keys = gateway_service.chat_keys(db, uuid.UUID(member_id))
+    assert all(str(k.id) != str(key_id) for k in lapsed_keys)
+    assert len(lapsed_keys) == 1 and lapsed_keys[0].scope == "personal"  # signup primary lives on
 
 
 # --- attribution --------------------------------------------------------------

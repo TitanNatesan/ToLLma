@@ -261,8 +261,20 @@ def delete_provider(
     provider.is_deleted = True
     provider.deleted_at = datetime.now(timezone.utc)
     provider.is_active = False
+    org_id, owner_id = provider.org_id, provider.user_id
     db.commit()
     _invalidate_provider_cache(provider.id)
+    if org_id is None and owner_id is not None:
+        # Personal provider: drop its rows from the owner's primary-key
+        # allow-list. Best-effort — the delete already committed.
+        try:
+            from tollms.api.keys import service as _keys_service
+
+            _keys_service.prune_primary_provider_models(
+                db, user_id=owner_id, provider_id=provider.id
+            )
+        except Exception:
+            logger.exception("primary key prune failed for provider %s", provider.id)
     logger.info("provider soft-deleted: %s", provider.id)
     emit("provider.deleted", provider_id=str(provider_id), user_id=str(user_id))
 

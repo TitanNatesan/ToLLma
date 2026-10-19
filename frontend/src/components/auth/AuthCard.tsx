@@ -214,12 +214,16 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       // Email verification gate: 2xx with verification_sent !== false
       // (absent on old backends, whose signup always initiates) means a
       // verification mail went out — toast and land on the login form,
-      // preserving invite context. Explicit false keeps legacy auto-login.
+      // preserving invite context. Flip the card explicitly as well: the
+      // post-signup URL change may not remount this component (in-app mode
+      // switches use history.pushState), which would leave the signup face
+      // visible. Explicit false keeps legacy auto-login.
       if (
         (res as { verification_sent?: boolean }).verification_sent !== false
       ) {
         toast.success("Verification email sent — check your inbox to continue.");
         const invite = peekInviteToken();
+        setMode("login");
         router.push(
           `/login${invite ? `?invite=${encodeURIComponent(invite)}` : ""}`,
         );
@@ -240,7 +244,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
 
   return (
     <main
-      className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-zinc-950 px-4 py-12"
+      className="relative flex h-dvh w-full items-center justify-center overflow-hidden bg-zinc-950 px-4 py-4"
       data-testid={mode === "login" ? "login-page" : "signup-page"}
     >
       {/* Ambient background glow */}
@@ -248,24 +252,26 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       <div className="pointer-events-none absolute -bottom-40 -left-40 size-96 rounded-full bg-sky-500/15 blur-3xl" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:24px_24px] opacity-30" />
 
-      {/* 3D Flip Container */}
-      <div className="relative w-full max-w-md [perspective:1200px]">
+      {/* 3D Flip Container — grid stacks both faces so the shell sizes to
+          the taller card; no page or card scrolling needed. Short viewports
+          scale the card down instead of scrolling. */}
+      <div className="relative w-full max-w-md origin-center [perspective:1200px] [@media_(max-height:740px)]:scale-[0.94] [@media_(max-height:660px)]:scale-[0.88] [@media_(max-height:600px)]:scale-[0.82]">
         <motion.div
-          className="relative w-full [transform-style:preserve-3d]"
+          className="relative grid w-full [transform-style:preserve-3d]"
           animate={{ rotateY: isFlipped ? 180 : 0 }}
           transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
         >
           {/* ==================== FRONT: LOGIN CARD ==================== */}
           <div
-            className="relative w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-8 pt-9 shadow-2xl backdrop-blur-xl [backface-visibility:hidden]"
+            className="relative col-start-1 row-start-1 w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 pt-7 shadow-2xl backdrop-blur-xl [backface-visibility:hidden] sm:p-7"
             style={{
               pointerEvents: isFlipped ? "none" : "auto",
             }}
           >
             <div aria-hidden className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-tollma-500/70 to-transparent" />
             {/* Header */}
-            <div className="mb-6 flex flex-col items-center text-center">
-              <Logo size="lg" className="mb-3" />
+            <div className="mb-4 flex flex-col items-center text-center">
+              <Logo size="lg" className="mb-2" />
               <h1 className="text-xl font-bold tracking-tight text-white">
                 Welcome back
               </h1>
@@ -284,7 +290,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                 {oauthNotice}
               </div>
             )}
-            <form onSubmit={handleLogin} className="space-y-4">
+            <form onSubmit={handleLogin} className="space-y-3">
               <div className="space-y-1">
                 <label htmlFor="login-email" className="text-xs font-medium text-zinc-300">Email</label>
                 <div className="relative flex items-center">
@@ -300,7 +306,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     title={inviteEmail ? "Email is locked to your invitation" : undefined}
                     id="login-email"
                     data-testid="login-email"
-                    className="h-11 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
                 {inviteEmail && (
@@ -324,7 +330,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     onKeyUp={onCapsKey}
                     id="login-password"
                     data-testid="login-password"
-                    className="h-11 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                   <button
                     type="button"
@@ -381,7 +387,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                 )}
               </Button>
 
-              <div className="relative my-4 flex items-center justify-center">
+              <div className="relative my-3 flex items-center justify-center">
                 <div className="w-full border-t border-zinc-800" />
                 <span className="absolute bg-zinc-900 px-2 text-[11px] text-zinc-500 uppercase">
                   or
@@ -419,13 +425,13 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               </Button>
             </form>
 
-            <div className="mt-6 flex items-center justify-center gap-3 text-[11px] text-zinc-500">
+            <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-zinc-500">
               <span className="inline-flex items-center gap-1"><ShieldCheck className="size-3 text-tollma-500" aria-hidden /> Encrypted credentials</span>
               <span aria-hidden>·</span>
               <span className="inline-flex items-center gap-1"><KeyRound className="size-3 text-tollma-500" aria-hidden /> SSO via Google</span>
             </div>
 
-            <div className="mt-3 text-center text-xs text-zinc-400">
+            <div className="mt-2.5 text-center text-xs text-zinc-400">
               No account?{" "}
               <button
                 type="button"
@@ -439,14 +445,14 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
 
           {/* ==================== BACK: SIGNUP CARD ==================== */}
           <div
-            className="absolute inset-0 w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-8 pt-9 shadow-2xl backdrop-blur-xl [backface-visibility:hidden] [transform:rotateY(180deg)]"
+            className="relative col-start-1 row-start-1 w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 pt-7 shadow-2xl backdrop-blur-xl [backface-visibility:hidden] [transform:rotateY(180deg)] sm:p-7"
             style={{
               pointerEvents: isFlipped ? "auto" : "none",
             }}
           >
             <div aria-hidden className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-tollma-500/70 to-transparent" />
             {/* Header */}
-            <div className="mb-5 flex flex-col items-center text-center">
+            <div className="mb-4 flex flex-col items-center text-center">
               <Logo size="lg" className="mb-2" />
               <h1 className="text-xl font-bold tracking-tight text-white">
                 Create an account
@@ -457,7 +463,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
             </div>
 
             {/* Signup Form */}
-            <form onSubmit={handleSignup} className="space-y-3.5">
+            <form onSubmit={handleSignup} className="space-y-3">
               <div className="space-y-1">
                 <label htmlFor="signup-name" className="text-xs font-medium text-zinc-300">
                   Full name <span className="text-zinc-500">(optional)</span>
@@ -471,7 +477,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     onChange={(e) => setSignupFullName(e.target.value)}
                     id="signup-name"
                     data-testid="signup-name"
-                    className="h-11 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
               </div>
@@ -491,7 +497,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     title={inviteEmail ? "Email is locked to your invitation" : undefined}
                     id="signup-email"
                     data-testid="signup-email"
-                    className="h-11 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
                 {inviteEmail && (
@@ -517,7 +523,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     id="signup-password"
                     data-testid="signup-password"
                     aria-describedby="signup-strength"
-                    className="h-11 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                   <button
                     type="button"
@@ -618,13 +624,13 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               </Button>
             </form>
 
-            <div className="mt-5 flex items-center justify-center gap-3 text-[11px] text-zinc-500">
+            <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-zinc-500">
               <span className="inline-flex items-center gap-1"><ShieldCheck className="size-3 text-tollma-500" aria-hidden /> Encrypted credentials</span>
               <span aria-hidden>·</span>
               <span className="inline-flex items-center gap-1"><KeyRound className="size-3 text-tollma-500" aria-hidden /> SSO via Google</span>
             </div>
 
-            <div className="mt-3 text-center text-xs text-zinc-400">
+            <div className="mt-2.5 text-center text-xs text-zinc-400">
               Have an account?{" "}
               <button
                 type="button"

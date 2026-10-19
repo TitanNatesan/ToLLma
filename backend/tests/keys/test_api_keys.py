@@ -53,7 +53,9 @@ def test_create_returns_raw_once_and_list_never_exposes_it(
     _create(client, name="Secondary")
     listed = client.get("/api/v1/keys")
     assert listed.status_code == 200
-    assert [item["name"] for item in listed.json()] == ["Secondary", "Primary"]
+    names = [item["name"] for item in listed.json()]
+    assert "Primary key" in names  # auto-provisioned on signup
+    assert [n for n in names if n != "Primary key"] == ["Secondary", "Primary"]
     assert raw not in listed.text
     assert "key_hash" not in listed.text
 
@@ -104,7 +106,9 @@ def test_disable_and_delete_block_authentication(client: TestClient, db, user_fa
 
     assert client.delete(f"/api/v1/keys/{key_id}").status_code == 204
     assert client.get(f"/api/v1/keys/{key_id}").status_code == 404
-    assert client.get("/api/v1/keys").json() == []
+    remaining = client.get("/api/v1/keys").json()
+    assert [k["name"] for k in remaining] == ["Primary key"]  # signup primary survives
+    assert remaining[0]["is_primary"] is True
     assert key_engine.authenticate(db, raw) is None
 
 
@@ -190,7 +194,10 @@ def test_other_users_keys_are_404(client: TestClient, user_factory) -> None:
     for method, path, payload in calls:
         response = getattr(client, method)(path) if payload is None else getattr(client, method)(path, json=payload)
         assert response.status_code == 404, (method, path, response.text)
-    assert client.get("/api/v1/keys").json() == []
+    intruder_keys = client.get("/api/v1/keys").json()
+    assert key_id not in [k["id"] for k in intruder_keys]
+    assert [k["name"] for k in intruder_keys] == ["Primary key"]  # intruder signup primary
+    assert intruder_keys[0]["is_primary"] is True
 
 
 def test_model_permissions_reference_and_replace(

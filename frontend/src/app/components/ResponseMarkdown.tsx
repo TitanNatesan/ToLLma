@@ -3,7 +3,9 @@
 import React, { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -22,6 +24,7 @@ import { MermaidBlock } from "./MermaidBlock";
 import { InlineCitation, type CitationSource } from "./chat/citations/InlineCitation";
 import { cn } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
+import "katex/dist/katex.min.css";
 
 /** Minimal hast shapes for the citation transform (no unist dependency). */
 interface HastTextNode {
@@ -41,7 +44,18 @@ interface HastParentNode {
 type HastNode = HastTextNode | HastElementNode | HastParentNode;
 
 const CITATION_MARKER = /\[(\d{1,3})\]/g;
-const CITATION_SKIP_TAGS = new Set(["code", "pre"]);
+const CITATION_SKIP_TAGS = new Set(["code", "pre", "math", "annotation", "semantics"]);
+
+/**
+ * KaTeX renders math to `span.katex` trees (incl. an `annotation` with the raw
+ * TeX source). Citations must not rewrite inside them.
+ */
+function isSkippedElement(node: HastElementNode): boolean {
+  if (CITATION_SKIP_TAGS.has(node.tagName)) return true;
+  const raw = node.properties?.className ?? node.properties?.class;
+  const classes = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/\s+/) : [];
+  return classes.some((c) => c === "katex" || c === "math" || String(c).startsWith("katex"));
+}
 
 /**
  * Rehype plugin: turn `[n]` text markers into `<sup data-citation-index="n">`
@@ -51,7 +65,7 @@ const CITATION_SKIP_TAGS = new Set(["code", "pre"]);
 export function rehypeCitations({ maxIndex }: { maxIndex: number }) {
   function transform(node: HastNode) {
     if (!("children" in node) || !node.children) return;
-    if (node.type === "element" && CITATION_SKIP_TAGS.has((node as HastElementNode).tagName)) {
+    if (node.type === "element" && isSkippedElement(node as HastElementNode)) {
       return;
     }
     const next: HastNode[] = [];
@@ -463,10 +477,10 @@ export function ResponseMarkdown({
 }) {
   const sourceMap = new Map((sources ?? []).map((source) => [source.index, source]));
   return (
-    <div className={cn("prose text-sm leading-relaxed", isStreaming && "streaming-cursor")}>
+    <div className={cn("prose text-sm leading-[1.75]", isStreaming && "streaming-cursor")}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight, [rehypeCitations, { maxIndex: sources?.length ?? 0 }]]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight, [rehypeCitations, { maxIndex: sources?.length ?? 0 }]]}
         components={{
           pre: ({ children }) => <>{children}</>,
           code: ({ className, children, ...props }) => {
@@ -581,6 +595,18 @@ export function ResponseMarkdown({
           hr: () => (
             <hr className="my-4 border-t border-zinc-200 dark:border-zinc-800" />
           ),
+          p: ({ children }) => <p className="my-2.5">{children}</p>,
+          ul: ({ children }) => (
+            <ul className="my-2.5 list-disc space-y-1.5 pl-5 marker:text-zinc-400 dark:marker:text-zinc-600">
+              {children}
+            </ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="my-2.5 list-decimal space-y-1.5 pl-5 marker:text-zinc-500 dark:marker:text-zinc-400">
+              {children}
+            </ol>
+          ),
+          li: ({ children }) => <li className="leading-[1.75]">{children}</li>,
         }}
       >
         {content}

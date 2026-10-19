@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { selectDropdown } from "../e2e/helpers";
 
 const BASE = "http://localhost:3000";
 
@@ -193,13 +194,12 @@ test.describe("Provider page enhancements", () => {
 
   test("type filter dropdown is interactive", async ({ page }) => {
     await goto(page, "/providers");
-    // Select BEDROCK_CONVERSE filter
-    const select = page.getByTestId("provider-type-filter");
-    await select.selectOption("BEDROCK_CONVERSE");
-    expect(await select.inputValue()).toBe("BEDROCK_CONVERSE");
+    // Select BEDROCK_CONVERSE filter (custom popover dropdown)
+    await selectDropdown(page, "provider-type-filter", "BEDROCK_CONVERSE");
+    await expect(page.getByTestId("provider-type-filter")).toContainText("AWS Bedrock");
     // Reset
-    await select.selectOption("ALL");
-    expect(await select.inputValue()).toBe("ALL");
+    await selectDropdown(page, "provider-type-filter", "ALL");
+    await expect(page.getByTestId("provider-type-filter")).toContainText("All provider types");
   });
 
   test("add provider button is visible", async ({ page }) => {

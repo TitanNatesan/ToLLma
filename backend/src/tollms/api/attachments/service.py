@@ -1,5 +1,6 @@
 """Attachment CRUD + ownership. Rows gate every byte served or forwarded."""
 
+import base64
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -106,6 +107,73 @@ def attachments_for_messages(
         if row.message_id is not None:
             grouped.setdefault(row.message_id, []).append(row)
     return grouped
+
+
+_INLINE_IMAGE_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+
+
+def persist_inline_images(
+    db,
+    *,
+    images,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+    model_label: str = "model",
+) -> list:
+    """Provider-returned chat images -> attachment rows linked to the message.
+
+    Same upload+link path as media generations (kind derives from the
+    filename extension). Failures skip one image, never the chat.
+    """
+    rows: list = []
+    total = 0
+    for image in images or []:
+        if isinstance(image, dict):
+            mime = image.get("mime_type") or "image/png"
+            b64 = image.get("data_b64") or ""
+        else:
+            mime = getattr(image, "mime_type", None) or "image/png"
+            b64 = getattr(image, "data_b64", None) or ""
+        mime = str(mime).split(";")[0].strip().lower() or "image/png"
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except Exception:
+            logger.warning("inline image skipped: invalid base64 (message=%s)", message_id)
+            continue
+        if not data:
+            continue
+        total += len(data)
+        ext = _INLINE_IMAGE_EXT.get(mime, "png")
+        filename = f"{model_label}-{uuid.uuid4().hex[:8]}.{ext}"
+        try:
+            row = upload_attachment(
+                db,
+                user_id=user_id,
+                filename=filename,
+                content_type=mime,
+                data=data,
+            )
+        except Exception:
+            logger.warning("inline image skipped: upload rejected (message=%s)", message_id, exc_info=True)
+            continue
+        link_to_message(db, row, conversation_id, message_id, commit=False)
+        rows.append(row)
+    if rows:
+        db.commit()
+        for row in rows:
+            db.refresh(row)
+        logger.info(
+            "chat images persisted: message=%s count=%d bytes=%d",
+            message_id, len(rows), total,
+        )
+    return rows
 
 
 def link_to_message(

@@ -40,6 +40,8 @@ def _read(key: ApiKey) -> KeyRead:
         expires_at=key.expires_at,
         last_used_at=key.last_used_at,
         rotation_count=key.rotation_count,
+        is_primary=key.is_primary,
+        is_default=key.is_default,
         policy=PolicyRead.model_validate(key.policy) if key.policy is not None else None,
         ip_rules=[
             IpRuleRead.model_validate(rule)

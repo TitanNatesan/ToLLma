@@ -6,6 +6,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, model_validator
 
+from tollms.api.attachments.schemas import AttachmentRead
+
 
 class ChatRequest(BaseModel):
     provider_id: uuid.UUID
@@ -49,6 +51,7 @@ class ChatResponse(BaseModel):
     reasoning_cost: Decimal = Decimal(0)
     usage_estimated: bool
     latency_ms: float
+    attachments: list[AttachmentRead] = Field(default_factory=list)
 
 
 class GenerationStarted(BaseModel):

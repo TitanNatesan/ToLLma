@@ -11,6 +11,7 @@ import {
   DialogContent,
   Field,
   Input,
+  ProviderLogo,
   Select,
   Textarea,
 } from "@/components/ui";
@@ -48,6 +49,8 @@ import type {
 } from "@/types";
 import { EMPTY_MODEL_FORM, ModelForm, fromSuggested, toPayload, type ModelFormState } from "./ModelForm";
 import { ConnectionTemplateFields } from "./ConnectionTemplateFields";
+import { CatalogBrowserDialog } from "./CatalogBrowser";
+import type { CatalogProvider } from "@/types/catalog";
 import {
   Check,
   CheckCircle2,
@@ -142,6 +145,9 @@ const PROVIDER_METAS: Record<
     endpoints: ["Chat", "Responses", "Embeddings", "Images", "Audio"],
   },
 };
+
+/** Step-1 platform cards. VERTEX_AI keeps backend/step-2+ support but has no card. */
+const VISIBLE_PROVIDER_TYPES: ProviderType[] = PROVIDER_TYPES.filter((t) => t !== "VERTEX_AI");
 
 const STEP_LABELS = ["1. Provider Type", "2. Credentials & Validation", "3. Models", "4. Finish"];
 const DRAFT_KEY = "tollma-wizard-draft";
@@ -427,9 +433,14 @@ export function ProviderWizardModal({
     return d?.step && d.step <= 2 ? d.step : 1;
   });
   const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (initialName ?? (orgId ? "" : (loadDraft()?.name ?? "")))));
-  const [type, setType] = useState<ProviderType>(() =>
-    isEditing ? (editingProvider?.provider_type ?? "OPENAI") : (initialType ?? (orgId ? "OPENAI" : (loadDraft()?.type ?? "OPENAI"))),
-  );
+  const [type, setType] = useState<ProviderType>(() => {
+    if (isEditing) return editingProvider?.provider_type ?? "OPENAI";
+    if (initialType) return initialType;
+    if (orgId) return "OPENAI";
+    // VERTEX_AI has no platform card: never restore it as a dead selection.
+    const draftType = loadDraft()?.type;
+    return draftType && draftType !== "VERTEX_AI" ? draftType : "OPENAI";
+  });
   const [description, setDescription] = useState(() => (isEditing || orgId ? "" : (loadDraft()?.description ?? "")));
   const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing || orgId ? {} : (loadDraft()?.creds ?? {})));
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
@@ -461,13 +472,30 @@ export function ProviderWizardModal({
   const [endpointFilter, setEndpointFilter] = useState("ALL");
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
 
+  // In-wizard catalog picks (Search providers card) behave like a catalog
+  // launch: template prefill for step 2 with the platform preselected on step 1.
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogPick, setCatalogPick] = useState<{ slug: string; baseUrl: string | null; name: string | null; logoUrl: string | null } | null>(null);
+
   // Catalog-launched runs load the connection template (backend endpoint with
   // a catalog-row-derived fallback) to prefill family + base URL + fields.
-  const templateQuery = useConnectionTemplate(!isEditing && open ? (catalogSlug ?? null) : null);
+  const activeCatalogSlug = catalogPick?.slug ?? catalogSlug ?? null;
+  const templateQuery = useConnectionTemplate(!isEditing && open ? activeCatalogSlug : null);
   const template = templateQuery.data ?? null;
 
   // Prefill base_url from the catalog base URL (derived, never clobbers user input).
-  const suggestedBaseUrl = initialBaseUrl ?? template?.suggested_base_url ?? null;
+  const suggestedBaseUrl = initialBaseUrl ?? catalogPick?.baseUrl ?? template?.suggested_base_url ?? null;
+
+  // Search-providers pick: a visible family wins, anything else (incl. VERTEX_AI)
+  // goes through CUSTOM with the catalog base URL, mirroring page.tsx.
+  function handleCatalogConfigure(p: CatalogProvider, family: ProviderType | null, opts?: { viaCustom: boolean }) {
+    if (!family) return;
+    updateType(VISIBLE_PROVIDER_TYPES.includes(family) ? family : "CUSTOM");
+    setCatalogPick({ slug: p.slug, baseUrl: opts?.viaCustom ? (p.api_base_url ?? null) : null, name: p.name, logoUrl: p.logo_url });
+    setName((prev) => (prev.trim() ? prev : p.name));
+    setCatalogOpen(false);
+    setStep(1);
+  }
   const effectiveCreds = useMemo(() => {
     if (!template || !suggestedBaseUrl) return creds;
     return creds.base_url ? creds : { ...creds, base_url: suggestedBaseUrl };
@@ -759,10 +787,10 @@ export function ProviderWizardModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="max-w-3xl p-0 overflow-hidden shadow-2xl">
+      <DialogContent className="max-w-3xl max-h-[90vh] p-0 overflow-hidden shadow-2xl">
         <form
           data-testid="provider-form"
-          className="flex flex-col"
+          className="flex flex-col max-h-[90vh] min-h-0"
           autoComplete="off"
           onSubmit={(e) => e.preventDefault()}
           data-1p-ignore="true"
@@ -770,13 +798,13 @@ export function ProviderWizardModal({
           data-bwignore="true"
           data-form-type="other"
         >
-          <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60">
+          <div className="shrink-0 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60">
             <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                   {isEditing ? "Edit Provider" : "Add Provider Connection"}
                 </h2>
-                <p className="text-xs text-zinc-500 mt-0.5">
+                <p className="text-xs text-zinc-500">
                   {isEditing
                     ? "Update provider settings"
                     : orgId
@@ -785,7 +813,7 @@ export function ProviderWizardModal({
                 </p>
                 {orgId && (
                   <p
-                    className="mt-1 text-xs font-medium text-zinc-600 dark:text-zinc-300"
+                    className="text-xs font-medium text-zinc-600 dark:text-zinc-300"
                     data-testid="wizard-org-scope"
                   >
                     {orgName
@@ -814,7 +842,13 @@ export function ProviderWizardModal({
             )}
           </div>
 
-          <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto" data-testid="wizard-step-body">
+          <div
+            className={cn(
+              "min-h-0 px-6 py-4",
+              step === 1 ? "overflow-hidden" : "max-h-[65vh] overflow-y-auto",
+            )}
+            data-testid="wizard-step-body"
+          >
             {isEditing ? (
               <EditBody
                 name={name}
@@ -829,7 +863,7 @@ export function ProviderWizardModal({
             ) : (
               <>
                 {step === 1 && (
-                  <div className="space-y-4" data-testid="wizard-step-1">
+                  <div className="space-y-3" data-testid="wizard-step-1">
                     <Field label="Provider Name">
                       <Input
                         value={name}
@@ -847,20 +881,6 @@ export function ProviderWizardModal({
                         data-form-type="other"
                       />
                     </Field>
-                    <select
-                      value={type}
-                      onChange={(e) => updateType(e.target.value as ProviderType)}
-                      data-testid="provider-type"
-                      className="sr-only"
-                      tabIndex={-1}
-                      aria-hidden="true"
-                    >
-                      {PROVIDER_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {PROVIDER_METAS[t]?.name ?? t}
-                        </option>
-                      ))}
-                    </select>
                     {nameTaken && name.trim() && (
                       <p className="text-xs text-red-500">A provider with this name already exists.</p>
                     )}
@@ -884,8 +904,8 @@ export function ProviderWizardModal({
                       <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                         Select Provider Platform
                       </label>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {PROVIDER_TYPES.map((t) => {
+                      <div className="grid grid-cols-3 items-stretch gap-2">
+                        {VISIBLE_PROVIDER_TYPES.map((t) => {
                           const meta = PROVIDER_METAS[t];
                           const isSelected = type === t;
                           return (
@@ -895,7 +915,7 @@ export function ProviderWizardModal({
                               onClick={() => updateType(t)}
                               data-testid={`provider-platform-${t}`}
                               className={cn(
-                                "flex flex-col items-start p-3 rounded-lg border text-left transition-all",
+                                "flex flex-col items-start p-2 rounded-lg border text-left transition-all",
                                 isSelected
                                   ? "border-tollma-600 bg-tollma-600 text-white dark:border-tollma-500 dark:bg-tollma-600 dark:text-white shadow-sm"
                                   : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700",
@@ -918,7 +938,7 @@ export function ProviderWizardModal({
                               <span className={cn("text-[10px] mt-1 line-clamp-2", isSelected ? "text-zinc-300 dark:text-zinc-600" : "text-zinc-500")}>
                                 {meta.subtitle}
                               </span>
-                              <span className="mt-1.5 flex flex-wrap gap-1">
+                              <span className="mt-auto flex flex-wrap gap-1 pt-1.5">
                                 {meta.endpoints.map((endpoint) => (
                                   <span
                                     key={endpoint}
@@ -936,6 +956,40 @@ export function ProviderWizardModal({
                             </button>
                           );
                         })}
+                        <button
+                          type="button"
+                          onClick={() => setCatalogOpen(true)}
+                          data-testid="provider-platform-SEARCH"
+                          aria-label={catalogPick ? `Change catalog provider (currently ${catalogPick.name ?? catalogPick.slug})` : "Search providers"}
+                          className="flex flex-col items-start p-2 rounded-lg border border-dashed border-zinc-300 text-left transition-all hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-600"
+                        >
+                          {catalogPick ? (
+                            <>
+                              <div className="flex items-center gap-1.5 w-full">
+                                <ProviderLogo logoUrl={catalogPick.logoUrl} name={catalogPick.name ?? catalogPick.slug} size="sm" />
+                                <span className="font-semibold text-xs truncate">{catalogPick.name ?? catalogPick.slug}</span>
+                              </div>
+                              <span className="mt-1 break-all font-mono text-[10px] text-zinc-500">
+                                /{catalogPick.slug}
+                              </span>
+                              <span className="mt-auto pt-1.5 text-[10px] font-medium text-tollma-600 dark:text-tollma-400">
+                                Change — search again
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-1.5 w-full">
+                                <span className="flex size-5 shrink-0 items-center justify-center rounded bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                  <Search className="size-3" />
+                                </span>
+                                <span className="font-semibold text-xs truncate">Search providers</span>
+                              </div>
+                              <span className="text-[10px] mt-1 line-clamp-2 text-zinc-500">
+                                Browse the catalog and configure any provider
+                              </span>
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1336,7 +1390,7 @@ export function ProviderWizardModal({
             )}
           </div>
 
-          <div className="border-t border-zinc-200 px-6 py-3 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-between">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-zinc-200 bg-zinc-50 px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
             <Button variant="outline" onClick={close} type="button">
               {step === 4 && !isEditing ? "Close" : "Cancel"}
             </Button>
@@ -1371,6 +1425,14 @@ export function ProviderWizardModal({
           </div>
         </form>
       </DialogContent>
+
+      {catalogOpen && (
+        <CatalogBrowserDialog
+          open={catalogOpen}
+          onClose={() => setCatalogOpen(false)}
+          onConfigure={handleCatalogConfigure}
+        />
+      )}
 
       {editingModelId && (
         <Dialog open onOpenChange={(o) => !o && setEditingModelId(null)}>

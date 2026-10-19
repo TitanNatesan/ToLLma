@@ -142,9 +142,14 @@ def test_org_members_see_only_own_assigned_keys(client: TestClient, db: Session,
     got_a = ma.get("/api/v1/chat/keys")
     got_b = mb.get("/api/v1/chat/keys")
     assert got_a.status_code == 200 and got_b.status_code == 200
-    assert [k["id"] for k in got_a.json()] == [ka["key"]["id"]]
-    assert [k["id"] for k in got_b.json()] == [kb["key"]["id"]]
-    assert all(k["scope"] == "organization" and k["org_id"] == oid for k in got_a.json() + got_b.json())
+    ids_a = [k["id"] for k in got_a.json()]
+    ids_b = [k["id"] for k in got_b.json()]
+    assert ka["key"]["id"] in ids_a and kb["key"]["id"] not in ids_a
+    assert kb["key"]["id"] in ids_b and ka["key"]["id"] not in ids_b
+    assert len(ids_a) == 2 and len(ids_b) == 2  # own org key + signup primary
+    assert {k["scope"] for k in got_a.json()} == {"organization", "personal"}
+    assert all(k["scope"] == "organization" and k["org_id"] == oid
+               for k in got_a.json() + got_b.json() if k["scope"] == "organization")
 
 
 # --- 2. revoked / disabled / expired keys denied on chat send ------------------

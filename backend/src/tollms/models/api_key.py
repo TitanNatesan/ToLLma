@@ -72,6 +72,18 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
                 "is_deleted = false AND org_id IS NULL AND is_primary = true"
             ),
         ),
+        # One default key per personal user: the most-recent personal key
+        # (primary is system-managed allow-list; default is the newest
+        # personal key used for password-less flows). Org keys never
+        # participate.
+        Index(
+            "uq_api_keys_default_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text(
+                "is_deleted = false AND org_id IS NULL AND is_default = true"
+            ),
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -95,6 +107,12 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
     # Personal-key default for password-less flows. At most one live
     # primary per personal user (see uq_api_keys_primary_per_user).
     is_primary: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # Personal-key default (most-recent personal key) vs primary (system
+    # allow-list key): a primary is usually also the default, but a newer
+    # user-created key takes over the default slot while the primary stays.
+    is_default: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

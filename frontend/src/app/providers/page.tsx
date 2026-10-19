@@ -56,6 +56,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -350,7 +351,7 @@ export default function ProvidersPage() {
               data-testid="provider-detail"
             >
               {/* Header */}
-              <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
+              <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     {!leftSidebarOpen && (
@@ -605,8 +606,9 @@ export default function ProvidersPage() {
             <div className="flex flex-1 flex-col overflow-y-auto bg-zinc-50/30 dark:bg-zinc-950/30 min-h-[300px] xl:flex-row xl:overflow-hidden">
               {/* LEFT: Available Models */}
               <div className="flex flex-1 flex-col border-b border-zinc-200 p-4 dark:border-zinc-800 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r">
+                <div className="sticky -top-4 z-10 -mx-4 bg-zinc-50 px-4 pt-4 pb-2 dark:bg-zinc-950">
                 <div className="mb-2 flex items-center gap-2">
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Available Models
                   </h2>
                   <Badge variant="secondary" className="text-xs">
@@ -665,6 +667,7 @@ export default function ProvidersPage() {
                       ))}
                     </Select>
                   </div>
+                </div>
                 </div>
 
                 <div className="mt-3 grid gap-2">
@@ -728,24 +731,33 @@ export default function ProvidersPage() {
                     </div>
                   ))}
                   {available.length === 0 && (
-                    <p className="py-8 text-center text-xs text-zinc-400" data-testid="no-available-models">
-                      {discovery
-                        ? "All discovered models are registered."
-                        : "No discovered models yet — click Refresh models to discover."}
-                    </p>
+                    <EmptyState
+                      icon={Cpu}
+                      title="No available models"
+                      description={
+                        discovery
+                          ? "All discovered models are registered."
+                          : "No discovered models yet — click Refresh models to discover."
+                      }
+                      testId="no-available-models"
+                    />
                   )}
                   {available.length > 0 && filteredAvailable.length === 0 && (
-                    <p className="py-8 text-center text-xs text-zinc-400" data-testid="no-available-match">
-                      No available models match the current filters.
-                    </p>
+                    <EmptyState
+                      icon={Search}
+                      title="No matching models"
+                      description="No available models match the current filters."
+                      testId="no-available-match"
+                    />
                   )}
                 </div>
               </div>
 
               {/* RIGHT: Registered Models */}
               <div className="flex flex-1 flex-col p-4 xl:min-h-0 xl:overflow-y-auto">
+                <div className="sticky -top-4 z-10 -mx-4 bg-zinc-50 px-4 pt-4 pb-2 dark:bg-zinc-950">
                 <div className="mb-2 flex items-center gap-2">
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Registered Models
                   </h2>
                   <Badge variant="secondary" className="text-xs">
@@ -760,6 +772,7 @@ export default function ProvidersPage() {
                   className="h-8"
                   data-testid="registered-search"
                 />
+                </div>
 
                 {/* Inline edit form (registered models only) */}
                 {!isOrg && showEditForm && editingModel && (
@@ -881,11 +894,16 @@ export default function ProvidersPage() {
                   ))}
 
                   {selectedModels.length === 0 && !showEditForm && (
-                    <p className="text-xs text-zinc-400 py-8 text-center" data-testid="no-registered-models">
-                      {isOrg
-                        ? "No registered models yet — models are added when the provider is connected."
-                        : "No registered models — discover above, then Register from Available Models."}
-                    </p>
+                    <EmptyState
+                      icon={Cpu}
+                      title="No registered models"
+                      description={
+                        isOrg
+                          ? "No registered models yet — models are added when the provider is connected."
+                          : "No registered models — discover above, then Register from Available Models."
+                      }
+                      testId="no-registered-models"
+                    />
                   )}
                 </div>
               </div>

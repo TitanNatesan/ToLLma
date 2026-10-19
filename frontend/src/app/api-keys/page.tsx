@@ -111,7 +111,9 @@ function PersonalApiKeysPage() {
     await qc.invalidateQueries({ queryKey: ["api-keys"] });
     setCreateOpen(false);
     setSecret({ rawKey: created.raw_key, apiKey: created.key, reason: "create" });
-    toast.success("API key created");
+    toast.success("API key created", {
+      description: "New key set as Default. Primary remains unchanged.",
+    });
   }
 
   const handleToggle = useCallback(

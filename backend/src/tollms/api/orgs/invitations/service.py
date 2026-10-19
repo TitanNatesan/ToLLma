@@ -515,6 +515,12 @@ async def accept_new_invitation(
             _notify(db, approver_id, "invitation.accepted", f"{inv.email} joined {org.name}",
                     org_id=org.id, invitation_id=str(inv.id))
     db.commit()
+    try:
+        from tollms.api.keys import service as keys_service
+
+        keys_service.ensure_primary_key(db, user.id)
+    except Exception:
+        logger.exception("primary key provisioning failed")
     db.refresh(user)
     logger.info("invitation accepted by new account: org_id=%s user_id=%s", org.id, user.id)
     try:

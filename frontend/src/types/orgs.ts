@@ -218,6 +218,14 @@ export interface OrgKey {
   description?: string | null;
   assignee_user_id?: string | null;
   assignee_email?: string | null;
+  /** Issuer display (who created the key); tolerant of backend namings. */
+  issued_by?: string | null;
+  issued_by_user_id?: string | null;
+  issued_by_email?: string | null;
+  issuer_email?: string | null;
+  /** System auto key vs current default (mirrors personal KeyRead). */
+  is_primary?: boolean | null;
+  is_default?: boolean | null;
   /** Alternate backend namings for the assignee identity. */
   user_id?: string | null;
   email?: string | null;

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -395,6 +396,30 @@ export const KeyTable = memo(function KeyTable({
                         <p className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
                           {apiKey.name}
                         </p>
+                        {(apiKey.is_primary || apiKey.is_default) && (
+                          <span className="mt-1 flex flex-wrap items-center gap-1">
+                            {apiKey.is_primary && (
+                              <Badge
+                                variant="secondary"
+                                className="text-[9px]"
+                                data-testid={`key-badge-primary-${apiKey.id}`}
+                                title="Primary is your automatic system key"
+                              >
+                                Primary
+                              </Badge>
+                            )}
+                            {apiKey.is_default && (
+                              <Badge
+                                variant="success"
+                                className="text-[9px]"
+                                data-testid={`key-badge-default-${apiKey.id}`}
+                                title="Default is the most-recent key used for new requests"
+                              >
+                                Default
+                              </Badge>
+                            )}
+                          </span>
+                        )}
                         <CopyPrefix apiKey={apiKey} />
                         {apiKey.description && (
                           <p className="mt-0.5 line-clamp-1 max-w-52 text-[10px] text-zinc-400">
@@ -469,6 +494,13 @@ export const KeyTable = memo(function KeyTable({
       )}
       <p className="border-t border-zinc-100 px-4 py-2 text-[10px] text-zinc-400 dark:border-zinc-800/80">
         Budget usage reflects the last 30 days against each key&apos;s reset window.
+      </p>
+      <p
+        className="border-t border-zinc-100 px-4 py-2 text-[10px] text-zinc-400 dark:border-zinc-800/80"
+        data-testid="keys-primary-default-legend"
+      >
+        Primary is your automatic system key. Default is the most-recent key used for new
+        requests.
       </p>
     </div>
   );

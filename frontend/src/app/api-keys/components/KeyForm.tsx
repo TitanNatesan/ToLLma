@@ -269,6 +269,7 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
                   onChange={(event) => setEffectiveAssignee(event.target.value)}
                   disabled={busy}
                   data-testid="key-assignee-input"
+                  aria-label="Assignee (member)"
                 >
                   <option value="">Select a member…</option>
                   {(assignees ?? []).map((member) => (
@@ -276,7 +277,20 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
                       {member.email}
                     </option>
                   ))}
+                  {(assignees ?? []).length === 0 && (
+                    <option value="" disabled>
+                      No eligible members
+                    </option>
+                  )}
                 </Select>
+                {(assignees ?? []).length === 0 && (
+                  <p
+                    className="text-[11px] text-zinc-500 dark:text-zinc-400"
+                    data-testid="key-assignee-empty"
+                  >
+                    No active members in this organization to assign a key to.
+                  </p>
+                )}
               </div>
             )}
             <div className="flex min-w-0 flex-col gap-1">

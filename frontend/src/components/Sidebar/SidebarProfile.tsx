@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import { ChevronsUpDown } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 import { useOrgStore } from "@/store/org";
@@ -11,11 +10,11 @@ import {
 } from "@/components/ui";
 import { WorkspaceMenuContent } from "./WorkspaceMenu";
 
-/** Persistent profile card. Hovering the identity block reveals the workspace
- * menu (same 1s grace-hide as the nav peek); clicking toggles it pinned
- * open. The footer chevron pins the bottom-anchored navigation open or
- * closed; hovering it while hidden only peeks. Log out lives at the end of
- * the navigation list. */
+/** Persistent profile card. Clicking the identity block toggles the workspace
+ * menu (Personal + accessible organizations + creation entry points). The
+ * footer chevron pins the bottom-anchored navigation open or closed;
+ * hovering it while hidden only peeks. Log out lives at the end of the
+ * navigation list. */
 export function SidebarProfile({
   navOpen,
   onToggleNav,
@@ -29,33 +28,6 @@ export function SidebarProfile({
 }) {
   const user = useAuthStore((s) => s.user);
   const context = useOrgStore((s) => s.context);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearMenuTimer = () => {
-    if (menuTimer.current !== null) {
-      clearTimeout(menuTimer.current);
-      menuTimer.current = null;
-    }
-  };
-
-  useEffect(
-    () => () => {
-      if (menuTimer.current !== null) clearTimeout(menuTimer.current);
-    },
-    [],
-  );
-
-  // Hovering the identity block reveals the workspace menu (same 1s grace
-  // as the nav peek); clicking toggles it pinned open.
-  const peekMenuOpen = () => {
-    clearMenuTimer();
-    setMenuOpen(true);
-  };
-  const scheduleMenuClose = () => {
-    clearMenuTimer();
-    menuTimer.current = setTimeout(() => setMenuOpen(false), 1000);
-  };
 
   if (!user) return null;
   const displayName = user.full_name?.trim() || "User";
@@ -64,15 +36,13 @@ export function SidebarProfile({
   const workspaceName = context.type === "personal" ? "Personal" : context.orgName;
 
   return (
-    <div className="flex items-center gap-2.5" data-testid="sidebar-profile">
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+    <div className="flex select-none items-center gap-2.5" data-testid="sidebar-profile">
+      <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
             aria-label={`Workspace menu, signed in as ${email}. Current workspace ${workspaceName}`}
             data-testid="workspace-menu-trigger"
-            onMouseEnter={peekMenuOpen}
-            onMouseLeave={scheduleMenuClose}
             className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1 py-1 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
             <span
@@ -99,8 +69,6 @@ export function SidebarProfile({
           align="start"
           className="w-64 p-1.5"
           data-testid="workspace-menu"
-          onMouseEnter={peekMenuOpen}
-          onMouseLeave={scheduleMenuClose}
         >
           <WorkspaceMenuContent />
         </DropdownMenuContent>

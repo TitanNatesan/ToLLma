@@ -3566,3 +3566,153 @@ Hovering the profile section reveals the org-switching menu (same 1s grace-hide 
 
 ### Verification
 - `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 149 collected incl. new hover/grace/click test. Integrated browser opened for visual check.
+
+---
+
+## 2026-10-19 (pm) — Auth hardening: post-signup flip + scroll-safe card
+
+### Requirement
+Signup card overflowed its flip container; after signup+toast the URL changed but the signup face stayed visible.
+
+### Root cause + fix (frontend only, `AuthCard.tsx`)
+- Overflow: flip-card back face was `absolute inset-0` with `overflow:hidden` inside an `overflow-hidden` main — taller signup content clipped with no scroll path. Fix: `main` scrolls (`overflow-y-auto` + `m-auto` centering wrapper), back face gets its own `overflow-y-auto`, signup header tightened.
+- Stuck signup face: in-app mode switches use raw `history.pushState`, which desyncs Next's router — the post-signup `router.push("/login")` can no-op (no remount). Fix: explicitly `setMode("login")` in the signup success path before navigating, so the card flips regardless of router behavior.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 149 collected (tester added auth restyle + palette coverage earlier). Integrated browser opened on /signup for visual check.
+
+---
+
+## 2026-10-19 — Automatic primary API keys + provider sync + default-key lifecycle
+
+### Requirement
+Every new user gets exactly one primary personal key; personal provider models sync to it; provider/model deletion prunes access without destroying usage history; manual personal keys become default (primary intact); org keys assigned to valid members, isolated from personal scope. Plus service-decomposition rule in backend.md.
+
+### Implementation Summary
+- Backend (`api/keys/service.py`): `is_default` flag + `find_default_key`/`set_default_key` (race-safe savepoint, mirrors primary pattern); `ensure_primary_key` also claims empty default slot; `persist_key(is_primary/is_default)` kwargs; `create_key` promotes new key to default; `delete_key` promotes most-recent successor; `backfill_missing_primaries()`; `prune_primary_provider_models`/`prune_primary_model` (scoped to owner's primary, context invalidated).
+- Provisioning: `api/auth/service.py` signup + Google-callback new-user branch, `api/orgs/invitations/service.py` accept-new — best-effort post-commit `ensure_primary_key`, never fails registration.
+- Sync/prune hooks: `api/models/service.py` create (existing) + delete/disable-prune + enable-resync (personal only); `api/providers/service.py` delete prunes personal-provider rows only.
+- Schema: `models/api_key.py` `is_default` + partial UQ `uq_api_keys_default_per_user`; migration `d6e7f8a9b0c1_api_key_default.py` (DISTINCT ON backfill, primary-wins-else-most-recent); `KeyRead` + router expose `is_primary/is_default` (additive).
+- Org path unchanged: assignee-required issuance, never touches flags/defaults.
+- Frontend: Primary/Default badges + legend (KeyTable, KeyDetailsPanel), org assignee filtering + issued-by display (OrgKeysPanel, KeyForm), creation toast notes Default promotion. Secrets still show-once only.
+- Rules: `backend.md` service-decomposition verbatim rule appended.
+
+### Files Changed
+- Backend src: `api/keys/service.py|schemas.py|router.py`, `models/api_key.py`, `api/auth/service.py`, `api/models/service.py`, `api/providers/service.py`, `api/orgs/invitations/service.py`; migration `d6e7f8a9b0c1_api_key_default.py`.
+- Tests: new `tests/keys/test_primary_default_lifecycle.py` (10 tests); fixed stale zero-key assumptions in `keys/test_api_keys.py`, `test_chat_keys.py`, `test_chat_keys_edge.py`, `analytics_api/test_analytics_api.py`.
+- Frontend: `types/apiKeys.ts|orgs.ts`, `KeyTable.tsx`, `KeyDetailsPanel.tsx`, `KeyForm.tsx`, `OrgKeysPanel.tsx`, `api-keys/page.tsx`.
+- Rules: `.opencode/rules/backend.md`.
+
+### Testing Performed
+- `docker compose exec -T backend pytest -q`: **771 passed** (clean, no concurrency; earlier 19-failure run was two pytest sessions sharing one DB + mid-run test edits — `test_org_phase_b` 26/26 solo confirmed pollution).
+- `alembic check`: no new operations; single linear head; OpenAPI 170 routes ok.
+- Frontend: `tsc`/`lint` clean, vitest 152/152, `playwright test --list` 149 collected.
+- Reviewer pass: hash-only storage confirmed, scope isolation intact, history SET NULL preserved; 2 mediums (default-claim race, delete-promotion) fixed.
+
+### Architecture Notes
+- Primary (system allow-list key) vs Default (most-recent personal key) enforced by twin partial UQs; org keys carry neither flag.
+- All cross-service calls lazy-imported (no cycles); provisioning/prune best-effort post-commit with structured logs, never fail the outer operation.
+- Gateway eligibility (live+active filter) remains backstop behind allow-list prune + 30s context invalidation.
+
+---
+
+## 2026-10-19 (pm) — Sidebar profile click-only + non-selectable
+
+### Requirement
+Workspace menu opens on click only (hover-to-open removed); profile text must not be selectable.
+
+### Implementation (frontend only, `SidebarProfile.tsx`)
+- Reverted to uncontrolled click-only `DropdownMenu` (removed `menuOpen` state, 1s hover timer, trigger/content hover handlers); comment updated. Footer-chevron nav peek unchanged.
+- Root profile container marked `select-none`.
+- E2E `navigation.spec.ts`: hover test rewritten to click-only (hover asserts hidden; click/Escape toggle covered).
+
+### Verification
+- `tsc` clean; `playwright test --list` 149 collected; vitest/lint via background run.
+
+---
+
+## 2026-10-19 (evening) — Catalog overlay, providers polish, logo dark fix, palette logout
+
+### Requirement
+Wider + more feature-rich catalog search overlay; providers UI/UX polish; black provider logos invisible in dark theme; logout in command palette.
+
+### Implementation (frontend only)
+- `CatalogBrowser.tsx`: dialog `max-w-3xl`→`max-w-5xl`, list `70vh`→`75vh`, 3-col grid on lg, sort control (`catalog-sort`: Name/Model count, client-side per page), results count (`catalog-results-count`) + clear-filters (`catalog-clear-filters`), gateway family label on supported cards.
+- `providers/page.tsx`: sticky center header + panel toolbars, unified section-header type, plain-<p> empty states → `EmptyState` (same strings/testids). No behavior/testid changes.
+- `ProviderLogo.tsx`: img tile keeps `bg-white` in both themes + inset ring (was `dark:bg-zinc-950` hiding black marks). Fallback unchanged.
+- `CommandPalette.tsx`: trailing Session group with Log out (`palette-logout`): logout() → reset() → push "/" in finally, toast + close. Mirrors `SidebarLogoutNav`.
+- E2E: new `frontend/e2e/palette-logout.spec.ts` (dedicated user, skip-guard if item absent — now present so it runs fully).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 150 collected.
+
+---
+
+## 2026-10-19 (night) — Gemini inline image output was silently dropped
+
+### Requirement
+"Generate an image" replies showed descriptive text but no image ("no image is visible!"); plus prior thread: shared custom dropdown everywhere + chat math rendering.
+
+### Root cause
+Gemini/Vertex image-capable models return image bytes as `inlineData` parts inside the SAME chat response. `adapters/gemini.py::_gemini_thought_and_text` extracted only `text` parts — image bytes were discarded, never persisted, so `MessageAttachments` had nothing to render. The model's own prose ("This infographic visualizes...") made it look like a render bug.
+
+### Implementation
+- Backend: `StreamChunk`/`ChatResult` gain `images[]`; `_gemini_images()` extracts camelCase/snake_case parts (stream + non-stream, Gemini + Vertex, ~20MB cap); `attachments/service.persist_inline_images()` decodes→upload→link; `run_chat` + `generation._finish_completed` persist post-commit; `ChatResponse.attachments` + SSE done-envelope carry `AttachmentRead`s. No migrations, text-only flows byte-identical.
+- Frontend: `StreamDone.attachments` typed; `ChatWorkspace.mergeDoneIntoCache` merges done-envelope attachments into the cached message before invalidating (empty lists never clobber); backend emits terminal only after image commit, so refetch is authoritative.
+- Prior thread (same tree, uncommitted): shared custom `Select` (`ui/select.tsx`, same props/API, `{testid}-option-{value}` contract, wizard raw select replaced); KaTeX math (`remark-math`+`rehype-katex` in `ResponseMarkdown`, citation plugin skips math nodes); e2e migrated from `selectOption` to `selectDropdown` helper; palette logout e2e.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; backend targeted suites 70+54 passed; `alembic check` clean; OpenAPI 27 routes ok.
+- E2E `test --list` 150 collected (browser suite not driven — agent limited to open/preview).
+
+### Notes
+- Without `-p no:randomly`, parallel pytest runs hit DB contention even on untouched tests (pre-existing flake, unrelated).
+
+---
+
+## 2026-10-19 (night) — Build fix: rehype-katex missing in frontend container
+
+### Symptom
+`next dev` overlay: `Module not found: Can't resolve 'rehype-katex'` in `ResponseMarkdown.tsx`.
+
+### Root cause
+Two-layer staleness, NOT a missing dep: `package.json` + `package-lock.json` correctly list `katex@0.19.0`/`rehype-katex@7.0.1`/`remark-math@6.0.0` and the rebuilt image contains them — but the `tollms_frontend_node_modules` named volume (populated from an older image) shadows `/app/node_modules` in the running container. (Known recurrence: Desktop file-sharing forces the volume; see 2026-09-13 volume incidents.) Local host `node_modules` was always fine.
+
+### Fix (infra only, no code)
+Rebuilt image (`docker compose build frontend`), then `docker rm -f tollms-frontend` + `docker volume rm tollms_frontend_node_modules` + `docker compose up -d frontend` so the fresh volume populates from the new image. Verified: all three packages resolve + import inside the container.
+
+### Lesson
+After any `package.json` dependency change, the frontend container needs image rebuild AND node_modules volume refresh — image rebuild alone is shadowed.
+
+---
+
+## 2026-10-19 (night) — Wizard Step 1: cards-only, no Vertex card, catalog search card, no scroll
+
+### Requirement
+No scroll (fit max height); remove dropdown type selection; remove Vertex AI card; search card last (after Custom) opening catalog search+configure.
+
+### Implementation (frontend only, `ProviderWizardModal.tsx`)
+- Deleted the `Select data-testid="provider-type"` block; platform cards (`provider-platform-{TYPE}`) are the only selector; `type` state/Next gating unchanged.
+- `VISIBLE_PROVIDER_TYPES` filters out `VERTEX_AI` from the card grid; meta/credential/step-2+ support intact; stale drafts fall back to OPENAI.
+- New dashed `provider-platform-SEARCH` card (Search icon) opens reused `CatalogBrowserDialog`; visible family preselected else CUSTOM (+viaCustom/baseUrl prefill, name fill-if-blank); never a submittable type.
+- `DialogContent`/`form` capped `max-h-[90vh]` overflow-hidden (also fixes clipped header); step-1 body non-scrolling compact 3-col grid; steps 2–4 keep existing scroll container.
+- E2E: `provider-type` dropdown refs → card clicks (`helpers`, `wizard.spec`, `providers.spec`); `selectDropdown` kept for remaining custom-dropdown filters; zero `provider-type` refs left.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 150 collected.
+
+---
+
+## 2026-10-19 (night) — Catalog no-scroll + card redesign + SEARCH logo preview + wizard layout
+
+### Requirement
+Catalog: no scroll, container hugs content, wider + more featuristic cards. Wizard SEARCH card shows picked provider logo. Add-Provider layout polish.
+
+### Implementation (frontend only)
+- `CatalogBrowser.tsx`: `PAGE_SIZE=12`, 4-col grid (xl), no scroll regions, dialog `max-w-6xl h-auto` + short-viewport scale-down; `CatalogCard` rewrite — wrapping names, break-all slug/host, family + count row, env chips, flex-1 Configure + doc tooltip. All catalog testids kept.
+- `useCatalog.ts`: `pageSize` param threaded into query key + `page_size`.
+- `ProviderWizardModal.tsx`: `catalogPick` carries name/logoUrl; SEARCH card previews logo+name+slug with Change hint; header rhythm/section labels/equal-height card footers/footer spacing polished.
+- E2E `catalog.spec.ts`: density-agnostic pagination assertions + SEARCH preview test. (Tester initially read stale files mid-write; on-disk state confirmed correct.)
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` green.

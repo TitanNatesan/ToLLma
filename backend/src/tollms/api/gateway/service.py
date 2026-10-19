@@ -49,6 +49,7 @@ from tollms.api.conversations.service import (
     list_messages,
     touch,
 )
+from tollms.api.attachments.schemas import AttachmentRead
 from tollms.api.conversations.schemas import ConversationCreate
 from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessage, ChatResult, MediaPart
 from tollms.services.gateway import attachments as attachment_engine
@@ -969,6 +970,15 @@ async def run_chat(
             assistant.api_key_id = api_key_id
             db.commit()
             db.refresh(assistant)
+        image_rows = attachment_service.persist_inline_images(
+            db,
+            images=getattr(result, "images", []),
+            conversation_id=conv_id,
+            message_id=assistant.id,
+            user_id=user_id,
+            model_label=model.model_id,
+        )
+        attachments = [AttachmentRead.model_validate(row) for row in image_rows]
         db.add(
             GenerationRun(
                 message_id=assistant.id,
@@ -1028,6 +1038,7 @@ async def run_chat(
             cache_read_cost=breakdown.cache_read_cost, cache_write_cost=breakdown.cache_write_cost,
             reasoning_cost=breakdown.reasoning_cost,
             usage_estimated=estimated, latency_ms=latency_ms,
+            attachments=attachments,
         )
     except (NotFoundError, ValidationError):
         raise
@@ -1400,7 +1411,7 @@ async def _drain_to_sse(
         yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
         if snapshot:
             yield f"data: {json.dumps({'content': msg.content, 'status': msg.status.value})}\n\n"
-        yield f"data: {json.dumps(_terminal_from_row(msg))}\n\n"
+        yield f"data: {json.dumps(_terminal_from_row(msg, _message_attachments(db, msg.id, user_id)))}\n\n"
         return
     # Subscribe + snapshot with no await between: the snapshot covers exactly
     # the deltas emitted before subscription — gapless by construction.
@@ -1414,7 +1425,7 @@ async def _drain_to_sse(
         yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
         if snapshot:
             yield f"data: {json.dumps({'content': msg.content, 'status': msg.status.value})}\n\n"
-        yield f"data: {json.dumps(_terminal_from_row(msg))}\n\n"
+        yield f"data: {json.dumps(_terminal_from_row(msg, _message_attachments(db, msg.id, user_id)))}\n\n"
         return
     yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
     if snapshot:
@@ -1436,7 +1447,7 @@ async def _drain_to_sse(
         generation_engine.manager.unsubscribe(msg.id, queue)
 
 
-def _terminal_from_row(msg) -> dict:
+def _terminal_from_row(msg, attachments: list | None = None) -> dict:
     return {
         "done": True,
         "generation_id": str(msg.id),
@@ -1444,7 +1455,21 @@ def _terminal_from_row(msg) -> dict:
         "status": msg.status.value,
         "content": msg.content,
         **({"error": msg.error} if msg.error else {}),
+        "attachments": [
+            a.model_dump(mode="json") if hasattr(a, "model_dump") else a
+            for a in (attachments or [])
+        ],
     }
+
+
+def _message_attachments(db, message_id, user_id) -> list:
+    """Attachment reads for one message. Empty on any failure (never break SSE)."""
+    try:
+        grouped = attachment_service.attachments_for_messages(db, [message_id], user_id)
+        return [AttachmentRead.model_validate(a) for a in grouped.get(message_id, [])]
+    except Exception:
+        logger.warning("terminal attachments lookup failed: %s", message_id, exc_info=True)
+        return []
 
 
 async def stream_events(

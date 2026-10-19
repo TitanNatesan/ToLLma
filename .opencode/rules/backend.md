@@ -142,3 +142,5 @@ authorization. Missing upstream fields must not be fabricated.
 ## Service decomposition
 
 When a service.py module begins accumulating unrelated responsibilities or becomes difficult to navigate, split it into multiple cohesive service modules in the same feature directory. Each module must have a meaningful name reflecting its business responsibility. Prefer clear boundaries, single-purpose functions, and small, composable services over a single large service file. Do not split files arbitrarily based on line count alone; use responsibility, complexity, cohesion, and testability as the primary criteria. Keep public interfaces and dependency direction clear, avoid circular imports, and preserve a thin router layer.
+
+> When a service module—particularly `service.py`—starts accumulating multiple unrelated responsibilities or becomes difficult to navigate because of its size, refactor it into multiple focused service modules in the same directory. Use meaningful names that describe each responsibility. Prefer cohesive modules over a single growing file. Do not split files arbitrarily by line count alone, and avoid creating overly fragmented modules.

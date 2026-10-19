@@ -38,6 +38,7 @@ class StreamChunk:
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
     reasoning_tokens: int | None = None
+    images: list = field(default_factory=list)
 
 
 @dataclass
@@ -49,6 +50,7 @@ class ChatResult:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     reasoning_tokens: int = 0
+    images: list = field(default_factory=list)
 
 
 # Reasoning normalization contract (provider-agnostic rendering).
@@ -200,6 +202,8 @@ class BaseProviderAdapter:
                 usage.cache_write_tokens = chunk.cache_write_tokens
             if chunk.reasoning_tokens is not None:
                 usage.reasoning_tokens = chunk.reasoning_tokens
+            if getattr(chunk, "images", None):
+                usage.images.extend(chunk.images)
         usage.text = "".join(parts)
         return usage
 

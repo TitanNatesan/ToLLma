@@ -106,6 +106,8 @@ class KeyRead(BaseModel):
     expires_at: datetime | None = None
     last_used_at: datetime | None = None
     rotation_count: int
+    is_primary: bool = False
+    is_default: bool = False
     policy: PolicyRead | None = None
     ip_rules: list[IpRuleRead] = Field(default_factory=list)
     model_permissions: list[ModelPermissionRead] = Field(default_factory=list)

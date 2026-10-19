@@ -279,6 +279,8 @@ export interface StreamDone {
   generation_id?: string;
   status?: MessageStatus | null;
   content?: string;
+  /** Generated media persisted alongside the message (absent on older backends). */
+  attachments?: ChatAttachment[];
   error?: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   cost?: { input_cost: string; output_cost: string; total_cost: string };

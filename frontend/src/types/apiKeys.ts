@@ -62,6 +62,9 @@ export interface ApiKey {
   policy: ApiKeyPolicy | null;
   ip_rules: ApiKeyIpRule[];
   model_permissions: ApiKeyModelPermission[];
+  /** System auto key (automatic) vs current default (most-recent). Backend-additive. */
+  is_primary?: boolean;
+  is_default?: boolean;
 }
 
 /** Create + rotate responses: the raw key is shown exactly once. */

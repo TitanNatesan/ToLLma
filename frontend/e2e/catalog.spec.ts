@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
-import { API } from "./helpers";
+import { API, selectDropdown } from "./helpers";
 
 async function verifiedSignupAndVerify(request: APIRequestContext, tag: string): Promise<string> {
   const email = `pw-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tollma.ai`;
@@ -22,6 +22,14 @@ test.describe("provider catalog", () => {
     await expect(page.getByTestId("catalog-stats")).toContainText("providers", { timeout: 30000 });
     const cards = page.locator('[data-testid^="catalog-card-"]');
     await expect(cards.first()).toBeVisible({ timeout: 30000 });
+    // Pagination density is 12/page (redesigned cards): page 1 holds >0 and <=12.
+    const pageOneCount = await cards.count();
+    expect(pageOneCount).toBeGreaterThan(0);
+    expect(pageOneCount).toBeLessThanOrEqual(12);
+    await expect(page.getByTestId("catalog-results-count")).toContainText(/Showing \d+ of \d+ providers?/);
+    if (await page.getByTestId("catalog-pages").count()) {
+      await expect(page.getByTestId("catalog-pages")).toContainText(/Page \d+ of \d+/);
+    }
     // Search narrows to anthropic.
     await page.getByTestId("catalog-search").fill("anthropic");
     await page.getByTestId("catalog-search").press("Enter");
@@ -35,10 +43,10 @@ test.describe("provider catalog", () => {
       await expect(imgs.first()).toHaveAttribute("alt", /Anthropic logo/);
     }
     // Catalog-only filter hides gateway-supported rows.
-    await page.getByTestId("catalog-gateway-filter").selectOption("catalog-only");
+    await selectDropdown(page, "catalog-gateway-filter", "catalog-only");
     await expect(page.getByTestId("catalog-card-anthropic")).toHaveCount(0, { timeout: 20000 });
     // Supported filter shows them again.
-    await page.getByTestId("catalog-gateway-filter").selectOption("supported");
+    await selectDropdown(page, "catalog-gateway-filter", "supported");
     await expect(page.getByTestId("catalog-card-anthropic")).toBeVisible({ timeout: 20000 });
     await page.keyboard.press("Escape");
   });
@@ -48,7 +56,7 @@ test.describe("provider catalog", () => {
     await page.goto("/providers");
     await page.getByTestId("browse-catalog").click();
     await expect(page.getByTestId("catalog-dialog")).toBeVisible({ timeout: 20000 });
-    await page.getByTestId("catalog-gateway-filter").selectOption("catalog-only");
+    await selectDropdown(page, "catalog-gateway-filter", "catalog-only");
     const first = page.locator('[data-testid^="catalog-card-"]').first();
     await expect(first).toBeVisible({ timeout: 30000 });
     await expect(first).toContainText("Catalog only");
@@ -69,6 +77,27 @@ test.describe("provider catalog", () => {
     // Wizard opens with the Anthropic family preselected (step: credentials).
     await expect(page.getByTestId("wizard-step-1")).toBeVisible({ timeout: 20000 });
     await expect(page.getByTestId("wizard-step-1")).toContainText("Anthropic");
+    await page.keyboard.press("Escape");
+  });
+
+  test("wizard SEARCH card previews picked provider (UI)", async ({ page, request }) => {
+    await verifiedSignupAndVerify(request, "catalog-search-card");
+    await page.goto("/providers");
+    await page.getByTestId("add-provider").click();
+    await expect(page.getByTestId("wizard-step-1")).toBeVisible({ timeout: 20000 });
+    await page.getByTestId("provider-platform-SEARCH").click();
+    await expect(page.getByTestId("catalog-dialog")).toBeVisible({ timeout: 20000 });
+    await page.getByTestId("catalog-search").fill("anthropic");
+    await page.getByTestId("catalog-search").press("Enter");
+    await expect(page.getByTestId("catalog-card-anthropic")).toBeVisible({ timeout: 20000 });
+    await page.getByTestId("catalog-configure-anthropic").click();
+    // Wizard returns to step 1 with the Anthropic family preselected.
+    await expect(page.getByTestId("wizard-step-1")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("wizard-step-1")).toContainText("Anthropic");
+    // SEARCH card previews the picked provider's name/logo.
+    const searchCard = page.getByTestId("provider-platform-SEARCH");
+    await expect(searchCard).toContainText("Anthropic");
+    await expect(searchCard.locator('img[alt*="logo"]')).toBeVisible();
     await page.keyboard.press("Escape");
   });
 

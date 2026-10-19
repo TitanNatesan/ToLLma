@@ -43,7 +43,7 @@ export function ProviderLogo({ logoUrl, name, size = "md", className }: {
       alt={`${name} logo`}
       loading="lazy"
       onError={() => setFailed(true)}
-      className={cn("shrink-0 bg-white object-contain dark:bg-zinc-950", dims, className)}
+      className={cn("shrink-0 bg-white object-contain ring-1 ring-inset ring-zinc-200 dark:ring-zinc-700", dims, className)}
     />
   );
 }

@@ -3,6 +3,7 @@
 //   LIVE_OPENAI_KEY=sk-... LIVE_IMAGE=/home/ond/Downloads/Ben_10_Omnitrix.png \
 //   npx playwright test e2e/live-openai.spec.ts --headed --workers=1
 import { expect, test, type Page } from "@playwright/test";
+import { selectDropdown } from "./helpers";
 
 const API = "http://localhost:8000";
 const EMAIL = process.env.LIVE_EMAIL ?? "titannatesan@gmail.com";
@@ -85,7 +86,7 @@ test("live: OpenAI provider registration and model matrix", async ({ page }) => 
   await page.getByTestId("wiz-model-search").fill("sora-2");
   await page.getByTestId("wiz-edit-sora-2").click();
   await expect(page.getByTestId("wiz-edit-drawer")).toBeVisible();
-  await page.getByTestId("madd-endpoint").selectOption("video/generations");
+  await selectDropdown(page, "madd-endpoint", "video/generations");
   await page.getByTestId("madd-save").click();
   console.log("CHECKPOINT edited sora-2 (video/generations)");
 
@@ -93,7 +94,7 @@ test("live: OpenAI provider registration and model matrix", async ({ page }) => 
   await page.getByTestId("wiz-model-search").fill("gpt-5-mini");
   await page.getByTestId("wiz-edit-gpt-5-mini").click();
   await expect(page.getByTestId("wiz-edit-drawer")).toBeVisible();
-  await page.getByTestId("madd-endpoint").selectOption("responses");
+  await selectDropdown(page, "madd-endpoint", "responses");
   await page.getByTestId("madd-save").click();
   console.log("CHECKPOINT edited gpt-5-mini (responses)");
 

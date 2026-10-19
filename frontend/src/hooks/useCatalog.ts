@@ -12,16 +12,17 @@ export function useCatalogProviders(params: {
   search: string;
   gateway: "all" | "supported" | "catalog-only";
   page: number;
+  pageSize?: number;
 }) {
-  const { search, gateway, page } = params;
+  const { search, gateway, page, pageSize = 24 } = params;
   return useQuery({
-    queryKey: ["catalog", "providers", search, gateway, page],
+    queryKey: ["catalog", "providers", search, gateway, page, pageSize],
     queryFn: () =>
       listCatalogProviders({
         search: search.trim() || undefined,
         gateway_supported: gateway === "all" ? undefined : gateway === "supported",
         page,
-        page_size: 24,
+        page_size: pageSize,
       }),
     staleTime: 60_000,
   });

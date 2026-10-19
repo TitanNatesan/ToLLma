@@ -563,7 +563,7 @@ test("collapsed rail mirrors scope, controls, and shared nav visibility", async 
   await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("aria-current", "page");
 });
 
-test("workspace menu opens on hover with grace-hide, click still toggles", async ({ page }) => {
+test("workspace menu is click-only, hover does not open it", async ({ page }) => {
   test.setTimeout(120000);
   await apiLoginAs(page, "nav-ws-hover");
   await page.goto("/");
@@ -577,23 +577,19 @@ test("workspace menu opens on hover with grace-hide, click still toggles", async
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden({ timeout: 10000 });
 
-  // Hover opens the menu without any click.
+  // Hover alone does NOT open the menu (click-only behavior).
   await trigger.hover();
-  await expect(menu).toBeVisible({ timeout: 10000 });
-  await expect(page.getByTestId("workspace-menu-personal")).toBeVisible({ timeout: 10000 });
-
-  // Moving the pointer away keeps it briefly (1s grace), then hides it.
-  await page.getByTestId("app-logo").hover();
-  await expect(menu).toBeVisible({ timeout: 2000 });
-  await expect(menu).toBeHidden({ timeout: 10000 });
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1500);
   await expect(menu).toBeHidden({ timeout: 10000 });
 
-  // Click toggle still works: click opens, Escape closes, click opens again.
+  // Click opens, second click closes.
   await trigger.click();
   await expect(menu).toBeVisible({ timeout: 10000 });
-  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("workspace-menu-personal")).toBeVisible({ timeout: 10000 });
+  await trigger.click();
   await expect(menu).toBeHidden({ timeout: 10000 });
+
+  // Click opens again, Escape closes.
   await trigger.click();
   await expect(menu).toBeVisible({ timeout: 10000 });
   await page.keyboard.press("Escape");

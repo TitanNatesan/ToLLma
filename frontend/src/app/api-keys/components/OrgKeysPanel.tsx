@@ -49,7 +49,31 @@ function money(v: number | string | null | undefined): string {
 }
 
 function assigneeEmail(k: OrgKey): string {
-  return k.assignee_email ?? k.user_email ?? k.email ?? "—";
+  return (
+    k.assignee_email ??
+    k.user_email ??
+    k.email ??
+    k.issued_by_email ??
+    k.issuer_email ??
+    (typeof k.issued_by === "string" ? k.issued_by : null) ??
+    "—"
+  );
+}
+
+/** Issuer display when it differs from the assignee (who created the key). */
+function issuedByEmail(k: OrgKey): string | null {
+  const issuer =
+    k.issued_by_email ??
+    k.issuer_email ??
+    (typeof k.issued_by === "string" ? k.issued_by : null);
+  const assignee = assigneeEmail(k);
+  if (!issuer || issuer === assignee || issuer === "—") return null;
+  return issuer;
+}
+
+/** Only members that can receive a key: active (or stateless legacy rows). */
+export function eligibleAssignees(members: Member[]): Member[] {
+  return members.filter((m) => !m.state || m.state === "active");
 }
 
 function budgetLabel(k: OrgKey): string {
@@ -139,7 +163,22 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
         </span>
       ),
     },
-    { key: "owner", header: "Owner", render: (k) => <span className="truncate">{assigneeEmail(k)}</span> },
+    {
+      key: "owner", header: "Owner",
+      render: (k) => {
+        const issuer = issuedByEmail(k);
+        return (
+          <span className="block min-w-0">
+            <span className="block truncate" data-testid={`org-key-assignee-${k.id}`}>{assigneeEmail(k)}</span>
+            {issuer && (
+              <span className="block truncate text-[11px] text-zinc-400" data-testid={`org-key-issued-by-${k.id}`}>
+                Issued by {issuer}
+              </span>
+            )}
+          </span>
+        );
+      },
+    },
     { key: "team", header: "Team", render: (k) => (k.team_name ? <span className="truncate">{k.team_name}</span> : <span className="text-zinc-400">—</span>) },
     {
       key: "status", header: "Status",
@@ -286,7 +325,7 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
     <KeyForm
       mode="create"
       scope="org"
-      assignees={members.map((m) => ({ id: m.user_id, email: m.email }))}
+      assignees={eligibleAssignees(members).map((m) => ({ id: m.user_id, email: m.email }))}
       models={modelsQuery.data ?? []}
       providers={orgProviders}
       configureHref={`/organizations/${orgId}?section=providers`}

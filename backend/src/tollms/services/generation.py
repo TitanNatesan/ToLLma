@@ -400,9 +400,10 @@ class GenerationManager:
         tokens, breakdown, estimated = self._price(db, spec, result, partial=False)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
         self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None, estimated)
+        attachments = self._store_inline_images(db, spec, result)
         await self._cache_write_state(spec, MessageStatus.COMPLETED.value, result.text)
         self._invalidate_usage(spec)
-        return _terminal_payload(spec, result, tokens, breakdown, estimated, MessageStatus.COMPLETED, latency_ms)
+        return _terminal_payload(spec, result, tokens, breakdown, estimated, MessageStatus.COMPLETED, latency_ms, attachments=attachments)
 
     async def _finish_cancelled(
         self, db, spec: GenerationSpec, active: ActiveGeneration, result: ChatResult, failed: bool = False
@@ -506,6 +507,38 @@ class GenerationManager:
             db.rollback()
             logger.warning("generation %s: final store failed", spec.generation_id, exc_info=True)
 
+    def _store_inline_images(self, db, spec: GenerationSpec, result: ChatResult) -> list:
+        """Provider-returned chat images -> attachments on the message row.
+
+        Text-only results skip untouched (byte-identical behavior).
+        """
+        images = getattr(result, "images", None) or []
+        if not images:
+            return []
+        try:
+            from tollms.api.attachments import service as attachment_service
+            from tollms.api.attachments.schemas import AttachmentRead
+        except Exception:
+            logger.warning(
+                "generation %s: inline image persistence unavailable", spec.generation_id, exc_info=True
+            )
+            return []
+        try:
+            rows = attachment_service.persist_inline_images(
+                db,
+                images=images,
+                conversation_id=spec.conversation_id,
+                message_id=spec.generation_id,
+                user_id=spec.user_id,
+                model_label=spec.model_label,
+            )
+            return [AttachmentRead.model_validate(row).model_dump(mode="json") for row in rows]
+        except Exception:
+            logger.warning(
+                "generation %s: inline image persistence failed", spec.generation_id, exc_info=True
+            )
+            return []
+
     def _store_run(
         self, db, spec, text, tokens, breakdown, latency_ms, status, error
     ) -> None:
@@ -590,6 +623,7 @@ def _accumulate(result: ChatResult, chunk) -> None:
     if chunk.cache_read_tokens is not None: result.cache_read_tokens = chunk.cache_read_tokens
     if chunk.cache_write_tokens is not None: result.cache_write_tokens = chunk.cache_write_tokens
     if chunk.reasoning_tokens is not None: result.reasoning_tokens = chunk.reasoning_tokens
+    if getattr(chunk, "images", None): result.images.extend(chunk.images)
 
 
 async def _cancellable_stream(
@@ -653,7 +687,7 @@ async def _aclose_quietly(provider_iter) -> None:
             logger.warning("provider iterator close failed", exc_info=True)
 
 
-def _terminal_payload(spec, result, tokens, breakdown, estimated, status, latency_ms, error=None) -> dict:
+def _terminal_payload(spec, result, tokens, breakdown, estimated, status, latency_ms, error=None, attachments: list | None = None) -> dict:
     cost = breakdown.legacy_triplet()
     payload = {
         "done": True,
@@ -674,6 +708,7 @@ def _terminal_payload(spec, result, tokens, breakdown, estimated, status, latenc
         },
         "usage_estimated": estimated,
         "latency_ms": latency_ms,
+        "attachments": list(attachments or []),
     }
     if error:
         payload["error"] = error

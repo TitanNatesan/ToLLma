@@ -6,6 +6,7 @@ import {
   apiCreateModel,
   apiCreateProvider,
   apiLoginAs,
+  selectDropdown,
   selectProviderModel,
   sendMessage,
 } from "./helpers";
@@ -86,7 +87,7 @@ test("analytics range switching + custom range + CSV export", async ({ page }) =
   await expect(page.getByTestId("kpi-requests")).toContainText("2");
 
   // CSV export streams a real file from the backend.
-  await page.getByTestId("export-dataset").selectOption("models");
+  await selectDropdown(page, "export-dataset", "models");
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("export-button").click();
   await page.getByTestId("export-csv").click();
@@ -136,7 +137,7 @@ test("chat preferences: Enter=New line and default thinking level persist", asyn
   await page.waitForLoadState("networkidle");
 
   await page.getByTestId("enter-newline").click();
-  await page.getByTestId("settings-thinking-level").selectOption("none");
+  await selectDropdown(page, "settings-thinking-level", "none");
   await expect
     .poll(async () => (await (await page.request.get(`${API}/api/v1/settings/preferences`)).json()).enter_behavior)
     .toBe("newline");

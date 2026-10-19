@@ -69,6 +69,54 @@ def _gemini_thought_and_text(item: dict) -> tuple[str, str]:
     return "".join(thought), "".join(answer)
 
 
+# Cap on accumulated inline image base64 per response (~20MB b64 ~= 15MB raw).
+MAX_INLINE_IMAGES_B64 = 20 * 1024 * 1024
+
+
+def _gemini_images(item: dict) -> list[dict]:
+    """Image parts from one response chunk. Never raises."""
+    try:
+        parts = item["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError, TypeError):
+        return []
+    if not isinstance(parts, list):
+        return []
+    out: list[dict] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        inline = part.get("inlineData") or part.get("inline_data")
+        if not isinstance(inline, dict):
+            continue
+        mime = inline.get("mimeType") or inline.get("mime_type") or "image/png"
+        data = inline.get("data") or ""
+        if not data:
+            continue
+        out.append({"mime_type": str(mime), "data_b64": str(data)})
+    return out
+
+
+def _capped_images(item: dict, state: dict) -> list[dict]:
+    """Images from one chunk, enforcing the per-response b64 cap."""
+    images = _gemini_images(item)
+    if not images:
+        return []
+    out: list[dict] = []
+    for img in images:
+        size = len(img.get("data_b64") or "")
+        if state["total"] + size > MAX_INLINE_IMAGES_B64:
+            if not state["capped"]:
+                logger.warning(
+                    "gemini inline images exceed %d bytes, dropping remainder",
+                    MAX_INLINE_IMAGES_B64,
+                )
+                state["capped"] = True
+            continue
+        state["total"] += size
+        out.append(img)
+    return out
+
+
 class GeminiAdapter(BaseProviderAdapter):
     endpoint_type = "chat_completions"
     supports_vision = True
@@ -128,6 +176,7 @@ class GeminiAdapter(BaseProviderAdapter):
                     logger.warning("gemini error %s: %s", resp.status_code, detail)
                     raise RuntimeError(f"provider error {resp.status_code}: {detail}")
                 in_reasoning = False
+                _img_state = {"total": 0, "capped": False}
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -146,6 +195,8 @@ class GeminiAdapter(BaseProviderAdapter):
                             yield StreamChunk(delta=THINK_CLOSE)
                             in_reasoning = False
                         yield StreamChunk(delta=text)
+                    for img in _capped_images(item, _img_state):
+                        yield StreamChunk(delta="", images=[img])
                     meta = item.get("usageMetadata") or {}
                     if meta.get("totalTokenCount"):
                         extras = usage_extras(meta)
@@ -268,6 +319,7 @@ class VertexAdapter(BaseProviderAdapter):
                     logger.warning("vertex error %s: %s", resp.status_code, detail)
                     raise RuntimeError(f"provider error {resp.status_code}: {detail}")
                 in_reasoning = False
+                _img_state = {"total": 0, "capped": False}
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -286,6 +338,8 @@ class VertexAdapter(BaseProviderAdapter):
                             yield StreamChunk(delta=THINK_CLOSE)
                             in_reasoning = False
                         yield StreamChunk(delta=text)
+                    for img in _capped_images(item, _img_state):
+                        yield StreamChunk(delta="", images=[img])
                     meta = item.get("usageMetadata") or {}
                     if meta.get("totalTokenCount"):
                         extras = usage_extras(meta)

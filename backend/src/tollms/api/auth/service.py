@@ -134,6 +134,12 @@ async def signup(
     set_password(user, password)
     db.add(user)
     db.commit()
+    try:
+        from tollms.api.keys import service as keys_service
+
+        keys_service.ensure_primary_key(db, user.id)
+    except Exception:
+        logger.exception("primary key provisioning failed")
     db.refresh(user)
     token, sent = await issue_verification(db, user)
     logger.info("user signed up: %s", user.id)
@@ -603,6 +609,7 @@ async def handle_google_callback(
     user = db.scalar(
         select(User).where(User.google_id == google_id, User.is_deleted.is_(False))
     )
+    is_new_user = False
     if user is None:
         user = get_by_email(db, email)
         if user is not None and email_verified:
@@ -612,6 +619,7 @@ async def handle_google_callback(
             else:
                 set_google_identity(user, google_id)
         elif user is None:
+            is_new_user = True
             user = User(
                 email=email,
                 password_hash=None,
@@ -633,6 +641,13 @@ async def handle_google_callback(
             )
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
+    if is_new_user:
+        try:
+            from tollms.api.keys import service as keys_service
+
+            keys_service.ensure_primary_key(db, user.id)
+        except Exception:
+            logger.exception("primary key provisioning failed")
     db.refresh(user)
     refresh_jti = security.generate_refresh_jti()
     session_id = await security.create_session(
