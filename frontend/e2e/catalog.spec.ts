@@ -22,10 +22,10 @@ test.describe("provider catalog", () => {
     await expect(page.getByTestId("catalog-stats")).toContainText("providers", { timeout: 30000 });
     const cards = page.locator('[data-testid^="catalog-card-"]');
     await expect(cards.first()).toBeVisible({ timeout: 30000 });
-    // Pagination density is 12/page (redesigned cards): page 1 holds >0 and <=12.
+    // Pagination density is 8/page (CatalogBrowser PAGE_SIZE): page 1 holds >0 and <=8.
     const pageOneCount = await cards.count();
     expect(pageOneCount).toBeGreaterThan(0);
-    expect(pageOneCount).toBeLessThanOrEqual(12);
+    expect(pageOneCount).toBeLessThanOrEqual(8);
     await expect(page.getByTestId("catalog-results-count")).toContainText(/Showing \d+ of \d+ providers?/);
     if (await page.getByTestId("catalog-pages").count()) {
       await expect(page.getByTestId("catalog-pages")).toContainText(/Page \d+ of \d+/);

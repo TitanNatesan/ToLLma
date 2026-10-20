@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from tollms.core.exceptions import NotFoundError
 from tollms.models.api_key import ApiKey, ApiRequestLog
 from tollms.services.analytics import presets as preset_vocab
+from tollms.services.request_logs import touch_key_last_used
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,12 @@ def log_request(db: Session, entry: ApiLogEntry) -> None:
         with _savepoint(db):
             db.add(row)
             db.flush()
+            # last_used_at = most recent SUCCESSFULLY COMPLETED request only:
+            # failed/cancelled rows (NULL tokens/cost) leave the stamp alone.
+            # Inside the same savepoint = same commit as the log row; the helper
+            # never raises so a stale key can never lose the usage row.
+            if entry.status == "success":
+                touch_key_last_used(db, entry.api_key_id)
         # The public gateway performs no other writes; commit here so the log
         # row survives the request-session teardown (callers never commit).
         db.commit()

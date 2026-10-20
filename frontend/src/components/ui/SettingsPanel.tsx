@@ -19,7 +19,7 @@ export function SettingItem({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-4 py-2.5 border-b border-zinc-100 last:border-0 dark:border-zinc-800/60",
+        "flex flex-col gap-2 py-2.5 border-b border-zinc-100 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4 dark:border-zinc-800/60",
         className,
       )}
     >
@@ -33,7 +33,7 @@ export function SettingItem({
           </span>
         )}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="w-full sm:w-auto sm:shrink-0">{children}</div>
     </div>
   );
 }

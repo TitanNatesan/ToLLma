@@ -14,7 +14,7 @@ export function useCatalogProviders(params: {
   page: number;
   pageSize?: number;
 }) {
-  const { search, gateway, page, pageSize = 24 } = params;
+  const { search, gateway, page, pageSize = 8 } = params;
   return useQuery({
     queryKey: ["catalog", "providers", search, gateway, page, pageSize],
     queryFn: () =>

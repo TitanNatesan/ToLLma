@@ -35,6 +35,7 @@ export default function SettingsPage() {
     >
           <SettingsCard
             id="profile"
+            active={activeId === "profile"}
             title="Profile"
             description="How you appear across ToLLma."
             testId="settings-section-profile"
@@ -44,6 +45,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="appearance"
+            active={activeId === "appearance"}
             title="Appearance"
             description="Theme and accent color — applied instantly, everywhere."
             testId="settings-section-appearance"
@@ -53,6 +55,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="chat"
+            active={activeId === "chat"}
             title="Chat preferences"
             description="Composer behavior, reasoning defaults and streaming."
             testId="settings-section-chat"
@@ -62,6 +65,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="account"
+            active={activeId === "account"}
             title="Account & security"
             description="Sign-in method and password management."
             testId="settings-section-account"
@@ -71,6 +75,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="sessions"
+            active={activeId === "sessions"}
             title="Login & sessions"
             description="Every device currently signed in to your account."
             testId="settings-section-sessions"
@@ -80,6 +85,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="providers"
+            active={activeId === "providers"}
             title="Providers"
             description="Model providers connected to this workspace."
             testId="settings-section-providers"
@@ -89,6 +95,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="organizations"
+            active={activeId === "organizations"}
             title="Organizations"
             description="Workspaces you belong to. Create, join, or switch."
             testId="settings-section-organizations"
@@ -98,6 +105,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="danger-zone"
+            active={activeId === "danger-zone"}
             title="Danger zone"
             description="Irreversible account actions."
             testId="danger-zone-section"

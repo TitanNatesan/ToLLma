@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   Badge, Button, DataTable, type DataTableColumn,
@@ -54,11 +55,17 @@ export function OrgOperationsSection({ orgId, perms, initialTab }: {
   perms: OpsPerms;
   initialTab: OpsTab;
 }) {
-  // Defensive: a legacy tab=keys deep link lands on requests (the [id] page
-  // redirects keys-tab links to /api-keys, but never trust the caller).
-  const [tab, setTab] = useState<OpsTab>(
-    initialTab === "requests" || initialTab === "invitations" ? initialTab : "requests",
-  );
+  // Tab lives in ?tab= so it is shareable and survives back/forward; a
+  // legacy tab=keys deep link lands on requests (the [id] page redirects
+  // keys-tab links to /api-keys, but never trust the caller).
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const paramTab = searchParams.get("tab");
+  const tab: OpsTab =
+    paramTab === "requests" || paramTab === "invitations" ? paramTab : initialTab;
+  function setTab(next: OpsTab) {
+    router.replace(`/organizations/${orgId}?section=operations&tab=${next}`);
+  }
 
   const invitations = useOrgInvitations(orgId);
   const requests = useJoinRequests(orgId);
@@ -73,7 +80,7 @@ export function OrgOperationsSection({ orgId, perms, initialTab }: {
           { id: "requests", label: "Requests", count: pendingRequests },
           { id: "invitations", label: "Invitations", count: pendingInvites },
         ] as const).map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id}
+          <button key={t.id} type="button" role="tab" id={`org-ops-tabbtn-${t.id}`} aria-selected={tab === t.id} aria-controls={`org-ops-panel-${t.id}`}
             onClick={() => setTab(t.id)} data-testid={`org-ops-tab-${t.id}`}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium transition-colors ${tab === t.id
               ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
@@ -89,10 +96,14 @@ export function OrgOperationsSection({ orgId, perms, initialTab }: {
       </div>
 
       {tab === "requests" && (
-        <RequestsTab orgId={orgId} canReview={perms.canReviewRequests} />
+        <div role="tabpanel" id="org-ops-panel-requests" aria-labelledby="org-ops-tabbtn-requests">
+          <RequestsTab orgId={orgId} canReview={perms.canReviewRequests} />
+        </div>
       )}
       {tab === "invitations" && (
-        <InvitationsTab orgId={orgId} canManage={perms.canInvite} canRead={perms.canReadInvitations} />
+        <div role="tabpanel" id="org-ops-panel-invitations" aria-labelledby="org-ops-tabbtn-invitations">
+          <InvitationsTab orgId={orgId} canManage={perms.canInvite} canRead={perms.canReadInvitations} />
+        </div>
       )}
     </div>
   );
@@ -154,9 +165,9 @@ function RequestsTab({ orgId, canReview }: { orgId: string; canReview: boolean }
     { key: "type", header: "Type", render: (r) => <Badge variant="outline">{r.kind}</Badge> },
     {
       key: "requester", header: "Requester",
-      render: (r) => <span className="truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-req-${r.id}`}>{requesterOf(r)}</span>,
+      render: (r) => <span className="truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-req-${r.id}`} title={requesterOf(r)}>{requesterOf(r)}</span>,
     },
-    { key: "resource", header: "Resource", render: (r) => <span className="truncate">{resourceOf(r)}</span> },
+    { key: "resource", header: "Resource", render: (r) => <span className="truncate" title={resourceOf(r)}>{resourceOf(r)}</span> },
     {
       key: "status", header: "Status",
       render: (r) => (
@@ -167,7 +178,7 @@ function RequestsTab({ orgId, canReview }: { orgId: string; canReview: boolean }
     },
     { key: "submitted", header: "Submitted", render: (r) => <span className="whitespace-nowrap">{dateLabel(r.created_at)}</span> },
     { key: "updated", header: "Updated", render: (r) => <span className="whitespace-nowrap">{dateLabel(r.updated_at)}</span> },
-    { key: "reviewer", header: "Reviewer", render: (r) => <span className="truncate">{reviewerOf(r)}</span> },
+    { key: "reviewer", header: "Reviewer", render: (r) => <span className="truncate" title={reviewerOf(r)}>{reviewerOf(r)}</span> },
     {
       key: "actions", header: "Actions", align: "right",
       render: (r) => (r.status === "pending" ? (
@@ -310,7 +321,7 @@ function InvitationsTab({ orgId, canManage, canRead }: { orgId: string; canManag
   const columns: DataTableColumn<Invitation>[] = [
     {
       key: "email", header: "Email",
-      render: (i) => <span className="truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-inv-${i.id}`}>{i.email}</span>,
+      render: (i) => <span className="truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-inv-${i.id}`} title={i.email}>{i.email}</span>,
     },
     {
       key: "status", header: "Status",
@@ -320,11 +331,11 @@ function InvitationsTab({ orgId, canManage, canRead }: { orgId: string; canManag
         </Badge>
       ),
     },
-    { key: "sets", header: "Sets", render: (i) => <span className="truncate">{inviteSets(i).join(", ") || "—"}</span> },
-    { key: "invitedBy", header: "Invited by", render: (i) => <span className="truncate">{inviterOf(i)}</span> },
+    { key: "sets", header: "Sets", render: (i) => <span className="truncate" title={inviteSets(i).join(", ") || "—"}>{inviteSets(i).join(", ") || "—"}</span> },
+    { key: "invitedBy", header: "Invited by", render: (i) => <span className="truncate" title={inviterOf(i) ?? undefined}>{inviterOf(i)}</span> },
     { key: "created", header: "Created", render: (i) => <span className="whitespace-nowrap">{dateLabel(i.created_at)}</span> },
     { key: "expiry", header: "Expiry", render: (i) => <span className="whitespace-nowrap">{dateLabel(i.expires_at)}</span> },
-    { key: "delivery", header: "Delivery", render: (i) => <span className="truncate">{deliveryOf(i)}</span> },
+    { key: "delivery", header: "Delivery", render: (i) => <span className="truncate" title={deliveryOf(i)}>{deliveryOf(i)}</span> },
     {
       key: "actions", header: "Actions", align: "right",
       render: (i) => (
@@ -408,7 +419,7 @@ function InvitationsTab({ orgId, canManage, canRead }: { orgId: string; canManag
             <dl className="space-y-1 rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
               <div className="flex justify-between gap-2"><dt className="text-zinc-500">Status</dt><dd><Badge variant="outline">{inspecting.status}</Badge></dd></div>
               <div className="flex justify-between gap-2"><dt className="text-zinc-500">Kind</dt><dd>{inspecting.kind}</dd></div>
-              <div className="flex justify-between gap-2"><dt className="text-zinc-500">Invited by</dt><dd className="truncate">{inviterOf(inspecting)}</dd></div>
+              <div className="flex justify-between gap-2"><dt className="text-zinc-500">Invited by</dt><dd className="break-words">{inviterOf(inspecting)}</dd></div>
               <div className="flex justify-between gap-2"><dt className="text-zinc-500">Created</dt><dd>{dateLabel(inspecting.created_at)}</dd></div>
               <div className="flex justify-between gap-2"><dt className="text-zinc-500">Expires</dt><dd>{dateLabel(inspecting.expires_at)}</dd></div>
               <div className="flex justify-between gap-2"><dt className="text-zinc-500">Delivery</dt><dd>{deliveryOf(inspecting)}</dd></div>

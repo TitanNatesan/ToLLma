@@ -110,7 +110,19 @@ export function MediaCard({
           <ExpandBadge />
         </button>
       ) : (
-        <div className="group relative w-full bg-black" data-testid={`message-video-${filename}`}>
+        <div
+          className="group relative w-full bg-black"
+          data-testid={`message-video-${filename}`}
+          role="button"
+          tabIndex={0}
+          aria-label={`Open ${filename} in the media viewer`}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onOpen();
+            }
+          }}
+        >
           <video
             className={cn(
               "max-h-[70vh] w-full object-contain transition-opacity duration-300",

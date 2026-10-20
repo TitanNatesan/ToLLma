@@ -72,7 +72,7 @@ test("platform admin sees one section at a time with hash navigation", async ({ 
   await expect(page.getByTestId("admin-panel-tokens")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("[data-testid^='admin-panel-']")).toHaveCount(1);
   await expect(page.getByTestId("admin-panel-overview")).toHaveCount(0);
-  await expect(page.getByTestId("sidebar-admin-tokens")).toHaveAttribute("aria-current", "location");
+  await expect(page.getByTestId("sidebar-admin-tokens")).toHaveAttribute("aria-current", "page");
   await page.screenshot({ path: "test-results/admin-tokens.png", fullPage: false });
 
   // Deep sections are reachable the same way (health uses its own panel).

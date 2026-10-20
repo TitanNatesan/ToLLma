@@ -13,6 +13,15 @@ Registered ``AIModel`` prices are joined through a per-``model_id`` deduplicated
 subquery (max price per model name), so cache-savings math can be derived from
 the same grouped rows even when several providers register the same model id —
 and without multiplying request counts.
+
+Key-scoped calls additionally merge in-app-chat ``request_logs`` rows
+(``api_key_id = :key``, same UTC half-open window). In-app rows resolve their
+provider/model names through the registry (``Provider.name`` /
+``AIModel.model_id``) and surface as ``"chat"`` in the endpoint dimension
+(``request_logs`` has no endpoint column — same label as
+``api/keys/analytics.py``). The ledgers have disjoint writers, so appended rows
+never double-count. Chat errors fold ``"regenerated"`` into the error bucket
+so every non-success row stays visible.
 """
 
 import logging
@@ -23,7 +32,9 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from tollms.models.api_key import ApiRequestLog
+from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
+from tollms.models.request_log import RequestLog
 from tollms.services.analytics.aggregations import (
     STATUS_CANCELLED,
     STATUS_FAILED,
@@ -31,6 +42,9 @@ from tollms.services.analytics.aggregations import (
     TOP_LIMIT,
     scope,
 )
+
+#: In-app-chat endpoint label (``request_logs`` has no endpoint column).
+CHAT_ENDPOINT = "chat"
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +81,55 @@ def _row(row: Any) -> dict[str, Any]:
     }
 
 
+def _chat_dimension_rows(db: Session, window: Any, *, key_id: Any) -> list[dict[str, Any]]:
+    """Per (provider, model) aggregates from the in-app-chat ledger (one scan)."""
+    prices = price_subquery()
+    rows = db.execute(
+        select(
+            Provider.name,
+            AIModel.model_id,
+            func.count(RequestLog.id),
+            func.count(RequestLog.id).filter(RequestLog.status == STATUS_SUCCESS),
+            func.count(RequestLog.id).filter(RequestLog.status != STATUS_SUCCESS),
+            func.coalesce(func.sum(RequestLog.total_cost), 0),
+            func.coalesce(func.sum(RequestLog.total_tokens), 0),
+            func.coalesce(func.sum(RequestLog.latency_ms), 0),
+            func.count(RequestLog.latency_ms),
+            func.coalesce(func.sum(RequestLog.cache_read_tokens), 0),
+            func.max(prices.c.input_price),
+            func.max(prices.c.cache_read_price),
+        )
+        .select_from(RequestLog)
+        .outerjoin(AIModel, AIModel.id == RequestLog.model_id)
+        .outerjoin(Provider, Provider.id == RequestLog.provider_id)
+        .outerjoin(prices, prices.c.model_id == AIModel.model_id)
+        .where(
+            RequestLog.api_key_id == key_id,
+            RequestLog.created_at >= window.start,
+            RequestLog.created_at < window.end,
+        )
+        .group_by(Provider.name, AIModel.model_id)
+    ).all()
+    return [
+        {
+            "provider": row[0],
+            "model": row[1],
+            "endpoint": None,
+            "requests": int(row[2] or 0),
+            "success": int(row[3] or 0),
+            "errors": int(row[4] or 0),
+            "cost": Decimal(str(row[5] or 0)),
+            "tokens": int(row[6] or 0),
+            "latency_sum": float(row[7] or 0),
+            "latency_count": int(row[8] or 0),
+            "cache_read_tokens": int(row[9] or 0),
+            "input_price": row[10],
+            "cache_read_price": row[11],
+        }
+        for row in rows
+    ]
+
+
 def dimension_rows(
     db: Session,
     window: Any,
@@ -74,7 +137,11 @@ def dimension_rows(
     key_id: Any = None,
     user_id: Any = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """One grouped scan -> ``{"dimensions": [(provider, model) rows], "endpoints": [...]}``."""
+    """One grouped scan -> ``{"dimensions": [(provider, model) rows], "endpoints": [...]}``.
+
+    Key-scoped merges the in-app-chat ledger (appended rows + a ``"chat"``
+    endpoint row); platform/user scopes stay gateway-only.
+    """
     prices = price_subquery()
     rows = db.execute(
         select(
@@ -113,6 +180,46 @@ def dimension_rows(
             dimensions.append(shaped)
         else:
             endpoints.append(shaped)
+    if key_id is not None:
+        # Disjoint writers: appended chat rows never double-count gateway rows.
+        chat_dimensions = _chat_dimension_rows(db, window, key_id=key_id)
+        dimensions.extend(chat_dimensions)
+        chat_requests = sum(item["requests"] for item in chat_dimensions)
+        if chat_requests:
+            chat_cost = sum((item["cost"] for item in chat_dimensions), Decimal(0))
+            chat_tokens = sum(item["tokens"] for item in chat_dimensions)
+            chat_success = sum(item["success"] for item in chat_dimensions)
+            chat_errors = sum(item["errors"] for item in chat_dimensions)
+            merged = False
+            for item in endpoints:
+                if item["endpoint"] == CHAT_ENDPOINT:
+                    item["requests"] += chat_requests
+                    item["success"] += chat_success
+                    item["errors"] += chat_errors
+                    item["cost"] += chat_cost
+                    item["tokens"] += chat_tokens
+                    merged = True
+                    break
+            if not merged:
+                endpoints.append(
+                    {
+                        "provider": None,
+                        "model": None,
+                        "endpoint": CHAT_ENDPOINT,
+                        "requests": chat_requests,
+                        "success": chat_success,
+                        "errors": chat_errors,
+                        "cost": chat_cost,
+                        "tokens": chat_tokens,
+                        "latency_sum": sum(item["latency_sum"] for item in chat_dimensions),
+                        "latency_count": sum(item["latency_count"] for item in chat_dimensions),
+                        "cache_read_tokens": sum(
+                            item["cache_read_tokens"] for item in chat_dimensions
+                        ),
+                        "input_price": None,
+                        "cache_read_price": None,
+                    }
+                )
     return {"dimensions": dimensions, "endpoints": endpoints}
 
 

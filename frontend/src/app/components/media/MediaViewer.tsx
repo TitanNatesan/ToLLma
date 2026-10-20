@@ -111,7 +111,7 @@ export function MediaViewer({
     <div
       aria-label="Media preview"
       aria-modal="true"
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 backdrop-blur-[24px]"
+      className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/65 backdrop-blur-[24px]"
       data-testid="media-viewer"
       onClick={onClose}
       role="dialog"
@@ -177,11 +177,13 @@ export function MediaViewer({
           <div
             className={cn(
               "relative flex max-h-[90vh] max-w-[90vw] items-center justify-center overflow-hidden",
-              scale > 1 && "cursor-grab active:cursor-grabbing",
+              (scale > 1 || natural) && "cursor-grab active:cursor-grabbing",
             )}
             data-testid="lightbox-image-viewport"
             onPointerDown={(event) => {
-              if (scale <= 1) return;
+              // Natural (1:1) mode can overflow the viewport even at scale 1:
+              // still allow panning then.
+              if (scale <= 1 && !natural) return;
               drag.current = { x: event.clientX, y: event.clientY, ox: offset.x, oy: offset.y };
               (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
             }}

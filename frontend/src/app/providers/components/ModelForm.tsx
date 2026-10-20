@@ -192,7 +192,7 @@ export function ModelForm({
             Linked to repository: {form.repository_model_key} (edits are overrides)
           </p>
         )}
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 lg:grid-cols-2">
           <Field label="Model name">
             <Input
               value={form.name}

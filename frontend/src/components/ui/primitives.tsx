@@ -115,8 +115,8 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        "flex h-9 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm",
-        "focus-visible:outline-none focus-visible:border-tollma-500 focus-visible:ring-2 focus-visible:ring-tollma-500/40",
+        "flex h-9 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm transition-colors",
+        "focus-visible:outline-none focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -129,8 +129,8 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   return (
     <textarea
       className={cn(
-        "flex min-h-16 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm",
-        "focus-visible:outline-none focus-visible:border-tollma-500 focus-visible:ring-2 focus-visible:ring-tollma-500/40",
+        "flex min-h-16 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm transition-colors",
+        "focus-visible:outline-none focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -181,7 +181,7 @@ export function Checkbox({
             "flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
             "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900",
             "group-hover:border-zinc-400 dark:group-hover:border-zinc-500",
-            "peer-focus-visible:ring-2 peer-focus-visible:ring-tollma-500/40 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
+            "peer-focus-visible:ring-2 peer-focus-visible:ring-tollma-500/60 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
             "peer-checked:border-tollma-600 peer-checked:bg-tollma-600 peer-checked:text-white",
             "dark:peer-checked:border-tollma-500 dark:peer-checked:bg-tollma-500 dark:peer-checked:text-white",
           )}
@@ -274,13 +274,14 @@ export function Tooltip({ children, content, side = "top" }: { children: React.R
 export const DropdownMenu = DropdownMenuPrimitives.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitives.Trigger;
 
-export function DropdownMenuContent({ className, sideOffset = 4, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Content>) {
+export function DropdownMenuContent({ className, sideOffset = 4, collisionPadding = 8, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Content>) {
   return (
     <DropdownMenuPrimitives.Portal>
       <DropdownMenuPrimitives.Content
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
-          "z-50 min-w-48 overflow-hidden rounded-md border border-zinc-200 bg-white p-1 shadow-md dark:border-zinc-800 dark:bg-zinc-900",
+          "z-50 min-w-48 max-h-[min(24rem,90dvh)] overflow-y-auto rounded-md border border-zinc-200 bg-white p-1 shadow-md dark:border-zinc-800 dark:bg-zinc-900",
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           className,
         )}
@@ -360,7 +361,6 @@ export function DialogContent({ className, children, ...props }: React.Component
           "max-h-[80vh] overflow-y-auto",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-          "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
           className,
         )}
         {...props}

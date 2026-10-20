@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { chartColor } from "@/components/charts/palette";
 import { ChartTooltip } from "./ChartTooltip";
+import { useChartHeight } from "@/components/charts/useChartHeight";
 import type { TrendSeries } from "./TrendChart";
 
 interface StackedBarChartProps {
@@ -33,7 +34,7 @@ export function StackedBarChart({
   data,
   series,
   xKey = "bucket",
-  height = 260,
+  height: heightProp,
   valueFormat,
   labelFormat,
   tooltipLabelFormat,
@@ -41,6 +42,8 @@ export function StackedBarChart({
   testId,
   ariaLabel,
 }: StackedBarChartProps) {
+  const fallbackHeight = useChartHeight(260);
+  const height = heightProp ?? fallbackHeight;
   const tooltipFormat = tooltipLabelFormat ?? labelFormat;
   return (
     <div

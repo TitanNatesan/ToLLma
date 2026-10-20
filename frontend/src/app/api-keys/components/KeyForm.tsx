@@ -221,8 +221,6 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
     }
   }
 
-  const wide = !editing;
-
   return (
     <Dialog
       open
@@ -230,7 +228,7 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
         if (!next && !busy) onClose();
       }}
     >
-      <DialogContent className={wide ? "max-w-5xl! p-5" : "max-w-3xl p-5"} data-testid="key-form-dialog">
+      <DialogContent className="max-w-2xl p-5" data-testid="key-form-dialog">
         <DialogTitle className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {editing ? "Edit API key" : isOrg ? "Create organization API key" : "Create API key"}
         </DialogTitle>
@@ -244,7 +242,7 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
           </p>
         </DialogDescription>
 
-        <div className={wide ? "mt-4 grid gap-x-6 gap-y-5 md:grid-cols-2" : "mt-4 space-y-5"}>
+        <div className="mt-4 space-y-5">
           <div className="min-w-0 space-y-5">
           <Section
             icon={KeyRound}
@@ -394,7 +392,8 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
           </div>
 
           {!editing && (
-          <div className="min-w-0 space-y-5 md:border-l md:border-zinc-200 md:pl-6 dark:md:border-zinc-800">
+            <>
+              <Separator />
               <Section
                 icon={ShieldCheck}
                 title="Model access"
@@ -409,7 +408,7 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
                   configureHref={configureHref}
                 />
               </Section>
-          </div>
+            </>
           )}
         </div>
 

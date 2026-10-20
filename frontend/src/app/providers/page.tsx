@@ -48,7 +48,6 @@ import {
 import type { AIModel, DiscoveredModelInfo, Provider, ProviderType } from "@/types";
 import { CatalogBrowserDialog } from "./components/CatalogBrowser";
 import {
-  Building2,
   CheckCircle2,
   Cpu,
   KeyRound,
@@ -83,6 +82,11 @@ function timeAgo(iso: string | null): string {
 function fmtPriceShort(v: unknown): string {
   return fmtPrice(v);
 }
+
+/** Sticky filter bar shared by both model-list columns: same offset in the
+ *  unified scroll container, parent-matched bg so there is no solid seam. */
+const STICKY_FILTER_BAR =
+  "sticky -top-4 z-10 -mx-4 bg-zinc-50/30 px-4 pt-4 pb-2 dark:bg-zinc-950/30";
 
 const MATCH_BADGE: Record<string, string> = {
   provider_specific: "Exact match",
@@ -268,7 +272,11 @@ export default function ProvidersPage() {
 
   async function confirmDeleteModel() {
     if (!deleteModelTarget) return;
-    await mm.remove.mutateAsync(deleteModelTarget.id);
+    if (isOrg && orgId) {
+      await orgMut.deleteOrgModel.mutateAsync(deleteModelTarget.id);
+    } else {
+      await mm.remove.mutateAsync(deleteModelTarget.id);
+    }
     setDeleteModelTarget(null);
     toast.success("Model deleted");
   }
@@ -277,7 +285,7 @@ export default function ProvidersPage() {
     <div className="flex h-full min-h-0 flex-1 overflow-hidden">
       {/* Three-Panel Workspace: Center (Details) & Right (Models) */}
       <section
-        className="flex min-w-0 flex-1 overflow-hidden divide-x divide-zinc-200 dark:divide-zinc-800"
+        className="flex min-w-0 flex-1 flex-col overflow-y-auto divide-zinc-200 xl:flex-row xl:overflow-hidden xl:divide-x dark:divide-zinc-800"
         aria-label="Provider details"
       >
         {providersQuery.isPending ? (
@@ -347,13 +355,13 @@ export default function ProvidersPage() {
           <>
             {/* Center Panel: Provider Details & Health */}
             <div
-              className="flex w-full lg:w-2/5 flex-col overflow-y-auto bg-white dark:bg-zinc-950 min-h-[300px]"
+              className="flex w-full flex-col bg-white dark:bg-zinc-950 min-h-[300px] xl:w-2/5 xl:min-h-0 xl:overflow-y-auto"
               data-testid="provider-detail"
             >
               {/* Header */}
               <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                     {!leftSidebarOpen && (
                       <Tooltip content="Show sidebar">
                         <Button
@@ -368,7 +376,7 @@ export default function ProvidersPage() {
                         </Button>
                       </Tooltip>
                     )}
-                    <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
+                    <h1 className="min-w-0 flex-1 truncate text-lg font-bold text-zinc-900 dark:text-zinc-100">
                       {selected.name}
                     </h1>
                     <Badge variant="outline" className="text-xs">
@@ -395,32 +403,6 @@ export default function ProvidersPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {isOrg && canManage && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 gap-1.5 text-xs"
-                          onClick={() => setCatalogOpen(true)}
-                          data-testid="org-prov-browse-catalog"
-                        >
-                          Browse catalog
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="h-8 gap-1.5 text-xs"
-                          onClick={() => {
-                            setEditingProvider(null);
-                            setCatalogPrefill(null);
-                            setAddProviderOpen(true);
-                          }}
-                          data-testid="org-prov-create-open"
-                        >
-                          <Building2 className="size-3.5" />
-                          <span>New</span>
-                        </Button>
-                      </>
-                    )}
                     {(!isOrg || canManage) && (
                       <Button
                         size="sm"
@@ -603,10 +585,10 @@ export default function ProvidersPage() {
                 />
               </div>
             ) : (
-            <div className="flex flex-1 flex-col overflow-y-auto bg-zinc-50/30 dark:bg-zinc-950/30 min-h-[300px] xl:flex-row xl:overflow-hidden">
+            <div className="flex flex-1 flex-col bg-zinc-50/30 dark:bg-zinc-950/30 min-h-[300px] xl:flex-row xl:overflow-hidden">
               {/* LEFT: Available Models */}
               <div className="flex flex-1 flex-col border-b border-zinc-200 p-4 dark:border-zinc-800 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r">
-                <div className="sticky -top-4 z-10 -mx-4 bg-zinc-50 px-4 pt-4 pb-2 dark:bg-zinc-950">
+                <div className={STICKY_FILTER_BAR}>
                 <div className="mb-2 flex items-center gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Available Models
@@ -702,7 +684,7 @@ export default function ProvidersPage() {
                           })()}
                         </p>
                       </div>
-                      {!isOrg && (
+                      {(!isOrg || canManage) && (
                         <div className="flex gap-1.5">
                           <Button
                             size="sm"
@@ -755,7 +737,7 @@ export default function ProvidersPage() {
 
               {/* RIGHT: Registered Models */}
               <div className="flex flex-1 flex-col p-4 xl:min-h-0 xl:overflow-y-auto">
-                <div className="sticky -top-4 z-10 -mx-4 bg-zinc-50 px-4 pt-4 pb-2 dark:bg-zinc-950">
+                <div className={STICKY_FILTER_BAR}>
                 <div className="mb-2 flex items-center gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Registered Models
@@ -775,7 +757,7 @@ export default function ProvidersPage() {
                 </div>
 
                 {/* Inline edit form (registered models only) */}
-                {!isOrg && showEditForm && editingModel && (
+                {(!isOrg || canManage) && showEditForm && editingModel && (
                   <div className="mt-3">
                     <ModelForm
                       initial={fromModel(editingModel)}
@@ -789,7 +771,14 @@ export default function ProvidersPage() {
                             selected.id,
                             f,
                           );
-                          await mm.update.mutateAsync({ id: editingModel.id, body: rest });
+                          if (isOrg && orgId) {
+                            await orgMut.updateOrgModel.mutateAsync({
+                              modelId: editingModel.id,
+                              payload: rest,
+                            });
+                          } else {
+                            await mm.update.mutateAsync({ id: editingModel.id, body: rest });
+                          }
                           toast.success("Model updated");
                           setShowEditForm(false);
                           setEditingModel(null);
@@ -810,7 +799,7 @@ export default function ProvidersPage() {
                       data-testid={`model-row-${m.id}`}
                       onClick={() => setDrawerModel(m)}
                       className={cn(
-                        "group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition-all hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700 cursor-pointer",
+                        "group flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition-all hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700 cursor-pointer",
                         !m.is_active && "opacity-60",
                         lastRegisteredId === m.id &&
                           "border-tollma-400 bg-tollma-50/60 dark:border-tollma-700 dark:bg-tollma-950/20",
@@ -854,41 +843,55 @@ export default function ProvidersPage() {
                       </div>
 
                       <div
-                        className="flex items-center gap-2 shrink-0 self-end sm:self-center"
+                        className="flex items-center gap-2 shrink-0 self-end xl:self-center"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <label className="flex items-center gap-1.5 text-xs text-zinc-500">
                           <Switch
                             checked={m.is_active}
-                            onCheckedChange={(v) => mm.update.mutate({ id: m.id, body: { is_active: v } })}
+                            disabled={isOrg && !canManage}
+                            onCheckedChange={(v) => {
+                              if (isOrg && orgId) {
+                                orgMut.updateOrgModel.mutate({
+                                  modelId: m.id,
+                                  payload: { is_active: v },
+                                });
+                              } else {
+                                mm.update.mutate({ id: m.id, body: { is_active: v } });
+                              }
+                            }}
                             aria-label={`Enable ${m.name}`}
                             data-testid={`model-toggle-${m.id}`}
                           />
                           <span className="text-[10px]">{m.is_active ? "On" : "Off"}</span>
                         </label>
 
-                        <Button variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={() => {
-                            setEditingModel(m);
-                            setShowEditForm(true);
-                          }}
-                          data-testid={`model-edit-${m.id}`}
-                          title="Edit Model"
-                        >
-                          <Pencil className="size-3" />
-                        </Button>
+                        {(!isOrg || canManage) && (
+                          <>
+                            <Button variant="outline"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => {
+                                setEditingModel(m);
+                                setShowEditForm(true);
+                              }}
+                              data-testid={`model-edit-${m.id}`}
+                              title="Edit Model"
+                            >
+                              <Pencil className="size-3" />
+                            </Button>
 
-                        <Button variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                          onClick={() => setDeleteModelTarget(m)}
-                          data-testid={`model-delete-${m.id}`}
-                          title="Delete Model"
-                        >
-                          <Trash2 className="size-3" />
-                        </Button>
+                            <Button variant="outline"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
+                              onClick={() => setDeleteModelTarget(m)}
+                              data-testid={`model-delete-${m.id}`}
+                              title="Delete Model"
+                            >
+                              <Trash2 className="size-3" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -919,6 +922,7 @@ export default function ProvidersPage() {
         provider={selected}
         open={!!drawerModel}
         onClose={() => setDrawerModel(null)}
+        orgId={orgId ?? undefined}
         onEdit={(m) => {
           setDrawerModel(null);
           setEditingModel(m);
@@ -933,6 +937,7 @@ export default function ProvidersPage() {
           info={registerInfo}
           providerId={selected?.id ?? ""}
           open={!!registerInfo}
+          orgId={orgId ?? undefined}
           initialStep={registerStep}
           onClose={() => setRegisterInfo(null)}
           onRegistered={(m) => {

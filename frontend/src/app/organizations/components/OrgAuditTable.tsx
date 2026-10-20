@@ -104,21 +104,21 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
       key: "timestamp", header: "Timestamp",
       render: (a) => <span className="whitespace-nowrap font-mono text-[11px]">{timeLabel(a.created_at)}</span>,
     },
-    { key: "actor", header: "Actor", render: (a) => <span className="truncate">{actorLabel(a)}</span> },
+    { key: "actor", header: "Actor", render: (a) => <span className="truncate" title={actorLabel(a)}>{actorLabel(a)}</span> },
     {
       key: "action", header: "Action",
       render: (a) => {
         const d = describeAuditEvent(a.action, a.target ?? {});
         const known = !d.title.startsWith("Unknown event");
         return (
-          <span className="min-w-0" title={known ? a.action : undefined}>
+          <span className="min-w-0" title={known ? undefined : `Unknown event: ${a.action} — no description available`}>
             <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100">{d.title}</span>
             <span className="block truncate font-mono text-[10px] text-zinc-400">{a.action}</span>
           </span>
         );
       },
     },
-    { key: "resource", header: "Resource", render: (a) => <span className="truncate">{resourceLabel(a)}</span> },
+    { key: "resource", header: "Resource", render: (a) => <span className="truncate" title={resourceLabel(a)}>{resourceLabel(a)}</span> },
     {
       key: "outcome", header: "Outcome",
       render: (a) => {
@@ -141,7 +141,7 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
 
   return (
     <div className="space-y-2.5" data-testid="org-audit">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
         <div className="min-w-44 flex-1">
           <SearchInput value={search} onChange={(e) => setSearch(e.target.value)}
             onClear={() => setSearch("")} placeholder="Search events…" aria-label="Search audit events"

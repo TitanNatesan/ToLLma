@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from tollms.api.orgs.common.audit import _audit
 from tollms.api.orgs.common.guards import _member_org, _require_perm
 from tollms.core.crypto import encrypt
-from tollms.core.exceptions import NotFoundError
+from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.models.provider import Provider, ProviderType
 
 logger = logging.getLogger(__name__)
@@ -203,3 +203,69 @@ def delete_org_provider(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
     emit("provider.deleted", provider_id=str(provider_id), org_id=str(org_id),
          user_id=str(caller_id))
 
+
+def create_org_model(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                     provider_id: uuid.UUID, data) -> object:
+    """Register one model on an org-owned provider. Same ModelCreate shape
+    as the personal registry; provider_id comes from the path (a body value
+    must match it or may be omitted). Guards mirror register_org_provider:
+    live membership + Providers.Create, same-org provider, 404 oracle."""
+    from tollms.api.models.schemas import ModelCreate
+    from tollms.api.models.service import create_model as _create_model
+    from tollms.api.providers import service as provider_service
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Providers.Create")
+    provider = provider_service.get_provider(db, provider_id, caller_id)
+    if provider.org_id != org_id:
+        raise NotFoundError("provider not found")
+    body_pid = getattr(data, "provider_id", None)
+    if body_pid is not None and body_pid != provider_id:
+        raise ValidationError("provider_id in body must match the path provider")
+    payload = data.model_dump()
+    payload["provider_id"] = provider_id
+    # Personal-only sync_primary_model guard stays inside create_model: org
+    # providers (org_id set) never touch the personal primary allow-list.
+    # The model.created org audit rides the same commit (see _audit_org_model).
+    return _create_model(db, ModelCreate(**payload), user_id=caller_id)
+
+
+def update_org_model(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                     model_id: uuid.UUID, data) -> object:
+    """Partial update of an org-owned model (incl. is_active toggles).
+    Providers.Update + same-org membership; 404 oracle for anyone else."""
+    from tollms.api.models.service import get_model as _get_model
+    from tollms.api.models.service import update_model as _update_model
+    from tollms.models.provider import Provider
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Providers.Update")
+    model = _get_model(db, model_id, caller_id)
+    provider = db.get(Provider, model.provider_id)
+    if provider is None or provider.org_id != org_id:
+        raise NotFoundError(f"model {model_id} not found")
+    updated = _update_model(db, model_id, data, caller_id)
+    _audit(db, org_id, caller_id, "model.updated", provider_id=str(provider.id),
+           model_id=str(model_id))
+    db.commit()
+    return updated
+
+
+def delete_org_model(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
+                     model_id: uuid.UUID) -> None:
+    """Soft-delete an org-owned model (mirrors personal delete_model).
+    Providers.Delete (the org equivalent of the personal ownership gate) +
+    same-org membership; 404 oracle for anyone else."""
+    from tollms.api.models.service import delete_model as _delete_model
+    from tollms.api.models.service import get_model as _get_model
+    from tollms.models.provider import Provider
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Providers.Delete")
+    model = _get_model(db, model_id, caller_id)
+    provider = db.get(Provider, model.provider_id)
+    if provider is None or provider.org_id != org_id:
+        raise NotFoundError(f"model {model_id} not found")
+    _delete_model(db, model_id, caller_id)
+    _audit(db, org_id, caller_id, "model.deleted", provider_id=str(provider.id),
+           model_id=str(model_id))

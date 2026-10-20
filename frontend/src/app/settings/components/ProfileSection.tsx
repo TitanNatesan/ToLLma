@@ -195,7 +195,7 @@ export function ProfileSection() {
           placeholder="Ada Lovelace"
           aria-label="Full name"
           data-testid="profile-name"
-          className="h-8 w-64 text-xs"
+          className="h-8 w-full sm:w-64 text-xs"
         />
       </SettingItem>
 
@@ -207,7 +207,7 @@ export function ProfileSection() {
           placeholder="ada_lovelace"
           aria-label="Username"
           data-testid="profile-username"
-          className="h-8 w-64 font-mono text-xs"
+          className="h-8 w-full sm:w-64 font-mono text-xs"
           spellCheck={false}
         />
       </SettingItem>
@@ -223,7 +223,7 @@ export function ProfileSection() {
             }}
             aria-label="Email"
             data-testid="profile-email"
-            className="h-8 w-64 text-xs"
+            className="h-8 w-full sm:w-64 text-xs"
             spellCheck={false}
           />
           {showPasswordConfirm && (
@@ -240,11 +240,11 @@ export function ProfileSection() {
                 aria-label="Current password"
                 autoComplete="current-password"
                 data-testid="email-change-password"
-                className="h-8 w-64 text-xs"
+                className="h-8 w-full sm:w-64 text-xs"
                 spellCheck={false}
               />
               <p
-                className="max-w-64 text-right text-[11px] text-zinc-500 dark:text-zinc-400"
+                className="max-w-full sm:max-w-64 text-right text-[11px] text-zinc-500 dark:text-zinc-400"
                 data-testid="email-change-password-hint"
               >
                 {EMAIL_PASSWORD_REQUIRED}
@@ -252,7 +252,7 @@ export function ProfileSection() {
             </div>
           )}
           {showGoogleHint && (
-            <div className="flex max-w-64 flex-col items-end gap-1">
+            <div className="flex max-w-full sm:max-w-64 flex-col items-end gap-1">
               <p
                 className="text-right text-[11px] text-zinc-500 dark:text-zinc-400"
                 data-testid="email-change-google-hint"
@@ -299,7 +299,7 @@ export function ProfileSection() {
           placeholder="https://…"
           aria-label="Avatar URL"
           data-testid="profile-avatar-url"
-          className="h-8 w-64 text-xs"
+          className="h-8 w-full sm:w-64 text-xs"
           spellCheck={false}
         />
       </SettingItem>

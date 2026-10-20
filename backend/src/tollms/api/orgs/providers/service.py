@@ -13,6 +13,9 @@ from tollms.api.providers.organization_service import (
     list_org_providers,
     list_org_provider_models,
     list_org_models,
+    create_org_model,
+    update_org_model,
+    delete_org_model,
     update_org_provider,
     delete_org_provider,
 )
@@ -23,6 +26,9 @@ __all__ = [
     'list_org_providers',
     'list_org_provider_models',
     'list_org_models',
+    'create_org_model',
+    'update_org_model',
+    'delete_org_model',
     'update_org_provider',
     'delete_org_provider',
 ]

@@ -129,8 +129,8 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
       key: "name", header: "Name",
       render: (t) => (
         <span className="min-w-0">
-          <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-team-${t.id}`}>{t.name}</span>
-          {t.description && <span className="block truncate text-[11px] text-zinc-400">{t.description}</span>}
+          <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-team-${t.id}`} title={t.name}>{t.name}</span>
+          {t.description && <span className="block truncate text-[11px] text-zinc-400" title={t.description ?? undefined}>{t.description}</span>}
         </span>
       ),
     },
@@ -152,7 +152,7 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
 
   return (
     <div className="space-y-2.5" data-testid="org-teams">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
         <div className="min-w-44 flex-1">
           <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
             onClear={() => setSearch("")} placeholder="Search teams…" aria-label="Search teams"
@@ -511,7 +511,7 @@ function TeamDetailBody({ orgId, team, members, sets, perms, labels, isRoot, myP
           <Card key={m.user_id} data-testid={`org-team-member-${m.user_id}`} className="mb-1.5">
             <CardContent className="flex flex-wrap items-center gap-2 p-2.5">
               <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold">{m.email}</p>
+                <p className="truncate font-semibold" title={m.email}>{m.email}</p>
                 <Badge variant="outline" className="mt-0.5">{m.state}</Badge>
               </div>
               {perms.canRemoveMembers && (

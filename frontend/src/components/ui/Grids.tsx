@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-/** Shared card grid: 1 col → sm:2 → xl:3 (organizations + permission sets). */
+/** Shared card grid: 1 col → sm:2 → lg:3 → xl:3/4. */
 export function CardGrid({
   children,
   id,
@@ -14,7 +14,7 @@ export function CardGrid({
   testId?: string;
 }) {
   return (
-    <div id={id} className={cn("grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3", className)} data-testid={testId}>
+    <div id={id} className={cn("grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3", className)} data-testid={testId}>
       {children}
     </div>
   );
@@ -38,7 +38,7 @@ export function StatGrid({
   testId?: string;
 }) {
   return (
-    <div id={id} className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", xl, className)} data-testid={testId}>
+    <div id={id} className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3", xl, className)} data-testid={testId}>
       {children}
     </div>
   );

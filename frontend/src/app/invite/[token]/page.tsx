@@ -348,7 +348,7 @@ function InviteLandingInner() {
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
                         data-testid="invite-profile-name"
-                        className="h-9 w-full rounded-md border border-zinc-300 bg-transparent pl-9 pr-3 text-xs placeholder-zinc-400 focus:border-tollma-500 focus:outline-none focus:ring-2 focus:ring-tollma-500/40 dark:border-zinc-700"
+                        className="h-9 w-full rounded-md border border-zinc-300 bg-transparent pl-9 pr-3 text-xs placeholder-zinc-400 focus:border-tollma-500 focus:outline-none focus:ring-2 focus:ring-tollma-500/60 dark:border-zinc-700"
                       />
                     </div>
                   </div>
@@ -367,7 +367,7 @@ function InviteLandingInner() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         data-testid="invite-profile-password"
-                        className="h-9 w-full rounded-md border border-zinc-300 bg-transparent pl-9 pr-3 text-xs placeholder-zinc-400 focus:border-tollma-500 focus:outline-none focus:ring-2 focus:ring-tollma-500/40 dark:border-zinc-700"
+                        className="h-9 w-full rounded-md border border-zinc-300 bg-transparent pl-9 pr-3 text-xs placeholder-zinc-400 focus:border-tollma-500 focus:outline-none focus:ring-2 focus:ring-tollma-500/60 dark:border-zinc-700"
                       />
                     </div>
                   </div>
@@ -386,7 +386,7 @@ function InviteLandingInner() {
                         value={confirm}
                         onChange={(e) => setConfirm(e.target.value)}
                         data-testid="invite-profile-confirm"
-                        className="h-9 w-full rounded-md border border-zinc-300 bg-transparent pl-9 pr-3 text-xs placeholder-zinc-400 focus:border-tollma-500 focus:outline-none focus:ring-2 focus:ring-tollma-500/40 dark:border-zinc-700"
+                        className="h-9 w-full rounded-md border border-zinc-300 bg-transparent pl-9 pr-3 text-xs placeholder-zinc-400 focus:border-tollma-500 focus:outline-none focus:ring-2 focus:ring-tollma-500/60 dark:border-zinc-700"
                       />
                     </div>
                     <p className="text-[11px] text-zinc-500">

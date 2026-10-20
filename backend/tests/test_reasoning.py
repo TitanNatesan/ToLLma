@@ -533,25 +533,44 @@ def test_deepseek_none_requests_no_reasoning_effort_but_still_normalizes() -> No
     assert text == f"{THINK_OPEN}R{THINK_CLOSE}A"
 
 
-def test_gemini_never_sends_reasoning_config() -> None:
-    """Gemini/Vertex thinking is model-controlled: ToLLma never requests it, so
-    "none" (and every other level) is a no-op on the wire rather than a
-    provider-specific hack."""
+def _gemini_bodies(levels, *, image_output: bool = False) -> list[dict]:
+    """Request bodies captured over the real adapter wire path."""
     bodies: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         bodies.append(json.loads(request.content))
         return _sse_response(_gemini_item(text="Hi"))
 
-    for level in ("none", "high"):
+    for level in levels:
         adapter = GeminiAdapter(
             credentials={"api_key": "k"}, model_id="gemini-x", reasoning_level=level,
-            transport=_transport(handler),
+            image_output=image_output, transport=_transport(handler),
         )
         _run(adapter)
-        body = bodies[-1]
-        assert "generationConfig" not in body, level
-        assert "thinkingConfig" not in body, level
+    return bodies
+
+
+def test_gemini_sends_thinking_budget_by_level() -> None:
+    """Composer level maps to generationConfig.thinkingConfig.thinkingBudget."""
+    bodies = _gemini_bodies(["high", "low", "medium"])
+    assert bodies[0]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 10000}
+    assert bodies[1]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 1024}
+    assert bodies[2]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 4096}
+
+
+def test_gemini_omits_thinking_config_when_off_or_unset() -> None:
+    """None/"none"/"default" send no thinking field at all."""
+    for body in _gemini_bodies([None, "none", "default"]):
+        assert "thinkingConfig" not in json.dumps(body)
+        assert "generationConfig" not in body
+
+
+def test_gemini_image_output_never_combined_with_thinking() -> None:
+    """Image models reject thinkingConfig: responseModalities wins even at high."""
+    bodies = _gemini_bodies(["high"], image_output=True)
+    config = bodies[-1]["generationConfig"]
+    assert config["responseModalities"] == ["TEXT", "IMAGE"]
+    assert "thinkingConfig" not in config
 
 
 def test_bedrock_none_level_sends_no_thinking_fields_end_to_end() -> None:

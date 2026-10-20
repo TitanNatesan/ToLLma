@@ -61,8 +61,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
     content = children;
   } else if (!checked) {
     content = (
-      <div className="flex h-screen w-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950">
-        <Loader2 className="size-6 animate-spin text-zinc-400" />
+      <div role="status" className="flex h-dvh w-screen items-center justify-center gap-2 bg-zinc-50 dark:bg-zinc-950">
+        <Loader2 className="size-6 animate-spin text-zinc-400" aria-hidden="true" />
+        <span className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</span>
       </div>
     );
   } else if (!user) {

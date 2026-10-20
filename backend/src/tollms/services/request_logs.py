@@ -14,6 +14,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from tollms.models.api_key import ApiKey
 from tollms.models.request_log import ExportEvent, RequestLog, RequestStatus
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,29 @@ class RequestLogEntry:
     is_streaming: bool = False
 
 
+def touch_key_last_used(
+    db: Session, api_key_id: uuid.UUID | None, *, completed_at: datetime | None = None
+) -> None:
+    """Stamp `ApiKey.last_used_at` = most recent SUCCESSFULLY COMPLETED request.
+
+    Callers gate on success-only; this just stamps. Never raises (freshness must
+    never fail the request it annotates) and never touches `enabled`/`is_deleted`.
+    The max-guard keeps out-of-order commits (streaming drivers) from moving the
+    stamp backwards. Joins the caller's commit — no commit here.
+    """
+    if api_key_id is None:
+        return
+    try:
+        key = db.get(ApiKey, api_key_id)
+        if key is None or key.is_deleted:
+            return
+        stamp = completed_at or datetime.now(timezone.utc)
+        if key.last_used_at is None or stamp > key.last_used_at:
+            key.last_used_at = stamp
+    except Exception:
+        logger.warning("request_logs: last_used_at touch failed (key=%s)", api_key_id, exc_info=True)
+
+
 def record(db: Session, entry: RequestLogEntry) -> RequestLog:
     """Insert one request-log row. Caller owns the transaction/commit."""
     row = RequestLog(
@@ -76,6 +100,8 @@ def record(db: Session, entry: RequestLogEntry) -> RequestLog:
         is_streaming=entry.is_streaming,
     )
     db.add(row)
+    if entry.status == RequestStatus.SUCCESS:
+        touch_key_last_used(db, entry.api_key_id, completed_at=row.request_completed_at)
     return row
 
 

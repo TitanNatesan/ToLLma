@@ -477,7 +477,7 @@ export function ResponseMarkdown({
 }) {
   const sourceMap = new Map((sources ?? []).map((source) => [source.index, source]));
   return (
-    <div className={cn("prose text-sm leading-[1.75]", isStreaming && "streaming-cursor")}>
+    <div className={cn("prose max-w-full break-words text-sm leading-[1.75]", isStreaming && "streaming-cursor")}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight, [rehypeCitations, { maxIndex: sources?.length ?? 0 }]]}
@@ -502,7 +502,7 @@ export function ResponseMarkdown({
               </RichCodeBlock>
             ) : (
               <code
-                className="rounded-md border border-zinc-200/80 bg-zinc-100/90 px-1.5 py-0.5 font-mono text-[11px] text-zinc-900 shadow-2xs dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200"
+                className="rounded-md border border-zinc-200/80 break-all bg-zinc-100/90 px-1.5 py-0.5 font-mono text-[11px] text-zinc-900 shadow-2xs dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200"
                 {...props}
               >
                 {children}
@@ -557,7 +557,7 @@ export function ResponseMarkdown({
                 href={href}
                 target={isExternal ? "_blank" : undefined}
                 rel={isExternal ? "noopener noreferrer" : undefined}
-                className="inline-flex items-center gap-0.5 font-medium text-tollma-500 hover:text-tollma-600 dark:text-tollma-400 dark:hover:text-tollma-300 underline underline-offset-2 transition-colors"
+                className="inline-flex max-w-full items-center gap-0.5 break-all font-medium text-tollma-500 hover:text-tollma-600 dark:text-tollma-400 dark:hover:text-tollma-300 underline underline-offset-2 transition-colors"
                 {...props}
               >
                 <span>{children}</span>

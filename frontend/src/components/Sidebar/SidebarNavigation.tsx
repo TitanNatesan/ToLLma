@@ -25,6 +25,9 @@ export const PERSONAL_NAV: NavItem[] = [
 ];
 
 export function isActivePath(pathname: string, href: string) {
+  // "/" is the Chat entry: exact plus the conversation route ("/" has no
+  // trailing-slash children, so the generic prefix check would never match).
+  if (href === "/") return pathname === "/" || pathname.startsWith("/c/");
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

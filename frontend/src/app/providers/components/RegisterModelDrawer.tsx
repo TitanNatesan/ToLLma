@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ORG_KEYS } from "@/hooks/useOrgs";
+import { createOrgModel } from "@/services/orgs";
 import { Badge, Button, CapabilityBadge, DetailPanel } from "@/components/ui";
 import { useModelMutations } from "@/hooks/useRegistry";
 import { endpointLabel, resolveWireEndpoint } from "@/app/providers/fields";
@@ -19,6 +22,8 @@ interface RegisterModelDrawerProps {
   info: DiscoveredModelInfo | null;
   providerId: string;
   open: boolean;
+  /** When set, registers via the org models endpoint instead of the personal one. */
+  orgId?: string;
   initialStep?: number;
   onClose: () => void;
   onRegistered: (m: AIModel) => void;
@@ -46,8 +51,10 @@ export function RegisterModelDrawer({
   initialStep = 0,
   onClose,
   onRegistered,
+  orgId,
 }: RegisterModelDrawerProps) {
   const mm = useModelMutations();
+  const qc = useQueryClient();
   // Parent remounts via key (provider:model:step), so initialStep seeds each mount.
   const [step, setStep] = useState(initialStep);
 
@@ -72,7 +79,16 @@ export function RegisterModelDrawer({
 
   async function handleSave(form: Parameters<typeof toPayload>[1]) {
     try {
-      const created = await mm.create.mutateAsync(toPayload(providerId, form));
+      const payload = toPayload(providerId, form);
+      const created = orgId
+        ? await createOrgModel(orgId, providerId, payload)
+        : await mm.create.mutateAsync(payload);
+      if (orgId) {
+        // Org lists consumed by the providers page (per-provider models via
+        // the providers prefix, plus the all-org-models list for key pickers).
+        void qc.invalidateQueries({ queryKey: ORG_KEYS.providers(orgId) });
+        void qc.invalidateQueries({ queryKey: ORG_KEYS.models(orgId) });
+      }
       toast.success(`Registered ${created.name}`);
       onRegistered(created);
       onClose();
@@ -112,7 +128,7 @@ export function RegisterModelDrawer({
               </span>
               <span
                 className={cn(
-                  "hidden sm:inline text-[10px]",
+                  "text-[9px] leading-tight",
                   i === step ? "font-semibold text-zinc-900 dark:text-zinc-100" : "text-zinc-400",
                 )}
               >

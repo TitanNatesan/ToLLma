@@ -38,6 +38,22 @@ import { useOrgStore } from "@/store/org";
 /** Rolling window used to compare spend against `policy.max_budget_usd`. */
 const BUDGET_PRESET = "last_30d" as const;
 
+/** Every query root serving the keys console: list, budget, detail, analytics, network. */
+const KEYS_FAMILY = new Set([
+  "api-keys",
+  "api-key-analytics",
+  "api-key-detail",
+  "key-analytics-summary",
+  "key-analytics-timeseries",
+  "key-analytics-insights",
+  "key-network",
+]);
+
+function isKeysFamilyQueryKey(queryKey: readonly unknown[]): boolean {
+  const root = queryKey[0];
+  return typeof root === "string" && KEYS_FAMILY.has(root);
+}
+
 interface RawKeyState {
   rawKey: string;
   apiKey: ApiKey;
@@ -55,7 +71,12 @@ function PersonalApiKeysPage() {
   const [secret, setSecret] = useState<RawKeyState | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const keysQuery = useQuery({ queryKey: ["api-keys"], queryFn: listApiKeys });
+  const keysQuery = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: listApiKeys,
+    // Chat usage lands while this page is hidden: refetch on return if stale.
+    refetchOnWindowFocus: true,
+  });
   const keys = useMemo(() => keysQuery.data ?? [], [keysQuery.data]);
 
   // Only budgeted keys need a spend lookup; each row's 30d cost feeds the bar.
@@ -68,6 +89,7 @@ function PersonalApiKeysPage() {
       queryKey: ["api-key-analytics", key.id, BUDGET_PRESET],
       queryFn: () => getApiKeyAnalytics(key.id, BUDGET_PRESET),
       staleTime: 60_000,
+      refetchOnWindowFocus: true,
     })),
   });
   const budgetCost = useMemo(() => {
@@ -91,6 +113,11 @@ function PersonalApiKeysPage() {
 
   const openCreate = useCallback(() => setCreateOpen(true), []);
   const closeCreate = useCallback(() => setCreateOpen(false), []);
+  // Manual refresh is unconditional: list + budget metadata + any open
+  // detail/analytics queries (window-focus refetch above stays stale-gated).
+  const handleRefresh = useCallback(() => {
+    void qc.invalidateQueries({ predicate: (query) => isKeysFamilyQueryKey(query.queryKey) });
+  }, [qc]);
   const closeDetails = useCallback(() => setDetailsKeyId(null), []);
   const openDetails = useCallback((apiKey: ApiKey) => setDetailsKeyId(apiKey.id), []);
   const openEdit = useCallback((apiKey: ApiKey) => setEditKeyId(apiKey.id), []);
@@ -172,7 +199,7 @@ function PersonalApiKeysPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void keysQuery.refetch()}
+              onClick={handleRefresh}
               disabled={keysQuery.isFetching}
             >
               <RefreshCw className={cn("size-3.5", keysQuery.isFetching && "animate-spin")} />
@@ -264,6 +291,7 @@ function PersonalApiKeysPage() {
         open={!!detailsKey}
         onClose={closeDetails}
         onEdit={openEdit}
+        cost={detailsKey ? budgetCost[detailsKey.id] : undefined}
       />
 
       <KeyEditDrawer

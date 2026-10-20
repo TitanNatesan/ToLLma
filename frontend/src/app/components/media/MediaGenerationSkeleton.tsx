@@ -41,11 +41,8 @@ export function MediaGenerationSkeleton({ kind, label, total, className }: Media
           aria-hidden="true"
           className="media-progress-glow absolute inset-y-0 -left-1/2 w-1/4 bg-gradient-to-r from-transparent via-tollma-400/20 to-transparent dark:via-tollma-400/10"
         />
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-400">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-400" aria-hidden="true">
           <Icon className="size-8" />
-          <span className="text-[10px] font-semibold tracking-widest uppercase">
-            {kind === "image" ? "Image generating" : "Video generating"}
-          </span>
         </div>
         {showTotal && (
           <div

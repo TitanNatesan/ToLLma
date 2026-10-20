@@ -40,13 +40,16 @@ function ConvItem({
           onRename(title);
           setRenaming(false);
         }}
-        className="px-1 py-0.5"
+        className="px-2 py-0.5"
       >
         <input
           autoFocus
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => setRenaming(false)}
+          onBlur={() => {
+            if (title.trim() && title.trim() !== conv.title) onRename(title.trim());
+            setRenaming(false);
+          }}
           onKeyDown={(e) => e.key === "Escape" && setRenaming(false)}
           aria-label="Conversation title"
           className="h-7 w-full rounded border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
@@ -63,8 +66,8 @@ function ConvItem({
       exit={{ opacity: 0, x: -8 }}
       transition={{ duration: 0.15 }}
       className={cn(
-        "group flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800",
-        active && "bg-tollma-50 font-medium text-tollma-800 dark:bg-tollma-950 dark:text-tollma-200",
+        "group flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800",
+        active && "bg-zinc-900 font-medium text-white dark:bg-zinc-100 dark:text-zinc-900",
       )}
     >
       {conv.is_pinned && (
@@ -80,11 +83,12 @@ function ConvItem({
       >
         {conv.title}
       </button>
-      <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+      <span className="invisible flex shrink-0 items-center gap-0.5 group-hover:visible group-focus-within:visible">
         <button
           onClick={onPin}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
           title={conv.is_pinned ? "Unpin" : "Pin"}
+          aria-label={conv.is_pinned ? "Unpin" : "Pin"}
           data-testid={`pin-button-${conv.id}`}
         >
           <Pin
@@ -96,8 +100,9 @@ function ConvItem({
             setTitle(conv.title);
             setRenaming(true);
           }}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
           title="Rename"
+          aria-label="Rename"
           data-testid={`rename-button-${conv.id}`}
         >
           <Pencil className="size-3" />
@@ -105,8 +110,9 @@ function ConvItem({
         <button
           onClick={onDelete}
           disabled={deleteDisabled}
-          className="rounded p-1 text-red-500 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/30"
+          className="rounded p-1.5 text-red-500 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/30"
           title={deleteDisabled ? "Stop generation before deleting" : "Delete"}
+          aria-label={deleteDisabled ? "Stop generation before deleting" : "Delete"}
           data-testid={`delete-button-${conv.id}`}
         >
           <Trash2 className="size-3" />
@@ -177,7 +183,7 @@ export function SidebarConversations() {
         <button
           onClick={newChat}
           data-testid="new-chat"
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm transition-all hover:bg-zinc-50 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         >
           <Plus className="size-3.5" />
           <span>New chat</span>
@@ -198,7 +204,7 @@ export function SidebarConversations() {
       </div>
 
       {/* Conversation List */}
-      <div className="flex-1 overflow-y-auto px-2 py-2 pt-0 space-y-3">
+      <div className="flex-1 overflow-y-auto px-2 py-2 pt-0 space-y-0.5">
         {/* Pinned section */}
         <AnimatePresence>
           {pinnedConvs.length > 0 && (

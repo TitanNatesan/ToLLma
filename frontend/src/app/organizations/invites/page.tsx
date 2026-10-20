@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, X } from "lucide-react";
 import { toast } from "sonner";
-import { Badge, Button, Card, CardContent, EmptyState, LoadingState, PageHeader } from "@/components/ui";
+import { Badge, Button, Card, CardContent, EmptyState, ErrorState, LoadingState, PageHeader } from "@/components/ui";
 import { useMyInvitations, useOrgMutations } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import type { Invitation } from "@/types/orgs";
@@ -79,13 +79,20 @@ function InvitesInner() {
 
   const list = invites.data ?? [];
   const match = token ? list.find((i) => i.token === token) : undefined;
-  const others = token ? list.filter((i) => i.token !== token && i.status === "pending") : list;
+  const others = token ? list.filter((i) => i.token !== token) : list;
 
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="org-invites-page">
       <PageHeader title="Invitation" subtitle="Review and respond to your organization invitation." />
       <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-4">
         {invites.isLoading && <LoadingState />}
+        {invites.isError && (
+          <ErrorState
+            title="Could not load invitations"
+            message={parseApiError(invites.error).message}
+            onRetry={() => void invites.refetch()}
+          />
+        )}
         {!invites.isLoading && token && !match && (
           <EmptyState title="Invitation not found"
             description="It may have expired, been revoked, or belong to a different account." />
@@ -99,9 +106,9 @@ function InvitesInner() {
             onAccept={() => match.token && void accept(match.token, match.org_name)}
             onReject={() => match.token && void reject(match.token)} />
         )}
-        {!invites.isLoading && others.length > 0 && (
+        {!invites.isLoading && !invites.isError && others.length > 0 && (
           <div className="space-y-2">
-            {token && <h2 className="text-xs font-bold text-zinc-500">Other pending invitations</h2>}
+            {token && <h2 className="text-xs font-bold text-zinc-500">Other invitations</h2>}
             {others.map((i) => (
               <InviteCard key={i.id} invite={i}
                 onAccept={() => i.token && void accept(i.token, i.org_name)}
@@ -122,6 +129,10 @@ function InviteCard({ invite, highlight, onAccept, onReject }: {
 }) {
   const inviter = inviterOf(invite);
   const sets = setsOf(invite);
+  // Only pending invites carrying their secret act; settled invites render
+  // their status badge read-only (no dead buttons).
+  const actionable = invite.status === "pending" && !!invite.token;
+  const pendingElsewhere = invite.status === "pending" && !invite.token;
   return (
     <Card data-testid={highlight ? "org-invite-landing" : `org-invite-${invite.id}`}>
       <CardContent className="space-y-2.5 p-4">
@@ -133,14 +144,20 @@ function InviteCard({ invite, highlight, onAccept, onReject }: {
             )}
             <span className="text-zinc-500"> invited you ({invite.email}) to join.</span>
           </p>
-          <Button size="sm" onClick={onAccept} disabled={!invite.token}
-            data-testid={highlight ? "org-invite-landing-accept" : `org-invite-accept-${invite.id}`}>
-            <Check className="size-3.5" /> Accept
-          </Button>
-          <Button size="sm" variant="outline" onClick={onReject} disabled={!invite.token}
-            data-testid={highlight ? "org-invite-landing-reject" : `org-invite-reject-${invite.id}`}>
-            <X className="size-3.5" /> Reject
-          </Button>
+          {(actionable || pendingElsewhere) && (
+            <>
+              <Button size="sm" onClick={onAccept} disabled={!actionable}
+                title={actionable ? undefined : "This invitation belongs to a different account — sign in with the invited address to respond."}
+                data-testid={highlight ? "org-invite-landing-accept" : `org-invite-accept-${invite.id}`}>
+                <Check className="size-3.5" /> Accept
+              </Button>
+              <Button size="sm" variant="outline" onClick={onReject} disabled={!actionable}
+                title={actionable ? undefined : "This invitation belongs to a different account — sign in with the invited address to respond."}
+                data-testid={highlight ? "org-invite-landing-reject" : `org-invite-reject-${invite.id}`}>
+                <X className="size-3.5" /> Reject
+              </Button>
+            </>
+          )}
         </div>
         <dl className="space-y-1 text-xs text-zinc-500">
           {inviter && (

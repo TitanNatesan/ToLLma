@@ -5,3 +5,4 @@ export * from "./Heatmap";
 export * from "./Sparkline";
 export * from "./palette";
 export * from "./useElementSize";
+export { useChartHeight } from "./useChartHeight";

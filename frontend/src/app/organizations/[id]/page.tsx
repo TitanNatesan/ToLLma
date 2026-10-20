@@ -36,11 +36,29 @@ export default function OrgDashboardPage() {
   );
 }
 
+const KNOWN_SECTIONS: ReadonlySet<string> = new Set([
+  "overview",
+  "members",
+  "teams",
+  "sets",
+  "operations",
+  "budgets",
+  "audit",
+  "settings",
+  // Legacy sections: the effect below redirects them, never renders them.
+  "keys",
+  "requests",
+  "invitations",
+  "providers",
+  "analytics",
+]);
+
 function OrgDashboardInner() {
   const params = useParams<{ id: string }>();
   const search = useSearchParams();
   const orgId = params.id;
-  const section = (search.get("section") ?? "overview") as OrgSection;
+  const rawSection = search.get("section") ?? "overview";
+  const section = (KNOWN_SECTIONS.has(rawSection) ? rawSection : "overview") as OrgSection;
   const tabParam = search.get("tab");
   const router = useRouter();
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -86,6 +104,14 @@ function OrgDashboardInner() {
     void qc.invalidateQueries({ queryKey: ["orgs", orgId] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, orgId]);
+
+  // Unknown ?section= values fall back to the overview (shareable, stable
+  // testids for known sections).
+  useEffect(() => {
+    if (rawSection !== section) {
+      router.replace(`/organizations/${orgId}?section=overview`);
+    }
+  }, [rawSection, section, orgId, router]);
 
   // Legacy ?section=keys|requests|invitations → ?section=operations&tab=…
   // Consolidation: providers, analytics, and org API keys moved to dedicated
@@ -293,18 +319,23 @@ function Overview({ org, memberCount, pendingInvites, pendingRequests, setCount 
       </div>
       <Card className="mt-2.5">
         <CardContent className="space-y-1 p-3.5 text-xs">
-          {org.description ? <p>{org.description}</p> : <p className="text-zinc-500">No description set.</p>}
-          <p className="text-zinc-500">
+          {org.description ? <p className="break-words">{org.description}</p> : <p className="text-zinc-500">No description set.</p>}
+          <p className="break-words text-zinc-500">
             {[org.industry, org.location, org.size].filter(Boolean).join(" · ") || "No profile details."}
           </p>
-          <p className="font-mono text-[11px] text-zinc-400">
+          <p className="break-all font-mono text-[11px] text-zinc-400">
             visibility: {org.visibility_mode} · sharing enforced: {String(org.personal_sharing_enforced)}
           </p>
         </CardContent>
       </Card>
       {(pendingInvites > 0 || pendingRequests > 0) && (
         <EmptyState title="Pending attention"
-          description={`${pendingInvites} pending invitation${pendingInvites === 1 ? "" : "s"} · ${pendingRequests} pending request${pendingRequests === 1 ? "" : "s"}. Review them under Operations.`} />
+          description={`${pendingInvites} pending invitation${pendingInvites === 1 ? "" : "s"} · ${pendingRequests} pending request${pendingRequests === 1 ? "" : "s"}.`}
+          action={
+            <a href="?section=operations" className="text-xs font-medium text-tollma-600 hover:underline dark:text-tollma-400" data-testid="org-overview-ops-link">
+              Review in Operations
+            </a>
+          } />
       )}
     </div>
   );

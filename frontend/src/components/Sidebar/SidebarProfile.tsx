@@ -20,11 +20,13 @@ export function SidebarProfile({
   onToggleNav,
   onPeekNav,
   onUnpeekNav,
+  hideToggle,
 }: {
   navOpen: boolean;
   onToggleNav: () => void;
   onPeekNav: () => void;
   onUnpeekNav: () => void;
+  hideToggle?: boolean;
 }) {
   const user = useAuthStore((s) => s.user);
   const context = useOrgStore((s) => s.context);
@@ -54,10 +56,10 @@ export function SidebarProfile({
               {initial}
             </span>
             <span className="flex min-w-0 flex-1 flex-col leading-tight">
-              <span className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+              <span className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100" title={displayName}>
                 {displayName}
               </span>
-              <span className="truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={email}>
+              <span className="truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={workspaceName}>
                 {workspaceName}
               </span>
             </span>
@@ -67,6 +69,7 @@ export function SidebarProfile({
         <DropdownMenuContent
           side="top"
           align="start"
+          collisionPadding={12}
           className="w-64 p-1.5"
           data-testid="workspace-menu"
         >
@@ -79,10 +82,16 @@ export function SidebarProfile({
         onMouseEnter={onPeekNav}
         onMouseLeave={onUnpeekNav}
         onFocus={onPeekNav}
-        onBlur={onUnpeekNav}
-        className="flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        onBlur={(e) => {
+          if (e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) return;
+          onUnpeekNav();
+        }}
+        disabled={hideToggle}
+        aria-hidden={hideToggle}
+        tabIndex={hideToggle ? -1 : undefined}
+        className={`flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100${hideToggle ? " hidden" : ""}`}
         title={navOpen ? "Hide navigation" : "Show navigation"}
-        aria-label={navOpen ? "Hide navigation. Activate to keep navigation visible." : "Show navigation temporarily. Activate to keep it visible."}
+        aria-label={navOpen ? "Hide navigation" : "Show navigation"}
         aria-expanded={navOpen}
         data-testid="sidebar-collapse-btn"
       >

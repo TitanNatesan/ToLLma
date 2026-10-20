@@ -106,6 +106,11 @@ IMAGE_MAX_COUNT = 10
 # Provider families whose image adapter speaks /images/edits.
 _EDIT_CAPABLE_TYPES = frozenset({ProviderType.OPENAI, ProviderType.CUSTOM})
 
+# Provider families whose chat wire shape accepts thinkingConfig. The adapter
+# still skips it when image_output is set (image models reject it); models
+# without supports_reasoning stay off entirely (they 400 on the field).
+_THINKING_CONFIG_TYPES = frozenset({ProviderType.GEMINI, ProviderType.VERTEX_AI})
+
 _COUNT_RE = re.compile(r"(\d{1,2})\s*(?:variations?|versions?|images?|pictures?|copies|options?)\b")
 
 
@@ -426,7 +431,7 @@ def org_attribution(db: Session, provider: Provider, user_id: uuid.UUID | None) 
 
     Returns the provider's org only when it is org-scoped AND the caller
     holds ACTIVE membership there; otherwise None (personal traffic).
-    In-app generations never carry an API key.
+    Orthogonal to `api_key_id`: keyed session-chat rows carry both.
     """
     from tollms.models.organization import Membership, MembershipState
 
@@ -626,6 +631,20 @@ def validated_reasoning_level(model: AIModel, level: str | None) -> str | None:
             on_value = default if isinstance(default, str) and default else "on"
             return level if level == on_value else None
     return None
+
+
+def _adapter_reasoning_level(provider: Provider, model: AIModel, level: str | None) -> str | None:
+    """Reasoning level after the thinkingConfig capability gate.
+
+    validated_reasoning_level passes legacy levels through when the catalog
+    declares no reasoning_options; Gemini/Vertex models without
+    supports_reasoning 400 on thinkingConfig, so they stay off. Other
+    families pass through — their adapters decide what to request.
+    """
+    level = validated_reasoning_level(model, level)
+    if provider.provider_type in _THINKING_CONFIG_TYPES and not model.supports_reasoning:
+        return None
+    return level
 
 
 def chat_keys(db: Session, user_id: uuid.UUID) -> list[ChatKeyRead]:
@@ -913,7 +932,8 @@ async def run_chat(
     try:
         credentials = decrypted_credentials(provider)
         adapter = build_adapter(provider, model, credentials, transport)
-        adapter.reasoning_level = validated_reasoning_level(model, data.reasoning_level)
+        adapter.reasoning_level = _adapter_reasoning_level(provider, model, data.reasoning_level)
+        adapter.image_output = bool(model.supports_image_generation)
         adapter.max_output_tokens = model.max_output_tokens
         transcriber = _transcriber(provider, credentials)
         rows = attachment_service.get_many(db, data.attachment_ids, user_id)
@@ -1002,6 +1022,7 @@ async def run_chat(
             db,
             request_log_engine.RequestLogEntry(
                 user_id=user_id,
+                org_id=org_attribution(db, provider, user_id),
                 api_key_id=api_key_id,
                 conversation_id=conv_id,
                 message_id=assistant.id,
@@ -1103,8 +1124,9 @@ async def _setup_generation(
     _enforce_key_model(db, api_key, model.id)
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
-    adapter.reasoning_level = validated_reasoning_level(model, data.reasoning_level)
+    adapter.reasoning_level = _adapter_reasoning_level(provider, model, data.reasoning_level)
     adapter.max_output_tokens = model.max_output_tokens
+    adapter.image_output = bool(model.supports_image_generation)
     transcriber = _transcriber(provider, credentials)
     rows = attachment_service.get_many(db, data.attachment_ids, user_id)
     if data.conversation_id is None:
@@ -1345,6 +1367,8 @@ async def start_generation(
         history_text=setup.history_text,
         provider_type=provider.provider_type.value,
         model_label=model.model_id,
+        provider_name=provider.name,
+        model_name=model.name,
         input_price=str(model.input_price),
         output_price=str(model.output_price),
         cache_read_price=str(model.cache_read_price),
@@ -1411,7 +1435,7 @@ async def _drain_to_sse(
         yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
         if snapshot:
             yield f"data: {json.dumps({'content': msg.content, 'status': msg.status.value})}\n\n"
-        yield f"data: {json.dumps(_terminal_from_row(msg, _message_attachments(db, msg.id, user_id)))}\n\n"
+        yield f"data: {json.dumps(_terminal_from_row(db, msg, _message_attachments(db, msg.id, user_id)))}\n\n"
         return
     # Subscribe + snapshot with no await between: the snapshot covers exactly
     # the deltas emitted before subscription — gapless by construction.
@@ -1425,7 +1449,7 @@ async def _drain_to_sse(
         yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
         if snapshot:
             yield f"data: {json.dumps({'content': msg.content, 'status': msg.status.value})}\n\n"
-        yield f"data: {json.dumps(_terminal_from_row(msg, _message_attachments(db, msg.id, user_id)))}\n\n"
+        yield f"data: {json.dumps(_terminal_from_row(db, msg, _message_attachments(db, msg.id, user_id)))}\n\n"
         return
     yield f"data: {json.dumps({'conversation_id': str(msg.conversation_id), 'generation_id': str(msg.id), 'message_id': str(msg.id), 'status': msg.status.value})}\n\n"
     if snapshot:
@@ -1447,12 +1471,33 @@ async def _drain_to_sse(
         generation_engine.manager.unsubscribe(msg.id, queue)
 
 
-def _terminal_from_row(msg, attachments: list | None = None) -> dict:
+def _display_names(db, msg) -> tuple[str | None, str | None]:
+    """(provider_name, model_name) for a message row. Never raises: unknown
+    rows yield None and the caller falls back to a non-null placeholder."""
+    provider_name, model_name = None, None
+    try:
+        if msg.provider_id is not None:
+            provider = db.get(Provider, msg.provider_id)
+            if provider is not None:
+                provider_name = provider.name
+        if msg.model_id is not None:
+            model = db.get(AIModel, msg.model_id)
+            if model is not None:
+                model_name = model.name
+    except Exception:
+        logger.warning("terminal display-name lookup failed: %s", msg.id, exc_info=True)
+    return provider_name, model_name
+
+
+def _terminal_from_row(db, msg, attachments: list | None = None) -> dict:
+    provider_name, model_name = _display_names(db, msg)
     return {
         "done": True,
         "generation_id": str(msg.id),
         "message_id": str(msg.id),
         "status": msg.status.value,
+        "provider_name": provider_name or "Unknown",
+        "model_name": model_name or "Unknown",
         "content": msg.content,
         **({"error": msg.error} if msg.error else {}),
         "attachments": [
@@ -1703,8 +1748,9 @@ async def start_regeneration(
     api_key_id = api_key.id if api_key is not None else None
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
-    adapter.reasoning_level = validated_reasoning_level(model, reasoning_level)
+    adapter.reasoning_level = _adapter_reasoning_level(provider, model, reasoning_level)
     adapter.max_output_tokens = model.max_output_tokens
+    adapter.image_output = bool(model.supports_image_generation)
     history = _history_until(db, conv_id, preceding, user_id, adapter, model)
     adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
     if not history:
@@ -1754,6 +1800,8 @@ async def start_regeneration(
         history_text="".join(m.content for m in history),
         provider_type=provider.provider_type.value,
         model_label=model.model_id,
+        provider_name=provider.name,
+        model_name=model.name,
         input_price=str(model.input_price),
         output_price=str(model.output_price),
         cache_read_price=str(model.cache_read_price),

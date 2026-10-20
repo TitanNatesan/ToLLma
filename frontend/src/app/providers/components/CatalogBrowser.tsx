@@ -25,8 +25,8 @@ import { apiBaseHost } from "./ConnectionTemplateFields";
 import type { CatalogProvider } from "@/types/catalog";
 import type { ProviderType } from "@/types";
 
-/** One full catalog page (4-col xl grid x 3 rows) fits ~90vh without scrolling. */
-const PAGE_SIZE = 12;
+/** One full catalog page (4-col xl grid x 2 rows) fits ~92dvh without scrolling. */
+const PAGE_SIZE = 8;
 
 /** Provider catalog browser: search + gateway filter + paginated cards with
  * logos. Catalog entries never hold credentials. Gateway-supported rows
@@ -67,9 +67,9 @@ export function CatalogBrowser({ onConfigure }: {
   }
 
   return (
-    <div className="flex flex-col gap-3" data-testid="catalog-browser">
+    <div className="flex flex-col gap-2" data-testid="catalog-browser">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex min-w-52 flex-1 items-center gap-2">
+        <div className="flex min-w-[150px] flex-1 items-center gap-2">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -80,7 +80,7 @@ export function CatalogBrowser({ onConfigure }: {
             data-testid="catalog-search"
             maxLength={120}
           />
-          <Button size="sm" variant="outline" onClick={submitSearch} aria-label="Search providers">
+          <Button size="sm" variant="outline" onClick={submitSearch} aria-label="Search providers" className="h-9">
             <Search className="size-3.5" aria-hidden />
           </Button>
         </div>
@@ -91,6 +91,7 @@ export function CatalogBrowser({ onConfigure }: {
             setPage(1);
           }}
           data-testid="catalog-gateway-filter"
+          className="h-9 w-32"
           aria-label="Filter by gateway support"
         >
           <option value="all">All providers</option>
@@ -104,6 +105,7 @@ export function CatalogBrowser({ onConfigure }: {
             setPage(1);
           }}
           data-testid="catalog-sort"
+          className="h-9 w-32"
           aria-label="Sort providers"
         >
           <option value="name">Name</option>
@@ -135,41 +137,50 @@ export function CatalogBrowser({ onConfigure }: {
         </Button>
       </div>
 
-      {query.isLoading && <LoadingState />}
+      {query.isLoading && (
+        <div className="min-h-48">
+          <LoadingState message="Loading providers…" />
+        </div>
+      )}
       {query.isError && (
-        <EmptyState
-          title="Catalog unavailable"
-          description={parseApiError(query.error).message}
-        />
+        <div className="flex flex-col gap-2">
+          <EmptyState
+            title="Catalog unavailable"
+            description={parseApiError(query.error).message}
+          />
+          <div>
+            <Button size="sm" variant="outline" onClick={() => void query.refetch()} data-testid="catalog-retry">
+              Retry
+            </Button>
+          </div>
+        </div>
       )}
       {!query.isLoading && !query.isError && items.length === 0 && (
         <EmptyState title="No providers match" description="Adjust the search or filters." />
       )}
 
-      <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="grid items-stretch gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {items.map((p) => (
           <CatalogCard key={p.id} provider={p} onConfigure={onConfigure} />
         ))}
       </div>
 
       {pages > 1 && (
-        <div className="flex items-center justify-between text-xs text-zinc-500">
+        <div className="flex items-center justify-center gap-2 text-xs text-zinc-500">
+          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((v) => v - 1)}>
+            Previous
+          </Button>
           <span data-testid="catalog-pages">
             Page {page} of {pages} ({total} providers)
           </span>
-          <div className="flex gap-1.5">
-            <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((v) => v - 1)}>
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page >= pages}
-              onClick={() => setPage((v) => v + 1)}
-            >
-              Next
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={page >= pages}
+            onClick={() => setPage((v) => v + 1)}
+          >
+            Next
+          </Button>
         </div>
       )}
     </div>
@@ -193,7 +204,7 @@ function CatalogCard({ provider: p, onConfigure }: {
   const envVars = p.env_vars ?? [];
   const shownEnvs = envVars.slice(0, 3);
   return (
-    <Card data-testid={`catalog-card-${p.slug}`}>
+    <Card className="h-full" data-testid={`catalog-card-${p.slug}`}>
       <CardContent className="flex h-full flex-col gap-2 p-3.5">
         <div className="flex items-start gap-2.5">
           <ProviderLogo logoUrl={p.logo_url} name={p.name} size="md" />
@@ -233,11 +244,11 @@ function CatalogCard({ provider: p, onConfigure }: {
             )}
           </div>
         )}
-        <div className="mt-auto flex items-center gap-1.5 pt-1">
+        <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-1">
           {supported ? (
             <Button
               size="sm"
-              className="flex-1"
+              className="min-w-[110px] flex-1"
               onClick={() => onConfigure(p, false)}
               data-testid={`catalog-configure-${p.slug}`}
             >
@@ -245,14 +256,14 @@ function CatalogCard({ provider: p, onConfigure }: {
             </Button>
           ) : (
             <>
-              <Button size="sm" variant="outline" className="flex-1" disabled title="No executable gateway yet — configuration will be kept">
+              <Button size="sm" variant="outline" className="min-w-[110px] flex-1" disabled title="No executable gateway yet — configuration will be kept">
                 Configure
               </Button>
               {p.api_base_url && (
                 <Button
                   size="sm"
                   variant="outline"
-                  className="flex-1"
+                  className="min-w-[110px] flex-1"
                   onClick={() => onConfigure(p, true)}
                   data-testid={`catalog-configure-custom-${p.slug}`}
                   title="Configure via the Custom (OpenAI-compatible) gateway using this provider's API base URL"
@@ -291,7 +302,7 @@ export function CatalogBrowserDialog({ open, onClose, onConfigure }: {
   return (
     <Dialog open={open} onOpenChange={(n) => { if (!n) onClose(); }}>
       <DialogContent
-        className="max-w-6xl h-auto max-h-none overflow-visible origin-center [@media_(max-height:760px)]:scale-[0.94] [@media_(max-height:680px)]:scale-[0.88] [@media_(max-height:620px)]:scale-[0.82] p-4"
+        className="max-w-6xl max-h-none overflow-hidden p-4"
         data-testid="catalog-dialog"
       >
         <DialogTitle className="text-sm font-semibold">Provider catalog</DialogTitle>

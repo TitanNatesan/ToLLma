@@ -1,9 +1,11 @@
 """Org provider wizard registration body."""
 
+import uuid
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tollms.api.models.schemas import ModelCreate
 from tollms.api.providers.schemas import RegisterModelItem
 from tollms.models.provider import ProviderType
 
@@ -25,3 +27,10 @@ class OrgProviderRegister(BaseModel):
     models: list[RegisterModelItem] = Field(default_factory=list)
     catalog_slug: str | None = None
 
+
+
+class OrgModelCreate(ModelCreate):
+    """Org model registration body: provider_id comes from the URL path and
+    may be omitted; when present it must match the path (else 422)."""
+
+    provider_id: uuid.UUID | None = None

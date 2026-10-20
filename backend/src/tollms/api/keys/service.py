@@ -22,6 +22,7 @@ from tollms.api.keys.schemas import (
     ApiKeyUpdate,
     IpRuleIn,
     ModelPermissionIn,
+    ModelPermissionRead,
     PolicyIn,
 )
 from tollms.core.exceptions import NotFoundError, ValidationError
@@ -70,6 +71,22 @@ def get_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> ApiKey:
     if key is None:
         raise NotFoundError(f"api key {key_id} not found")
     return key
+
+
+def get_key_for_read(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> ApiKey:
+    """Personal key owned by `user_id`, else an org key assigned to them or
+    visible via ``Keys.Read``. Everything else 404s (no oracle).
+
+    Read-path companion to `get_key`: mutations keep using `get_key` so org
+    keys stay managed exclusively through the organizations API.
+    """
+    try:
+        return get_key(db, key_id, user_id)
+    except NotFoundError:
+        pass
+    from tollms.api.keys import organization_service as org_keys
+
+    return org_keys.get_org_key(db, user_id, key_id)
 
 
 def list_keys(db: Session, user_id: uuid.UUID) -> list[ApiKey]:
@@ -242,6 +259,67 @@ def _validated_model_permissions(
         if item.provider_id and item.model_id and models[item.model_id].provider_id != item.provider_id:
             raise ValidationError(f"model {item.model_id} does not belong to provider {item.provider_id}")
     return [item.model_dump() for item in items]
+
+
+# --- permission display names --------------------------------------------------
+
+def permission_name_maps(
+    db: Session, perms
+) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, str]]:
+    """Batch-load display names for permission rows (no N+1).
+
+    Returns (provider names by provider_id, model `model_id` strings by
+    model row id). Deleted rows are simply absent — callers render None.
+    Two queries regardless of how many rows are passed.
+    """
+    pids = {p.provider_id for p in perms if p.provider_id is not None}
+    mids = {p.model_id for p in perms if p.model_id is not None}
+    provider_names: dict[uuid.UUID, str] = (
+        dict(
+            db.execute(select(Provider.id, Provider.name).where(Provider.id.in_(pids))).all()
+        )
+        if pids
+        else {}
+    )
+    model_names: dict[uuid.UUID, str] = (
+        dict(db.execute(select(AIModel.id, AIModel.model_id).where(AIModel.id.in_(mids))).all())
+        if mids
+        else {}
+    )
+    return provider_names, model_names
+
+
+def model_permission_reads(
+    db: Session, perms, *, names: tuple[dict, dict] | None = None
+) -> list[ModelPermissionRead]:
+    """ORM permission rows -> display reads, deterministically ordered.
+
+    `names` is a precomputed `permission_name_maps` result for the batch
+    case (list endpoints resolve one map for the whole page, then pass it
+    per key); single-key reads pass nothing and cost exactly two queries.
+    """
+    ordered = sorted(
+        perms, key=lambda perm: (str(perm.provider_id or ""), str(perm.model_id or ""))
+    )
+    if not ordered:
+        return []
+    provider_names, model_names = names if names is not None else permission_name_maps(db, ordered)
+    return [
+        ModelPermissionRead(
+            id=perm.id,
+            provider_id=perm.provider_id,
+            model_id=perm.model_id,
+            model_name=model_names.get(perm.model_id) if perm.model_id is not None else None,
+            provider_name=provider_names.get(perm.provider_id)
+            if perm.provider_id is not None
+            else None,
+            enabled=perm.enabled,
+            max_budget=perm.max_budget,
+            rpm=perm.rpm,
+            tpm=perm.tpm,
+        )
+        for perm in ordered
+    ]
 
 
 # --- mutations ---------------------------------------------------------------

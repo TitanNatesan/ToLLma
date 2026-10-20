@@ -279,6 +279,7 @@ class OpenAIChatAdapter(OpenAIBaseAdapter):
                                 completion_tokens=usage.get("completion_tokens"),
                                 total_tokens=usage.get("total_tokens"),
                                 cache_read_tokens=extras["cache_read_tokens"],
+                                cache_write_tokens=extras["cache_write_tokens"],
                                 reasoning_tokens=extras["reasoning_tokens"],
                             )
                 if in_reasoning:
@@ -375,6 +376,7 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
                             completion_tokens=usage.get("output_tokens"),
                             total_tokens=usage.get("total_tokens"),
                             cache_read_tokens=extras["cache_read_tokens"],
+                            cache_write_tokens=extras["cache_write_tokens"],
                             reasoning_tokens=extras["reasoning_tokens"],
                         )
                 if in_reasoning:

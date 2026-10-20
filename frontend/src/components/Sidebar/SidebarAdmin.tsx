@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ComponentType, MouseEvent } from "react";
 import {
   Activity,
@@ -87,27 +88,27 @@ export function SidebarAdmin({ activeId }: { activeId: AdminSectionId }) {
           {ADMIN_SECTIONS.map(({ id, label, icon: Icon }) => {
             const active = id === activeId;
             return (
-              <a
+              <Link
                 key={id}
                 href={`/admin#${id}`}
-                aria-current={active ? "location" : undefined}
+                aria-current={active ? "page" : undefined}
                 onClick={(event) => navigate(event, id)}
                 data-testid={`sidebar-admin-${id}`}
                 className={cn(
                   "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
                   active
-                    ? "bg-tollma-50 text-tollma-800 dark:bg-tollma-950/50 dark:text-tollma-200"
+                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                     : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
                 )}
               >
                 <Icon
                   className={cn(
                     "size-3.5 shrink-0",
-                    active ? "text-tollma-600 dark:text-tollma-400" : "text-zinc-400",
+                    active ? "text-white dark:text-zinc-900" : "text-zinc-400",
                   )}
                 />
                 <span>{label}</span>
-              </a>
+              </Link>
             );
           })}
         </div>

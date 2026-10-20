@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useElementSize } from "./useElementSize";
+import { useChartHeight } from "./useChartHeight";
 import { chartColor, compactNumber, niceMax } from "./palette";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +30,7 @@ const PAD = { left: 52, right: 14, top: 14, bottom: 26 };
 export function AreaChart({
   labels,
   series,
-  height = 240,
+  height: heightProp,
   valueFormat = compactNumber,
   labelFormat,
   showLegend = true,
@@ -38,6 +39,8 @@ export function AreaChart({
   className,
 }: AreaChartProps) {
   const { ref, width } = useElementSize<HTMLDivElement>();
+  const responsiveHeight = useChartHeight(240);
+  const height = heightProp ?? responsiveHeight;
   const [hover, setHover] = useState<number | null>(null);
   const [brush, setBrush] = useState<{ from: number; to: number } | null>(null);
   const dragStart = useRef<number | null>(null);

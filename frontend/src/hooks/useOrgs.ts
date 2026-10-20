@@ -119,6 +119,7 @@ function invalidateOrg(qc: ReturnType<typeof useQueryClient>, orgId?: string) {
     void qc.invalidateQueries({ queryKey: ORG_KEYS.audit(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.keys(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.providers(orgId) });
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.models(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.budget(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.analyticsOverview(orgId) });
     void qc.invalidateQueries({ queryKey: ORG_KEYS.teams(orgId) });
@@ -410,6 +411,20 @@ export function useOrgMutations(orgId?: string) {
     updateOrgProvider: useMutation({
       mutationFn: (p: { providerId: string; payload: Record<string, unknown> }) =>
         orgApi.updateOrgProvider(orgId ?? "", p.providerId, p.payload),
+      onSuccess: () => inv(),
+    }),
+    createOrgModel: useMutation({
+      mutationFn: (p: { providerId: string; payload: Record<string, unknown> }) =>
+        orgApi.createOrgModel(orgId ?? "", p.providerId, p.payload),
+      onSuccess: () => inv(),
+    }),
+    updateOrgModel: useMutation({
+      mutationFn: (p: { modelId: string; payload: Record<string, unknown> }) =>
+        orgApi.updateOrgModel(orgId ?? "", p.modelId, p.payload),
+      onSuccess: () => inv(),
+    }),
+    deleteOrgModel: useMutation({
+      mutationFn: (modelId: string) => orgApi.deleteOrgModel(orgId ?? "", modelId),
       onSuccess: () => inv(),
     }),
     updateBudget: useMutation({

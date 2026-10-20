@@ -42,6 +42,7 @@
 html,
 body {
   height: 100%;
+  height: 100dvh;
 }
 
 body {
@@ -49,6 +50,18 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
+}
+
+/* Keyboard-focus fallback: buttons, links, and nav rows without their own
+   focus ring get a visible tollma outline. Text entry (input, textarea,
+   contenteditable) is excluded on purpose: this selector is unlayered so it
+   beats every layered Tailwind utility regardless of specificity — scoping
+   it here lets text inputs keep their own neutral border-shift treatment.
+   Menu/command rows are excluded too: their focus:bg-* treatment is the
+   indicator, so an extra outline would double up. */
+:focus-visible:not(input, textarea, [contenteditable], [role="menuitem"], [role="option"]) {
+  outline: 2px solid var(--color-tollma-500);
+  outline-offset: 2px;
 }
 
 /* Streaming cursor blink animation */
@@ -116,8 +129,12 @@ html[data-animations="off"] .animate-pulse {
 
 /* Custom slim scrollbar */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar:hover {
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -126,8 +143,14 @@ html[data-animations="off"] .animate-pulse {
   background: rgba(0, 0, 0, 0.15);
   border-radius: 9999px;
 }
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
 :where(.dark, .dark *) ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
+}
+:where(.dark, .dark *) ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 /* Prose styles for markdown messages */
@@ -155,10 +178,8 @@ html[data-animations="off"] .animate-pulse {
   border-radius: 4px;
   padding: 0.1em 0.35em;
 }
-@media (prefers-color-scheme: dark) {
-  .prose code {
-    background: rgba(255,255,255,0.08);
-  }
+.dark .prose code {
+  background: rgba(255,255,255,0.08);
 }
 .prose pre {
   background: #1a1a1a;
@@ -193,16 +214,29 @@ html[data-animations="off"] .animate-pulse {
   background: rgba(0,0,0,0.04);
   font-weight: 600;
 }
-@media (prefers-color-scheme: dark) {
-  .prose th, .prose td { border-color: #374151; }
-  .prose th { background: rgba(255,255,255,0.04); }
-  .prose blockquote { border-color: #374151; color: #9ca3af; }
-}
+.dark .prose th, .dark .prose td { border-color: #374151; }
+.dark .prose th { background: rgba(255,255,255,0.04); }
+.dark .prose blockquote { border-color: #374151; color: #9ca3af; }
 .prose a { color: #3b82f6; text-decoration: underline; }
 .prose a:hover { color: #1d4ed8; }
 .prose strong { font-weight: 600; }
 .prose em { font-style: italic; }
 .prose hr { border: none; border-top: 1px solid #e5e7eb; margin: 1em 0; }
-@media (prefers-color-scheme: dark) {
-  .prose hr { border-color: #374151; }
+.dark .prose hr { border-color: #374151; }
+
+/* Long math + code wrapping: keep narrow chat columns from overflowing. */
+.prose { overflow-wrap: break-word; }
+.prose a { overflow-wrap: break-word; }
+.prose code { overflow-wrap: break-word; }
+.prose .katex-display { overflow-x: auto; padding-bottom: 0.25rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .streaming-cursor::after,
+  .animate-fade-in,
+  .media-progress-bar,
+  .media-progress-sweep,
+  .media-progress-glow,
+  .animate-pulse {
+    animation: none !important;
+  }
 }

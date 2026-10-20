@@ -153,6 +153,10 @@ class BaseProviderAdapter:
     # Prompt-cache plan (services/gateway/caching). None = caching unsupported
     # or not requested; adapters then send their default request body.
     prompt_cache: CachingPlan | None = None
+    # Ask a chat endpoint for image output alongside text (Gemini
+    # responseModalities). The gateway sets this from the registered model's
+    # supports_image_generation flag; adapters that cannot do it ignore it.
+    image_output: bool = False
     # Last non-chat provider usage payload (image generation reports token
     # usage); None when the provider reported none. Actual cost wins over
     # estimates when this is present.

@@ -8,11 +8,13 @@ export function SidebarFooter({
   onToggleNav,
   onPeekNav,
   onUnpeekNav,
+  hideToggle,
 }: {
   navOpen: boolean;
   onToggleNav: () => void;
   onPeekNav: () => void;
   onUnpeekNav: () => void;
+  hideToggle?: boolean;
 }) {
   return (
     <div
@@ -24,6 +26,7 @@ export function SidebarFooter({
         onToggleNav={onToggleNav}
         onPeekNav={onPeekNav}
         onUnpeekNav={onUnpeekNav}
+        hideToggle={hideToggle}
       />
     </div>
   );

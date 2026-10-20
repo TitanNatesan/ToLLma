@@ -787,10 +787,10 @@ export function ProviderWizardModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] p-0 overflow-hidden shadow-2xl">
+      <DialogContent className="max-w-2xl max-h-[92dvh]! p-0 overflow-hidden shadow-2xl">
         <form
           data-testid="provider-form"
-          className="flex flex-col max-h-[90vh] min-h-0"
+          className="flex flex-col max-h-[92dvh] min-h-0"
           autoComplete="off"
           onSubmit={(e) => e.preventDefault()}
           data-1p-ignore="true"
@@ -904,7 +904,7 @@ export function ProviderWizardModal({
                       <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                         Select Provider Platform
                       </label>
-                      <div className="grid grid-cols-3 items-stretch gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 items-stretch gap-2">
                         {VISIBLE_PROVIDER_TYPES.map((t) => {
                           const meta = PROVIDER_METAS[t];
                           const isSelected = type === t;
@@ -978,14 +978,14 @@ export function ProviderWizardModal({
                             </>
                           ) : (
                             <>
-                              <div className="flex items-center gap-1.5 w-full">
-                                <span className="flex size-5 shrink-0 items-center justify-center rounded bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                                  <Search className="size-3" />
+                              <div className="flex items-center gap-2 w-full">
+                                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                  <Search className="size-3.5" />
                                 </span>
                                 <span className="font-semibold text-xs truncate">Search providers</span>
                               </div>
-                              <span className="text-[10px] mt-1 line-clamp-2 text-zinc-500">
-                                Browse the catalog and configure any provider
+                              <span className="text-[10px] mt-1.5 line-clamp-2 text-zinc-500">
+                                Browse the catalog — 100+ providers with prefilled endpoints and auth fields
                               </span>
                             </>
                           )}
@@ -1113,7 +1113,7 @@ export function ProviderWizardModal({
                                   value={search}
                                   onChange={(e) => setSearch(e.target.value)}
                                   data-testid="wiz-model-search"
-                                  className="h-8 pl-8 text-xs w-full"
+                                  className="h-9 pl-8 text-xs w-full"
                                 />
                               </div>
                               <Select
@@ -1121,7 +1121,7 @@ export function ProviderWizardModal({
                                 onChange={(e) => setMatchFilter(e.target.value as typeof matchFilter)}
                                 data-testid="wiz-match-filter"
                                 sizeVariant="sm"
-                                className="w-32 text-xs"
+                                className="h-9 w-32 text-xs"
                               >
                                 <option value="ALL">All matches</option>
                                 <option value="US">US specific</option>
@@ -1159,7 +1159,7 @@ export function ProviderWizardModal({
                                 onChange={(e) => setEndpointFilter(e.target.value)}
                                 data-testid="wiz-endpoint-filter"
                                 sizeVariant="sm"
-                                className="w-32 text-xs"
+                                className="h-9 w-32 text-xs"
                               >
                                 <option value="ALL">All endpoints</option>
                                 {endpointChoices.map((o) => (
@@ -1203,7 +1203,7 @@ export function ProviderWizardModal({
                               </div>
                             </div>
                           </div>
-                          <div className="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
+                          <div className="flex max-h-72 min-h-[200px] flex-col gap-2 overflow-y-auto pr-1">
                             {grouped.map(({ category, items }) => (
                               <div
                                 key={category}
@@ -1234,7 +1234,7 @@ export function ProviderWizardModal({
                                       <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-1.5">
                                           <Cpu className="size-3.5 shrink-0 text-zinc-400" />
-                                          <span className="truncate font-medium">{displayName}</span>
+                                          <span className="min-w-0 flex-1 truncate font-medium">{displayName}</span>
                                           {scopeInfo && (
                                             <span
                                               className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
@@ -1286,7 +1286,7 @@ export function ProviderWizardModal({
                           <span className="text-[11px] text-zinc-400">Review before registration</span>
                         </div>
                         <div
-                          className="min-h-[200px] max-h-[280px] overflow-y-auto space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-900/30"
+                          className="min-h-[200px] max-h-72 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-900/30"
                           data-testid="wiz-finish-models-list"
                         >
                           {selectedModels.length === 0 ? (
@@ -1344,7 +1344,7 @@ export function ProviderWizardModal({
                                   </div>
 
                                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-zinc-500">
-                                    <span className="text-zinc-400 dark:text-zinc-500 truncate max-w-[220px]">
+                                    <span className="min-w-0 flex-1 truncate text-zinc-400 dark:text-zinc-500">
                                       {m.model_id}
                                     </span>
                                     {f?.context_window && (

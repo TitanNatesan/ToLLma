@@ -104,6 +104,7 @@ export function Select({
   title,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
+  const [flipUp, setFlipUp] = useState(false);
   const controlId = useId();
   const listboxId = `${controlId}-listbox`;
   const listRef = useRef<HTMLDivElement>(null);
@@ -130,6 +131,20 @@ export function Select({
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open ]);
+
+  // On open, flip the listbox above the trigger when the space below fits
+  // less than the menu needs (and above fits more).
+  useEffect(() => {
+    if (!open) return;
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const frame = requestAnimationFrame(() => {
+      const rect = trigger.getBoundingClientRect();
+      const needed = listRef.current?.offsetHeight ?? 160;
+      setFlipUp(window.innerHeight - rect.bottom < needed && rect.top > needed);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [open ]);
 
   // On open, move focus to the selected option (or the first enabled one).
@@ -255,7 +270,7 @@ export function Select({
           "flex w-full items-center justify-between gap-2 rounded-md border text-zinc-900 transition-colors cursor-pointer",
           "border-zinc-300 bg-white hover:border-zinc-400 shadow-xs",
           "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/40 focus-visible:border-tollma-500 dark:focus-visible:ring-tollma-500/40",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-tollma-500 dark:focus-visible:ring-tollma-500/60",
           "disabled:cursor-not-allowed",
           !selected && "text-zinc-400 dark:text-zinc-500",
           sizeVariant === "sm" ? "h-8 pl-2.5 pr-2 text-xs" : "h-9 pl-3 pr-2.5 text-sm",
@@ -279,8 +294,9 @@ export function Select({
           aria-label={ariaLabel}
           onKeyDown={onListKeyDown}
           className={cn(
-            "absolute left-0 top-full z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-xl",
+            "absolute left-0 z-50 max-h-[min(20rem,80dvh)] w-full overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-xl",
             "dark:border-zinc-800 dark:bg-zinc-900",
+            flipUp ? "bottom-full mb-1" : "top-full mt-1",
           )}
         >
           {options.map((option, index) => {

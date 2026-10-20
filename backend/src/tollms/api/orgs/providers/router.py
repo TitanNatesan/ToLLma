@@ -5,8 +5,9 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from tollms.api.models.schemas import ModelRead
+from tollms.api.models.schemas import ModelRead, ModelUpdate, read_model
 from tollms.api.orgs.providers import service
+from tollms.api.orgs.providers.schemas import OrgModelCreate
 from tollms.api.orgs.schemas import OrgProviderRegister
 from tollms.api.providers.router import _read as _read_provider
 from tollms.api.providers.schemas import ProviderCreate, ProviderRead, ProviderUpdate
@@ -70,3 +71,29 @@ def delete_org_provider(org_id: uuid.UUID, provider_id: uuid.UUID,
                         user: User = Depends(require_active_user)):
     service.delete_org_provider(db, user.id, org_id, provider_id)
 
+@router.post("/{org_id}/providers/{provider_id}/models", response_model=ModelRead, status_code=201)
+def create_org_provider_model(org_id: uuid.UUID, provider_id: uuid.UUID, data: OrgModelCreate,
+                              db: Session = Depends(get_db),
+                              user: User = Depends(require_active_user)):
+    """Register one model on an org-owned provider (201 ModelRead). Body is
+    the personal ModelCreate shape; provider_id must match the path or be
+    omitted. Perm: Providers.Create + live membership."""
+    return read_model(service.create_org_model(db, user.id, org_id, provider_id, data))
+
+
+@router.patch("/{org_id}/models/{model_id}", response_model=ModelRead)
+def update_org_model(org_id: uuid.UUID, model_id: uuid.UUID, data: ModelUpdate,
+                     db: Session = Depends(get_db),
+                     user: User = Depends(require_active_user)):
+    """Partial update of an org-owned model (incl. is_active). Perm:
+    Providers.Update + live membership; 404 oracle otherwise."""
+    return read_model(service.update_org_model(db, user.id, org_id, model_id, data))
+
+
+@router.delete("/{org_id}/models/{model_id}", status_code=204)
+def delete_org_model(org_id: uuid.UUID, model_id: uuid.UUID,
+                     db: Session = Depends(get_db),
+                     user: User = Depends(require_active_user)):
+    """Soft-delete an org-owned model (mirrors personal delete). Perm:
+    Providers.Delete + live membership; 404 oracle otherwise."""
+    service.delete_org_model(db, user.id, org_id, model_id)

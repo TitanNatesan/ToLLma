@@ -25,7 +25,7 @@ import { ModelTable } from "./analytics/ModelTable";
 import { ModelUsageTrend } from "./analytics/ModelUsageTrend";
 import { DEFAULT_RANGE, RangeSelector, type RangeValue } from "./analytics/RangeSelector";
 import { RequestVolumeChart } from "./analytics/RequestVolumeChart";
-import { SectionFrame, num } from "./analytics/shared";
+import { ChartSkeleton, SectionFrame, num } from "./analytics/shared";
 import { SpendTrend } from "./analytics/SpendTrend";
 import { TokenTrend } from "./analytics/TokenTrend";
 import { TopModelsChart } from "./analytics/TopModelsChart";
@@ -35,33 +35,23 @@ import type { AnalyticsPreset, ApiKey, ApiKeyAnalyticsSummary, ApiKeyTimeseries 
 function AnalyticsSkeleton() {
   return (
     <div className="space-y-4" data-testid="key-analytics-loading">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <div
             key={index}
-            className="h-40 animate-pulse rounded-xl border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/60"
+            className="h-24 animate-pulse rounded-xl border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/60"
           />
         ))}
       </div>
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-        <div className="h-72 animate-pulse rounded-xl border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/60 xl:col-span-2" />
-        <div className="h-72 animate-pulse rounded-xl border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/60" />
-      </div>
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div
-            key={index}
-            className="h-64 animate-pulse rounded-xl border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/60"
-          />
-        ))}
-      </div>
+      <ChartSkeleton height={220} />
+      <ChartSkeleton height={180} />
     </div>
   );
 }
 
 function SectionLabel({ children }: { children: string }) {
   return (
-    <h4 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{children}</h4>
+    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">{children}</h4>
   );
 }
 
@@ -90,6 +80,8 @@ export function KeyAnalytics({ keyId }: { keyId: string }) {
     queryFn: () => getKeyAnalytics(keyId, params),
     enabled: customReady,
     staleTime: 30_000,
+    // Returning from chat usage refetches the open detail when stale.
+    refetchOnWindowFocus: true,
   });
   // Two stacked views need two groupings of the same endpoint (no new API).
   const modelTsQuery = useQuery({
@@ -97,18 +89,21 @@ export function KeyAnalytics({ keyId }: { keyId: string }) {
     queryFn: () => getKeyTimeseries(keyId, params, "model"),
     enabled: customReady,
     staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
   const endpointTsQuery = useQuery({
     queryKey: ["key-analytics-timeseries", keyId, params, "endpoint"],
     queryFn: () => getKeyTimeseries(keyId, params, "endpoint"),
     enabled: customReady,
     staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
   // Key identity for the read-only health section (existing key endpoint).
   const keyQuery = useQuery({
     queryKey: ["api-key-detail", keyId],
     queryFn: () => getApiKey(keyId),
     staleTime: 60_000,
+    refetchOnWindowFocus: true,
   });
   // The summary carries insights; the dedicated endpoint is a fallback only.
   const insightsQuery = useQuery({
@@ -116,6 +111,7 @@ export function KeyAnalytics({ keyId }: { keyId: string }) {
     queryFn: () => getKeyInsights(keyId, params),
     enabled: customReady && !!summaryQuery.data && (summaryQuery.data.insights?.length ?? 0) === 0,
     staleTime: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const fetching =
@@ -330,6 +326,9 @@ function AnalyticsBody({
         >
           <EndpointTable summary={summary} />
         </SectionFrame>
+        <p className="text-[11px] text-zinc-400" data-testid="key-endpoints-caption">
+          Totals include in-app chat-page traffic.
+        </p>
       </div>
 
       <div className="space-y-2">

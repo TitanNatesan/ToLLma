@@ -243,4 +243,101 @@ test.describe("org sidebar + key model lifecycle", () => {
     await expect(page.locator("[data-testid^='model-group-']:not([data-testid^='model-group-CUSTOM']):not([data-testid^='model-group-OPENAI']):not([data-testid^='model-group-ANTHROPIC_MESSAGES']):not([data-testid^='model-group-GEMINI']):not([data-testid^='model-group-VERTEX_AI']):not([data-testid^='model-group-BEDROCK_CONVERSE'])")).toHaveCount(0);
     await page.keyboard.press("Escape");
   });
+
+  test("org keys table has no Team column (Owner/Status instead)", async ({ page }) => {
+    await apiLoginAs(page, "side-noteam");
+    const orgRes = await page.request.post(`${API}/api/v1/orgs`, {
+      data: { name: `NoTeam Org ${Date.now()}` },
+    });
+    expect(orgRes.ok(), await orgRes.text()).toBeTruthy();
+    const orgId = (await orgRes.json()).id as string;
+    const me = (await (await page.request.get(`${API}/auth/me`)).json()) as { id: string };
+    const keyRes = await page.request.post(`${API}/api/v1/orgs/${orgId}/keys`, {
+      data: { assignee_user_id: me.id, name: `noteam-key-${Date.now()}` },
+    });
+    expect(keyRes.ok(), await keyRes.text()).toBeTruthy();
+    // Enter org scope, then the unified keys page renders org data.
+    await page.goto(`/organizations/${orgId}`);
+    await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+    await page.goto("/api-keys");
+    const table = page.getByTestId("org-keys-table");
+    await expect(table).toBeVisible({ timeout: 20000 });
+    // TEAM column deleted: headers are the replacement set, never "Team".
+    const headerTexts = (await table.locator("thead th").allTextContents()).map((t) => t.trim());
+    expect(headerTexts).toEqual([
+      "Name", "Owner", "Status", "Models", "Budget", "Spend", "Created", "Last used", "Actions",
+    ]);
+    expect(headerTexts).not.toContain("Team");
+  });
+
+  test("show-once dialog offers copy and .txt download", async ({ page }) => {
+    await apiLoginAs(page, "showonce");
+    const name = `ShowOnce ${Date.now()}`;
+    await page.goto("/api-keys");
+    await page.getByTestId("create-key-button").click();
+    await page.getByTestId("key-name-input").fill(name);
+    await page.getByTestId("key-form-submit").click();
+    const dialog = page.getByTestId("raw-key-dialog");
+    await expect(dialog).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("raw-key-value")).not.toBeEmpty();
+    await expect(page.getByTestId("raw-key-copy")).toBeVisible();
+    // Download fires a real .txt download event (no dialog dismissal needed).
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("raw-key-download").click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.txt$/);
+    // Ack gates dismissal; closing clears the secret.
+    await page.getByTestId("raw-key-ack").check();
+    await page.getByTestId("raw-key-done").click();
+    await expect(dialog).toBeHidden();
+    // Cleanup: the created key is now listed; remove it via API.
+    const keys = (await (await page.request.get(`${API}/api/v1/keys`)).json()) as { id: string; name: string }[];
+    const mine = keys.find((k) => k.name === name);
+    expect(mine).toBeDefined();
+    if (mine) await page.request.delete(`${API}/api/v1/keys/${mine.id}`);
+  });
+
+  test("personal key details show provider / model chips (not UUIDs)", async ({ page }) => {
+    await apiLoginAs(page, "chipdet");
+    const provName = `ChipProv ${Date.now()}`;
+    const prov = await page.request.post(`${API}/api/v1/providers`, {
+      data: { name: provName, provider_type: "CUSTOM", credentials: { base_url: "http://mock" } },
+    });
+    expect(prov.ok(), await prov.text()).toBeTruthy();
+    const providerId = (await prov.json()).id as string;
+    const modelIdStr = `chip-model-${Date.now()}`;
+    const model = await page.request.post(`${API}/api/v1/models`, {
+      data: {
+        provider_id: providerId,
+        model_id: modelIdStr,
+        name: "Chip Model",
+        endpoint_type: "chat_completions",
+        input_price: "1",
+        output_price: "2",
+      },
+    });
+    expect(model.ok(), await model.text()).toBeTruthy();
+    const modelRowId = (await model.json()).id as string;
+    const created = await page.request.post(`${API}/api/v1/keys`, {
+      data: {
+        name: `chip-key-${Date.now()}`,
+        model_permissions: [{ provider_id: providerId, model_id: modelRowId }],
+      },
+    });
+    expect(created.ok(), await created.text()).toBeTruthy();
+    const kid = ((await created.json()) as { key: { id: string } }).key.id;
+
+    await page.goto("/api-keys");
+    const row = page.getByTestId(`key-row-${kid}`);
+    await expect(row).toBeVisible({ timeout: 20000 });
+    await row.click();
+    await expect(page.getByTestId("key-details-panel")).toBeVisible({ timeout: 20000 });
+    // Model permissions render `provider / model` names, never raw UUIDs.
+    const chips = page.getByTestId(`key-models-${kid}`);
+    await expect(chips).toBeVisible({ timeout: 20000 });
+    await expect(chips).toContainText(`${provName} /`);
+    await expect(chips).toContainText(modelIdStr);
+    await expect(chips).not.toContainText(providerId);
+    await expect(chips).not.toContainText(modelRowId);
+  });
 });

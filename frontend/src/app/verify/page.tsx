@@ -3,6 +3,8 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { verifyEmail } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
 
@@ -46,25 +48,38 @@ function VerifyBody() {
   }, [token]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4" data-testid="verify-page">
-      <div className="w-full max-w-sm space-y-3 rounded-xl border border-zinc-200 bg-white p-6 text-center dark:border-zinc-800 dark:bg-zinc-950">
-        {status === "pending" && <p data-testid="verify-pending">Verifying your email…</p>}
-        {status === "ok" && (
-          <>
-            <h1 className="text-lg font-semibold" data-testid="verify-ok">Email verified</h1>
-            <p className="text-sm text-zinc-500">Your account is active.</p>
-            <Link href={invitesHref} className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Go to ToLLma</Link>
-          </>
-        )}
-        {status === "bad" && (
-          <>
-            <h1 className="text-lg font-semibold" data-testid="verify-bad">Link invalid or expired</h1>
-            <p className="text-sm text-zinc-500">Verification links are single-use and expire after 24 hours.</p>
-            <Link href={loginHref} className="inline-block underline hover:text-tollma-600 dark:hover:text-tollma-400">Back to login</Link>
-          </>
-        )}
-      </div>
-    </main>
+    <AuthShell
+      title={status === "bad" ? "Link invalid or expired" : "Email verification"}
+      description="Confirming your email address."
+      testId="verify-page"
+    >
+      {status === "pending" && (
+        <p role="status" data-testid="verify-pending" className="flex items-center justify-center gap-2 text-sm text-zinc-300">
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+          Verifying your email…
+        </p>
+      )}
+      {status === "ok" && (
+        <div className="space-y-2 text-center">
+          <p role="status" data-testid="verify-ok" className="text-sm font-semibold text-white">
+            Email verified — your account is active.
+          </p>
+          <Link href={invitesHref} className="inline-block text-sm underline underline-offset-4 hover:text-tollma-300">
+            Go to ToLLma
+          </Link>
+        </div>
+      )}
+      {status === "bad" && (
+        <div className="space-y-2 text-center">
+          <p role="status" data-testid="verify-bad" className="text-sm text-zinc-300">
+            Verification links are single-use and expire after 24 hours.
+          </p>
+          <Link href={loginHref} className="inline-block text-sm underline underline-offset-4 hover:text-tollma-300">
+            Back to login
+          </Link>
+        </div>
+      )}
+    </AuthShell>
   );
 }
 

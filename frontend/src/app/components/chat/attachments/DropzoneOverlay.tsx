@@ -22,7 +22,7 @@ function DropzoneOverlayInner({ isDragging, className, acceptLabel }: DropzoneOv
   return (
     <div
       className={cn(
-        "pointer-events-none fixed inset-0 z-50 flex items-center justify-center",
+        "pointer-events-none fixed inset-0 z-[60] flex items-center justify-center",
         "bg-zinc-950/60 backdrop-blur-sm dark:bg-zinc-950/70",
         "animate-in fade-in-0 duration-150",
         className,

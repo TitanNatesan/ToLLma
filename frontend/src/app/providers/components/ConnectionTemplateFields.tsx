@@ -56,8 +56,12 @@ export function ConnectionTemplateFields({ template, creds, onChange }: {
       </div>
 
       {template.fallback && (
-        <p className="text-[11px] text-zinc-400" data-testid="template-fallback-notice">
-          Field hints derived from catalog metadata — confirm against the provider docs.
+        <p
+          className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+          data-testid="template-fallback-notice"
+        >
+          These fields are inferred from catalog metadata and may be incomplete — verify them
+          against the provider&apos;s documentation before saving.
         </p>
       )}
 

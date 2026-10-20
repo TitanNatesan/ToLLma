@@ -260,7 +260,7 @@ export default function AdminPage() {
 
   if (forbidden) {
     return (
-      <PageContainer header={pageHeader} testId="admin-page" dense>
+      <PageContainer header={pageHeader} testId="admin-page">
         <ForbiddenState onRetry={isAdmin ? refresh : undefined} />
       </PageContainer>
     );
@@ -344,7 +344,7 @@ export default function AdminPage() {
   }
 
   return (
-    <PageContainer header={pageHeader} testId="admin-page" dense>
+    <PageContainer header={pageHeader} testId="admin-page">
       {(() => {
           const section = ADMIN_SECTIONS.find(({ id }) => id === activeId) ?? ADMIN_SECTIONS[0];
           return (

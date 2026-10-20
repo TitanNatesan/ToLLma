@@ -56,12 +56,35 @@ export { DrawerBackdrop, useEscapeClose };
 // Expiration helpers (parity with KeyForm presets; edit drawer owns its copy)
 // ---------------------------------------------------------------------------
 
-type ExpiryPreset = "never" | "custom";
+type ExpiryPreset = "never" | "1d" | "7d" | "30d" | "90d" | "custom";
+
+const EXPIRY_DAYS: Record<"1d" | "7d" | "30d" | "90d", number> = {
+  "1d": 1,
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+};
 
 const EDIT_EXPIRY_OPTIONS: ReadonlyArray<{ value: ExpiryPreset; label: string }> = [
-  { value: "never", label: "Never expires" },
-  { value: "custom", label: "Custom date" },
+  { value: "never", label: "Never" },
+  { value: "1d", label: "1 day" },
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+  { value: "90d", label: "90 days" },
+  { value: "custom", label: "Custom" },
 ];
+
+/** Reverse-map a stored timestamp to its preset when it matches "now + N days". */
+function detectExpiryPreset(iso: string | null | undefined): ExpiryPreset {
+  if (!iso) return "never";
+  const target = new Date(iso).getTime();
+  if (isNaN(target)) return "never";
+  const diffDays = (target - Date.now()) / 86_400_000;
+  for (const [preset, days] of Object.entries(EXPIRY_DAYS)) {
+    if (Math.abs(diffDays - days) < 1.5) return preset as ExpiryPreset;
+  }
+  return "custom";
+}
 
 function toDateTimeLocal(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -156,7 +179,9 @@ const KeyEditContent = memo(function KeyEditContent({
   const [description, setDescription] = useState(apiKey.description ?? "");
   const [enabled, setEnabled] = useState(apiKey.enabled);
   const [expiresAt, setExpiresAt] = useState(initialExpires);
-  const [expiryPreset, setExpiryPreset] = useState<ExpiryPreset>(apiKey.expires_at ? "custom" : "never");
+  const [expiryPreset, setExpiryPreset] = useState<ExpiryPreset>(() =>
+    detectExpiryPreset(apiKey.expires_at),
+  );
   const [policy, setPolicy] = useState<ApiKeyPolicyInput>(initialPolicy);
   const [allow, setAllow] = useState(initialIp.allow);
   const [deny, setDeny] = useState(initialIp.deny);
@@ -401,8 +426,16 @@ const KeyEditContent = memo(function KeyEditContent({
                 value={expiryPreset}
                 onChange={(next) => {
                   setExpiryPreset(next);
-                  if (next === "never") setExpiresAt("");
-                  else if (!expiresAt) setExpiresAt(initialExpires);
+                  if (next === "never") {
+                    setExpiresAt("");
+                    return;
+                  }
+                  if (next === "custom") {
+                    if (!expiresAt) setExpiresAt(initialExpires);
+                    return;
+                  }
+                  const days = EXPIRY_DAYS[next];
+                  setExpiresAt(toDateTimeLocal(new Date(Date.now() + days * 86_400_000).toISOString()));
                 }}
                 options={EDIT_EXPIRY_OPTIONS}
                 ariaLabel="Expiration preset"

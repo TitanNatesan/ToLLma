@@ -64,17 +64,25 @@ def _org_key_select():
 
 
 
-def _read_org_key(db: Session, key, spend_usd: float = 0.0) -> OrgKeyRead:
+def _read_org_key(
+    db: Session, key, spend_usd: float = 0.0, names: tuple | None = None
+) -> OrgKeyRead:
+    """Org key metadata view. `names` is a precomputed
+    `permission_name_maps` result for the batch case (list endpoints resolve
+    one map for the whole page); single-key reads resolve it inline."""
     assignee = db.get(User, key.user_id)
+    issuer = db.get(User, key.issued_by) if key.issued_by else None
     return OrgKeyRead(
         id=key.id, org_id=key.org_id, assignee_user_id=key.user_id,
         assignee_email=assignee.email if assignee else None,
-        issued_by=key.issued_by, name=key.name, description=key.description,
+        issued_by=key.issued_by, issued_by_email=issuer.email if issuer else None, name=key.name, description=key.description,
         key_prefix=key.key_prefix, masked=keys_service.masked_prefix(key.key_prefix),
         enabled=key.enabled, expires_at=key.expires_at, last_used_at=key.last_used_at,
         rotation_count=key.rotation_count,
         policy=key.policy, ip_rules=list(key.ip_rules or []),
-        model_permissions=list(key.model_permissions or []),
+        model_permissions=keys_service.model_permission_reads(
+            db, key.model_permissions or [], names=names
+        ),
         created_at=key.created_at, updated_at=key.updated_at,
         spend_usd=spend_usd,
     )
@@ -166,6 +174,25 @@ def create_org_key(
 
 
 
+def get_org_key(db: Session, caller_id: uuid.UUID, key_id: uuid.UUID):
+    """One live org key for its assignee or a ``Keys.Read`` holder.
+
+    Assignees always see their own keys; anyone else needs ACTIVE membership
+    plus ``Keys.Read`` (root qualifies implicitly). Strangers, non-members,
+    unpermitted members and personal keys all 404 (no existence oracle).
+    """
+    from tollms.models.api_key import ApiKey
+
+    key = db.scalar(_org_key_select().where(ApiKey.id == key_id))
+    if key is None or key.org_id is None:
+        raise NotFoundError("api key not found")
+    org, mem = _member_org(db, key.org_id, caller_id)
+    if key.user_id != caller_id:
+        _require_perm(db, org, mem, caller_id, "Keys.Read")
+    return key
+
+
+
 def list_org_keys(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, *,
                   search: str | None = None, limit: int | None = None,
                   offset: int = 0) -> list[OrgKeyRead]:
@@ -203,7 +230,10 @@ def list_org_keys(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, *,
                 .group_by(ApiRequestLog.api_key_id)
             ).all()
         }
-    return [_read_org_key(db, k, spend_usd=spend.get(k.id, 0.0)) for k in rows]
+    names = keys_service.permission_name_maps(
+        db, [perm for k in rows for perm in (k.model_permissions or [])]
+    )
+    return [_read_org_key(db, k, spend_usd=spend.get(k.id, 0.0), names=names) for k in rows]
 
 
 

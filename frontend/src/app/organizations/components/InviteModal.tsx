@@ -10,6 +10,8 @@ import { PermissionSetPicker, PickerReview } from "./PermissionSetPicker";
 import { parseApiError } from "@/lib/errors";
 import type { PermissionSet } from "@/types/orgs";
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function InviteModal({ open, onClose, orgId, sets, myPermissions, isRoot, onInvite }: {
   open: boolean;
   onClose: () => void;
@@ -26,7 +28,14 @@ export function InviteModal({ open, onClose, orgId, sets, myPermissions, isRoot,
   const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
-  const validEmail = email.trim().includes("@");
+  const trimmedEmail = email.trim();
+  const emailError =
+    trimmedEmail === ""
+      ? null
+      : EMAIL_RE.test(trimmedEmail)
+        ? null
+        : "Enter a valid email address.";
+  const validEmail = trimmedEmail !== "" && emailError === null;
 
   function close() {
     if (busy) return;
@@ -68,7 +77,12 @@ export function InviteModal({ open, onClose, orgId, sets, myPermissions, isRoot,
             <>
               <Field label="Email address">
                 <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com"
-                  data-testid="org-invite-email" maxLength={320} inputMode="email" />
+                  data-testid="org-invite-email" maxLength={320} inputMode="email" type="email" />
+                {emailError && (
+                  <p className="text-[11px] text-red-500" data-testid="org-invite-email-error">
+                    {emailError}
+                  </p>
+                )}
               </Field>
               <Field label="Permission sets">
                 <PermissionSetPicker orgId={orgId} sets={sets} selected={picked}
@@ -83,6 +97,7 @@ export function InviteModal({ open, onClose, orgId, sets, myPermissions, isRoot,
               <div className="flex justify-end gap-2">
                 <Button variant="outline" size="sm" onClick={close} disabled={busy}>Cancel</Button>
                 <Button size="sm" onClick={() => setReviewing(true)} disabled={busy || !validEmail}
+                  title={busy ? "Sending…" : validEmail ? undefined : "Enter a valid email address to continue."}
                   data-testid="org-invite-review">
                   Review invite
                 </Button>
@@ -91,7 +106,7 @@ export function InviteModal({ open, onClose, orgId, sets, myPermissions, isRoot,
           ) : (
             <>
               <div className="space-y-2 text-xs">
-                <p><span className="text-zinc-500">To:</span> <strong>{email.trim()}</strong></p>
+                <p className="break-all"><span className="text-zinc-500">To:</span> <strong className="break-all">{email.trim()}</strong></p>
                 <PickerReview sets={sets} selected={picked} />
               </div>
               {error && (
@@ -100,10 +115,12 @@ export function InviteModal({ open, onClose, orgId, sets, myPermissions, isRoot,
                 </p>
               )}
               <div className="flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={() => setReviewing(false)} disabled={busy}>
+                <Button variant="outline" size="sm" onClick={() => setReviewing(false)} disabled={busy}
+                  title={busy ? "Sending…" : undefined}>
                   <ArrowLeft className="size-3.5" aria-hidden /> Back
                 </Button>
                 <Button size="sm" onClick={() => void submit()} disabled={busy}
+                  title={busy ? "Sending…" : undefined}
                   data-testid="org-invite-submit">
                   {busy && <Loader2 className="size-3.5 animate-spin" />} Send invite
                 </Button>

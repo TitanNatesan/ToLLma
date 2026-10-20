@@ -12,6 +12,11 @@ Three responsibilities:
   ``cache_read_tokens * (input_price - cache_read_price) / 1e6`` and are counted
   only when both rates are published (> 0); a provider split is returned too.
 
+Key-scoped calls merge the in-app-chat ledger (``request_logs``,
+``api_key_id = :key``) into ``trailing_costs`` and ``most_expensive`` — same
+UTC windows, disjoint writers so no double-count. Chat rows surface as
+endpoint ``"chat"`` with registry-resolved model/provider names.
+
 Date windows resolve locally (services never import from ``api/``); day
 boundaries follow the window timezone. ``Decimal`` math never touches floats.
 """
@@ -23,10 +28,13 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.orm import Session
 
 from tollms.models.api_key import ApiRequestLog
+from tollms.models.provider import Provider
+from tollms.models.registered_model import AIModel
+from tollms.models.request_log import RequestLog
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +77,7 @@ def _key_filter(key_id: Any) -> list[Any]:
 
 
 def trailing_costs(db: Session, window: Any, *, key_id: Any = None) -> dict[str, Decimal]:
-    """Spend for today / last 7d / last 30d relative to now (one scan)."""
+    """Spend for today / last 7d / last 30d relative to now (one scan, + chat union when key-scoped)."""
     now = datetime.now(timezone.utc)
     zone = _zone(getattr(window, "timezone", "UTC"))
     today_start = datetime.combine(now.astimezone(zone).date(), time.min, tzinfo=zone).astimezone(timezone.utc)
@@ -94,7 +102,37 @@ def trailing_costs(db: Session, window: Any, *, key_id: Any = None) -> dict[str,
         )
         .where(ApiRequestLog.created_at >= earliest, ApiRequestLog.created_at < now, *_key_filter(key_id))
     ).one()
-    return {"today": _t(row[0]), "last_7d": _t(row[1]), "last_30d": _t(row[2])}
+    totals = {"today": _t(row[0]), "last_7d": _t(row[1]), "last_30d": _t(row[2])}
+    if key_id is not None:
+        chat = db.execute(
+            select(
+                func.coalesce(
+                    func.sum(RequestLog.total_cost).filter(RequestLog.created_at >= today_start), 0
+                ),
+                func.coalesce(
+                    func.sum(RequestLog.total_cost).filter(
+                        RequestLog.created_at >= now - timedelta(days=7)
+                    ),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(RequestLog.total_cost).filter(
+                        RequestLog.created_at >= now - timedelta(days=30)
+                    ),
+                    0,
+                ),
+            ).where(
+                RequestLog.api_key_id == key_id,
+                RequestLog.created_at >= earliest,
+                RequestLog.created_at < now,
+            )
+        ).one()
+        totals = {
+            "today": totals["today"] + _t(chat[0]),
+            "last_7d": totals["last_7d"] + _t(chat[1]),
+            "last_30d": totals["last_30d"] + _t(chat[2]),
+        }
+    return totals
 
 
 def projected_run_rate(
@@ -153,7 +191,11 @@ def cost_payload(
 
 
 def most_expensive(db: Session, window: Any, *, key_id: Any = None) -> dict[str, Any] | None:
-    """The highest-cost request in the window (None when the window is empty)."""
+    """The highest-cost request in the window (None when the window is empty).
+
+    Key-scoped compares the gateway winner against the in-app-chat winner
+    (registry-resolved names, endpoint ``"chat"``) and returns the costlier row.
+    """
     row = db.execute(
         select(
             ApiRequestLog.cost,
@@ -171,16 +213,60 @@ def most_expensive(db: Session, window: Any, *, key_id: Any = None) -> dict[str,
         .order_by(ApiRequestLog.cost.desc().nullslast(), ApiRequestLog.created_at.desc())
         .limit(1)
     ).first()
-    if row is None:
-        return None
-    return {
-        "cost": _t(row[0]),
-        "model": row[1],
-        "provider": row[2],
-        "endpoint": row[3],
-        "latency_ms": _f(row[4]),
-        "at": row[5],
+    best = (
+        {
+            "cost": _t(row[0]),
+            "model": row[1],
+            "provider": row[2],
+            "endpoint": row[3],
+            "latency_ms": _f(row[4]),
+            "at": row[5],
+        }
+        if row is not None and row[0] is not None
+        else (None if row is None else {
+            "cost": _t(row[0]),
+            "model": row[1],
+            "provider": row[2],
+            "endpoint": row[3],
+            "latency_ms": _f(row[4]),
+            "at": row[5],
+        })
+    )
+    if key_id is None:
+        return best
+    chat = db.execute(
+        select(
+            RequestLog.total_cost,
+            AIModel.model_id,
+            Provider.name,
+            literal("chat"),
+            RequestLog.latency_ms,
+            RequestLog.created_at,
+        )
+        .select_from(RequestLog)
+        .outerjoin(AIModel, AIModel.id == RequestLog.model_id)
+        .outerjoin(Provider, Provider.id == RequestLog.provider_id)
+        .where(
+            RequestLog.api_key_id == key_id,
+            RequestLog.created_at >= window.start,
+            RequestLog.created_at < window.end,
+        )
+        .order_by(RequestLog.total_cost.desc().nullslast(), RequestLog.created_at.desc())
+        .limit(1)
+    ).first()
+    if chat is None or chat[0] is None:
+        return best
+    chat_best = {
+        "cost": _t(chat[0]),
+        "model": chat[1],
+        "provider": chat[2],
+        "endpoint": chat[3],
+        "latency_ms": _f(chat[4]),
+        "at": chat[5],
     }
+    if best is None or chat_best["cost"] > best["cost"]:
+        return chat_best
+    return best
 
 
 def _price(value: Any) -> Decimal:

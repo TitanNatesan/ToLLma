@@ -244,7 +244,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
 
   return (
     <main
-      className="relative flex h-dvh w-full items-center justify-center overflow-hidden bg-zinc-950 px-4 py-4"
+      className="relative flex min-h-dvh w-full items-center justify-center bg-zinc-950 px-4 py-4"
       data-testid={mode === "login" ? "login-page" : "signup-page"}
     >
       {/* Ambient background glow */}
@@ -253,9 +253,9 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:24px_24px] opacity-30" />
 
       {/* 3D Flip Container — grid stacks both faces so the shell sizes to
-          the taller card; no page or card scrolling needed. Short viewports
-          scale the card down instead of scrolling. */}
-      <div className="relative w-full max-w-md origin-center [perspective:1200px] [@media_(max-height:740px)]:scale-[0.94] [@media_(max-height:660px)]:scale-[0.88] [@media_(max-height:600px)]:scale-[0.82]">
+          the taller card. Content hugs its height; only viewports shorter
+          than the card scroll internally (never shrink text for zoom users). */}
+      <div className="relative max-h-[92dvh] w-full max-w-md overflow-y-auto [perspective:1200px]">
         <motion.div
           className="relative grid w-full [transform-style:preserve-3d]"
           animate={{ rotateY: isFlipped ? 180 : 0 }}

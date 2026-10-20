@@ -120,3 +120,54 @@ test("org scope renders org providers with scope chip and remounts per org", asy
   await page.getByTestId("rail-expand").click();
   await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
 });
+
+test("org scope exposes register and view-details actions on available models", async ({ page }) => {
+  await apiLoginAs(page, "prov-org-reg");
+  const orgRes = await page.request.post(`${API}/api/v1/orgs`, {
+    data: { name: `ProvReg Org ${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBeTruthy();
+  const org = await orgRes.json();
+  const provRes = await page.request.post(`${API}/api/v1/orgs/${org.id}/providers`, {
+    data: { name: `RegScopeProv ${Date.now()}`, provider_type: "CUSTOM", credentials: { base_url: "http://mock" } },
+  });
+  expect(provRes.ok(), await provRes.text()).toBeTruthy();
+  const prov = await provRes.json();
+  // Seed one unregistered discovery entry so the Available panel has a row.
+  const seed = await page.request.patch(`${API}/api/v1/orgs/${org.id}/providers/${prov.id}`, {
+    data: {
+      metadata: {
+        discovery: {
+          models: [
+            {
+              model_id: "mock-org-a",
+              name: "Org Mock A",
+              endpoint_type: "chat_completions",
+              primary_endpoint: null,
+              supported_endpoints: ["chat_completions"],
+              context_window: null,
+              max_output_tokens: null,
+              repository_model_key: null,
+              match_type: "fallback",
+              suggested: { input_price: 2, output_price: 8 },
+              repository_match: {},
+            },
+          ],
+          last_discovery_at: new Date().toISOString(),
+        },
+      },
+    },
+  });
+  expect(seed.ok(), await seed.text()).toBeTruthy();
+
+  // Enter org scope, then the unified providers page shows org data.
+  await page.goto(`/organizations/${org.id}`);
+  await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+  await page.goto("/providers");
+  await expect(page.getByTestId("provider-scope-org")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("provider-scope-org")).toContainText(org.name);
+  const section = page.locator("section[aria-label='Provider details']");
+  await expect(section.getByTestId("available-row-mock-org-a")).toBeVisible({ timeout: 20000 });
+  await expect(section.getByTestId("register-mock-org-a")).toBeVisible();
+  await expect(section.getByTestId("available-details-mock-org-a")).toBeVisible();
+});

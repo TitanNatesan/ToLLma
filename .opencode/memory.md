@@ -3716,3 +3716,185 @@ Catalog: no scroll, container hugs content, wider + more featuristic cards. Wiza
 
 ### Verification
 - `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` green.
+
+---
+
+## 2026-10-19 — Full-application UI/UX audit + layout optimization (agent-browser validated)
+
+### Requirement
+App-wide UI/UX audit: spacing, sizing, typography, responsive (375→1920), shell/nav, forms/dialogs, data pages, a11y — validated in the real running app via agent-browser.
+
+### Investigation
+- Route/component inventory (19 routes, shared shell, primitives, tokens, breakpoints, e2e map).
+- 5 read-only audit workstreams (shell, chat, providers, keys/analytics/admin/settings/docs/auth, orgs) → ~70 prioritized findings.
+- Browser baseline (agent-browser, session audit-main): login/chat/providers/keys/analytics/settings/docs/org at 1440; chat at 390; wizard/catalog dialogs.
+
+### Root-cause fix (shared layer)
+`lib/utils.ts:cn` was a naive join (no tailwind-merge), so every per-instance Dialog width/height override silently lost to base classes (`max-w-lg` beat `max-w-6xl`). Added `tailwind-merge`; `cn = twMerge(join)`. Required frontend image rebuild + node_modules volume refresh (stale-volume shadowing, same as katex incident).
+
+### Implementation (frontend only, 3 batches + polish; no backend changes)
+- Batch 1 (shell+chat critical/high): Chat active on /c/[id]; focus-visible row actions + labels; select aria-labels; inert collapsed/off-canvas sidebars; keyboard resizer; dialog fade-only (no jump); dropdown collision/max-h; select flip+max-h; dvh shell; skip link + #main-content; mobile Esc/focus; Link for hash nav; analytics active highlight; global focus-visible ring; message/media touch+keyboard access; media empty-fallback; conversation loading/error states; composer wrap; reasoning tap-toggle.
+- Batch 2 (data pages critical/high): catalog hug+92dvh fallback (scale hacks removed); providers xl breakpoint unity; responsive wizard grid; drawer max-width; sticky/filter/header/row fixes; verify/callback AuthShell states; AuthCard no-shrink (scroll fallback); KeyForm single-col parity + preset parity; mobile budget line; settings wrap; docs copy button + PageContainer; org denied/gating/URL-sync/ID-joins/budget-gate/validation fixes; orphan dashboard verified live (kept).
+- Batch 3 (44 mediums): peek debounce; unified zinc-900 active; dense semantics fixed; full-bleed sticky headers; h1 truncate; lg grid step; prose dark class; reduced-motion; ring contrast; SidebarHeader hydration; mobile provider line; prose/katex breaks; failure details+copy; panel 30vw cap + 1100px overlay; user-math parity; rename save-on-blur; history compare highlight; catalog loading/retry + toolbar unity; card h-full; header tokens; expiry/footer merge; fluid BudgetBar; shared currency fmt; responsive chart heights; drawer grids; range toolbar scroll; settings scroll-spy; empty states; skeleton parity; org pagination; titles/break-words/CTAs/budget validation/toolbars/tablists.
+- Polish (12): header/reveal tooltips + guards; profile/workspace titles; aria-current=page; conversation rhythm; 6px scrollbars; Shell role=status; empty-state API-key CTA; zinc-500 minimums; viewer z-1100.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152 (each batch); e2e `test --list` 151 green; tester updated 5 spec files (aria-current, generation selectors, ops-tab URL, wizard assertions, chat-ux placeholders/landmark); backend `test_org_phase_b + tests/keys` 54 passed (no drift).
+- agent-browser: login flow, skip-link focus, chat 1440/768/1920, providers + wizard 1440/390, catalog 1152px 4-col, settings/analytics/docs/admin-gate/org-members, mobile login. Screenshots in /tmp/opencode/*-before/after.png.
+- Untested: /share/[token], /invite/[token], /verify, /health, org budgets/audit/operations flows (no data), paid/live-gateway paths, 320px width, full keyboard-only pass beyond skip link.
+
+### Notes
+- Audit user `auditbrow-*@test.tollma.ai` + `AuditOrg` remain in LOCAL dev DB only (no org DELETE endpoint; user purge is scheduled). Tagged, inert.
+- Two mid-task races documented: tester read files mid-write (resolved by on-disk recheck); pytest Valkey flush logged out the browser session (re-login).
+
+---
+
+## 2026-10-19 (late) — Model selector union + org model CRUD + chat/keys fixes
+
+### Requirement
+Selector showed ~10 models (org models missing); org Available/Register/View Details parity; key download button; drop TEAM column; chat-only focus-ring removal; Gemini image/video preview; refresh-mid-generation duplicate-key crash; uniform cross-provider response schema.
+
+### Root causes + fixes
+- Selector cap: `ChatComposer` groups joined key models against the personal-only registry (`byId.get(km.id)`, drop on miss) — org-only models silently discarded. Fix: fall back to the key's own full `ModelRead` row (`ChatKeyModel = AIModel`, type-identical). Live-verified: seeded 12 models → all 12 listed; provider delete → prune → 0 eligible.
+- Backend org model CRUD (new): POST/PATCH/DELETE `/api/v1/orgs/{id}/.../models` with Providers.Create/Update/Delete + 404-oracle; personal primary sync untouched; `app.openapi` + `alembic check` clean; full backend suite 771 passed.
+- Uniform schema: `cache_write_tokens` forwarded (OpenAI chat/Responses, Gemini/Vertex); terminal payloads (live + reattach) always carry `model_name`/`provider_name` (fixes "null" header); `<think>` stays the uniform reasoning channel; no fabricated fillers. Gemini `thinkingConfig` deliberately skipped (unverifiable without live creds, 400-risk). Factory media gate untouched (Gemini images ride the chat path).
+- Gemini image: models.dev reports image output; mapping lock dropped it and chat never requested IMAGE modality. Fix: preserve non-chat endpoints; send `responseModalities:[TEXT,IMAGE]` when registered model flags image support; existing inlineData→attachment path reused. Video honestly unavailable (Veo is Vertex-only).
+- Frontend: RawKeyDialog Download (`raw-key-download`, .txt blob); TEAM column deleted; composer-scoped focus override (global rings untouched); `addOptimistic` idempotent + winner-map dedupe + idempotent `attachToGeneration` (duplicate-key crash); no OpenAI-only gates found (purely data-driven).
+- E2E: new `test_org_models.py` (6 tests) + org table/download/org-register specs; `test --list` 154 green. Tester stale-read races re-confirmed on disk twice.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; backend targeted 37+74, full 771; live stack: 12/12 listed, 0 after delete.
+
+---
+
+## 2026-10-20 — Workspace switch preserves current page
+
+### Requirement
+Switching workspaces must keep the user on the most relevant page (e.g. personal Providers → org Providers), permission-aware, instead of always jumping home.
+
+### Implementation (frontend only, `Sidebar/WorkspaceMenu.tsx`)
+- New exported `destinationFor(pathname, target)`: scope-shared pages (`/`, `/providers`, `/api-keys`, `/analytics`) keep path + query; org dashboards swap the org id (query like `?section=` preserved); `/c/*` is personal-only → org switch lands at chat root; everything else (settings, admin, docs, notifications, invites) keeps path (scope-agnostic). Permission-denied landings are safe: pages render their own gated empty states (verified in audit).
+- `goPersonal`/`goOrg` use it (were hardcoded `/` and `/organizations/{id}`). Query read via `window.location.search` in the click handler (no Suspense risk).
+
+### Verification
+- `tsc`/`eslint` clean. Live agent-browser: personal `/providers` → AuditOrg stayed `/providers` (was org dashboard); org dashboard `?section=members` → Personal landed `/` with Personal context. Browser sessions closed.
+
+---
+
+## 2026-10-20 — Single sidebar navigation (no duplicates, empty body)
+
+### Requirement
+Org dashboard showed the section subnav AND the full org nav (duplicated); docs/org pages showed the unrelated conversations list. Rule: sidebar body stays empty unless genuinely contextual; the bottom-anchored nav is the single navigation.
+
+### Implementation (frontend only)
+- `Sidebar.tsx`: body renders contextual content only on chat (`SidebarConversations`), providers, analytics, settings, admin, api-keys hint; org routes + `/docs/*` (fixed `isApiDocsPage` to include subpages) + `/notifications` render an empty `aria-hidden` div. Bottom block unchanged: full personal nav or full org nav.
+- `SidebarOrgNav.tsx`: reverted the interim subnav split (`sections`/`hideHeader`/`ORG_SECTION_IDS`/`ORG_PAGE_IDS`) — single full-nav variant again. Kept the permission-gate mirroring + truncation titles from the earlier batch.
+- E2E: `org-subnav-key-details.spec.ts` rewritten to assert no-subnav/no-conversations + single bottom org nav (13 links).
+
+### Verification
+- `tsc` clean; e2e `test --list` 157 green. Live agent-browser: org dashboard → 0 subnav, exactly 1 `sidebar-org-nav` (13 links), 0 conversation items; `/docs/openai` → 0/0. Sessions closed.
+
+---
+
+## 2026-10-20 — Key model names, chat-inclusive key analytics, member drawer
+
+### Requirement
+Key panels showed raw UUIDs; key analytics missed in-app chat traffic with no per-endpoint split; member details drawer sparse.
+
+### Implementation
+- Backend: `ModelPermissionRead` gains live-resolved `model_name`/`provider_name` (batch-loaded, null when deleted; personal + org paths; no migration). Per-key `get_analytics` unions `ApiRequestLog` + `RequestLog(api_key_id)` — totals/series/top-models/top-endpoints include chat under `endpoint:"chat"`; p95 via UNION ALL; ownership unchanged; shape additive.
+- Frontend: shared `ModelPermissionChips` (names + UUID titles + "Removed model" state) in both key panels (`key-models-{id}` / `org-key-models-{id}`); endpoint components label `"chat"` as "Chat app" (fixed distinct color) + caption "Totals include in-app chat-page traffic."; `MemberDetailDrawer` overhaul (avatar header, profile + copy email, sets/teams chips, assigned-keys list from `useOrgKeys`, clearer usage labels; actions/gates untouched).
+- E2E: chip assertions (names, never UUIDs), Chat-app label + caption (mocked summary shape, label-only), member drawer profile + assigned keys; `test --list` 160 green. Backend suites 43 passed.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; pytest keys+analytics 43 passed; full backend suite green on this tree per workstream runs.
+
+---
+
+## 2026-10-20 — Sidebar body: conversations on chat only, empty elsewhere
+
+### Requirement
+Conversations list leaked onto every page (docs, api-keys, org routes); api-keys/docs showed a "Select a section below" placeholder. Rule: conversations ONLY on chat (`/`, `/c/*`); empty body everywhere else (providers/analytics/settings/admin keep contextual bodies); no hover layout shift on conversation rows. Plus infra: Docker Desktop is the only daemon (reject native-dockerd fallback).
+
+### Implementation (frontend only)
+- `Sidebar.tsx`: `isChatPage` gate — `SidebarConversations` renders only on chat routes; placeholder branch deleted; all other non-contextual routes fall into the empty `aria-hidden` div. Removed now-unused page flags.
+- `SidebarConversations.tsx`: row actions `hidden/group-hover:flex` → `invisible/group-hover:visible` — space always reserved, hover no longer shifts the title.
+- Infra: Docker Desktop daemon had failed (`docker-desktop.service failed`, whole stack down); restarted via `systemctl --user start docker-desktop`, stack healthy on Desktop context (`desktop-linux`), backend healthy. No native-dockerd stack touched.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` green (existing conversation-search assertions are all on chat/admin pages — still valid, no spec edits).
+- Live agent-browser: `/api-keys` + `/docs/openai` → 0 conversation items, placeholder text gone. Sessions closed.
+
+---
+
+## 2026-10-20 — Model menu scroll/focus, Gemini thinking, null header, empty state, per-model levels
+
+### Requirement
+Menu wouldn't scroll; focus borders on options; Gemini thinking never rendered; streaming header showed "null"; generation felt static; empty state dated; thinking level global instead of per model.
+
+### Root causes + fixes
+- Scroll: composer `<DropdownMenu>` defaulted to `modal` → Radix RemoveScroll swallowed wheel (reproduced: real wheel input left scrollTop at 0 while programmatic scroll worked). Fix: `modal={false}` + `overscroll-contain`. (Automation can't deliver real wheel input — verified structurally + keyboard path native to Radix.)
+- Focus border: global unlayered `:focus-visible` beat utilities on `role=menuitem/option` (same cascade trap as inputs). Exclusion extended; bg treatment is the indicator.
+- Thinking: Gemini ignored `reasoning_level` so no thought parts ever returned. Now maps level→`thinkingBudget` (none/low1024/medium4096/high10000/ultra32000), gated (never with image_output, never when `supports_reasoning=False`); 400s surface, no retry. Thought extraction unchanged.
+- "null": real source was `costStr` template rendering literal "null" (fixed to null); header names resolve against registry∪key-models union; unknown names → shimmer, never blank.
+- Loading: text → typing dots + thinking pill; image/video → kind-labeled skeleton.
+- Empty state: Logo hero + status-aware CTAs (no provider → providers; no key → api-keys; ready → hint + 3 sample chips filling composer via draft store).
+- Levels: `thinkingLevels: Record<modelId,level>` persisted in chat store; per-model restore.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; pytest reasoning 34 + gateway/public 106; e2e `test --list` 165 (new `chat-empty-state` 5 tests). Browser suite not driven.
+- NOTE: user's tab may run a stale dev bundle (old symptoms persisting) — hard refresh advised after container rebuilds.
+
+---
+
+## 2026-10-20 — Model list hard-capped scroll container (inline styles)
+
+### Requirement
+Model dropdown still unscrollable on real Chrome; make the listing max-height + overflow scroll, immune to repeat regressions.
+
+### Analysis
+Exhaustive live probing: programmatic scroll + keyboard scrollIntoView work; synthetic AND harness-delivered real wheel events reach the page un-preventDefaulted yet move nothing — even a bare synthetic overflow div (proves the automation harness cannot validate wheel here, not app behavior). Prior suspects eliminated one by one (Radix modal RemoveScroll removed via rewrite; no global wheel handlers except gated closed-component traps; no preventDefault on the event path). Remaining risk was purely cascade-level (a repeat of the max-w-6xl incident where utilities silently lost).
+
+### Fix (frontend only, `ModelSelectorMenu.tsx`)
+List container constraints moved to INLINE styles (`minHeight:200, maxHeight:400, overflowY:auto, overscrollBehavior:contain`) — inline beats every stylesheet/merge/specificity trap by construction; classes kept for padding/overscroll only. Cap lowered 560→400 so overflow (hence scrollability) is unambiguous with 11+ models. Zero JS scroll handling; keyboard path (arrows + scrollIntoView) live-verified working.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; no e2e max-h assertions exist (grep clean).
+
+---
+
+## 2026-10-20 — Intelligence panel org-key union + slimmer conversation rows
+
+### Requirement
+Panel showed full data for personal models but all dashes for org-key models; conversation rows too tall.
+
+### Root cause
+`IntelligencePanel` resolved model/provider from the personal-only `useModels()`/`useProviders()` registries — org rows never matched (same trap as the selector union, fixed separately).
+
+### Fix (frontend only, `ChatSettingsPanel.tsx`)
+Union mirrors the composer: registry find ?? key-entries find (via shared `useChatKeys`/`useAllChatKeyModels` cache keys); provider via personal find ?? owning org's `useOrgProviders` (org id from the containing key entry; query dormant for personal picks). Caps/pricing/limits/reasoning derive from the full row unchanged. `SidebarConversations` row `py-1.5` → `py-1`.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 166 (new `intelligence-org-key.spec.ts` with skip-guard + name/pricing/limit assertions).
+
+---
+
+## 2026-10-20 — API key status/usage/last-used lifecycle fix
+
+### Requirement
+Chat usage invisible in key analytics; listing said Inactive while detail said Enabled; last-used never set; per-key attribution in doubt.
+
+### Root causes (all evidence-verified)
+- Rich panel reads `/api/analytics/api-keys/*`, which scanned only the public ledger — in-app chat rows invisible (the other endpoint's union didn't feed the UI).
+- Listing used usage-aware `keyStatus` (Inactive = never used) vs detail's usage-blind `apiKeyStatus` (Enabled); org table had a third vocabulary.
+- `last_used_at` had zero writers anywhere in the tree.
+
+### Implementation
+- Backend: `touch_key_last_used` (success-only, max-guard, never raises, same-commit) hooked into `record()` (both chat sites) + public `log_request`; fixed missing `org_id` on non-streaming `run_chat`; rich analytics unions both ledgers (`endpoint:"chat"` for in-app; network stays gateway-only, documented); `OrgKeyRead.issued_by_email` added (UUID display fix). No migration.
+- Frontend: single shared `keyStatus` everywhere incl. new `orgKeyStatus` adapter; Refresh invalidates keys+analytics families; window-focus refetch when stale; error vs empty states verified separated.
+- Tests: new `test_key_usage_stamps.py` (8) + `api-keys-status.spec.ts` (3, mocked routes).
+
+### Verification
+- Live browser (stub LLM, no paid calls): personal chat → Enabled + last-used + REQUESTS 1/TOKENS 14/charts; org chat → org-key stamped, personal stays 1 (isolation); org table Enabled + date; API returns `issued_by_email`.
+- Full backend suite: **787 passed**. Frontend: tsc/lint clean, vitest 152/152, e2e list green.
+- Residue (local dev only, tagged): `auditkeys-*@test.tollma.ai`, KeyAuditOrg, stub provider/models.

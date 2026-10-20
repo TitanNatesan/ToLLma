@@ -53,10 +53,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const openShortcuts = useCallback(() => setShortcutsOpen(true), []);
   const openCommandPalette = useCallback(() => setCmdOpen((v) => !v), [setCmdOpen]);
 
+  // Off-canvas sidebar (below md): Esc closes, and focus moves into the
+  // sidebar on open. No full focus trap — tabbing out is allowed.
+  useEffect(() => {
+    if (!leftSidebarOpen) return;
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLeftSidebar(false);
+    };
+    window.addEventListener("keydown", onKey);
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[data-testid="left-sidebar"]')?.focus();
+    });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      cancelAnimationFrame(frame);
+    };
+  }, [leftSidebarOpen, setLeftSidebar]);
+
   useGlobalShortcuts({ openShortcuts, openCommandPalette });
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white text-zinc-950 antialiased dark:bg-zinc-950 dark:text-zinc-50">
+    <div className="flex h-dvh w-screen overflow-hidden bg-white text-zinc-950 antialiased dark:bg-zinc-950 dark:text-zinc-50">
       <ScopeSync />
       {/* Primary Navigation: context-aware left sidebar */}
       <Sidebar onOpenCommandPalette={() => setCmdOpen(true)} />

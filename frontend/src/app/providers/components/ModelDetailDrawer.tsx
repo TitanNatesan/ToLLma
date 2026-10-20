@@ -1,5 +1,7 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Badge,
   Button,
@@ -8,6 +10,8 @@ import {
   Switch,
 } from "@/components/ui";
 import { useModelMutations } from "@/hooks/useRegistry";
+import { ORG_KEYS } from "@/hooks/useOrgs";
+import { deleteOrgModel, updateOrgModel } from "@/services/orgs";
 import { endpointLabel, providerTypeLabel } from "@/app/providers/fields";
 import type { AIModel, Provider } from "@/types";
 import {
@@ -15,7 +19,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { stripTrailingZeros } from "@/lib/utils";
+import { fmtPrice } from "@/lib/utils";
 
 interface ModelDetailDrawerProps {
   model: AIModel | null;
@@ -23,6 +27,8 @@ interface ModelDetailDrawerProps {
   open: boolean;
   onClose: () => void;
   onEdit?: (m: AIModel) => void;
+  /** When set, toggle + delete go through the org models endpoint. */
+  orgId?: string;
 }
 
 const CAPS_LIST = [
@@ -43,23 +49,53 @@ export function ModelDetailDrawer({
   open,
   onClose,
   onEdit,
+  orgId,
 }: ModelDetailDrawerProps) {
   const mm = useModelMutations();
+  const qc = useQueryClient();
 
   if (!model) return null;
+
+  function invalidateOrgModels() {
+    if (!orgId) return;
+    // Providers prefix covers the per-provider model lists on the page.
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.providers(orgId) });
+    void qc.invalidateQueries({ queryKey: ORG_KEYS.models(orgId) });
+  }
+
+  async function handleToggle(active: boolean) {
+    if (!orgId) {
+      mm.update.mutate({ id: model!.id, body: { is_active: active } });
+      return;
+    }
+    try {
+      await updateOrgModel(orgId, model!.id, { is_active: active });
+      invalidateOrgModels();
+    } catch (e) {
+      toast.error("Update failed", {
+        description: e instanceof Error ? e.message : "unknown error",
+      });
+    }
+  }
 
   const activeCaps = CAPS_LIST.filter(
     (k) => (model as unknown as Record<string, boolean>)[k],
   );
 
-  function fmtPrice(val: string): string {
-    const n = parseFloat(val);
-    if (isNaN(n) || n === 0) return "$0";
-    return `$${stripTrailingZeros(val)}/1M`;
-  }
-
   async function handleDelete() {
-    mm.remove.mutate(model!.id);
+    if (orgId) {
+      try {
+        await deleteOrgModel(orgId, model!.id);
+        invalidateOrgModels();
+      } catch (e) {
+        toast.error("Delete failed", {
+          description: e instanceof Error ? e.message : "unknown error",
+        });
+        return;
+      }
+    } else {
+      mm.remove.mutate(model!.id);
+    }
     onClose();
   }
 
@@ -114,7 +150,7 @@ export function ModelDetailDrawer({
           <div className="flex items-center gap-2">
             <Switch
               checked={model.is_active}
-              onCheckedChange={(v) => mm.update.mutate({ id: model.id, body: { is_active: v } })}
+              onCheckedChange={(v) => void handleToggle(v)}
               aria-label="Toggle model active state"
             />
             <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
@@ -143,7 +179,7 @@ export function ModelDetailDrawer({
             </div>
             <div className="flex items-center justify-between p-2.5">
               <span className="text-zinc-500">Model ID</span>
-              <span className="font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
+              <span className="min-w-0 break-all text-right font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
                 {model.model_id}
               </span>
             </div>
@@ -167,25 +203,25 @@ export function ModelDetailDrawer({
             <div className="rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30">
               <span className="text-[10px] text-zinc-400">Input Price</span>
               <div className="mt-0.5 font-semibold text-zinc-800 dark:text-zinc-200">
-                {fmtPrice(model.input_price)}
+                {fmtPrice(model.input_price)}/1M
               </div>
             </div>
             <div className="rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30">
               <span className="text-[10px] text-zinc-400">Output Price</span>
               <div className="mt-0.5 font-semibold text-zinc-800 dark:text-zinc-200">
-                {fmtPrice(model.output_price)}
+                {fmtPrice(model.output_price)}/1M
               </div>
             </div>
             <div className="rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30">
               <span className="text-[10px] text-zinc-400">Cache Read</span>
               <div className="mt-0.5 font-semibold text-zinc-800 dark:text-zinc-200">
-                {fmtPrice(model.cache_read_price)}
+                {fmtPrice(model.cache_read_price)}/1M
               </div>
             </div>
             <div className="rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30">
               <span className="text-[10px] text-zinc-400">Cache Write</span>
               <div className="mt-0.5 font-semibold text-zinc-800 dark:text-zinc-200">
-                {fmtPrice(model.cache_write_price)}
+                {fmtPrice(model.cache_write_price)}/1M
               </div>
             </div>
           </div>

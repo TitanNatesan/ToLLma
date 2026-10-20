@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
+import { Button, ErrorState, LoadingState, Logo } from "@/components/ui";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChatComposer, type ChatSendPayload } from "@/app/components/chat/ChatComposer";
@@ -12,6 +13,8 @@ import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
 import { deriveSources } from "@/app/components/chat/sources/Sources";
 import { useConversation } from "@/hooks/useChat";
+import { useProviders } from "@/hooks/useRegistry";
+import { useChatKeys } from "@/hooks/useChatKeys";
 import {
   cancelGeneration,
   createConversation,
@@ -41,8 +44,15 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Sparkles } from "lucide-react";
 import type { ActiveGeneration, ChatMessage, Conversation as ConversationData, MessageStatus, SearchResult, StreamDone } from "@/types";
+
+/** Sample prompts on the empty state: one click fills the composer via the
+ *  draft store + the existing focus event — no new plumbing. */
+const SAMPLE_PROMPTS = [
+  "Explain quantum computing in simple terms",
+  "Write a haiku about the ocean",
+  "Draft a friendly follow-up email",
+];
 
 const PENDING_SEND_KEY = "tollma-pending-send";
 
@@ -124,10 +134,18 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     setActiveGeneration,
   } = useChatStore();
 
-  const { data: conversation, error: convError } = useConversation(conversationId);
+  const {
+    data: conversation,
+    error: convError,
+    isLoading: convLoading,
+    refetch: refetchConversation,
+  } = useConversation(conversationId);
   // A 404 on the route id falls back to the empty state (store id null) at the
   // same URL — no redirect, so a bad id can never loop through `/`.
-  const activeId = isNotFound(convError) ? null : conversationId;
+  const notFound = isNotFound(convError);
+  const activeId = notFound ? null : conversationId;
+  // Non-404 fetch failure: error panel with retry instead of the empty state.
+  const convFailed = !!conversationId && !!convError && !notFound;
   const routeIdRef = useRef(conversationId);
   useEffect(() => {
     routeIdRef.current = conversationId;
@@ -165,14 +183,33 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     () => conversation?.messages ?? [],
     [conversation?.messages],
   );
-  // Optimistic entries carry backend-issued ids: they replace (never duplicate)
-  // the persisted rows. History itself always comes from the backend.
+  // Optimistic entries carry backend-issued ids: they overlay (never
+  // duplicate) the persisted rows. History itself always comes from the
+  // backend. While the overlay is still streaming it wins; once it settles
+  // the persisted row (server truth) wins. Either way each id renders
+  // exactly once — no duplicate-key crash on refresh-recovery double-invoke.
   const allMessages = useMemo(() => {
-    const optimisticIds = new Set(optimisticMessages.map((m) => m.id));
-    return [
-      ...persistedMessages.filter((m) => !optimisticIds.has(m.id)),
-      ...optimisticMessages,
-    ] as ChatMessage[];
+    const winner = new Map<string, ChatMessage>();
+    for (const m of persistedMessages) winner.set(m.id, m);
+    for (const m of optimisticMessages) {
+      if (!winner.has(m.id) || m.isStreaming) winner.set(m.id, m as ChatMessage);
+    }
+    const emitted = new Set<string>();
+    const ordered: ChatMessage[] = [];
+    for (const m of persistedMessages) {
+      const w = winner.get(m.id);
+      if (w && !emitted.has(m.id)) {
+        emitted.add(m.id);
+        ordered.push(w);
+      }
+    }
+    for (const m of optimisticMessages) {
+      if (!emitted.has(m.id)) {
+        emitted.add(m.id);
+        ordered.push(winner.get(m.id) as ChatMessage);
+      }
+    }
+    return ordered;
   }, [persistedMessages, optimisticMessages]);
   // Reply sources derived from the turn's attachments (stable identities so
   // MessageView memoization survives streaming re-renders).
@@ -314,6 +351,10 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     ctrl: AbortController,
     onSettled?: () => void,
   ) => {
+    // Idempotent: refresh recovery can double-invoke (effect re-run races
+    // the first subscribe). The live overlay already exists — subscribing
+    // again would double-apply deltas and duplicate the React key.
+    if (useChatStore.getState().optimisticMessages.some((m) => m.id === active.message_id)) return;
     setConversation(convId);
     setStreaming(true);
     setActiveGeneration({ id: active.generation_id, messageId: active.message_id });
@@ -542,7 +583,6 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     return null;
   }, [persistedMessages]);
   const lastAssistantId = [...persistedMessages].reverse().find((m) => m.role === "assistant")?.id;
-  const ready = !!providerId && !!modelId;
 
   /** User stop: cancel the backend generation, then reload truth.
    *  Cancel is fired before the local abort so it reaches the provider even
@@ -684,6 +724,9 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const { data: providers = [], isPending: providersPending } = useProviders();
+  const { data: chatKeys = [], isPending: keysPending } = useChatKeys();
+  const statusLoaded = !providersPending && !keysPending;
   const intelligence = useIntelligenceMutations(activeId);
   const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation } = intelligence;
 
@@ -814,26 +857,72 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
   const messageList = (
     <>
-      {allMessages.length === 0 && !streaming && (
-        <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
-          <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-            <Sparkles className="size-7" />
-          </div>
+      {conversationId && convLoading && allMessages.length === 0 && !streaming && (
+        <div className="m-auto w-full max-w-md" data-testid="conversation-loading">
+          <LoadingState message="Loading conversation…" />
+        </div>
+      )}
+
+      {convFailed && allMessages.length === 0 && !streaming && (
+        <div className="m-auto w-full max-w-md" data-testid="conversation-error">
+          <ErrorState
+            title="Could not load conversation"
+            message={convError instanceof Error ? convError.message : undefined}
+            onRetry={() => void refetchConversation()}
+          />
+        </div>
+      )}
+
+      {allMessages.length === 0 && !streaming && !convLoading && !convFailed && (
+        <div
+          className="m-auto flex w-full max-w-md flex-col items-center gap-3 px-4 py-8 text-center"
+          data-testid="empty-state"
+        >
+          <Logo size="lg" hideText />
           <h1 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200">
             Start a conversation
           </h1>
-          <p className="text-sm text-zinc-500">
-            Select a provider and model in the composer below, then type your message.
-            {!ready && (
-              <span>
-                {" "}
-                <Link href="/providers" className="text-tollma-600 underline hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300">
-                  Set up a provider
-                </Link>{" "}
-                to get started.
-              </span>
-            )}
-          </p>
+          {statusLoaded && providers.length === 0 ? (
+            <>
+              <p className="text-sm text-zinc-500">
+                Connect a provider to register your first model, then start chatting.
+              </p>
+              <Button asChild data-testid="empty-state-cta">
+                <Link href="/providers">Set up a provider</Link>
+              </Button>
+            </>
+          ) : statusLoaded && chatKeys.length === 0 ? (
+            <>
+              <p className="text-sm text-zinc-500">
+                Your provider is ready — create an API key to start chatting.
+              </p>
+              <Button asChild data-testid="empty-state-cta">
+                <Link href="/api-keys">Create an API key</Link>
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-zinc-500">
+                Pick a model in the composer below, then ask anything — or try one of these.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {SAMPLE_PROMPTS.map((prompt, i) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    data-testid={`sample-prompt-${i}`}
+                    onClick={() => {
+                      useChatStore.getState().setDraft(prompt);
+                      window.dispatchEvent(new Event("tollma:focus-input"));
+                    }}
+                    className="max-w-full truncate rounded-full border border-zinc-200 px-3 py-1 text-xs text-zinc-600 transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <p className="text-xs text-zinc-400">
             Press <kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">Ctrl+K</kbd> to open the command palette
           </p>
@@ -870,7 +959,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   return (
     <div className="flex h-full flex-1 overflow-hidden">
       {/* Center Chat Panel */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950">
+      <main id="main-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950">
         {/* Chat Header */}
         <ChatHeader />
 

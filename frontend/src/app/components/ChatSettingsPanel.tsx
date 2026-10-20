@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useAllChatKeyModels, useChatKeys } from "@/hooks/useChatKeys";
+import { useOrgProviders } from "@/hooks/useOrgs";
 import { useConversation, useUsage } from "@/hooks/useChat";
 import { useChatStore } from "@/store/chat";
 import { Badge, Button, Tooltip } from "@/components/ui";
@@ -47,7 +49,7 @@ function Section({
       data-testid={testid}
     >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
           {Icon && <Icon className="size-3 text-zinc-400" />}
           <span>{title}</span>
         </div>
@@ -122,7 +124,6 @@ function SupportValue({ on }: { on: boolean }) {
 
 export function IntelligencePanel() {
   const {
-    providerId,
     modelId,
     activeConversationId,
     rightSidebarOpen,
@@ -133,11 +134,30 @@ export function IntelligencePanel() {
 
   const { data: providers = [] } = useProviders();
   const { data: models = [] } = useModels();
+  const { data: chatKeys } = useChatKeys();
+  const { entries: keyEntries } = useAllChatKeyModels(chatKeys);
   const { data: usage } = useUsage(activeConversationId);
   const { data: conv } = useConversation(activeConversationId);
 
-  const provider = providers.find((p) => p.id === providerId);
-  const model = models.find((m) => m.id === modelId);
+  // Scope-correct union (mirrors ChatComposer scopedModels): the personal
+  // registry never lists org models, so org-key selections resolve here.
+  const model =
+    models.find((m) => m.id === modelId) ??
+    keyEntries.flatMap((e) => e.models ?? []).find((m) => m.id === modelId);
+  const owningOrgId =
+    keyEntries.find((e) => (e.models ?? []).some((m) => m.id === modelId))?.key
+      .org_id ?? null;
+  const { data: orgProviders = [] } = useOrgProviders(owningOrgId ?? "", {
+    enabled: !!owningOrgId,
+  });
+  const personalProvider = providers.find((p) => p.id === model?.provider_id);
+  const orgProvider = orgProviders.find((op) => op.id === model?.provider_id);
+  const provider = personalProvider ?? orgProvider;
+  const providerType =
+    personalProvider?.provider_type ??
+    orgProvider?.provider_type ??
+    orgProvider?.type ??
+    null;
   const caps = getModelCapabilities(model);
   const rates = mediaRates(model);
   const cacheSavings = parseFloat(usage?.cache_savings ?? "0") || 0;
@@ -145,10 +165,13 @@ export function IntelligencePanel() {
     (usage?.cache_read_tokens ?? 0) > 0 || (usage?.cache_write_tokens ?? 0) > 0;
 
   const messageCount = conv?.messages?.length ?? 0;
-  const width = Math.min(
+  const rawWidth = Math.min(
     Math.max(rightSidebarWidth || INTELLIGENCE_DEFAULT_WIDTH, INTELLIGENCE_MIN_WIDTH),
     INTELLIGENCE_MAX_WIDTH,
   );
+  // In-flow cap: never wider than 380px or 30vw so the composer keeps room.
+  const vwCap = typeof window !== "undefined" ? Math.floor(window.innerWidth * 0.3) : 380;
+  const width = Math.min(rawWidth, 380, Math.max(240, vwCap));
 
   // Resizing state (mirrors the conversation sidebar handle)
   const [isResizing, setIsResizing] = useState(false);
@@ -156,7 +179,7 @@ export function IntelligencePanel() {
   // Below md the panel becomes an overlay drawer (it overlays content).
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
+    const mq = window.matchMedia("(max-width: 1100px)");
     const update = () => setIsMobile(mq.matches);
     update();
     mq.addEventListener("change", update);
@@ -241,7 +264,7 @@ export function IntelligencePanel() {
               >
                 <div className="flex items-center gap-2.5">
                   <ProviderLogo
-                    logoUrl={logoForProviderType(provider?.provider_type ?? null)}
+                    logoUrl={logoForProviderType(providerType)}
                     name={model.name}
                     size="md"
                   />
@@ -309,7 +332,7 @@ export function IntelligencePanel() {
               {/* By provider breakdown */}
               {(usage?.by_provider.length ?? 0) > 0 && (
                 <div className="mt-2 border-t border-zinc-100 pt-1.5 dark:border-zinc-800" data-testid="usage-by-provider">
-                  <p className="text-[9px] font-semibold uppercase text-zinc-400 mb-1">
+                  <p className="text-[9px] font-semibold uppercase text-zinc-500 dark:text-zinc-400 mb-1">
                     By Provider
                   </p>
                   {usage!.by_provider.map((b) => (
@@ -326,7 +349,7 @@ export function IntelligencePanel() {
               {/* By model breakdown */}
               {(usage?.by_model.length ?? 0) > 0 && (
                 <div className="mt-2 border-t border-zinc-100 pt-1.5 dark:border-zinc-800" data-testid="usage-by-model">
-                  <p className="text-[9px] font-semibold uppercase text-zinc-400 mb-1">
+                  <p className="text-[9px] font-semibold uppercase text-zinc-500 dark:text-zinc-400 mb-1">
                     By Model
                   </p>
                   {usage!.by_model.map((b) => (
@@ -380,7 +403,7 @@ export function IntelligencePanel() {
                       className="mt-1 border-t border-zinc-100 pt-1 dark:border-zinc-800"
                       data-testid="intelligence-media-pricing"
                     >
-                      <p className="mb-1 text-[9px] font-semibold uppercase text-zinc-400">
+                      <p className="mb-1 text-[9px] font-semibold uppercase text-zinc-500 dark:text-zinc-400">
                         Media (/image)
                       </p>
                       {rates.imageLow && <StatRow label="Image · low" value={fmtCost(rates.imageLow)} mono />}
@@ -589,9 +612,14 @@ export function IntelligencePanel() {
         {/* Resizer Handle */}
         <div
           data-testid="intelligence-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize intelligence panel"
           onMouseDown={() => setIsResizing(true)}
-          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-zinc-400/50 active:bg-zinc-500 transition-colors z-10"
-        />
+          className="absolute left-0 top-0 bottom-0 w-2 -ml-1 z-10 cursor-col-resize touch-none group"
+        >
+          <div className="mx-auto h-full w-0.5 group-hover:bg-zinc-400/50 group-active:bg-zinc-500 transition-colors" />
+        </div>
       </motion.aside>
     </>
   );

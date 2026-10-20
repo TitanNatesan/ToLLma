@@ -1,5 +1,9 @@
 """Network analytics for one API key: IPs, geo, devices and clients.
 
+Gateway-only by design: ``request_logs`` (in-app chat) carries no IP/geo
+columns, so chat traffic cannot appear here.
+
+
 All queries are grouped SQL scoped to the key. Definitions:
 
 * ``unique_ips`` — distinct IPs with traffic in the window.

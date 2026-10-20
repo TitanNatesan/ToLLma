@@ -119,7 +119,7 @@ export function ChatHeader() {
   const costFormatted = fmtCost(usage?.total_cost);
 
   return (
-    <header className="flex h-12 w-full shrink-0 items-center justify-between border-b border-zinc-200 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/80">
+    <header className="flex h-12 w-full min-w-0 shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-zinc-200 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/80">
       {/* Left: Title & Inline Rename */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {!leftSidebarOpen && (
@@ -176,8 +176,19 @@ export function ChatHeader() {
           </button>
         )}
 
+        {/* Mobile: single collapsed model · provider line */}
+        {(activeModel || activeProvider) && (
+          <span
+            className="ml-1 min-w-0 flex-1 truncate text-[11px] text-zinc-400 sm:hidden"
+            data-testid="header-model-provider-mobile"
+            title={[activeModel?.name, activeProvider?.name].filter(Boolean).join(" · ")}
+          >
+            {[activeModel?.name, activeProvider?.name].filter(Boolean).join(" · ")}
+          </span>
+        )}
+
         {/* Model & Provider Badges in Header */}
-        <div className="hidden sm:flex items-center gap-1.5 ml-2">
+        <div className="hidden sm:flex min-w-0 items-center gap-1.5 ml-2">
           {activeModel && (
             <Badge variant="secondary" className="gap-1 text-[10px] font-medium font-mono">
               <Sparkles className="size-2.5 text-zinc-400" />

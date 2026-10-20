@@ -83,7 +83,7 @@ export function SidebarReveal({ onOpenCommandPalette }: { onOpenCommandPalette?:
 
   return (
     <div
-      className="hidden w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-zinc-200 bg-zinc-50 py-2 md:flex dark:border-zinc-800 dark:bg-zinc-900"
+      className="hidden w-12 shrink-0 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto border-r border-zinc-200 bg-zinc-50 py-2 md:flex dark:border-zinc-800 dark:bg-zinc-900"
       data-testid="sidebar-reveal-rail"
     >
       <RailButton testId="rail-expand" title="Show sidebar" ariaLabel="Expand sidebar" onClick={() => setLeftSidebar(true)}>
@@ -96,7 +96,7 @@ export function SidebarReveal({ onOpenCommandPalette }: { onOpenCommandPalette?:
         testId="rail-notifications"
         title={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
         ariaLabel={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
-        onClick={() => router.push("/settings#organizations")}
+        onClick={() => router.push("/notifications")}
       >
         <span className="relative inline-flex">
           <Bell className="size-4" aria-hidden />
@@ -156,7 +156,7 @@ export function SidebarReveal({ onOpenCommandPalette }: { onOpenCommandPalette?:
             </Tooltip>
           </span>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="end" className="w-64 p-1.5" data-testid="workspace-menu">
+        <DropdownMenuContent side="right" align="end" collisionPadding={12} className="w-64 p-1.5" data-testid="workspace-menu">
           <WorkspaceMenuContent />
         </DropdownMenuContent>
       </DropdownMenu>

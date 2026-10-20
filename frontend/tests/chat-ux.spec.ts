@@ -21,6 +21,7 @@ test.describe("Three-panel layout", () => {
   test("renders left sidebar, center chat, right panel", async ({ page }) => {
     await goto(page);
     await expect(page.getByTestId("left-sidebar")).toBeVisible();
+    await expect(page.locator("#main-content")).toBeVisible();
     await expect(page.getByTestId("message-list")).toBeVisible();
     await expect(page.getByTestId("right-sidebar")).toBeVisible();
   });
@@ -123,7 +124,7 @@ test.describe("Chat composer", () => {
     await goto(page);
     await page.getByTestId("model-selector").click();
     // Dropdown opens — search input is present
-    await expect(page.getByPlaceholder("Search models or providers…")).toBeVisible();
+    await expect(page.getByPlaceholder("Search models or keys…")).toBeVisible();
     // Verify dropdown content is visible
     const content = page.locator("[data-testid^='model-option-']").or(page.getByText("No models found"));
     await expect(content.first()).toBeVisible();

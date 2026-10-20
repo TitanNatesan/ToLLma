@@ -114,6 +114,7 @@ export function SidebarProviders() {
         <Select
           value={providerTypeFilter}
           onChange={(e) => setProviderTypeFilter(e.target.value as ProviderType | "ALL")}
+          aria-label="Filter by provider type"
           data-testid="provider-type-filter"
           sizeVariant="sm"
           className="w-full text-xs"

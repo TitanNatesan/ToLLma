@@ -1,15 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, Copy } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge, Button, DataTable, type DataTableColumn, DetailPanel, EmptyState,
-  ErrorState, LoadingState, SearchInput, Select,
+  ErrorState, LoadingState, SearchInput, SectionHeader, Select,
 } from "@/components/ui";
 import { AssignSetsDialog, ConfirmDialog } from "./Dialogs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { isForbiddenError, isNotFoundError, useMembers, useOrgAnalyticsOverview, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
+import { isForbiddenError, isNotFoundError, useMembers, useOrgAnalyticsOverview, useOrgKeys, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
+import { copyWithToast } from "@/lib/clipboard";
 import { parseApiError } from "@/lib/errors";
 import type { Member } from "@/types/orgs";
 
@@ -104,7 +106,7 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
       key: "member", header: "Member",
       render: (m) => (
         <span className="flex items-center gap-1.5">
-          <span className="truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-member-${m.user_id}`}>
+          <span className="truncate font-medium text-zinc-900 dark:text-zinc-100" data-testid={`org-member-${m.user_id}`} title={m.email}>
             {m.email}
           </span>
           {m.is_root && <Badge>root</Badge>}
@@ -135,7 +137,7 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
 
   return (
     <div className="space-y-2.5" data-testid="org-members">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
         <div className="min-w-44 flex-1">
           <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
             onClear={() => setSearch("")} placeholder="Search members…" aria-label="Search members"
@@ -186,7 +188,12 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
             {pageCount > 1 && ` · page ${safePage + 1} of ${pageCount}`}
           </p>
           {rows.length === 0 ? (
-            <EmptyState title="No members" description={debounced || state ? "No members match these filters." : ""} />
+            <EmptyState title="No members" description={debounced || state ? "No members match these filters." : "Invite members to collaborate in this organization."}
+              action={canInvite && !debounced && !state ? (
+                <Button size="sm" onClick={onInvite} data-testid="org-member-invite-open-empty">
+                  Invite members
+                </Button>
+              ) : undefined} />
           ) : (
             <DataTable columns={columns} rows={visible} rowKey={(m) => m.user_id}
               testId="org-members-table" emptyMessage="No members" />
@@ -220,18 +227,40 @@ function MemberDetailDrawer({ orgId, member, onClose, canRemove, canSuspend, can
   const mut = useOrgMutations(orgId);
   const orgSets = useOrgSets(orgId, { limit: 200 });
   const analytics = useOrgAnalyticsOverview(orgId, { enabled: canViewUsage && member !== null });
+  const keysQuery = useOrgKeys(orgId, { enabled: member !== null });
   const [assigning, setAssigning] = useState(false);
   const [confirm, setConfirm] = useState<"suspend" | "resume" | "remove" | null>(null);
 
   const open = member !== null;
+  const memberId = member?.user_id ?? null;
+  const memberEmail = member?.email ?? null;
   const usage = useMemo(() => {
     const rows = analytics.data ? (analytics.data.by_user ?? analytics.data.users ?? analytics.data.by_member ?? analytics.data.members ?? []) : [];
-    return rows.find((r) => (r.email ?? r.user_email) === member?.email) ?? null;
-  }, [analytics.data, member?.email]);
+    // Join by user id; fall back to email while older backends omit user_id.
+    return rows.find((r) => memberId !== null && r.user_id === memberId)
+      ?? rows.find((r) => (r.email ?? r.user_email) === memberEmail)
+      ?? null;
+  }, [analytics.data, memberId, memberEmail]);
   const assignedIds = useMemo(() => {
+    const ids = new Set(member?.set_ids ?? []);
+    if (ids.size > 0) return (orgSets.data ?? []).filter((s) => ids.has(s.id)).map((s) => s.id);
+    // Fallback while older backends omit set_ids: match the granted names.
     const names = new Set(member?.permission_sets ?? []);
     return (orgSets.data ?? []).filter((s) => names.has(s.name)).map((s) => s.id);
   }, [orgSets.data, member]);
+  const assignedKeys = useMemo(() => {
+    const list = keysQuery.data ?? [];
+    if (!member) return [];
+    const email = member.email.toLowerCase();
+    return list.filter(
+      (k) =>
+        (k.assignee_user_id != null && k.assignee_user_id === member.user_id) ||
+        (k.user_id != null && k.user_id === member.user_id) ||
+        [k.assignee_email, k.user_email, k.email].some(
+          (candidate) => typeof candidate === "string" && candidate.toLowerCase() === email,
+        ),
+    );
+  }, [keysQuery.data, member]);
 
   async function run(p: Promise<unknown>, ok: string) {
     try {
@@ -261,31 +290,64 @@ function MemberDetailDrawer({ orgId, member, onClose, canRemove, canSuspend, can
     },
   } as const;
 
+  const initial = ((((member?.full_name?.trim() ? member.full_name : member?.email)) || "?").trim().charAt(0) || "?").toUpperCase();
+  const displayName = member?.full_name?.trim() ? member.full_name : (member?.email ?? "Member");
+
   return (
     <>
       <DetailPanel open={open} onClose={onClose} testId="org-member-detail"
-        title={member?.email ?? "Member"}
-        subtitle={member ? `${member.state}${member.is_root ? " · root" : ""}` : undefined}>
+        title={member ? (
+          <span className="flex items-center gap-2.5">
+            <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-tollma-100 text-sm font-bold text-tollma-800 dark:bg-tollma-900 dark:text-tollma-200">
+              {initial}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{displayName}</span>
+              <span className="block truncate text-xs font-normal text-zinc-500 dark:text-zinc-400">{member.email}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1">
+              <Badge variant={member.state === "active" ? "success" : member.state === "suspended" ? "warning" : "outline"}>{member.state}</Badge>
+              {member.is_root ? <Badge>root</Badge> : <Badge variant="outline">member</Badge>}
+            </span>
+          </span>
+        ) : "Member"}>
         {member && (
-          <div className="space-y-4 text-xs">
-            <section>
-              <h3 className="mb-1.5 text-xs font-bold">Profile</h3>
-              <dl className="space-y-1 rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-                <div className="flex justify-between gap-2"><dt className="text-zinc-500">Email</dt><dd className="truncate font-medium">{member.email}</dd></div>
-                <div className="flex justify-between gap-2"><dt className="text-zinc-500">Status</dt><dd><Badge variant="outline">{member.state}</Badge></dd></div>
-                <div className="flex justify-between gap-2"><dt className="text-zinc-500">Joined</dt><dd>{joinedLabel(member)}</dd></div>
-                <div className="flex justify-between gap-2"><dt className="text-zinc-500">API keys</dt><dd className="font-mono">{member.key_count ?? "—"}</dd></div>
+          <div className="flex flex-col gap-3 text-xs">
+            <section className="flex flex-col gap-1.5">
+              <SectionHeader title="Profile" tone="label" />
+              <dl className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                <div className="col-span-2 min-w-0">
+                  <dt className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Email</dt>
+                  <dd className="mt-0.5 flex items-center gap-1.5">
+                    <span className="min-w-0 flex-1 truncate font-medium">{member.email}</span>
+                    <Button size="xs" variant="ghost" onClick={() => void copyWithToast(member.email, "Email copied")}
+                      data-testid={`org-member-copy-email-${member.user_id}`} aria-label={`Copy ${member.email}`}>
+                      <Copy className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Status</dt>
+                  <dd className="mt-0.5">
+                    <Badge variant={member.state === "active" ? "success" : member.state === "suspended" ? "warning" : "outline"}>{member.state}</Badge>
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Joined</dt>
+                  <dd className="mt-0.5">{joinedLabel(member)}</dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">API keys</dt>
+                  <dd className="mt-0.5 font-mono">{member.key_count ?? "—"}</dd>
+                </div>
               </dl>
             </section>
 
-            <section>
-              <div className="mb-1.5 flex items-center justify-between">
-                <h3 className="text-xs font-bold">Permission sets</h3>
-                {canAssign && !member.is_root && (
-                  <Button size="sm" variant="outline" onClick={() => setAssigning(true)}
-                    data-testid={`org-assign-${member.user_id}`}>Assign sets</Button>
-                )}
-              </div>
+            <section className="flex flex-col gap-1.5">
+              <SectionHeader title="Permission sets" tone="label" action={canAssign && !member.is_root ? (
+                <Button size="sm" variant="outline" onClick={() => setAssigning(true)}
+                  data-testid={`org-assign-${member.user_id}`}>Assign sets</Button>
+              ) : undefined} />
               {member.permission_sets.length === 0 ? (
                 <p className="text-zinc-500">No sets assigned.</p>
               ) : (
@@ -295,8 +357,8 @@ function MemberDetailDrawer({ orgId, member, onClose, canRemove, canSuspend, can
               )}
             </section>
 
-            <section>
-              <h3 className="mb-1.5 text-xs font-bold">Teams</h3>
+            <section className="flex flex-col gap-1.5">
+              <SectionHeader title="Teams" tone="label" />
               {teamNames(member).length === 0 ? (
                 <p className="text-zinc-500">Not in any team.</p>
               ) : (
@@ -306,17 +368,42 @@ function MemberDetailDrawer({ orgId, member, onClose, canRemove, canSuspend, can
               )}
             </section>
 
-            <section>
-              <h3 className="mb-1.5 text-xs font-bold">Usage</h3>
+            <section className="flex flex-col gap-1.5">
+              <SectionHeader title="Assigned API keys" tone="label"
+                badge={<Badge variant="secondary">{assignedKeys.length}</Badge>} />
+              {keysQuery.isLoading ? (
+                <p className="text-zinc-500">Loading keys…</p>
+              ) : keysQuery.isError ? (
+                <p className="text-zinc-500">Could not load assigned keys.</p>
+              ) : assignedKeys.length === 0 ? (
+                <p className="text-zinc-500">No API keys assigned to this member.</p>
+              ) : (
+                <ul className="flex flex-col gap-1" data-testid="org-member-keys">
+                  {assignedKeys.map((k) => (
+                    <li key={k.id} className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
+                      <Link href="/api-keys" data-testid={`org-member-key-${k.id}`}
+                        title={k.masked ?? k.key_prefix ?? k.name}
+                        className="min-w-0 flex-1 truncate font-medium text-tollma-600 hover:underline dark:text-tollma-400">
+                        {k.name}
+                      </Link>
+                      <span className="shrink-0 font-mono text-[10px] text-zinc-400">{k.masked ?? k.key_prefix ?? ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="flex flex-col gap-1.5">
+              <SectionHeader title="Usage" tone="label" />
               {!canViewUsage ? (
                 <p className="text-zinc-500">You need analytics permission to view usage.</p>
               ) : analytics.isLoading ? (
                 <p className="text-zinc-500">Loading usage…</p>
               ) : usage ? (
-                <dl className="space-y-1 rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Requests</dt><dd className="font-mono">{String(usage.requests ?? usage.total_requests ?? "—")}</dd></div>
-                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Tokens</dt><dd className="font-mono">{String(usage.tokens ?? usage.total_tokens ?? "—")}</dd></div>
-                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Cost</dt><dd className="font-mono">{String(usage.cost ?? usage.total_cost ?? usage.spend ?? "—")}</dd></div>
+                <dl className="grid gap-1 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Total requests</dt><dd className="font-mono">{String(usage.requests ?? usage.total_requests ?? "—")}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Total tokens</dt><dd className="font-mono">{String(usage.tokens ?? usage.total_tokens ?? "—")}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Total cost</dt><dd className="font-mono">{String(usage.cost ?? usage.total_cost ?? usage.spend ?? "—")}</dd></div>
                 </dl>
               ) : (
                 <p className="text-zinc-500">No usage recorded for this member in range.</p>

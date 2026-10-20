@@ -94,7 +94,7 @@ function ReasoningPanelInner({
       title="Copy thought process"
       aria-label="Copy thought process"
       data-testid="reasoning-copy"
-      className="flex size-6 shrink-0 items-center justify-center rounded-full text-zinc-400 opacity-0 transition-all group-hover/reasoning:opacity-100 hover:bg-zinc-100 hover:text-zinc-600 focus-visible:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+      className="flex size-6 shrink-0 items-center justify-center rounded-full text-zinc-400 opacity-0 transition-all group-hover/reasoning:opacity-100 hover:bg-zinc-100 hover:text-zinc-600 focus-visible:opacity-100 pointer-coarse:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
     >
       {copied ? (
         <Check className="size-3 text-tollma-600 dark:text-tollma-400" />

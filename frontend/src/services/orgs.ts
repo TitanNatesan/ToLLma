@@ -368,6 +368,37 @@ export function updateOrgProvider(
   });
 }
 
+// --- Org models (same ModelRead/ModelUpdate shapes as personal) ------------------
+
+/** Register a model under an org provider. Personal ModelCreate body shape
+ * (provider_id optional, must match the path when present). */
+export function createOrgModel(
+  orgId: string,
+  providerId: string,
+  payload: Record<string, unknown>,
+): Promise<AIModel> {
+  return req<AIModel>(`${BASE}/${orgId}/providers/${providerId}/models`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Partial org model update (incl. is_active). */
+export function updateOrgModel(
+  orgId: string,
+  modelId: string,
+  payload: Record<string, unknown>,
+): Promise<AIModel> {
+  return req<AIModel>(`${BASE}/${orgId}/models/${modelId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteOrgModel(orgId: string, modelId: string): Promise<void> {
+  return req<void>(`${BASE}/${orgId}/models/${modelId}`, { method: "DELETE" });
+}
+
 // --- Phase B: org budget pools ----------------------------------------------
 
 export function getOrgBudget(orgId: string): Promise<OrgBudget> {

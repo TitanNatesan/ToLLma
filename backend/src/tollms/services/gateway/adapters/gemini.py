@@ -13,6 +13,7 @@ from tollms.services.gateway.adapters.base import (
     ChatMessage,
     DiscoveredModel,
     StreamChunk,
+    thinking_budget,
     usage_extras,
 )
 
@@ -29,12 +30,29 @@ def _gemini_parts(m: ChatMessage) -> list[dict]:
     return parts or [{"text": ""}]
 
 
-def _gemini_body(messages: list[ChatMessage]) -> dict:
+def _gemini_body(
+    messages: list[ChatMessage], *, image_output: bool = False, reasoning_level: str | None = None
+) -> dict:
     contents = []
     for m in messages:
         role = "user" if m.role in ("user", "system") else "model"
         contents.append({"role": role, "parts": _gemini_parts(m)})
-    return {"contents": contents}
+    body: dict = {"contents": contents}
+    generation_config: dict = {}
+    if image_output:
+        # Image-capable models (nano-banana / gemini-*-image*) default to
+        # text-only responses; ask for both so inlineData parts flow back
+        # through the existing image extraction below. Image models reject
+        # thinkingConfig, so it is never combined with responseModalities.
+        generation_config["responseModalities"] = ["TEXT", "IMAGE"]
+    elif (budget := thinking_budget(reasoning_level)) is not None:
+        # Thinking models emit thought:true parts (split out by
+        # _gemini_thought_and_text); without a budget they stay silent, so
+        # thought content only renders when a level maps to a budget here.
+        generation_config["thinkingConfig"] = {"thinkingBudget": budget}
+    if generation_config:
+        body["generationConfig"] = generation_config
+    return body
 
 
 def _gemini_text(item: dict) -> str:
@@ -169,7 +187,9 @@ class GeminiAdapter(BaseProviderAdapter):
         )
         try:
             async with self._client() as client, client.stream(
-                "POST", url, json=_gemini_body(messages)
+                "POST", url, json=_gemini_body(
+                    messages, image_output=self.image_output, reasoning_level=self.reasoning_level
+                )
             ) as resp:
                 if resp.status_code >= 400:
                     detail = (await resp.aread()).decode()[:500]
@@ -205,6 +225,7 @@ class GeminiAdapter(BaseProviderAdapter):
                             completion_tokens=meta.get("candidatesTokenCount"),
                             total_tokens=meta.get("totalTokenCount"),
                             cache_read_tokens=extras["cache_read_tokens"],
+                            cache_write_tokens=extras["cache_write_tokens"],
                             reasoning_tokens=extras["reasoning_tokens"],
                         )
                 if in_reasoning:
@@ -312,7 +333,12 @@ class VertexAdapter(BaseProviderAdapter):
             raise RuntimeError(f"vertex auth failed: {e}") from e
         try:
             async with self._client() as client, client.stream(
-                "POST", url, json=_gemini_body(messages), headers={"Authorization": f"Bearer {token}"}
+                "POST",
+                url,
+                json=_gemini_body(
+                    messages, image_output=self.image_output, reasoning_level=self.reasoning_level
+                ),
+                headers={"Authorization": f"Bearer {token}"},
             ) as resp:
                 if resp.status_code >= 400:
                     detail = (await resp.aread()).decode()[:500]
@@ -348,6 +374,7 @@ class VertexAdapter(BaseProviderAdapter):
                             completion_tokens=meta.get("candidatesTokenCount"),
                             total_tokens=meta.get("totalTokenCount"),
                             cache_read_tokens=extras["cache_read_tokens"],
+                            cache_write_tokens=extras["cache_write_tokens"],
                             reasoning_tokens=extras["reasoning_tokens"],
                         )
                 if in_reasoning:

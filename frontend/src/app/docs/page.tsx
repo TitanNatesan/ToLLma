@@ -17,7 +17,7 @@ export default function DocsPage() {
           {
             href: "/docs/authentication",
             title: "Authentication",
-            body: "API keys, budgets, rate limits and headers.",
+            body: "API keys, headers, budgets, rate limits and error codes.",
           },
           {
             href: "/docs/openai",
@@ -46,6 +46,14 @@ export default function DocsPage() {
           </Link>
         ))}
       </div>
+      <DocSection title="Setup" testId="docs-setup">
+        <ol className="list-decimal space-y-1 pl-5">
+          <li>Create a key at API Keys — it is shown once, then only a hash is stored.</li>
+          <li>Point any compatible client at <code>http://localhost:8000/v1</code>.</li>
+          <li>Send the key as <code>Authorization: Bearer</code> (or <code>x-api-key</code>).</li>
+          <li>Pick a model as <code>provider/model</code>, e.g. <code>openai/gpt-5</code>.</li>
+        </ol>
+      </DocSection>
       <DocSection title="Quickstart">
         <DocCode testId="docs-quickstart-code">
           {`from openai import OpenAI

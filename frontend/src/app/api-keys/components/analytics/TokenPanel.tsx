@@ -19,6 +19,7 @@ import {
   ChartSkeleton,
   EmptyHint,
   SectionFrame,
+  endpointLabel,
   bucketFullLabel,
   bucketLabel,
   num,
@@ -103,7 +104,7 @@ export function TokenPanel({
   const endpoints = useMemo(
     () =>
       (summary.endpoints ?? []).map((row) => ({
-        name: row.endpoint || "unknown endpoint",
+        name: endpointLabel(row.endpoint),
         value: num(row.requests),
         hint:
           row.share !== null && row.share !== undefined

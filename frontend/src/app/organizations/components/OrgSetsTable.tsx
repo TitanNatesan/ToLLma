@@ -78,7 +78,17 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
   const safePage = Math.min(page, pageCount - 1);
   const visible = rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
 
-  if (!canRead) return null;
+  if (!canRead) {
+    return (
+      <div data-testid="org-sets">
+        <EmptyState
+          title="Permission sets"
+          description="You need PermissionSets.Read permission to view organization permission sets. Ask an organization admin to grant it."
+          testId="org-sets-denied"
+        />
+      </div>
+    );
+  }
 
   const editable = (s: PermissionSet) => !s.is_system && canUpdate;
   const columns: DataTableColumn<PermissionSet>[] = [
@@ -86,8 +96,8 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
       key: "name", header: "Name",
       render: (s) => (
         <span className="min-w-0">
-          <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100">{s.name}</span>
-          {s.description && <span className="block truncate text-[11px] text-zinc-400">{s.description}</span>}
+          <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100" title={s.name}>{s.name}</span>
+          {s.description && <span className="block truncate text-[11px] text-zinc-400" title={s.description ?? undefined}>{s.description}</span>}
         </span>
       ),
     },
@@ -147,7 +157,7 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
 
   return (
     <div data-testid="org-sets">
-      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+      <div className="mb-2.5 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
         <div className="min-w-44 flex-1">
           <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
             onClear={() => setSearch("")} placeholder="Search sets…" aria-label="Search permission sets"
@@ -188,7 +198,12 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
       )}
       {!sets.isLoading && !sets.isError && rows.length === 0 && (
         <EmptyState title="No permission sets"
-          description={debounced ? "No sets match this search." : "Create a set to start granting permissions."} />
+          description={debounced ? "No sets match this search." : "Create a set to start granting permissions."}
+          action={canCreate && !debounced ? (
+            <Button size="sm" onClick={() => setCreating(true)} data-testid="org-set-create-open-empty">
+              Create set
+            </Button>
+          ) : undefined} />
       )}
       {rows.length > 0 && (
         <>

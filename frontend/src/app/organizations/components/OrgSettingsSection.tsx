@@ -1,4 +1,5 @@
 "use client";
+import { fmtBudgetAmount } from "@/app/api-keys/components/BudgetBar";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -17,7 +18,8 @@ type Tab = "profile" | "privacy" | "sharing" | "budgets" | "danger";
 function money(v: number | string | null | undefined): string {
   if (v === null || v === undefined || v === "") return "—";
   const n = typeof v === "string" ? Number(v) : v;
-  return Number.isFinite(n) ? `$${n.toFixed(2)}` : "—";
+  if (!Number.isFinite(n)) return "—";
+  return fmtBudgetAmount(n);
 }
 
 /** Settings as tabs: profile, privacy, sharing, budgets summary, danger zone.
@@ -41,7 +43,7 @@ export function OrgSettingsSection({ orgId, org, canManage }: {
           { id: "budgets", label: "Budgets" },
           { id: "danger", label: "Danger zone" },
         ] as const).map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id}
+          <button key={t.id} type="button" role="tab" id={`org-settings-tabbtn-${t.id}`} aria-selected={tab === t.id} aria-controls={`org-settings-panel-${t.id}`}
             onClick={() => setTab(t.id)} data-testid={`org-settings-tab-${t.id}`}
             className={`flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors ${tab === t.id
               ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
@@ -51,11 +53,31 @@ export function OrgSettingsSection({ orgId, org, canManage }: {
         ))}
       </div>
 
-      {tab === "profile" && <ProfileTab orgId={orgId} org={org} canManage={canManage} />}
-      {tab === "privacy" && <PrivacyTab orgId={orgId} org={org} canManage={canManage} />}
-      {tab === "sharing" && <SharingTab orgId={orgId} org={org} canManage={canManage} />}
-      {tab === "budgets" && <BudgetsTab orgId={orgId} />}
-      {tab === "danger" && <DangerTab />}
+      {tab === "profile" && (
+        <div role="tabpanel" id="org-settings-panel-profile" aria-labelledby="org-settings-tabbtn-profile">
+          <ProfileTab orgId={orgId} org={org} canManage={canManage} />
+        </div>
+      )}
+      {tab === "privacy" && (
+        <div role="tabpanel" id="org-settings-panel-privacy" aria-labelledby="org-settings-tabbtn-privacy">
+          <PrivacyTab orgId={orgId} org={org} canManage={canManage} />
+        </div>
+      )}
+      {tab === "sharing" && (
+        <div role="tabpanel" id="org-settings-panel-sharing" aria-labelledby="org-settings-tabbtn-sharing">
+          <SharingTab orgId={orgId} org={org} canManage={canManage} />
+        </div>
+      )}
+      {tab === "budgets" && (
+        <div role="tabpanel" id="org-settings-panel-budgets" aria-labelledby="org-settings-tabbtn-budgets">
+          <BudgetsTab orgId={orgId} />
+        </div>
+      )}
+      {tab === "danger" && (
+        <div role="tabpanel" id="org-settings-panel-danger" aria-labelledby="org-settings-tabbtn-danger">
+          <DangerTab />
+        </div>
+      )}
     </div>
   );
 }

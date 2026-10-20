@@ -1,4 +1,5 @@
 "use client";
+import { fmtBudgetAmount } from "@/app/api-keys/components/BudgetBar";
 
 import { useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
@@ -21,8 +22,7 @@ function num(v: number | string | null | undefined): number | null {
 function money(v: number | string | null | undefined): string {
   const n = num(v);
   if (n === null) return "—";
-  if (n !== 0 && Math.abs(n) < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+  return fmtBudgetAmount(n);
 }
 
 function compact(n: number | null): string {

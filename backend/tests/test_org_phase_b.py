@@ -218,10 +218,21 @@ def test_personal_org_key_isolation(client: TestClient, db, user_factory) -> Non
     org_ids = [k["id"] for k in client.get(f"{ORG}/{oid}/keys").json()]
     assert kid in org_ids and pid not in org_ids
 
-    # Personal management endpoints cannot touch org keys (404 oracle).
-    assert client.get(f"/api/v1/keys/{kid}").status_code == 404
+    # Read contract: the holder (root assignee here) with Keys.Read gets 200
+    # on single-read + analytics; every write stays org-managed (404 oracle).
+    assert client.get(f"/api/v1/keys/{kid}").status_code == 200
+    assert client.get(f"/api/v1/keys/{kid}/analytics").status_code == 200
+    assert client.patch(f"/api/v1/keys/{kid}", json={"name": "x"}).status_code == 404
     assert client.delete(f"/api/v1/keys/{kid}").status_code == 404
     assert client.post(f"/api/v1/keys/{kid}/rotate").status_code == 404
+    assert client.put(f"/api/v1/keys/{kid}/policy", json={}).status_code == 404
+    assert client.put(f"/api/v1/keys/{kid}/ip-rules", json=[]).status_code == 404
+    assert client.put(f"/api/v1/keys/{kid}/model-permissions", json=[]).status_code == 404
+
+    # Strangers (non-members) get the 404 oracle on org-key reads too.
+    stranger = _mkuser("stranger-keys")
+    assert stranger.get(f"/api/v1/keys/{kid}").status_code == 404
+    assert stranger.get(f"/api/v1/keys/{kid}/analytics").status_code == 404
 
     # Org endpoints cannot touch personal keys either.
     assert client.delete(f"{ORG}/{oid}/keys/{pid}").status_code == 404

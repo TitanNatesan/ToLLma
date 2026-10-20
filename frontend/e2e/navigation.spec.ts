@@ -78,7 +78,7 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await collapseBtn.hover();
   await expect(personalNav).toBeVisible({ timeout: 10000 });
   await expect(page.getByTestId("logout-btn")).toBeVisible({ timeout: 10000 });
-  // Moving pointer + focus away hides it again after the ~1s grace.
+  // Moving pointer + focus away hides it again after the 150ms grace.
   await page.getByTestId("app-logo").hover();
   await collapseBtn.blur();
   await expect(personalNav).toBeHidden({ timeout: 10000 });
@@ -248,11 +248,23 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await expect(page).toHaveURL(/\/api-keys/, { timeout: 20000 });
 
   // Operations has only requests + invitations tabs (keys moved to /api-keys).
+  // Tab state lives in ?tab= (URL-synced, role=tab + aria-selected + tabpanel).
   await page.goto(`/organizations/${orgId}?section=operations`);
   await expect(page.getByTestId("org-operations")).toBeVisible({ timeout: 20000 });
   await expect(page.getByTestId("org-ops-tab-requests")).toBeVisible();
   await expect(page.getByTestId("org-ops-tab-invitations")).toBeVisible();
   await expect(page.getByTestId("org-ops-tab-keys")).toHaveCount(0);
+  await expect(page.getByTestId("org-ops-tab-requests")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("org-ops-tab-invitations")).toHaveAttribute("aria-selected", "false");
+  await expect(page).toHaveURL(/section=operations/, { timeout: 20000 });
+  await page.getByTestId("org-ops-tab-invitations").click();
+  await expect(page).toHaveURL(/tab=invitations/, { timeout: 20000 });
+  await expect(page.getByTestId("org-ops-tab-invitations")).toHaveAttribute("aria-selected", "true");
+
+  // Unknown ?section= values fall back to the overview (shareable, stable testids).
+  await page.goto(`/organizations/${orgId}?section=bogus`);
+  await expect(page).toHaveURL(/section=overview/, { timeout: 20000 });
+  await expect(page.getByTestId("org-section-overview")).toBeVisible({ timeout: 20000 });
 
   // Switch back to the personal workspace via the chevron menu.
   await page.getByTestId("workspace-menu-trigger").click();
@@ -504,7 +516,7 @@ test("collapsed rail mirrors scope, controls, and shared nav visibility", async 
   const expandedCollapseBtn = page.getByTestId("sidebar-collapse-btn");
   await expandedCollapseBtn.hover();
   await expect(page.getByTestId("sidebar-personal-nav")).toBeVisible({ timeout: 10000 });
-  // Moving pointer + focus away hides it again after the ~1s grace.
+  // Moving pointer + focus away hides it again after the 150ms grace.
   await page.getByTestId("app-logo").hover();
   await expandedCollapseBtn.blur();
   await expect(page.getByTestId("sidebar-personal-nav")).toBeHidden({ timeout: 10000 });

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, Cpu } from "lucide-react";
 import { useProviders } from "@/hooks/useRegistry";
-import { Badge } from "@/components/ui";
+import { Badge, EmptyState } from "@/components/ui";
 import { providerTypeLabel } from "@/app/providers/fields";
 
 /** Provider shortcuts — management lives on /providers. */
@@ -13,11 +13,13 @@ export function ProvidersSection() {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        {providers.length === 0
-          ? "No providers configured yet."
-          : `${providers.length} provider${providers.length === 1 ? "" : "s"} configured · ${active} active.`}
-      </p>
+      {providers.length === 0 ? (
+        <EmptyState title="No providers yet" description="Connect a provider to start chatting with models." />
+      ) : (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          {`${providers.length} provider${providers.length === 1 ? "" : "s"} configured · ${active} active.`}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         {providers.slice(0, 6).map((provider) => (
           <span

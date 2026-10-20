@@ -24,6 +24,11 @@ export function useConversation(id: string | null) {
     queryKey: ["conversation", id],
     queryFn: () => getConversation(id as string),
     enabled: !!id && !streaming,
+    retry: (count, error) => {
+      const status = (error as { status?: number }).status;
+      if (status === 404 || status === 422) return false;
+      return count < 2;
+    },
   });
 }
 

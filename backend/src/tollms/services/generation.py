@@ -95,6 +95,10 @@ class GenerationSpec:
     # driver prefers the adapter's actual provider-usage cost when it set one.
     media_cost: Decimal | None = None
     media_cost_source: str | None = None
+    # Display names for the terminal payload (frontend shows them instead of
+    # null). Plain values: ORM rows stay in the request session.
+    provider_name: str | None = None
+    model_name: str | None = None
 
 
 @dataclass
@@ -694,6 +698,8 @@ def _terminal_payload(spec, result, tokens, breakdown, estimated, status, latenc
         "generation_id": str(spec.generation_id),
         "message_id": str(spec.generation_id),
         "status": status.value,
+        "provider_name": spec.provider_name or spec.provider_type,
+        "model_name": spec.model_name or spec.model_label,
         "usage": {
             "prompt_tokens": tokens.prompt, "completion_tokens": tokens.completion,
             "total_tokens": tokens.prompt + tokens.completion,

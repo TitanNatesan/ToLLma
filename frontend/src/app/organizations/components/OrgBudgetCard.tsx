@@ -1,4 +1,5 @@
 "use client";
+import { fmtBudgetAmount } from "@/app/api-keys/components/BudgetBar";
 
 import { useState } from "react";
 import { Loader2, Wallet } from "lucide-react";
@@ -21,8 +22,7 @@ function num(v: number | string | null | undefined): number | null {
 function money(v: number | string | null | undefined): string {
   const n = num(v);
   if (n === null) return "—";
-  if (n !== 0 && Math.abs(n) < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+  return fmtBudgetAmount(n);
 }
 
 function capOf(b: OrgBudget): number | null {
@@ -54,10 +54,15 @@ export function OrgBudgetCard({ orgId, canRead, canEdit }: {
   const capN = data ? capOf(data) : null;
 
   async function save() {
+    const trimmed = cap.trim();
+    if (trimmed !== "" && (!Number.isFinite(Number(trimmed)) || Number(trimmed) < 0)) {
+      setError("Enter a non-negative number, or leave empty for unlimited.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const value = cap.trim() === "" ? null : Number(cap);
+      const value = trimmed === "" ? null : Number(trimmed);
       // Send both field names; the backend reads whichever it knows.
       await mut.updateBudget.mutateAsync({ max_spend: value, max_budget_usd: value });
       toast.success("Budget cap updated.");
@@ -103,6 +108,9 @@ export function OrgBudgetCard({ orgId, canRead, canEdit }: {
             message={parseApiError(budget.error).message}
             onRetry={() => void budget.refetch()} />
         )}
+        {!budget.isLoading && !budget.isError && !data && (
+          <EmptyState title="No budget data" description="Budget pools are not configured for this organization yet." testId="org-budget-empty" />
+        )}
         {data && !budget.isLoading && !budget.isError && (
           <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
@@ -139,6 +147,11 @@ export function OrgBudgetCard({ orgId, canRead, canEdit }: {
             {error && (
               <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                 {error}
+              </p>
+            )}
+            {cap.trim() !== "" && (Number.isNaN(Number(cap)) || Number(cap) < 0) && (
+              <p className="mt-2 text-xs text-red-600 dark:text-red-400" data-testid="org-budget-cap-error">
+                Enter a non-negative number, or leave empty for unlimited.
               </p>
             )}
             <div className="mt-4 flex justify-end gap-2">

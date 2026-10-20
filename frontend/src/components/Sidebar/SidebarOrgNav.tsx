@@ -96,6 +96,10 @@ export function useOrgNavItems(orgId: string): OrgNavEntry[] {
   if (detail.isError) {
     visible = ITEMS.filter((item) => item.id === "overview");
   } else if (detail.data) {
+    // Gated items mirror the same can() checks the dashboard page content
+    // uses: budgets needs Budgets.Read, settings needs Organization.Settings,
+    // operations needs request/invitation readability. Visibility only — no
+    // capability changes.
     visible = ITEMS.filter((item) => {
       switch (item.id) {
         case "overview":
@@ -103,9 +107,11 @@ export function useOrgNavItems(orgId: string): OrgNavEntry[] {
         case "keys":
         case "analytics":
         case "docs":
-        case "budgets":
-        case "settings":
           return true;
+        case "budgets":
+          return can("Budgets.Read");
+        case "settings":
+          return can("Organization.Settings");
         case "members":
           return can("Members.Read");
         case "teams":
@@ -113,7 +119,7 @@ export function useOrgNavItems(orgId: string): OrgNavEntry[] {
         case "sets":
           return can("PermissionSets.Read");
         case "operations":
-          return can("Keys.Read", "Members.Read", "Members.Invite", "Members.Approve", "Members.Update");
+          return can("Members.Read", "Members.Approve", "Members.Update");
         case "audit":
           return can("Audit.Read");
         default:
@@ -156,10 +162,10 @@ export function SidebarOrgNav({ orgId }: { orgId: string }) {
       <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left">
         <Building2 className="size-3.5 shrink-0 text-zinc-400" aria-hidden />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-bold text-zinc-900 dark:text-zinc-100">
+          <span className="block truncate text-xs font-bold text-zinc-900 dark:text-zinc-100" title={org?.name ?? "Organization"}>
             {org?.name ?? "Organization"}
           </span>
-          <span className="block truncate font-mono text-[10px] text-zinc-500">
+          <span className="block truncate font-mono text-[10px] text-zinc-500" title={org ? `/${org.slug}` : undefined}>
             {org ? `/${org.slug}` : "…"}
             {org?.is_root ? " · root" : ""}
           </span>

@@ -1,9 +1,12 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
+import "katex/dist/katex.min.css";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import {
@@ -44,6 +47,7 @@ import type { ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useAllChatKeyModels, useChatKeys } from "@/hooks/useChatKeys";
 import { Button, Textarea } from "@/components/ui/primitives";
 import { fmtCost, stripTrailingZeros } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
@@ -104,10 +108,10 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
 /** User content is plain text or user markdown. */
 function UserMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
   return (
-    <div className={isStreaming ? "streaming-cursor" : undefined}>
+    <div className={isStreaming ? "streaming-cursor break-words" : "break-words"}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
           pre: ({ children }) => <>{children}</>,
           code: ({ className, children, ...props }) => {
@@ -234,6 +238,7 @@ function MessageHeaderMeta({
   timestamp,
   modelName,
   providerName,
+  modelLoading,
   tokens,
   tokensTooltip,
   cost,
@@ -244,6 +249,8 @@ function MessageHeaderMeta({
   timestamp?: string;
   modelName?: string | null;
   providerName?: string | null;
+  /** Streaming and the names aren't resolved yet: shimmer, never blank. */
+  modelLoading?: boolean;
   tokens?: number | null;
   tokensTooltip?: string;
   cost?: string | null;
@@ -257,17 +264,27 @@ function MessageHeaderMeta({
 
   return (
     <div
-      className={`flex items-center gap-2 text-[11px] text-zinc-400 ${isUser ? "flex-row-reverse" : ""}`}
+      className={`flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 ${isUser ? "flex-row-reverse" : ""}`}
     >
       {formattedTime && (
         <time dateTime={timestamp} title={timestamp}>
           {formattedTime}
         </time>
       )}
-      {!isUser && (modelName || providerName) && (
-        <span data-testid="message-model" title={`${providerName ?? ""} / ${modelName ?? ""}`}>
-          {[modelName, providerName].filter(Boolean).join(" · ")}
-        </span>
+      {!isUser && modelLoading && !modelName && !providerName ? (
+        <span
+          data-testid="message-model-loading"
+          role="status"
+          aria-label="Loading model info"
+          className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
+        />
+      ) : (
+        !isUser &&
+        (modelName || providerName) && (
+          <span data-testid="message-model" title={`${providerName ?? ""} / ${modelName ?? ""}`}>
+            {[modelName, providerName].filter(Boolean).join(" · ")}
+          </span>
+        )
       )}
       {!isUser && tokens != null && (
         <span data-testid="message-usage" title={tokensTooltip}>
@@ -300,13 +317,25 @@ function MessageViewInner({
   const isUser = role === "user";
   const msg = message as ChatMessage;
   const costEstimated = msg.usage_estimated === true;
-  const costStr = `${formatCost(msg.total_cost ?? null)}${costEstimated ? " est." : ""}`;
+  const costAmount = formatCost(msg.total_cost ?? null);
+  const costStr = costAmount ? `${costAmount}${costEstimated ? " est." : ""}` : null;
   const inCostStr = formatCost(msg.input_cost ?? null);
   const outCostStr = formatCost(msg.output_cost ?? null);
   const latencyStr = formatLatency(msg.latency_ms ?? null);
   const { data: models } = useModels(undefined, undefined, { enabled: !isUser });
   const { data: providers } = useProviders();
-  const modelName = !isUser ? models?.find((m) => m.id === msg.model_id)?.name : null;
+  const { data: chatKeys } = useChatKeys();
+  const { entries: keyEntries } = useAllChatKeyModels(chatKeys);
+  const modelById = useMemo(() => {
+    const byId = new Map((models ?? []).map((m) => [m.id, m]));
+    for (const entry of keyEntries) {
+      for (const km of entry.models ?? []) {
+        if (!byId.has(km.id)) byId.set(km.id, km);
+      }
+    }
+    return byId;
+  }, [models, keyEntries]);
+  const modelName = !isUser && msg.model_id ? (modelById.get(msg.model_id)?.name ?? null) : null;
   const providerName = !isUser ? providers?.find((p) => p.id === msg.provider_id)?.name : null;
 
   const usageTitle = [
@@ -377,6 +406,7 @@ function MessageViewInner({
           costTooltip={costTitle}
           latency={latencyStr}
           modelName={modelName}
+          modelLoading={isStreaming}
           providerName={providerName}
           role={role}
           timestamp={message.created_at}
@@ -482,8 +512,39 @@ function MessageViewInner({
               {mediaKind ? (
                 isStreaming ? (
                   <MediaGenerationSkeleton kind={mediaKind} label={progressLabel} total={mediaTotal} />
-                ) : null
-              ) : (
+                ) : (msg.attachments?.length ?? 0) > 0 ? null : message.content?.trim() ? (
+                  <AssistantContent
+                    content={message.content}
+                    isStreaming={isStreaming}
+                    reasoningTokens={msg.reasoning_tokens}
+                    sources={sources}
+                    status={reasoningStatus}
+                    thinkingMs={msg.thinking_ms}
+                  />
+                ) : (
+                  <div
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
+                    data-testid={`media-unavailable-${message.id}`}
+                    role="status"
+                  >
+                    <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+                      <AlertCircle className="size-3.5 shrink-0" />
+                      <span className="truncate">Media unavailable</span>
+                    </span>
+                    {onRegenerate && (
+                      <button
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                        data-testid={`media-retry-${message.id}`}
+                        onClick={() => onRegenerate(message.id)}
+                        type="button"
+                      >
+                        <RotateCcw className="size-3" />
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                )
+              ) : message.content?.trim() ? (
                 <AssistantContent
                   content={message.content}
                   isStreaming={isStreaming}
@@ -492,7 +553,24 @@ function MessageViewInner({
                   status={reasoningStatus}
                   thinkingMs={msg.thinking_ms}
                 />
-              )}
+              ) : isStreaming ? (
+                <div
+                  data-testid="typing-indicator"
+                  role="status"
+                  aria-label="Responding"
+                  className="flex items-center gap-1 py-1 text-zinc-400 dark:text-zinc-500"
+                >
+                  <span className="size-1.5 animate-pulse rounded-full bg-current" />
+                  <span
+                    className="size-1.5 animate-pulse rounded-full bg-current"
+                    style={{ animationDelay: "200ms" }}
+                  />
+                  <span
+                    className="size-1.5 animate-pulse rounded-full bg-current"
+                    style={{ animationDelay: "400ms" }}
+                  />
+                </div>
+              ) : null}
 
               <Sources sources={sources} />
             </>
@@ -520,6 +598,25 @@ function MessageViewInner({
                 Generation failed{msg.error ? `: ${msg.error}` : ""}
               </span>
             </span>
+            {msg.error && (
+              <details className="w-full text-[11px]" data-testid={`failed-details-${message.id}`}>
+                <summary className="cursor-pointer select-none text-red-600 underline-offset-2 hover:underline dark:text-red-400">
+                  Show full error
+                </summary>
+                <pre className="mt-1 max-h-32 overflow-auto rounded bg-red-100/60 p-2 font-mono text-[10px] break-all whitespace-pre-wrap dark:bg-red-950/40">
+                  {msg.error}
+                </pre>
+                <button
+                  type="button"
+                  className="mt-1 inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-0.5 text-[11px] font-medium hover:bg-red-100 dark:border-red-900/60 dark:hover:bg-red-950/40"
+                  data-testid={`failed-copy-${message.id}`}
+                  onClick={() => copyText(message.content ? `${msg.error}` : (msg.error ?? ""))}
+                >
+                  <Copy className="size-3" />
+                  Copy error
+                </button>
+              </details>
+            )}
             {onRegenerate && (
               <button
                 className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-700"
@@ -537,7 +634,7 @@ function MessageViewInner({
         <MessageHistoryDialog messageId={message.id} onOpenChange={setHistoryOpen} open={historyOpen} />
 
         <MessageActions
-          className={`opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
+          className={`opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100 ${
             isUser ? "flex-row-reverse" : ""
           }`}
         >

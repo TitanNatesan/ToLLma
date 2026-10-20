@@ -122,6 +122,7 @@ test("org scope unified pages and legacy redirects", async ({ page }) => {
   await expect(page.getByTestId("org-ops-tab-requests")).toBeVisible({ timeout: 20000 });
   await expect(page.getByTestId("org-ops-tab-invitations")).toBeVisible();
   await expect(page.getByTestId("org-ops-tab-keys")).toHaveCount(0);
+  await expect(page.getByTestId("org-ops-tab-requests")).toHaveAttribute("aria-selected", "true");
   // Chat entry links home and highlights on "/" in org scope.
   await page.goto("/");
   await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");

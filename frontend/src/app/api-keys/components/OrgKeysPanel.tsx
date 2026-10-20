@@ -4,10 +4,14 @@ import { useState } from "react";
 import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Badge, Button, DataTable, type DataTableColumn,
+  Button, DataTable, type DataTableColumn,
   EmptyState, ErrorState, LoadingState, SearchInput,
 } from "@/components/ui";
+import { OrgKeyDetailsPanel } from "./OrgKeyDetailsPanel";
+import { orgKeyStatus } from "./orgKeyStatus";
+import { ApiKeyStatusPill } from "./StatusPill";
 import { RawKeyDialog } from "./RawKeyDialog";
+import { fmtBudgetAmount } from "./BudgetBar";
 import { ConfirmDialog } from "@/app/organizations/components/Dialogs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useOrgKeys, useOrgModels, useOrgMutations, useOrgProviders } from "@/hooks/useOrgs";
@@ -44,8 +48,7 @@ function money(v: number | string | null | undefined): string {
   if (v === null || v === undefined || v === "") return "—";
   const n = typeof v === "string" ? Number(v) : v;
   if (!Number.isFinite(n)) return "—";
-  if (n !== 0 && Math.abs(n) < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+  return fmtBudgetAmount(n);
 }
 
 function assigneeEmail(k: OrgKey): string {
@@ -81,7 +84,7 @@ function budgetLabel(k: OrgKey): string {
   const raw = k.max_budget_usd ?? k.max_budget ?? k.budget_usd ?? k.budget ?? policy?.max_budget_usd;
   if (raw === null || raw === undefined || raw === "") return "Unlimited";
   const n = typeof raw === "string" ? Number(raw) : raw;
-  return Number.isFinite(n) ? `$${n}` : "Unlimited";
+  return Number.isFinite(n) ? fmtBudgetAmount(n) : "Unlimited";
 }
 
 function spendLabel(k: OrgKey): string {
@@ -95,11 +98,6 @@ function modelCount(k: OrgKey): number {
   if (Array.isArray(k.model_ids)) return k.model_ids.length;
   if (Array.isArray(k.models)) return k.models.length;
   return 0;
-}
-
-function keyStatus(k: OrgKey): string {
-  if (k.revoked) return "revoked";
-  return k.status ?? "active";
 }
 
 function extractRawKey(res: unknown): string | null {
@@ -124,6 +122,7 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [revoking, setRevoking] = useState<OrgKey | null>(null);
+  const [detailsKeyId, setDetailsKeyId] = useState<string | null>(null);
   const [created, setCreated] = useState<{ rawKey: string; name: string } | null>(null);
 
   const debounced = useDebouncedValue(search.trim(), 300);
@@ -179,13 +178,9 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
         );
       },
     },
-    { key: "team", header: "Team", render: (k) => (k.team_name ? <span className="truncate">{k.team_name}</span> : <span className="text-zinc-400">—</span>) },
     {
       key: "status", header: "Status",
-      render: (k) => {
-        const s = keyStatus(k);
-        return <Badge variant={s === "active" ? "success" : "outline"}>{s}</Badge>;
-      },
+      render: (k) => <ApiKeyStatusPill status={orgKeyStatus(k)} />,
     },
     { key: "models", header: "Models", align: "right", render: (k) => String(modelCount(k)) },
     { key: "budget", header: "Budget", align: "right", render: (k) => <span className="font-mono">{budgetLabel(k)}</span> },
@@ -195,7 +190,7 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
     {
       key: "actions", header: "Actions", align: "right",
       render: (k) => (!k.revoked && perms.canRevokeKeys ? (
-        <Button size="sm" variant="outline" onClick={() => setRevoking(k)}
+        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setRevoking(k); }}
           data-testid={`org-key-revoke-${k.id}`}>Revoke</Button>
       ) : null),
     },
@@ -238,15 +233,22 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
       )}
       {rows.length > 0 && (
         <>
-          <DataTable columns={columns} rows={visible} rowKey={(k) => k.id} testId="org-keys-table" />
-          {pageCount > 1 && (
-            <div className="flex items-center justify-end gap-2">
-              <Button size="sm" variant="outline" disabled={safePage === 0}
-                onClick={() => setPage(safePage - 1)}>Previous</Button>
-              <Button size="sm" variant="outline" disabled={safePage >= pageCount - 1}
-                onClick={() => setPage(safePage + 1)}>Next</Button>
-            </div>
-          )}
+          <DataTable columns={columns} rows={visible} rowKey={(k) => k.id} testId="org-keys-table"
+            rowTestId={(k) => `org-key-row-${k.id}`}
+            onRowClick={(k) => setDetailsKeyId(k.id)} />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-zinc-400" data-testid="org-keys-pages">
+              Page {safePage + 1} of {pageCount} · {visible.length} of {rows.length} keys
+            </span>
+            {pageCount > 1 && (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" disabled={safePage === 0}
+                  onClick={() => setPage(safePage - 1)}>Previous</Button>
+                <Button size="sm" variant="outline" disabled={safePage >= pageCount - 1}
+                  onClick={() => setPage(safePage + 1)}>Next</Button>
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -264,6 +266,12 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
         description="The key stops working immediately. Applications using it will be rejected. This cannot be undone."
         onClose={() => setRevoking(null)}
         onConfirm={() => revoke().then(() => setRevoking(null))} />
+
+      <OrgKeyDetailsPanel
+        orgKey={rows.find((k) => k.id === detailsKeyId) ?? null}
+        open={detailsKeyId !== null}
+        onClose={() => setDetailsKeyId(null)}
+      />
 
       {created && (
         <RawKeyDialog

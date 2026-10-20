@@ -1,19 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Check, Plus, UserRound } from "lucide-react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui";
 import { useAuthStore } from "@/store/auth";
 import { useOrgs } from "@/hooks/useOrgs";
 import { useOrgStore } from "@/store/org";
 
+/** Resolve where a workspace switch should land so the user stays on the
+ * most relevant page. Scope-shared pages (`/`, `/providers`, `/api-keys`,
+ * `/analytics`) render per active workspace, so the switch keeps the path
+ * (and query). Scope-bound pages map to their counterpart: org dashboards
+ * swap the org id (query like `?section=` preserved), conversations are
+ * personal-only so switching to an org starts at its chat root. Every other
+ * page (settings, admin, docs, notifications, invites) is scope-agnostic and
+ * keeps its path. Permission-denied landings are safe by design: each page
+ * renders its own permission-gated empty state. */
+export function destinationFor(
+  pathname: string,
+  target: { type: "personal" } | { type: "org"; orgId: string },
+): string {
+  const query = typeof window !== "undefined" ? window.location.search : "";
+  if (
+    pathname === "/" ||
+    pathname === "/providers" ||
+    pathname === "/api-keys" ||
+    pathname === "/analytics"
+  ) {
+    return `${pathname}${query}`;
+  }
+  if (/^\/organizations\/[^/]+/.test(pathname)) {
+    return target.type === "org" ? `/organizations/${target.orgId}${query}` : "/";
+  }
+  if (pathname.startsWith("/c/")) {
+    return target.type === "org" ? "/" : pathname;
+  }
+  return `${pathname}${query}`;
+}
+
 /** Shared workspace-menu body: identity header, Personal + org list with
  * active checks, inline New/Join organization actions. Rendered inside a
  * DropdownMenuContent by both the sidebar profile trigger and the collapsed
  * rail avatar. */
-export function WorkspaceMenuContent() {
-  const router = useRouter();
+export function WorkspaceMenuContent() {  const router = useRouter();
+  const pathname = usePathname();
   const orgs = useOrgs();
   const setContext = useOrgStore((s) => s.setContext);
   const active = useOrgStore((s) => s.context);
@@ -21,12 +52,12 @@ export function WorkspaceMenuContent() {
 
   function goPersonal() {
     setContext({ type: "personal" });
-    router.push("/");
+    router.push(destinationFor(pathname, { type: "personal" }));
   }
 
   function goOrg(id: string, name: string) {
     setContext({ type: "org", orgId: id, orgName: name });
-    router.push(`/organizations/${id}`);
+    router.push(destinationFor(pathname, { type: "org", orgId: id }));
   }
 
   return (
@@ -75,8 +106,8 @@ export function WorkspaceMenuContent() {
               {o.name.slice(0, 1).toUpperCase()}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-xs font-medium">{o.name}</span>
-              <span className="block truncate font-mono text-[10px] text-zinc-500">/{o.slug}{o.is_root ? " · root" : ""}</span>
+              <span className="block truncate text-xs font-medium" title={o.name}>{o.name}</span>
+              <span className="block truncate font-mono text-[10px] text-zinc-500" title={`/${o.slug}`}>/{o.slug}{o.is_root ? " · root" : ""}</span>
             </span>
             {isActive && <Check className="size-3.5 shrink-0 text-tollma-600 dark:text-tollma-400" aria-hidden />}
           </DropdownMenuItem>

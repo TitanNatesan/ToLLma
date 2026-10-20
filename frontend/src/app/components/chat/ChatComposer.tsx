@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
@@ -10,33 +10,20 @@ import { useOrgStore } from "@/store/org";
 import { useSettingsStore } from "@/store/settings";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useAllChatKeyModels, useChatKeys, type KeyModelsEntry } from "@/hooks/useChatKeys";
-import {
-  Button,
-  Badge,
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui";
+import { Button } from "@/components/ui";
+import { ModelSelectorMenu } from "./ModelSelectorMenu";
 import { cn } from "@/lib/utils";
 import { uploadChatAttachment } from "@/services/api";
 import type { AIModel, ChatKey } from "@/types";
 
 import {
   Bot,
-  Brain,
-  ChevronDown,
   CornerDownLeft,
-  Eye,
   Image as ImageIcon,
   KeyRound,
-  Mic,
   Plus,
-  Search,
   Square,
-  Wrench,
   X,
-  Zap,
 } from "lucide-react";
 import { AttachmentPicker } from "./AttachmentPicker";
 import { UploadPreview } from "./UploadPreview";
@@ -80,266 +67,6 @@ interface ChatComposerProps {
   continuityKind?: "image" | "video" | null;
   onSend: (payload: ChatSendPayload) => void;
   onStop: () => void;
-}
-
-const CAP_ICONS: Record<string, { icon: ComponentType<{ className?: string }>; label: string }> = {
-  supports_vision: { icon: Eye, label: "Vision" },
-  supports_reasoning: { icon: Brain, label: "Reasoning" },
-  supports_tool_calling: { icon: Wrench, label: "Tool calling" },
-  supports_streaming: { icon: Zap, label: "Streaming" },
-  supports_audio_input: { icon: Mic, label: "Audio input" },
-  supports_image_generation: { icon: ImageIcon, label: "Image generation" },
-};
-
-function UnifiedModelSelector({
-  keys,
-  keyEntries,
-  models,
-  open,
-  onOpenChange,
-  onSelect,
-  activeKeyName,
-  activeKeyScope,
-  activeKeyOrgId,
-  triggerPlaceholder,
-  emptyContent,
-}: {
-  /** Eligible keys to group by (order preserved). */
-  keys: ChatKey[];
-  /** Per-key servable models (same key ids). */
-  keyEntries: KeyModelsEntry[];
-  /** Full registry rows for display (capabilities/pricing). */
-  models: AIModel[];
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** Single pick sets key + provider + model together. */
-  onSelect: (keyId: string, model: AIModel) => void;
-  /** Key name for the trigger chip. */
-  activeKeyName?: string | null;
-  /** Key scope for the trigger badge + add-provider fallback routing. */
-  activeKeyScope?: "personal" | "organization" | null;
-  /** Org id for the add-provider fallback (org keys only). */
-  activeKeyOrgId?: string | null;
-  /** Placeholder when nothing is selected. */
-  triggerPlaceholder?: string;
-  /** Empty-state override. */
-  emptyContent?: ReactNode;
-}) {
-  const { modelId, setAddProviderOpen } = useChatStore();
-  const [search, setSearch] = useState("");
-  const router = useRouter();
-
-  const activeModel = models.find((m) => m.id === modelId);
-
-  const caps = activeModel
-    ? Object.entries(CAP_ICONS)
-        .filter(([k]) => (activeModel as unknown as Record<string, boolean>)[k])
-        .map(([, item]) => item)
-    : [];
-
-  const q = search.trim().toLowerCase();
-  const byId = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
-
-  const groups = keyEntries
-    .map((entry) => {
-      // Join key-eligible ids with full registry rows for display.
-      const seen = new Set<string>();
-      const kModels: AIModel[] = [];
-      for (const km of entry.models ?? []) {
-        if (seen.has(km.id)) continue;
-        seen.add(km.id);
-        const full = byId.get(km.id);
-        if (!full || !full.is_active) continue;
-        if (
-          q &&
-          !full.name.toLowerCase().includes(q) &&
-          !full.model_id.toLowerCase().includes(q) &&
-          !entry.key.name.toLowerCase().includes(q)
-        )
-          continue;
-        kModels.push(full);
-      }
-      return { key: entry.key, models: kModels };
-    })
-    .filter((g) => g.models.length > 0 || (q && g.key.name.toLowerCase().includes(q)));
-
-  const totalMatchingModels = groups.reduce((acc, g) => acc + g.models.length, 0);
-  // No servable models under any key (not just no search hit): point at key
-  // management instead of a dead end.
-  const registryEmpty = groups.every((g) => g.models.length === 0) && !q;
-
-  function handleAddProvider() {
-    // The wizard modal lives on the providers page: navigate there first,
-    // then open it (same pattern as the command palette's Add Provider).
-    // Org keys land on the org providers section instead — the personal
-    // wizard must never see org credentials.
-    onOpenChange(false);
-    if (activeKeyScope === "organization" && activeKeyOrgId) {
-      router.push(`/organizations/${activeKeyOrgId}?section=providers`);
-      return;
-    }
-    router.push("/providers");
-    setAddProviderOpen(true);
-  }
-
-  return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger asChild>
-        <button
-          className={cn(
-            "flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors",
-            "border border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50",
-            "dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:bg-zinc-800",
-            !activeModel && "text-zinc-400",
-          )}
-          data-testid="model-selector"
-          aria-label="Select model"
-        >
-          <Bot className="size-3 text-zinc-500" />
-          <span className="max-w-44 truncate font-medium">
-            {activeModel ? activeModel.name : (triggerPlaceholder ?? "Select model")}
-          </span>
-          {activeKeyName && (
-            <span className="hidden sm:inline-flex rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.2 text-[9px] text-zinc-500 dark:text-zinc-400 font-normal">
-              <KeyRound className="mr-0.5 size-2.5 self-center" />
-              {activeKeyName}
-            </span>
-          )}
-          {activeKeyScope && (
-            <Badge
-              variant="outline"
-              className="hidden text-[9px] px-1 py-0 font-normal sm:inline-flex"
-              data-testid="model-selector-key-scope"
-            >
-              {activeKeyScope === "organization" ? "Org" : "Personal"}
-            </Badge>
-          )}
-          {caps.length > 0 && (
-            <span className="hidden items-center gap-1 md:flex">
-              {caps.slice(0, 3).map(({ icon: Icon, label }) => (
-                <Icon key={label} className="size-2.5 text-zinc-400" />
-              ))}
-            </span>
-          )}
-          <ChevronDown className="size-3 text-zinc-400" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-80 p-0 overflow-hidden">
-        {/* Search input */}
-        <div className="border-b border-zinc-200 p-2 dark:border-zinc-800">
-          <div className="relative flex items-center">
-            <Search className="absolute left-2 size-3.5 text-zinc-400 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search models or keys…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-7 w-full rounded border border-zinc-200 bg-transparent pl-7 pr-2 text-xs outline-none focus:border-zinc-400 dark:border-zinc-700 dark:focus:border-zinc-500"
-              autoFocus
-            />
-          </div>
-        </div>
-
-        {/* Scrollable list with min-height and max-height */}
-        <div className="min-h-[220px] max-h-[380px] overflow-y-auto p-1.5">
-          {totalMatchingModels === 0 ? (emptyContent ?? (
-            <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-zinc-400">
-              <Bot className="size-5 opacity-40" />
-              {q ? (
-                <>
-                  <span>No models match &ldquo;{search.trim()}&rdquo;</span>
-                  <button
-                    type="button"
-                    onClick={() => setSearch("")}
-                    className="font-medium text-tollma-600 underline underline-offset-2 hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300"
-                  >
-                    Clear search
-                  </button>
-                </>
-              ) : registryEmpty ? (
-                <>
-                  <span className="font-medium text-zinc-500 dark:text-zinc-300">No models available</span>
-                  <span className="text-[11px]">
-                    Add a provider to register your first model.
-                  </span>
-                  <Button
-                    size="sm"
-                    onClick={handleAddProvider}
-                    data-testid="model-selector-add-provider"
-                    className="mt-1 gap-1 text-[11px]"
-                  >
-                    <Plus className="size-3.5" />
-                    Add provider
-                  </Button>
-                </>
-              ) : (
-                <span>No models found</span>
-              )}
-            </div>
-          )) : (
-            groups.map(({ key, models: kModels }) => (
-              <div key={key.id} className="mb-2 last:mb-0">
-                {/* Key group header */}
-                <div className="sticky top-0 z-10 flex items-center justify-between rounded bg-zinc-100/95 px-2 py-1 text-[11px] font-semibold text-zinc-600 backdrop-blur-sm dark:bg-zinc-900/95 dark:text-zinc-400">
-                  <span className="flex items-center gap-1.5 truncate" title={key.scope === "organization" && key.org_name ? `${key.name} · ${key.org_name}` : key.name}>
-                    <KeyRound className="size-3 text-zinc-400" />
-                    <span className="truncate">{key.name}</span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-1">
-                    <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal">
-                      {key.scope === "organization" ? "Org" : "Personal"}
-                    </Badge>
-                    <span className="text-[10px] font-normal text-zinc-400">
-                      {kModels.length} model{kModels.length === 1 ? "" : "s"}
-                    </span>
-                  </span>
-                </div>
-
-                {/* Models servable under this key */}
-                <div className="mt-0.5 space-y-0.5">
-                  {kModels.map((m) => {
-                    const isSelected = modelId === m.id;
-                    const mCaps = Object.entries(CAP_ICONS)
-                      .filter(([k]) => (m as unknown as Record<string, boolean>)[k])
-                      .map(([, item]) => item);
-
-                    return (
-                      <DropdownMenuItem
-                        key={`${key.id}:${m.id}`}
-                        onClick={() => onSelect(key.id, m)}
-                        data-testid={`model-option-${m.id}`}
-                        className={cn(
-                          "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-xs transition-colors",
-                          isSelected
-                            ? "bg-tollma-100 font-medium text-tollma-900 dark:bg-tollma-900 dark:text-tollma-100"
-                            : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
-                        )}
-                      >
-                        <div className="flex flex-1 flex-col gap-0.5 overflow-hidden pr-2">
-                          <span className="truncate">{m.name}</span>
-                          <span className="text-[10px] text-zinc-400">
-                            {m.context_window ? `ctx ${m.context_window.toLocaleString()}` : ""}
-                            {m.input_price !== "0.000000" ? ` · $${m.input_price}/1M in` : ""}
-                          </span>
-                        </div>
-                        <span className="flex shrink-0 items-center gap-1">
-                          {mCaps.slice(0, 3).map(({ icon: Icon, label }) => (
-                            <span key={label} title={label} className="inline-flex">
-                              <Icon className="size-3 text-zinc-400" />
-                            </span>
-                          ))}
-                        </span>
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
 }
 
 interface Rejection {
@@ -438,7 +165,11 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
   const defaultThinkingLevel = useSettingsStore((s) => s.defaultThinkingLevel);
 
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
-  const [reasoningLevel, setReasoningLevel] = useState<string | null>(null);
+  // Reasoning level lives in persisted store state keyed by model id, so
+  // switching models restores each model's last level. Null = no override.
+  const thinkingLevels = useChatStore((st) => st.thinkingLevels);
+  const setThinkingLevel = useChatStore((st) => st.setThinkingLevel);
+  const reasoningLevel = modelId ? (thinkingLevels[modelId] ?? null) : null;
   // Display + send value: stored choice kept when the model supports it,
   // else the provided default or empty. Null-safe: unknown models resolve
   // to null and hide the control (see reasoningControl).
@@ -551,13 +282,13 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
     void qc.invalidateQueries({ queryKey: ["chat-keys"] });
   }, [orgKey, qc]);
 
-  // Model change: reset reasoning to the user's preferred level when the new
-  // model offers it, and drop attachments its capabilities no longer support.
+  // Model change: drop attachments the new model's capabilities no longer
+  // support. The reasoning level needs no reset — it is derived per model at
+  // render (stored level, else the global default), so it follows the switch.
   const prevModelId = useRef(modelId);
   useEffect(() => {
     if (prevModelId.current === modelId) return;
     prevModelId.current = modelId;
-    setReasoningLevel((prev) => resolveReasoningValue(caps, prev, defaultThinkingLevel));
     setRejection(null);
     setAttachments((prev) => {
       const kept = prev.filter((a) => kinds.includes(a.kind));
@@ -606,15 +337,15 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
     }
     function cycleThinking() {
       const control = caps.reasoningControl;
-      if (!control) return;
+      if (!control || !modelId) return;
       if (control.kind === "toggle") {
-        setReasoningLevel((prev) => (prev === control.onValue ? null : control.onValue));
+        setThinkingLevel(modelId, reasoningLevel === control.onValue ? null : control.onValue);
         return;
       }
       if (control.kind !== "effort") return;
       const current = reasoningLevel ?? resolveReasoningValue(caps, reasoningLevel, defaultThinkingLevel);
       const next = cycleReasoningLevel(control.levels, current);
-      if (next) setReasoningLevel(next);
+      if (next) setThinkingLevel(modelId, next);
     }
     window.addEventListener("tollma:focus-input", focusInput);
     window.addEventListener("tollma:open-model-selector", openSelector);
@@ -626,7 +357,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
       window.removeEventListener("tollma:switch-model", switchModel);
       window.removeEventListener("tollma:cycle-thinking", cycleThinking);
     };
-  }, [caps, reasoningLevel, defaultThinkingLevel, keyEntries, scopedModels]);
+  }, [caps, reasoningLevel, defaultThinkingLevel, keyEntries, scopedModels, modelId, setThinkingLevel]);
 
   // Revoke image object URLs on unmount.
   useEffect(() => {
@@ -1011,6 +742,11 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
           handleSend();
         }}
         status={streaming ? "streaming" : "ready"}
+        // Chat-only focus treatment (scoped here — never in globals.css or
+        // the shared primitive): text entry is excluded from the global
+        // :focus-visible ring, so a subtle container border shift is the
+        // only visible focus indicator.
+        className="[&:has(textarea:focus-visible)]:border-zinc-400 dark:[&:has(textarea:focus-visible)]:border-zinc-500"
       >
         {/* Image-continuity hint: the backend edits the last image by default,
             so this is informational only — no payload change, no re-upload. */}
@@ -1080,9 +816,9 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
         </PromptInputBody>
 
         {/* Toolbar: message-creation controls only */}
-        <PromptInputFooter className="pb-2">
+        <PromptInputFooter className="flex-wrap pb-2">
           <PromptInputTools>
-            <UnifiedModelSelector
+            <ModelSelectorMenu
               keys={chatKeys}
               keyEntries={keyEntries}
               models={scopedModels}
@@ -1101,7 +837,9 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
               <ReasoningControl
                 control={caps.reasoningControl}
                 value={resolvedReasoning}
-                onChange={setReasoningLevel}
+                onChange={(level) => {
+                  if (modelId) setThinkingLevel(modelId, level);
+                }}
               />
             ) : null}
 
@@ -1126,7 +864,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
             {streaming ? (
               <>
                 <Square className="size-3 fill-current" />
-                <span>Stop Generating</span>
+                <span className="hidden sm:inline">Stop Generating</span>
               </>
             ) : (
               <>

@@ -29,6 +29,8 @@ interface ChatState {
   sidebarWidth: number;
   rightSidebarWidth: number;
   draft: string;
+  /** Reasoning level per model id — switching models restores each model's last level. */
+  thinkingLevels: Record<string, string>;
   optimisticMessages: OptimisticMessage[];
   /** Backend-owned generation the UI is currently subscribed to (if any). */
   activeGeneration: ActiveGenerationRef | null;
@@ -50,6 +52,7 @@ interface ChatState {
   setSidebarWidth: (w: number) => void;
   setRightSidebarWidth: (w: number) => void;
   setDraft: (text: string) => void;
+  setThinkingLevel: (modelId: string, level: string | null) => void;
   addOptimistic: (msg: OptimisticMessage) => void;
   updateOptimisticStreaming: (id: string, delta: string) => void;
   setOptimisticContent: (id: string, content: string) => void;
@@ -78,6 +81,7 @@ export const useChatStore = create<ChatState>()(
       sidebarWidth: 260,
       rightSidebarWidth: 380,
       draft: "",
+      thinkingLevels: {},
       optimisticMessages: [],
       activeGeneration: null,
       addProviderOpen: false,
@@ -98,8 +102,23 @@ export const useChatStore = create<ChatState>()(
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
       setRightSidebarWidth: (rightSidebarWidth) => set({ rightSidebarWidth }),
       setDraft: (draft) => set({ draft }),
+      setThinkingLevel: (modelId, level) =>
+        set((prev) => {
+          if (level === null) {
+            if (!(modelId in prev.thinkingLevels)) return prev;
+            const next = { ...prev.thinkingLevels };
+            delete next[modelId];
+            return { thinkingLevels: next };
+          }
+          if (prev.thinkingLevels[modelId] === level) return prev;
+          return { thinkingLevels: { ...prev.thinkingLevels, [modelId]: level } };
+        }),
       addOptimistic: (msg) =>
-        set((s) => ({ optimisticMessages: [...s.optimisticMessages, msg] })),
+        set((s) =>
+          s.optimisticMessages.some((m) => m.id === msg.id)
+            ? s
+            : { optimisticMessages: [...s.optimisticMessages, msg] },
+        ),
       updateOptimisticStreaming: (id, delta) =>
         set((s) => ({
           optimisticMessages: s.optimisticMessages.map((m) =>
@@ -136,6 +155,7 @@ export const useChatStore = create<ChatState>()(
         sidebarWidth: s.sidebarWidth,
         rightSidebarWidth: s.rightSidebarWidth,
         draft: s.draft,
+        thinkingLevels: s.thinkingLevels,
         selectedProviderId: s.selectedProviderId,
       }),
     },

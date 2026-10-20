@@ -35,6 +35,7 @@ class OrgKeyRead(BaseModel):
     assignee_user_id: uuid.UUID
     assignee_email: str | None = None
     issued_by: uuid.UUID | None = None
+    issued_by_email: str | None = None
     name: str
     description: str | None = None
     key_prefix: str

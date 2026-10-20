@@ -47,11 +47,11 @@ export function RangeSelector({
   const customActive = value.preset === "custom" && value.quick !== "month";
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
       <div
         role="group"
         aria-label="Analytics range"
-        className="flex flex-wrap items-center rounded-lg border border-zinc-200 bg-zinc-50/60 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+        className="flex shrink-0 flex-nowrap items-center rounded-lg border border-zinc-200 bg-zinc-50/60 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
       >
         {PRESETS.map((preset) => (
           <button

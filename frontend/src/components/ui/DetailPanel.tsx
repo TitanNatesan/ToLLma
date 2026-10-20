@@ -167,7 +167,7 @@ export function DetailPanel({
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "100%", opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            style={{ width, zIndex }}
+            style={{ width: typeof width === "number" ? `min(${width}px, 100vw)` : width, zIndex }}
             role="dialog"
             aria-modal="true"
             aria-label={label}

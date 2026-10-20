@@ -41,7 +41,7 @@ export function PermissionSetPicker({ orgId, sets, selected, onChange, myPermiss
       <div className="flex gap-1 rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800" role="tablist"
         aria-label="Permission set source">
         {(["existing", "custom", "derive"] as const).map((t) => (
-          <button key={t} type="button" role="tab" aria-selected={tab === t}
+          <button key={t} type="button" role="tab" id={`${testIdPrefix}-picker-tabbtn-${t}`} aria-selected={tab === t} aria-controls={`${testIdPrefix}-picker-panel-${t}`}
             onClick={() => setTab(t)} data-testid={`${testIdPrefix}-picker-tab-${t}`}
             className={`flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors ${tab === t
               ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
@@ -52,7 +52,7 @@ export function PermissionSetPicker({ orgId, sets, selected, onChange, myPermiss
       </div>
 
       {tab === "existing" && (
-        <div className="mt-2 max-h-48 space-y-1.5 overflow-y-auto rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
+        <div role="tabpanel" id={`${testIdPrefix}-picker-panel-existing`} aria-labelledby={`${testIdPrefix}-picker-tabbtn-existing`} className="mt-2 max-h-48 space-y-1.5 overflow-y-auto rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           {delegableSets.map((s) => (
             <label key={s.id} data-testid={`${testIdPrefix}-picker-opt-${s.id}`}
               className="flex cursor-pointer items-center gap-2 text-xs">
