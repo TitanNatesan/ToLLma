@@ -3898,3 +3898,33 @@ Chat usage invisible in key analytics; listing said Inactive while detail said E
 - Live browser (stub LLM, no paid calls): personal chat → Enabled + last-used + REQUESTS 1/TOKENS 14/charts; org chat → org-key stamped, personal stays 1 (isolation); org table Enabled + date; API returns `issued_by_email`.
 - Full backend suite: **787 passed**. Frontend: tsc/lint clean, vitest 152/152, e2e list green.
 - Residue (local dev only, tagged): `auditkeys-*@test.tollma.ai`, KeyAuditOrg, stub provider/models.
+
+---
+
+## 2026-10-20 — Model selector highlights only the selected key's row
+
+### Requirement
+Same model under two keys highlighted simultaneously (modelId-only match).
+
+### Fix (frontend only)
+`ModelSelectorMenu` takes new optional `activeKeyId` (wired from `useChatKeyStore().keyId` in `ChatComposer`); row highlight is now `key.id === activeKeyId && modelId === m.id`. Null key → nothing highlighted (a pick always sets both together).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152.
+
+---
+
+## 2026-10-20 — Duplicate model rows crash TopModelsChart (union fix)
+
+### Requirement
+`Encountered two children with the same key, 'gemini-2.5-flash'` in key analytics Top Models chart.
+
+### Root cause
+Cross-ledger same-model rows: gateway ledger stores adapter family strings (`gemini`), chat ledger joins registry display names (`Gemini AI`) — verified byte-identical model strings with different providers via live DB (Ney Kwy key: 3+6 gateway rows, 1 chat row). The rich union appended without folding, so two `gemini-2.5-flash` bars rendered with identical React keys. (The other analytics endpoint already merged by name; the rich `model_rows` mapped 1:1.)
+
+### Fix (backend only, `services/analytics/models.py`)
+`model_rows` folds by model name (sums requests/success/cost/tokens/latency; first-seen provider label; avg/success recomputed post-fold). Provider-level folding untouched (no attribution change). New `tests/test_analytics_models.py` regression test.
+
+### Verification
+- Live-shape probe in container: merged 4/400/provider-gemini + distinct row intact.
+- Suites: analytics_api + analytics + consistency + keys = 79 passed; new test 1 passed.

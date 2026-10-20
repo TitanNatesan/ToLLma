@@ -825,6 +825,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
               open={modelOpen}
               onOpenChange={setModelOpen}
               onSelect={pickKeyModel}
+              activeKeyId={keyId}
               activeKeyName={activeKey?.name ?? null}
               activeKeyScope={activeKey?.scope ?? null}
               activeKeyOrgId={activeKey?.org_id ?? null}

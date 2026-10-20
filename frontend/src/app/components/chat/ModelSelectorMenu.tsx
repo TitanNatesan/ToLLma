@@ -43,6 +43,9 @@ interface ModelSelectorMenuProps {
   onSelect: (keyId: string, model: AIModel) => void;
   /** Key name for the trigger chip. */
   activeKeyName?: string | null;
+  /** Currently selected key id — selection highlights only the row whose
+      key AND model both match (same model under two keys is common). */
+  activeKeyId?: string | null;
   /** Key scope for the trigger badge + add-provider fallback routing. */
   activeKeyScope?: "personal" | "organization" | null;
   /** Org id for the add-provider fallback (org keys only). */
@@ -76,6 +79,7 @@ export function ModelSelectorMenu({
   open,
   onOpenChange,
   onSelect,
+  activeKeyId,
   activeKeyName,
   activeKeyScope,
   activeKeyOrgId,
@@ -393,7 +397,7 @@ export function ModelSelectorMenu({
                   {/* Models servable under this key */}
                   <div className="mt-0.5 space-y-0.5">
                     {kModels.map((m) => {
-                      const isSelected = modelId === m.id;
+                      const isSelected = activeKeyId != null && key.id === activeKeyId && modelId === m.id;
                       const mCaps = Object.entries(CAP_ICONS)
                         .filter(([k]) => (m as unknown as Record<string, boolean>)[k])
                         .map(([, item]) => item);

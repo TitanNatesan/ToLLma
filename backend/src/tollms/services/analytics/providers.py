@@ -182,6 +182,9 @@ def dimension_rows(
             endpoints.append(shaped)
     if key_id is not None:
         # Disjoint writers: appended chat rows never double-count gateway rows.
+        # Same-model rows from both ledgers are folded downstream in
+        # `models_engine.model_rows` (per-model view); provider folding keeps
+        # each ledger's own provider labels untouched.
         chat_dimensions = _chat_dimension_rows(db, window, key_id=key_id)
         dimensions.extend(chat_dimensions)
         chat_requests = sum(item["requests"] for item in chat_dimensions)
