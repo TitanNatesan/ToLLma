@@ -422,6 +422,11 @@ def test_google_oauth_ip_mismatch_forbidden(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _hardening_config(monkeypatch)
+    # TestClient peer is "testclient" (unparseable -> never a trusted proxy),
+    # so gateway_client_ip would ignore XFF without this patch. Simulate a
+    # trusted-proxy deployment (production topology) where OAuth IP-mismatch
+    # protection operates. monkeypatch restores _peer_trusted after the test.
+    monkeypatch.setattr("tollms.core.sessions._peer_trusted", lambda peer: True)
 
     async def _tokens(code: str) -> dict:
         return {"access_token": "google-at"}

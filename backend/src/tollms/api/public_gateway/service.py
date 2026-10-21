@@ -10,7 +10,6 @@ routes through the shared provider adapters, and lands in `api_request_logs`
 import asyncio
 import base64
 import inspect
-import ipaddress
 import json
 import logging
 import time
@@ -36,7 +35,9 @@ from tollms.core.exceptions import (
     ValidationError,
     classify_provider_failure,
 )
-from tollms.core.security import client_meta as _request_client_meta
+from tollms.core.sessions import client_meta as _request_client_meta
+from tollms.core.sessions import gateway_client_ip
+from tollms.services.gateway import key_policy
 from tollms.api.providers.service import decrypted_credentials, request_revalidation
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
@@ -57,7 +58,8 @@ from tollms.services.gateway.costing import (
     prices_for_model,
 )
 from tollms.services.gateway.factory import build_adapter
-from tollms.services.gateway.limits import check_request, record_usage
+from tollms.services.gateway.limits import LimitsDecision, check_request, record_usage
+from tollms.services.gateway import key_policy as key_policy_engine
 from tollms.services.gateway.model_resolution import ResolvedModel, resolve_model
 from tollms.services.gateway.unified import UnifiedRequest
 from tollms.services.model_repository.lookup import find_for_model
@@ -97,6 +99,11 @@ def client_meta(request: Request) -> ClientMeta:
         ip_address=info.get("ip") or None,
         user_agent=info.get("user_agent") or None,
     )
+
+
+def policy_client_ip(request: Request) -> str | None:
+    """Policy-grade client IP for key checks (XFF only behind a trusted peer)."""
+    return gateway_client_ip(request) or None
 
 
 # --- outcomes returned to the router -----------------------------------------
@@ -178,30 +185,9 @@ def _denied_result(decision) -> DeniedResult:
 # --- auth dependency ----------------------------------------------------------
 
 
-def _match_network(address: ipaddress.IPv4Address | ipaddress.IPv6Address, cidr: str) -> bool:
-    try:
-        network = ipaddress.ip_network(cidr, strict=False)
-    except ValueError:
-        return False
-    try:
-        return address in network
-    except TypeError:
-        return False
-
-
 def _ip_allowed(ctx: KeyContext, ip_text: str | None) -> bool:
-    """Deny rules win; an empty allow list allows every address."""
-    if not ip_text:
-        return True
-    try:
-        address = ipaddress.ip_address(ip_text)
-    except ValueError:
-        return True  # unparseable client address cannot be evaluated
-    if any(_match_network(address, rule) for rule in ctx.deny_rules):
-        return False
-    if not ctx.allow_rules:
-        return True
-    return any(_match_network(address, rule) for rule in ctx.allow_rules)
+    """Shared deny-wins IP rules (see `services.gateway.key_policy`)."""
+    return key_policy.ip_allowed(ctx, ip_text)
 
 
 def _deny_event(
@@ -259,7 +245,7 @@ def api_key_required(request: Request, db: Session = Depends(get_db)) -> KeyCont
     if ctx.is_expired():
         _deny_event(reason="expired", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("API key is expired")
-    if not _ip_allowed(ctx, _request_client_meta(request).get("ip")):
+    if not _ip_allowed(ctx, policy_client_ip(request)):
         _deny_event(reason="ip", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("request blocked by API key IP rules")
     return ctx
@@ -391,24 +377,8 @@ def _log_request(
 
 
 def _org_cap_usd(db: Session, ctx: KeyContext) -> Decimal | None:
-    """Live org spend cap for keyed requests. None = personal key or uncapped.
-
-    Read per request (indexed PK lookup): caps must take effect immediately
-    after PATCH without waiting on a cache TTL.
-    """
-    org_id = getattr(ctx, "org_id", None)
-    if org_id is None:
-        return None
-    try:
-        from tollms.models.organization import Organization
-
-        org = db.get(Organization, org_id)
-        if org is None or org.is_deleted:
-            return None
-        return org.max_spend
-    except Exception:
-        logger.warning("public gateway: org cap lookup failed", exc_info=True)
-        return None
+    """Live org spend cap (shared helper; None = personal key or uncapped)."""
+    return key_policy.org_cap_usd(db, ctx)
 
 
 def _record_usage(
@@ -566,19 +536,44 @@ def _prepare(
     if unified.endpoint in CHAT_ENDPOINTS:
         _require_chat_capabilities(model, unified)
     org_cap = _org_cap_usd(db, ctx)
+    estimated_cost = _estimated_cost(db, provider, model, unified)
+    # Same stored-spend truth as the in-app gate: deny when Postgres already
+    # covers a cap even if the Valkey counters are cold (flush/restart) or
+    # behind. Identical rule on both planes — no bypass by switching surface.
+    pg_deny = key_policy_engine.postgres_deny(db, ctx, estimated_cost)
+    if pg_deny is not None:
+        reason, retry_after = pg_deny
+        # Same observability as a Valkey denial (`check_request` counts via
+        # `_count_denied`; this path never reaches it, so count here — the
+        # `_LimitsDenied` handler below emits the event but does not count).
+        incr_counter("gateway.denied", {"reason": reason})
+        raise _LimitsDenied(
+            _denied_result(LimitsDecision(allowed=False, reason=reason, status_code=403, retry_after=retry_after))
+        )
     decision = check_request(
         ctx,
         provider_id=provider.id,
         model_id=model.id,
         estimated_tokens=_prompt_tokens(unified),
-        estimated_cost=_estimated_cost(db, provider, model, unified),
+        estimated_cost=estimated_cost,
         request_id=meta.request_id,
         org_max_spend_usd=org_cap,
     )
     if not decision.allowed:
         raise _LimitsDenied(_denied_result(decision))
-    credentials = decrypted_credentials(provider)
-    adapter = build_adapter(provider, model, credentials)
+    try:
+        credentials = decrypted_credentials(provider)
+        adapter = build_adapter(provider, model, credentials)
+    except Exception:
+        # Reservation is stashed but no provider call happens — refund so a
+        # credential/adapter failure leaves no phantom spend. Deny paths above
+        # roll back inside `check_request` and never reach here.
+        _record_usage(
+            ctx, provider, model,
+            tokens=0, cost=Decimal(0), request_id=meta.request_id,
+            org_cap=org_cap,
+        )
+        raise
     adapter.max_output_tokens = model.max_output_tokens
     messages = unified.as_chat_messages()
     prepared = _Prepared(

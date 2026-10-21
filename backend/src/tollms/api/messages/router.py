@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from tollms.api.conversations.schemas import MessageRead
@@ -18,6 +18,7 @@ from tollms.api.messages.schemas import (
 )
 from tollms.core.deps import get_db
 from tollms.core.security import require_active_user
+from tollms.core.sessions import gateway_client_ip
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/messages", tags=["messages"])
@@ -36,6 +37,7 @@ def history(
 async def edit(
     message_id: uuid.UUID,
     data: MessageEditRequest,
+    request: Request,
     # Session-user key serving the auto-regeneration (same gate as chat send).
     # Query param: the edit body schema carries only the new content.
     key_id: uuid.UUID | None = None,
@@ -53,7 +55,8 @@ async def edit(
     )
     if target is not None:
         await service.regenerate_message(
-            db, target.id, user.id, key_id=key_id, session_factory=None, session_id=None
+            db, target.id, user.id, key_id=key_id, session_factory=None, session_id=None,
+            client_ip=gateway_client_ip(request) if request is not None else None,
         )
         response.regeneration_started = True
         response.regenerating_message_id = target.id
@@ -73,6 +76,7 @@ def generations(
 @router.post("/{message_id}/regenerate", response_model=GenerationStarted)
 async def regenerate(
     message_id: uuid.UUID,
+    request: Request,
     data: RegenerateRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(require_active_user),
@@ -86,6 +90,7 @@ async def regenerate(
         model_id=payload.model_id,
         key_id=payload.key_id,
         reasoning_level=payload.reasoning_level,
+        client_ip=gateway_client_ip(request) if request is not None else None,
     )
 
 

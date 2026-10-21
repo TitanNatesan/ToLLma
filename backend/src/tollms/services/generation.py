@@ -28,8 +28,10 @@ from sqlalchemy import select
 from tollms.db.session import SessionLocal
 from tollms.models.conversation import Conversation
 from tollms.models.message import TERMINAL_STATUSES, Message, MessageStatus
+from tollms.services.api_keys.keys import KeyContext
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import get_manager
+from tollms.services.gateway import key_policy
 from tollms.services.gateway.adapters.base import (
     THINK_CLOSE,
     THINK_OPEN,
@@ -83,6 +85,12 @@ class GenerationSpec:
     org_id: uuid.UUID | None = None
     # Session-user key serving a keyed in-app generation (None = legacy keyless).
     api_key_id: uuid.UUID | None = None
+    # Key-policy reservation (reserved pre-spawn by the gateway service, None =
+    # legacy keyless). The driver reconciles Valkey with actual usage; the org
+    # cap rides as str (plain values cross the request/driver boundary).
+    key_ctx: KeyContext | None = None
+    key_request_id: str | None = None
+    key_org_cap: str | None = None
     error_code: str | None = None
     # Time to first streamed token (ms), measured by the driver.
     ttfb_ms: float | None = None
@@ -404,6 +412,7 @@ class GenerationManager:
         tokens, breakdown, estimated = self._price(db, spec, result, partial=False)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
         self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None, estimated)
+        _reconcile_key_policy(spec, completed=True, result=result, tokens=tokens, breakdown=breakdown)
         attachments = self._store_inline_images(db, spec, result)
         await self._cache_write_state(spec, MessageStatus.COMPLETED.value, result.text)
         self._invalidate_usage(spec)
@@ -419,6 +428,7 @@ class GenerationManager:
         tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
         self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, status, error, estimated)
+        _reconcile_key_policy(spec, completed=False, result=result, tokens=tokens, breakdown=breakdown)
         await self._cache_write_state(spec, status.value, result.text)
         self._invalidate_usage(spec)
         return _terminal_payload(spec, result, tokens, breakdown, estimated, status, latency_ms, error)
@@ -429,6 +439,7 @@ class GenerationManager:
         tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
         self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error, estimated)
+        _reconcile_key_policy(spec, completed=False, result=result, tokens=tokens, breakdown=breakdown)
         await self._cache_write_state(spec, MessageStatus.FAILED.value, result.text)
         self._invalidate_usage(spec)
         return _terminal_payload(spec, result, tokens, breakdown, estimated, MessageStatus.FAILED, latency_ms, error)
@@ -610,6 +621,44 @@ class GenerationManager:
                 cache_invalidate_sync(cache_keys.analytics_pattern(spec.user_id))
         except Exception:
             logger.warning("generation %s: usage invalidation failed", spec.generation_id, exc_info=True)
+
+
+def _reconcile_key_policy(spec: GenerationSpec, *, completed: bool, result: ChatResult, tokens, breakdown) -> None:
+    """Swap the pre-spawn Valkey reservation for actual usage. Never raises.
+
+    Completed token runs bill actuals (provider-reported or the text estimate,
+    same as the public gateway). Media runs bill the adapter's actual cost (or
+    the rate-card estimate) with zero tokens. Cancelled/failed runs release the
+    reservation (0/0) unless the provider already reported usage — estimates
+    are never fabricated for runs that produced nothing billable.
+    """
+    if spec.key_ctx is None or spec.key_request_id is None:
+        return
+    try:
+        media = spec.media_cost is not None or getattr(
+            getattr(spec, "adapter", None), "final_cost", None
+        ) is not None
+        if media:
+            actual_tokens = 0
+            actual_cost = breakdown.total_cost if completed else Decimal(0)
+        elif completed or result.prompt_tokens or result.completion_tokens or result.total_tokens:
+            actual_tokens = tokens.prompt + tokens.completion
+            actual_cost = breakdown.total_cost
+        else:
+            actual_tokens, actual_cost = 0, Decimal(0)
+        key_policy.reconcile_chat_usage(
+            spec.key_ctx,
+            provider_id=spec.provider_id,
+            model_id=spec.model_id,
+            tokens=actual_tokens,
+            cost=actual_cost,
+            request_id=spec.key_request_id,
+            org_cap=Decimal(spec.key_org_cap) if spec.key_org_cap else None,
+        )
+    except Exception:
+        logger.warning(
+            "generation %s: key usage reconciliation failed", spec.generation_id, exc_info=True
+        )
 
 
 class _GenerationCancelled(Exception):

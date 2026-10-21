@@ -741,4 +741,13 @@ export interface ChatKey {
 export type ChatKeyModel = AIModel;
 
 /** Gateway key denials the composer must recover from (refresh + reselect). */
-export type ChatKeyProblem = "key-required" | "key-invalid" | "model-not-allowed";
+/** Gateway key denials the composer must recover from (refresh + reselect).
+ *  Disabled/expired keys stay a 404 oracle (`key-invalid`); budget, rate,
+ *  and IP denials arrive as 403/429 with reason strings. */
+export type ChatKeyProblem =
+  | "key-required"
+  | "key-invalid"
+  | "model-not-allowed"
+  | "budget-exceeded"
+  | "rate-limited"
+  | "ip-blocked";

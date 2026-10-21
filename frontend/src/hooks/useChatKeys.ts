@@ -5,9 +5,16 @@ import { listChatKeys, listChatKeyModels } from "@/services/api";
 import type { ChatKey, ChatKeyModel } from "@/types";
 import { useMemo } from "react";
 
-/** Eligible keys for the session user (personal live + assigned org keys). */
+/** Eligible keys for the session user (personal live + assigned org keys).
+ *  Refetches on window focus (same pattern as the key console): a denial or
+ *  limit change fixed elsewhere is visible as soon as the user returns. */
 export function useChatKeys() {
-  return useQuery({ queryKey: ["chat-keys"], queryFn: listChatKeys, staleTime: 30_000 });
+  return useQuery({
+    queryKey: ["chat-keys"],
+    queryFn: listChatKeys,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
 }
 
 export interface KeyModelsEntry {
@@ -30,6 +37,7 @@ export function useAllChatKeyModels(keys: ChatKey[] | undefined) {
       queryKey: ["chat-key-models", k.id],
       queryFn: () => listChatKeyModels(k.id),
       staleTime: 30_000,
+      refetchOnWindowFocus: true,
     })),
   });
   return useMemo(() => {

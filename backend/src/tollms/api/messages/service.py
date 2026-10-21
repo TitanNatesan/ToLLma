@@ -214,6 +214,7 @@ async def regenerate_message(
     transport=None,
     session_factory=None,
     session_id: str | None = None,
+    client_ip: str | None = None,
 ):
     # Fail-closed ownership check + drop stale aggregates up front; the
     # generation engine re-invalidates on completion for the final totals.
@@ -231,6 +232,7 @@ async def regenerate_message(
         transport=transport,
         session_factory=session_factory,
         session_id=session_id,
+        client_ip=client_ip,
     )
 
 

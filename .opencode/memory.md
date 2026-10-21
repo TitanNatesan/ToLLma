@@ -3928,3 +3928,32 @@ Cross-ledger same-model rows: gateway ledger stores adapter family strings (`gem
 ### Verification
 - Live-shape probe in container: merged 4/400/provider-gemini + distinct row intact.
 - Suites: analytics_api + analytics + consistency + keys = 79 passed; new test 1 passed.
+
+---
+
+## 2026-10-21 — Unified API-key enforcement (chat + external share one policy gate)
+
+### Requirement
+Budget-exceeded keys still generated chat responses; key restrictions (budget/rate/IP/model) enforced on external `/v1/*` only, bypassed by in-app chat. Full policy matrix + transparent OpenAI/Anthropic compat + usage integrity + perf measurement.
+
+### Root causes (all evidence-verified)
+- In-app chat (`api/gateway/service.run_chat/_setup_generation/start_regeneration`) never called `limits.check_request/record_usage` — only existence/owner/enabled/expired + allow-list. Enforcement spend (Valkey) diverged from display spend (Postgres SUM) because chat never wrote Valkey.
+- Missing-IP allowed + XFF trusted blindly (unparseable peer fell back to XFF).
+- Post-gate failures (409/credential/adapter errors) leaked Valkey reservations (phantom spend).
+- Public plane lacked stored-spend pre-check, so post-Valkey-flush it could exceed while chat denied.
+
+### Implementation (backend/**, frontend/** — no rewrites, no new deps)
+- NEW `services/gateway/key_policy.py`: `chat_key_context`, `ip_allowed` (deny-wins, fail-closed with rules), `org_cap_usd`, `postgres_spend` + `postgres_deny` (stored-spend pre-check, Valkey vocabulary `budget/daily_spend/monthly_spend` + UTC retry_after), `enforce_chat_policy` (owner→enabled/expired oracle→IP→model→Postgres→Valkey), `reconcile_chat_usage`.
+- Chat: gate before row creation/provider I/O in run_chat/stream setup/regen; reconcile actuals on success, release on fail/cancel/409 (incl. IntegrityError paths + generic post-gate guard).
+- Public `_prepare`: same Postgres pre-check (with `Retry-After`), refund on credential/adapter failure, shared `ip_allowed`/`org_cap` helpers, denial counter parity.
+- `core/sessions.gateway_client_ip`: XFF only behind loopback/private/TRUSTED_PROXIES peer; new `TRUSTED_PROXIES` setting (+`.env.example`).
+- Migration `f7a8b9c0d1e2`: `ix_request_logs_key_created(api_key_id, created_at)` (model metadata updated; `alembic check` green).
+- Frontend: 403/429 denial UX (no fake success, no key fallback/scope switch, friendly copy + Manage-keys action), key/model refresh on focus, `budget-exceeded/rate-limited/ip-blocked` problem mapping.
+- Tests: NEW `test_unified_policy.py` (42), `test_auth` OAuth trusted-proxy simulation, `api.test.ts` new-reason assertions, IP fail-closed expectation updates.
+
+### Verification
+- Live (real provider `http://115.247.148.78:3002/api/v1`, glm-4.7-flash, billable prices set): valid chat + chat_completions/responses/messages all succeed with usage; budget-exceeded denies pre-dispatch on BOTH planes (0.13s, no upstream); expired/revoked 403/404; RPM 429 with retry-after; IP-deny 403; unknown/alias-cased model 404; browser: listing/detail both Budget-exceeded, denial banner, key unchanged, zero new rows.
+- Suites: unified-policy 42/42; blast-radius gate (public_gateway+keys+generations+auth+observability+analytics+chat_keys+history+org_phase_b) 314 passed; test_limits 12/12; observability 16/16; auth 24/24; frontend vitest 155/155; tsc/eslint clean; `alembic check` clean; OpenAPI 171 paths.
+- Perf (dev, Docker Desktop): denied (pure gateway overhead) ~50–280ms — 2–4ms target NOT met; dominated by session/key DB loads + indexed SUM + sync Valkey bridge. Upstream dominates admitted requests (2–13s on live model). Honest numbers, no optimization claimed.
+- Full suite: 803 passed / 27 failed / 7 errors under full-run contention — triaged: 2 real issues found+fixed (denial counter, OAuth test topology), remainder pass solo (deadlock/interference flakes incl. known `test_progress_persists` flake); one ~11h stall from real-time-wait tests in file order (documented anomaly, not a code hang — affected suites pass in bounded runs).
+- Residue (local dev only, tagged): `livepol-*@test.tollma.ai`, LiveTestProv + glm model, ExtTestKey/LiveValid keys; prior `auditkeys-*` user.

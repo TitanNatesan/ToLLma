@@ -143,11 +143,7 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
       );
     }
     const method = init?.method ?? "GET";
-    const retryAfterHeader = res.headers.get("retry-after");
-    const retryAfterSeconds =
-      retryAfterHeader !== null && retryAfterHeader.trim() !== "" && Number.isFinite(Number(retryAfterHeader))
-        ? Math.max(0, Math.ceil(Number(retryAfterHeader)))
-        : null;
+    const retryAfterSeconds = parseRetryAfter(res);
     throw new ApiError(
       res.status,
       res.statusText,
@@ -157,6 +153,14 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
     );
   }
   return res.json() as Promise<T>;
+}
+
+
+/** Seconds from the `Retry-After` header (429s), when present. */
+function parseRetryAfter(res: Response): number | null {
+  const header = res.headers.get("retry-after");
+  if (header === null || header.trim() === "" || !Number.isFinite(Number(header))) return null;
+  return Math.max(0, Math.ceil(Number(header)));
 }
 
 const get = <T,>(path: string) => req<T>(path);
@@ -959,18 +963,116 @@ export const listChatKeyModels = (keyId: string) =>
  * Classify gateway key denials from the error envelope so the composer can
  * refresh its lists and request re-selection. Key 404s read lowercase
  * `api key <id> not found` — distinct from `conversation ...` / `generation
- * ... not found`, which never classify here.
+ * ... not found`, which never classify here. Disabled/expired keys stay that
+ * 404 oracle; budget, rate, and IP denials arrive as 403/429 carrying reason
+ * strings (budget_exceeded, rate_limited/rpm/…, model_not_allowed,
+ * ip_blocked). Matching is case-insensitive: the same reason can surface in
+ * the envelope message or a raw string body.
  */
 export function classifyChatKeyProblem(status: number, data: unknown): ChatKeyProblem | null {
   const raw = typeof data === "string" ? data : JSON.stringify(data ?? "");
-  if (status === 422 && raw.includes("KEY_REQUIRED")) return "key-required";
+  const text = raw.toLowerCase();
+  if (status === 422 && text.includes("key_required")) return "key-required";
   if (status === 404 && /api key \S+ not found/.test(raw)) return "key-invalid";
-  if (status === 403 && raw.includes("model_not_allowed")) return "model-not-allowed";
+  if (status === 403 || status === 429) {
+    if (text.includes("model_not_allowed")) return "model-not-allowed";
+    if (text.includes("ip_blocked")) return "ip-blocked";
+    if (
+      text.includes("budget") ||
+      text.includes("spend") ||
+      text.includes("overbudget") ||
+      text.includes("over budget") ||
+      text.includes("exhausted")
+    ) {
+      return "budget-exceeded";
+    }
+    if (
+      status === 429 ||
+      text.includes("rate_limited") ||
+      text.includes("rate limited") ||
+      text.includes("too many requests") ||
+      /\b(rpm|rph|rpd|tpm|tpd|model_rpm|model_tpm)\b/.test(text)
+    ) {
+      return "rate-limited";
+    }
+  }
   return null;
 }
 
-/** Non-OK stream-setup response → user-facing message + optional key problem. */
+export interface PolicyDenialCopy {
+  problem: ChatKeyProblem;
+  title: string;
+  description: string;
+  /** Show a "Manage API keys" recovery action alongside the message. */
+  manageKeys: boolean;
+}
+
+/**
+ * Friendly copy for unified gateway policy denials. One source of truth for
+ * stream toasts and composer banners — raw reason strings never reach the UI.
+ * Nothing is generated on denial, so every description says so.
+ */
+export function policyDenialCopy(
+  problem: ChatKeyProblem,
+  retryAfterSeconds?: number | null,
+): PolicyDenialCopy {
+  switch (problem) {
+    case "key-required":
+      return {
+        problem,
+        title: "An API key is required",
+        description: "Select a model above — its API key is selected automatically.",
+        manageKeys: false,
+      };
+    case "key-invalid":
+      return {
+        problem,
+        title: "This API key is no longer valid",
+        description:
+          "It was revoked, disabled, expired, or your org access changed. Your key list was refreshed — pick another model to continue.",
+        manageKeys: false,
+      };
+    case "model-not-allowed":
+      return {
+        problem,
+        title: "That model isn't allowed for this key",
+        description: "Pick another model to continue — your key is unchanged.",
+        manageKeys: false,
+      };
+    case "budget-exceeded":
+      return {
+        problem,
+        title: "Budget exhausted",
+        description:
+          "This API key hit its spending limit, so the request was blocked and nothing was generated. Raise the budget or pick another key.",
+        manageKeys: true,
+      };
+    case "rate-limited":
+      return {
+        problem,
+        title: "Rate limited",
+        description:
+          retryAfterSeconds != null
+            ? `This key hit its request limit. Retry in about ${retryAfterSeconds}s — nothing was generated.`
+            : "This key hit its request limit. Wait a moment and retry — nothing was generated.",
+        manageKeys: false,
+      };
+    case "ip-blocked":
+      return {
+        problem,
+        title: "Blocked by IP rules",
+        description:
+          "Your current network isn't allowed by this key's IP rules, so the request was blocked. Update the allowlist or pick another key.",
+        manageKeys: true,
+      };
+  }
+}
+
+/** Non-OK stream-setup response → user-facing message + optional key problem.
+ *  Classified policy denials surface the friendly copy (never the raw reason
+ *  string); anything else keeps the previous behavior. */
 async function readStreamFailure(res: Response): Promise<{ message: string; problem: ChatKeyProblem | null }> {
+  const retryAfterSeconds = parseRetryAfter(res);
   const fallback = `stream failed with ${res.status}`;
   const text = await res.text().catch(() => "");
   if (!text) return { message: fallback, problem: null };
@@ -980,7 +1082,9 @@ async function readStreamFailure(res: Response): Promise<{ message: string; prob
   } catch {
     return { message: `${fallback}: ${text.slice(0, 200)}`, problem: null };
   }
+  const problem = classifyChatKeyProblem(res.status, data);
+  if (problem) return { message: policyDenialCopy(problem, retryAfterSeconds).description, problem };
   const err = (data as { error?: { message?: unknown } })?.error;
   const message = typeof err?.message === "string" && err.message ? err.message : fallback;
-  return { message, problem: classifyChatKeyProblem(res.status, data) };
+  return { message, problem: null };
 }

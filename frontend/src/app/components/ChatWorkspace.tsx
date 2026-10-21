@@ -16,16 +16,20 @@ import { useConversation } from "@/hooks/useChat";
 import { useProviders } from "@/hooks/useRegistry";
 import { useChatKeys } from "@/hooks/useChatKeys";
 import {
+  ApiError,
   cancelGeneration,
+  classifyChatKeyProblem,
   createConversation,
   getActiveGeneration,
   getConversation,
   getGeneration,
   getGenerationByClientKey,
+  policyDenialCopy,
   streamChat,
   streamGeneration,
   type StreamCallbacks,
 } from "@/services/api";
+import { useChatKeyStore } from "@/app/components/chat/chatKeyStore";
 import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
 import { useSettingsStore } from "@/store/settings";
@@ -167,6 +171,10 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     void qc.invalidateQueries({ queryKey: ["conversation", id] });
     void qc.invalidateQueries({ queryKey: ["usage", id] });
     void qc.invalidateQueries({ queryKey: ["conversations"] });
+    // Spend/eligibility changed with the generation: refresh key availability
+    // too (same pattern — the composer's keyProblem effect also refreshes on
+    // denial, so both paths converge without switching keys).
+    void qc.invalidateQueries({ queryKey: ["chat-keys"] });
   }, [qc]);
   const abortRef = useRef<AbortController | null>(null);
   // Draft-send probe: adopts the conversation id by idempotency key when the
@@ -511,6 +519,17 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
             }
           })();
         },
+        onError: (m) => {
+          // Base handler clears overlays and toasts the (already friendly)
+          // message. Policy denial flagged by the api layer means the backend
+          // created no rows, so the unpersisted echo is gone — restore it to
+          // the draft so nothing is lost and history is preserved. Key/model
+          // selection is untouched: no fallback key, no personal<->org switch.
+          cbs.onError(m);
+          if (useChatKeyStore.getState().problem) {
+            useChatStore.getState().setDraft(text);
+          }
+        },
       },
     );
   }, [
@@ -730,6 +749,37 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   const intelligence = useIntelligenceMutations(activeId);
   const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation } = intelligence;
 
+  /**
+   * Unified policy denials (403/429 with reason strings) on edit/regenerate:
+   * friendly copy + key-list refresh via the composer's keyProblem effect —
+   * never an assistant success, never a key fallback or scope switch. The
+   * conversation stays intact; the user corrects the policy (Manage API keys
+   * when the fix lives in the key console). Returns true when handled.
+   */
+  const handlePolicyDenial = useCallback(
+    (error: unknown): boolean => {
+      const status =
+        error instanceof ApiError ? error.status : ((error as { status?: number } | null)?.status ?? 0);
+      const data = error instanceof ApiError ? error.data : null;
+      const text = error instanceof Error ? error.message : "";
+      const problem = classifyChatKeyProblem(status, data ?? text);
+      if (!problem) return false;
+      useChatKeyStore.getState().flagProblem(problem);
+      const copy = policyDenialCopy(
+        problem,
+        error instanceof ApiError ? error.retryAfterSeconds : null,
+      );
+      toast.error(copy.title, {
+        description: copy.description,
+        action: copy.manageKeys
+          ? { label: "Manage API keys", onClick: () => router.push("/api-keys") }
+          : undefined,
+      });
+      return true;
+    },
+    [router],
+  );
+
   const attachRegeneration = useCallback(
     (convId: string, messageId: string, generationId: string) => {
       const ctrl = new AbortController();
@@ -767,15 +817,17 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         { messageId, content },
         {
           onSuccess,
-          onError: (error) =>
+          onError: (error) => {
+            if (handlePolicyDenial(error)) return;
             toastApiError(error, {
               title: "Edit failed",
               onRetry: () => editMutation.mutate({ messageId, content }, { onSuccess }),
-            }),
+            });
+          },
         },
       );
     },
-    [activeId, attachRegeneration, editMutation, refreshAll],
+    [activeId, attachRegeneration, editMutation, refreshAll, handlePolicyDenial],
   );
 
   const handleRegenerate = useCallback(
@@ -786,14 +838,16 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       };
       regenerateMutation.mutate(messageId, {
         onSuccess,
-        onError: (error) =>
+        onError: (error) => {
+          if (handlePolicyDenial(error)) return;
           toastApiError(error, {
             title: "Regenerate failed",
             onRetry: () => regenerateMutation.mutate(messageId, { onSuccess }),
-          }),
+          });
+        },
       });
     },
-    [attachRegeneration, regenerateMutation],
+    [attachRegeneration, regenerateMutation, handlePolicyDenial],
   );
 
   const handleBranch = useCallback(

@@ -72,6 +72,7 @@ class RequestLog(TimestampedModel):
         Index("ix_request_logs_user_created", "user_id", "created_at"),
         Index("ix_request_logs_org_created", "org_id", "created_at"),
         Index("ix_request_logs_api_key", "api_key_id"),
+        Index("ix_request_logs_key_created", "api_key_id", "created_at"),
         Index("ix_request_logs_status", "status"),
         Index("ix_request_logs_conversation", "conversation_id", "created_at"),
         # Platform-admin error analytics.

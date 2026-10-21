@@ -7,6 +7,7 @@ the presented one. A stale `jti` (or any use of an unexpired refresh for an
 unknown session) revokes the whole family.
 """
 
+import ipaddress
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -23,13 +24,68 @@ logger = logging.getLogger(__name__)
 _ACTIVITY_TOUCH_INTERVAL = 60  # seconds; keeps last_seen fresh without a Valkey write per request
 
 
+def _trusted_proxy_nets() -> list:
+    """Extra trusted proxy peers from `TRUSTED_PROXIES` (IPs or CIDRs, comma-separated)."""
+    nets = []
+    try:
+        raw = get_settings().trusted_proxies
+    except Exception:
+        return nets
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            logger.warning("ignoring unparsable TRUSTED_PROXIES entry: %r", part)
+    return nets
+
+
+def _peer_trusted(peer: str) -> bool:
+    """True when X-Forwarded-For may be honored from this direct peer.
+
+    Loopback, private (RFC 1918, incl. the docker bridge), and link-local peers
+    are trusted by default — the backend normally sits behind such a hop.
+    Anything else must be listed in TRUSTED_PROXIES; unparseable peers never
+    trust XFF. No new deps (stdlib `ipaddress` only).
+    """
+    try:
+        addr = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    if addr.is_loopback or addr.is_private:
+        return True
+    try:
+        return any(addr in net for net in _trusted_proxy_nets())
+    except TypeError:
+        return False
+
+
+def gateway_client_ip(request: Request) -> str:
+    """Policy-grade client IP: XFF only behind a trusted peer, else direct peer.
+
+    Never trust X-Forwarded-For blindly — any client can forge it. When the
+    direct TCP peer is loopback/private or listed in TRUSTED_PROXIES, the
+    leftmost XFF entry is the real client; otherwise the peer itself is used.
+    """
+    peer = request.client.host if request.client else ""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded and peer and _peer_trusted(peer):
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first[:64]
+    if peer:
+        return peer[:64]
+    # No direct peer (tests/proxy misconfig): never elect XFF — an untrusted
+    # or empty peer must not choose the client identity. Policy treats the
+    # missing IP as fail-closed when the key has IP rules (key_policy).
+    return ""
+
+
 def client_meta(request: Request) -> dict[str, str]:
     """Coarse device metadata for the session-management UI. Never trusted for auth."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    ip = (forwarded.split(",")[0].strip() if forwarded else "") or (
-        request.client.host if request.client else ""
-    )
-    return {"user_agent": request.headers.get("user-agent", "")[:512], "ip": ip[:64]}
+    return {"user_agent": request.headers.get("user-agent", "")[:512], "ip": gateway_client_ip(request)[:64]}
 
 
 def _session_ttl_seconds() -> int:

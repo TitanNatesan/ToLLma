@@ -13,7 +13,7 @@ import { useAllChatKeyModels, useChatKeys, type KeyModelsEntry } from "@/hooks/u
 import { Button } from "@/components/ui";
 import { ModelSelectorMenu } from "./ModelSelectorMenu";
 import { cn } from "@/lib/utils";
-import { uploadChatAttachment } from "@/services/api";
+import { policyDenialCopy, uploadChatAttachment } from "@/services/api";
 import type { AIModel, ChatKey } from "@/types";
 
 import {
@@ -602,6 +602,32 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
       <KeyNotice
         title="That model isn't allowed for this key"
         body="Pick another model to continue — your key is unchanged."
+      />
+    );
+  } else if (keyProblem === "budget-exceeded" || keyProblem === "ip-blocked") {
+    // Policy denial: nothing was generated, key and model stay selected.
+    // Recovery is correcting the policy — the key console owns the fix.
+    const copy = policyDenialCopy(keyProblem);
+    keyBanner = (
+      <KeyNotice
+        title={copy.title}
+        body={copy.description}
+        actionLabel="Manage API keys"
+        onAction={openKeyManagement}
+      />
+    );
+  } else if (keyProblem === "rate-limited") {
+    // Transient: the same key and model stay selected, retrying clears this.
+    const copy = policyDenialCopy(keyProblem);
+    keyBanner = (
+      <KeyNotice
+        title={copy.title}
+        body={copy.description}
+        actionLabel="Retry now"
+        onAction={() => {
+          clearProblem();
+          void qc.invalidateQueries({ queryKey: ["chat-keys"] });
+        }}
       />
     );
   } else if (keyProblem === "key-required") {

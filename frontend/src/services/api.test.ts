@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listProviders, streamChat, uploadChatAttachment } from "@/services/api";
+import {
+  classifyChatKeyProblem,
+  listProviders,
+  policyDenialCopy,
+  streamChat,
+  uploadChatAttachment,
+} from "@/services/api";
 
 const originalBackendUrl = process.env.BACKEND_URL;
 const originalApiUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -190,5 +196,43 @@ describe("uploadChatAttachment (XHR progress)", () => {
     }
     vi.stubGlobal("XMLHttpRequest", FailingXHR);
     await expect(uploadChatAttachment(new File(["x"], "a.bin"), null)).rejects.toThrow(/422/);
+  });
+});
+
+describe("unified policy denials", () => {
+  it("keeps the 404 oracle and KEY_REQUIRED gate", () => {
+    expect(classifyChatKeyProblem(404, { detail: "api key abc not found" })).toBe("key-invalid");
+    expect(classifyChatKeyProblem(404, { detail: "conversation abc not found" })).toBeNull();
+    expect(classifyChatKeyProblem(422, { error: { code: "VALIDATION_ERROR", message: "KEY_REQUIRED: ..." } })).toBe(
+      "key-required",
+    );
+  });
+
+  it("maps 403/429 reason strings without key fallback", () => {
+    const envelope = (message: string) => ({ error: { code: "FORBIDDEN", message } });
+    expect(classifyChatKeyProblem(403, envelope("model_not_allowed: model x is not allowed"))).toBe(
+      "model-not-allowed",
+    );
+    expect(classifyChatKeyProblem(403, envelope("budget_exceeded"))).toBe("budget-exceeded");
+    expect(classifyChatKeyProblem(403, envelope("daily_budget_exceeded"))).toBe("budget-exceeded");
+    expect(classifyChatKeyProblem(403, envelope("budget"))).toBe("budget-exceeded");
+    expect(classifyChatKeyProblem(403, envelope("daily_spend"))).toBe("budget-exceeded");
+    expect(classifyChatKeyProblem(403, envelope("monthly_spend"))).toBe("budget-exceeded");
+    expect(classifyChatKeyProblem(403, envelope("ip_blocked: request blocked by API key IP rules"))).toBe(
+      "ip-blocked",
+    );
+    expect(classifyChatKeyProblem(429, envelope("rpm"))).toBe("rate-limited");
+    expect(classifyChatKeyProblem(429, envelope("anything else"))).toBe("rate-limited");
+    expect(classifyChatKeyProblem(403, envelope("rate_limited"))).toBe("rate-limited");
+    expect(classifyChatKeyProblem(500, envelope("budget_exceeded"))).toBeNull();
+  });
+
+  it("writes friendly copy with retry-after and key-console routing", () => {
+    expect(policyDenialCopy("budget-exceeded").title).toBe("Budget exhausted");
+    expect(policyDenialCopy("budget-exceeded").manageKeys).toBe(true);
+    expect(policyDenialCopy("rate-limited", 30).description).toContain("30s");
+    expect(policyDenialCopy("rate-limited", null).description).toContain("Wait a moment");
+    expect(policyDenialCopy("ip-blocked").manageKeys).toBe(true);
+    expect(policyDenialCopy("model-not-allowed").manageKeys).toBe(false);
   });
 });

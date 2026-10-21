@@ -29,6 +29,7 @@ from tollms.core.exceptions import (
     ForbiddenError,
     NotFoundError,
     ProviderError,
+    TooManyRequestsError,
     ValidationError,
     classify_provider_failure,
 )
@@ -75,6 +76,7 @@ from tollms.api.gateway.schemas import (
 from tollms.api.models.schemas import ModelRead, read_model
 from tollms.services import generation as generation_engine
 from tollms.services.api_keys import keys as key_engine
+from tollms.services.gateway import key_policy
 from tollms.services.generation import GenerationSpec
 from tollms.services.gateway.adapters.base import ChatMessage, StreamChunk
 from tollms.services.model_repository.lookup import find_for_model
@@ -588,6 +590,75 @@ def _enforce_key_model(db: Session, key: ApiKey | None, model_id: uuid.UUID) -> 
         )
 
 
+def _chat_estimate(db: Session, provider: Provider, model: AIModel, text: str) -> tuple[int, Decimal]:
+    """Pre-flight estimate for the key policy: prompt-only tokens + shared pricing."""
+    tokens = max(1, len(text or "") // 4)
+    repo = find_for_model(db, provider.provider_type.value, model.model_id)
+    cost = calculate(UsageTokens(prompt=tokens), prices_for_model(model, repo)).total_cost
+    return tokens, cost
+
+
+def _enforce_chat_key(
+    db: Session,
+    api_key: ApiKey | None,
+    provider: Provider,
+    model: AIModel,
+    *,
+    estimated_tokens: int,
+    estimated_cost: Decimal,
+    request_id: str | None,
+    client_ip: str | None,
+) -> tuple[key_engine.KeyContext | None, Decimal | None]:
+    """Shared in-app key-policy gate. No-op on the legacy keyless path.
+
+    Returns (ctx, org_cap) for usage reconciliation. Raises 404-oracle on
+    bad/disabled/expired keys, 403/429 on policy denies — always BEFORE any
+    row creation or provider I/O by the caller.
+    """
+    if api_key is None:
+        return None, None
+    ctx = key_policy.chat_key_context(db, api_key)
+    org_cap = key_policy.org_cap_usd(db, ctx)
+    key_policy.enforce_chat_policy(
+        db, ctx, provider, model,
+        estimated_tokens, estimated_cost, request_id, client_ip, org_cap,
+    )
+    return ctx, org_cap
+
+
+def _release_chat_reservation(
+    ctx: key_engine.KeyContext | None,
+    provider: Provider,
+    model: AIModel,
+    request_id: str | None,
+    org_cap: Decimal | None,
+) -> None:
+    """Refund the pre-flight Valkey reservation (provider failure/cancel)."""
+    key_policy.reconcile_chat_usage(
+        ctx, provider_id=provider.id, model_id=model.id,
+        tokens=0, cost=Decimal(0), request_id=request_id, org_cap=org_cap,
+    )
+
+
+def _reconcile_chat_usage(
+    db: Session,
+    ctx: key_engine.KeyContext | None,
+    provider: Provider,
+    model: AIModel,
+    tokens: UsageTokens,
+    breakdown: CostBreakdown,
+    request_id: str | None,
+    org_cap: Decimal | None,
+) -> None:
+    """Swap the reservation for actual usage after the request-log row commits."""
+    del db  # reconciliation is Valkey-only; the DB row is the caller's commit
+    key_policy.reconcile_chat_usage(
+        ctx, provider_id=provider.id, model_id=model.id,
+        tokens=tokens.prompt + tokens.completion, cost=breakdown.total_cost,
+        request_id=request_id, org_cap=org_cap,
+    )
+
+
 def validated_reasoning_level(model: AIModel, level: str | None) -> str | None:
     """Constrain a requested reasoning level to the model's catalog options.
 
@@ -921,6 +992,7 @@ async def run_chat(
     transport: httpx.AsyncBaseTransport | None = None,
     user_id: uuid.UUID | None = None,
     session_id: str | None = None,
+    client_ip: str | None = None,
 ) -> ChatResponse:
     """Non-streaming chat. Persists user + assistant messages, usage, cost."""
     api_key = _require_chat_key(db, data.key_id, user_id)
@@ -929,6 +1001,13 @@ async def run_chat(
     api_key_id = api_key.id if api_key is not None else None
     start = time.monotonic()
     started_at = datetime.now(timezone.utc)
+    # Pre-flight reservation id: the client idempotency key when present, else
+    # the conversation under test, else a fresh id (reconciled with actuals below).
+    request_id = data.client_key or (
+        str(data.conversation_id) if data.conversation_id is not None else uuid.uuid4().hex
+    )
+    ctx: key_engine.KeyContext | None = None
+    org_cap: Decimal | None = None
     try:
         credentials = decrypted_credentials(provider)
         adapter = build_adapter(provider, model, credentials, transport)
@@ -937,6 +1016,27 @@ async def run_chat(
         adapter.max_output_tokens = model.max_output_tokens
         transcriber = _transcriber(provider, credentials)
         rows = attachment_service.get_many(db, data.attachment_ids, user_id)
+        history = _history(db, data.conversation_id, data.system, user_id, adapter, model)
+        texts, media = await _assemble_attachments(
+            db, rows=rows, model=model, adapter=adapter,
+            transcriber=transcriber, transport=transport, strict=True,
+        )
+        content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
+        history.append(ChatMessage(role="user", content=content, media=media))
+        history_text = "".join(m.content for m in history)
+        if _is_media_model(model):
+            media_est = media_cost_estimate(
+                db, provider, model, model.primary_endpoint, media_options(model.primary_endpoint)
+            )
+            est_tokens, est_cost = max(1, len(history_text) // 4), media_est.estimated_cost
+        else:
+            est_tokens, est_cost = _chat_estimate(db, provider, model, history_text)
+        # Policy gate BEFORE any row creation or provider I/O (raises on deny).
+        ctx, org_cap = _enforce_chat_key(
+            db, api_key, provider, model,
+            estimated_tokens=est_tokens, estimated_cost=est_cost,
+            request_id=request_id, client_ip=client_ip,
+        )
         if data.conversation_id is None:
             title = data.message[:60] or (f"Attachment: {rows[0].filename}"[:60] if rows else "New conversation")
             conv = create_conversation(
@@ -950,14 +1050,7 @@ async def run_chat(
         else:
             conv = get_conversation(db, data.conversation_id, user_id)
             conv_id = conv.id
-        history = _history(db, conv_id, data.system, user_id, adapter, model)
         adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
-        texts, media = await _assemble_attachments(
-            db, rows=rows, model=model, adapter=adapter,
-            transcriber=transcriber, transport=transport, strict=True,
-        )
-        content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
-        history.append(ChatMessage(role="user", content=content, media=media))
         logger.info(
             "gateway chat: provider=%s model=%s conv=%s attachments=%d media=%d",
             provider.provider_type, model.model_id, conv_id, len(rows), len(media),
@@ -1045,6 +1138,10 @@ async def run_chat(
             ),
         )
         db.commit()
+        _reconcile_chat_usage(
+            db, ctx, provider, model, tokens, breakdown,
+            request_id=request_id, org_cap=org_cap,
+        )
         logger.info(
             "gateway chat done: conv=%s tokens=%s/%s cost=%s latency=%.0fms",
             conv_id, usage[0], usage[1], cost[2], latency_ms,
@@ -1061,10 +1158,11 @@ async def run_chat(
             usage_estimated=estimated, latency_ms=latency_ms,
             attachments=attachments,
         )
-    except (NotFoundError, ValidationError):
+    except (NotFoundError, ValidationError, ForbiddenError, TooManyRequestsError):
         raise
     except Exception as e:
         logger.exception("gateway chat failed")
+        _release_chat_reservation(ctx, provider, model, request_id, org_cap)
         incr_counter("gateway.request", {"plane": "ui", "status": "failed"})
         classified = classify_provider_failure(e)
         emit(
@@ -1106,6 +1204,11 @@ class _Setup:
     media_ref_bytes: bytes | None = None
     media_lineage: dict | None = None
     api_key_id: uuid.UUID | None = None
+    # Key-policy reservation: enforced in _setup_generation, reconciled by the
+    # generation driver with actual usage (None = legacy keyless path).
+    request_id: str | None = None
+    key_ctx: key_engine.KeyContext | None = None
+    key_org_cap: Decimal | None = None
 
 
 async def _setup_generation(
@@ -1113,15 +1216,21 @@ async def _setup_generation(
     data: ChatRequest,
     transport: httpx.AsyncBaseTransport | None,
     user_id: uuid.UUID | None,
+    client_ip: str | None = None,
 ) -> _Setup:
-    """Resolve, create conv if needed, assemble history + attachments.
+    """Resolve, enforce key policy, create conv if needed, assemble history.
 
-    Raises 404/422 before any row exists. Row creation happens in
-    start_generation under the conversation lock (409 on active generation).
+    Raises 404/422/403/429 before any row exists. Row creation happens after
+    the policy gate (409 on active generation stays in start_generation under
+    the conversation lock). Pre-existing conversations are validated up front;
+    new ones are created only once the key policy allows the generation.
     """
     api_key = _require_chat_key(db, data.key_id, user_id)
     provider, model = _resolve(db, data.provider_id, data.model_id, user_id)
     _enforce_key_model(db, api_key, model.id)
+    # Ownership check for a pre-existing conversation (no rows touched).
+    if data.conversation_id is not None:
+        get_conversation(db, data.conversation_id, user_id)
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
     adapter.reasoning_level = _adapter_reasoning_level(provider, model, data.reasoning_level)
@@ -1129,20 +1238,10 @@ async def _setup_generation(
     adapter.image_output = bool(model.supports_image_generation)
     transcriber = _transcriber(provider, credentials)
     rows = attachment_service.get_many(db, data.attachment_ids, user_id)
-    if data.conversation_id is None:
-        title = data.message[:60] or (f"Attachment: {rows[0].filename}"[:60] if rows else "New conversation")
-        conv = create_conversation(
-            db, ConversationCreate(title=title, provider_id=provider.id, model_id=model.id),
-            user_id,
-        )
-        conv_id = conv.id
-    else:
-        conv = get_conversation(db, data.conversation_id, user_id)
-        conv_id = conv.id
-    history = _history(db, conv_id, data.system, user_id, adapter, model)
-    # Prompt caching is planned once the conversation id is known (OpenAI uses
-    # it as the cache key). Disabled plans leave the request body untouched.
-    adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
+    # History/reference lookups use the existing conversation only; a new
+    # conversation has no history by construction.
+    lookup_conv_id = data.conversation_id
+    history = _history(db, lookup_conv_id, data.system, user_id, adapter, model)
     media_endpoint = model.primary_endpoint if _is_media_model(model) else None
     media_opts: dict | None = None
     media_cost: CostEstimate | None = None
@@ -1165,12 +1264,12 @@ async def _setup_generation(
             # Explicit uploads first, else the most recent prior image in this
             # conversation — history is resolved, not discarded.
             ref_row = next((row for row in rows if row.kind == "image"), None)
-            if ref_row is None:
-                stored = list_messages(db, conv_id, user_id)
+            if ref_row is None and lookup_conv_id is not None:
+                stored = list_messages(db, lookup_conv_id, user_id)
                 grouped = attachment_service.attachments_for_messages(
                     db, [m.id for m in stored], user_id
                 )
-                resolved = _resolve_image_reference(stored, grouped, user_id, conv_id)
+                resolved = _resolve_image_reference(stored, grouped, user_id, lookup_conv_id)
                 if resolved is not None:
                     ref_row, ref_message_id, prior_excerpt = resolved
             if ref_row is not None:
@@ -1208,12 +1307,12 @@ async def _setup_generation(
             # Image-to-video: explicit uploads first, else the most recent
             # prior image in this conversation — same rule as stills.
             ref_row = next((row for row in rows if row.kind == "image"), None)
-            if ref_row is None:
-                stored = list_messages(db, conv_id, user_id)
+            if ref_row is None and lookup_conv_id is not None:
+                stored = list_messages(db, lookup_conv_id, user_id)
                 grouped = attachment_service.attachments_for_messages(
                     db, [m.id for m in stored], user_id
                 )
-                resolved = _resolve_image_reference(stored, grouped, user_id, conv_id)
+                resolved = _resolve_image_reference(stored, grouped, user_id, lookup_conv_id)
                 if resolved is not None:
                     ref_row, ref_message_id, prior_excerpt = resolved
             if ref_row is not None:
@@ -1244,19 +1343,47 @@ async def _setup_generation(
         content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
         history.append(ChatMessage(role="user", content=content, media=media))
         logger.info(
-            "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d cache=%s",
-            provider.provider_type, model.model_id, conv_id, len(rows), len(media),
-            adapter.prompt_cache.strategy if adapter.prompt_cache else "none",
+            "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d",
+            provider.provider_type, model.model_id, lookup_conv_id, len(rows), len(media),
         )
+    history_text = "".join(m.content for m in history)
+    if media_endpoint is not None and media_cost is not None:
+        est_tokens, est_cost = max(1, len(history_text) // 4), media_cost.estimated_cost
+    else:
+        est_tokens, est_cost = _chat_estimate(db, provider, model, history_text)
+    # Policy gate BEFORE row creation (raises 404-oracle/403/429 on deny).
+    # Attachment content prep above is not provider I/O for the generation
+    # itself; the expensive call and every row happen strictly after this.
+    request_id = data.client_key or (
+        str(data.conversation_id) if data.conversation_id is not None else uuid.uuid4().hex
+    )
+    ctx, org_cap = _enforce_chat_key(
+        db, api_key, provider, model,
+        estimated_tokens=est_tokens, estimated_cost=est_cost,
+        request_id=request_id, client_ip=client_ip,
+    )
+    if data.conversation_id is None:
+        title = data.message[:60] or (f"Attachment: {rows[0].filename}"[:60] if rows else "New conversation")
+        conv = create_conversation(
+            db, ConversationCreate(title=title, provider_id=provider.id, model_id=model.id),
+            user_id,
+        )
+        conv_id = conv.id
+    else:
+        conv_id = data.conversation_id
+    # Prompt caching is planned once the conversation id is known (OpenAI uses
+    # it as the cache key). Disabled plans leave the request body untouched.
+    adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
     return _Setup(
         conv_id=conv_id, provider=provider, model=model, adapter=adapter,
         api_key_id=api_key.id if api_key is not None else None,
-        rows=rows, history=history, history_text="".join(m.content for m in history),
+        rows=rows, history=history, history_text=history_text,
         media_endpoint=media_endpoint, media_options=media_opts, media_cost=media_cost,
         media_operation=operation, media_prompt=final_prompt, media_count=count,
         media_ref_id=ref_id, media_ref_message_id=ref_message_id,
         media_prior_excerpt=prior_excerpt, media_ref_bytes=ref_bytes,
         media_lineage=lineage or None,
+        request_id=request_id, key_ctx=ctx, key_org_cap=org_cap,
     )
 
 
@@ -1267,6 +1394,7 @@ async def start_generation(
     user_id: uuid.UUID | None = None,
     session_factory=None,
     session_id: str | None = None,
+    client_ip: str | None = None,
 ) -> GenerationStarted:
     """Synchronous setup + background spawn. The assistant row exists as
     RUNNING before this returns — the frontend never invents messages.
@@ -1289,7 +1417,7 @@ async def start_generation(
                 message_id=existing.id,
                 status=existing.status.value,
             )
-    setup = await _setup_generation(db, data, transport, user_id)
+    setup = await _setup_generation(db, data, transport, user_id, client_ip)
     provider, model = setup.provider, setup.model
     conv_id = setup.conv_id
     started_at = datetime.now(timezone.utc)
@@ -1342,12 +1470,22 @@ async def start_generation(
             if conversation_row.model_id is None:
                 conversation_row.model_id = model.id
             touch(db, conversation_row)
+    except ConflictError:
+        # Gate already reserved but no generation proceeds — refund so the
+        # 409 leaves no phantom spend (fail-closed direction, not a bypass).
+        db.rollback()
+        _release_chat_reservation(setup.key_ctx, provider, model, setup.request_id, setup.key_org_cap)
+        raise
     except IntegrityError:
         # Lost a same-key/in-flight race: adopt the winner, never duplicate.
         db.rollback()
         if data.client_key:
             winner = find_assistant_by_client_key(db, user_id, data.client_key)
             if winner is not None:
+                # Winner proceeds under its own reservation (same request_id
+                # slot when the client_key matches); the duplicate INCR stays
+                # reserved and is reconciled by the winner's finish path, so
+                # nothing is released here.
                 logger.info("generation race adopted by client_key: %s", winner.id)
                 return GenerationStarted(
                     conversation_id=winner.conversation_id,
@@ -1356,7 +1494,14 @@ async def start_generation(
                     status=winner.status.value,
                 )
         if active_assistant_message(db, conv_id, user_id) is not None:
+            _release_chat_reservation(setup.key_ctx, provider, model, setup.request_id, setup.key_org_cap)
             raise ConflictError(f"conversation {conv_id} already has an active generation")
+        _release_chat_reservation(setup.key_ctx, provider, model, setup.request_id, setup.key_org_cap)
+        raise
+    except Exception:
+        # Any other post-gate failure before spawn: refund the reservation.
+        db.rollback()
+        _release_chat_reservation(setup.key_ctx, provider, model, setup.request_id, setup.key_org_cap)
         raise
     spec = GenerationSpec(
         generation_id=assistant.id,
@@ -1379,6 +1524,9 @@ async def start_generation(
         org_id=org_attribution(db, provider, user_id),
         api_key_id=setup.api_key_id,
         run_id=run.id,
+        key_ctx=setup.key_ctx,
+        key_request_id=setup.request_id,
+        key_org_cap=str(setup.key_org_cap) if setup.key_org_cap is not None else None,
     )
     if setup.media_endpoint:
         # Same pipeline, media driver: progress deltas + attachment persistence.
@@ -1708,6 +1856,7 @@ async def start_regeneration(
     transport: httpx.AsyncBaseTransport | None = None,
     session_factory=None,
     session_id: str | None = None,
+    client_ip: str | None = None,
 ) -> GenerationStarted:
     """Regenerate an assistant message in place, preserving every prior run.
 
@@ -1755,41 +1904,69 @@ async def start_regeneration(
     adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
     if not history:
         raise ValidationError("no conversation history to regenerate from")
+    history_text = "".join(m.content for m in history)
+    if _is_media_model(model):
+        regen_est_cost = media_cost_estimate(
+            db, provider, model, model.primary_endpoint,
+            {} if model.primary_endpoint == "images/generations"
+            else media_options(model.primary_endpoint),
+        ).estimated_cost
+        est_tokens, est_cost = max(1, len(history_text) // 4), regen_est_cost
+    else:
+        est_tokens, est_cost = _chat_estimate(db, provider, model, history_text)
+    # Policy gate BEFORE row writes (raises 404-oracle/403/429 on deny).
+    request_id = uuid.uuid4().hex
+    ctx, org_cap = _enforce_chat_key(
+        db, api_key, provider, model,
+        estimated_tokens=est_tokens, estimated_cost=est_cost,
+        request_id=request_id, client_ip=client_ip,
+    )
 
     started_at = datetime.now(timezone.utc)
-    async with generation_engine.manager.conv_lock(conv_id):
-        if generation_engine.manager.is_active(conv_id) is not None:
-            raise ConflictError(f"conversation {conv_id} already has an active generation")
-        if active_assistant_message(db, conv_id, user_id) is not None:
-            raise ConflictError(f"conversation {conv_id} already has an active generation")
-        last_number = db.execute(
-            select(func.max(GenerationRun.generation_number)).where(
-                GenerationRun.message_id == assistant.id
+    try:
+        async with generation_engine.manager.conv_lock(conv_id):
+            if generation_engine.manager.is_active(conv_id) is not None:
+                raise ConflictError(f"conversation {conv_id} already has an active generation")
+            if active_assistant_message(db, conv_id, user_id) is not None:
+                raise ConflictError(f"conversation {conv_id} already has an active generation")
+            last_number = db.execute(
+                select(func.max(GenerationRun.generation_number)).where(
+                    GenerationRun.message_id == assistant.id
+                )
+            ).scalar_one()
+            db.execute(
+                update(GenerationRun)
+                .where(GenerationRun.message_id == assistant.id)
+                .values(is_active=False)
             )
-        ).scalar_one()
-        db.execute(
-            update(GenerationRun)
-            .where(GenerationRun.message_id == assistant.id)
-            .values(is_active=False)
-        )
-        run = GenerationRun(
-            message_id=assistant.id,
-            user_id=user_id,
-            api_key_id=api_key_id,
-            generation_number=int(last_number or 0) + 1,
-            provider_id=provider.id,
-            model_id=model.id,
-            content="",
-            status=MessageStatus.RUNNING.value,
-            is_active=False,
-        )
-        db.add(run)
-        _reset_assistant_for_regeneration(assistant, started_at)
-        if api_key_id is not None:
-            assistant.api_key_id = api_key_id
-        db.commit()
-        db.refresh(assistant)
-        db.refresh(run)
+            run = GenerationRun(
+                message_id=assistant.id,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                generation_number=int(last_number or 0) + 1,
+                provider_id=provider.id,
+                model_id=model.id,
+                content="",
+                status=MessageStatus.RUNNING.value,
+                is_active=False,
+            )
+            db.add(run)
+            _reset_assistant_for_regeneration(assistant, started_at)
+            if api_key_id is not None:
+                assistant.api_key_id = api_key_id
+            db.commit()
+            db.refresh(assistant)
+            db.refresh(run)
+    except ConflictError:
+        # Gate already reserved but no generation proceeds — refund so the
+        # 409 leaves no phantom spend (fail-closed direction, not a bypass).
+        _release_chat_reservation(ctx, provider, model, request_id, org_cap)
+        raise
+    except Exception:
+        # Any other post-gate failure before spawn: refund the reservation.
+        db.rollback()
+        _release_chat_reservation(ctx, provider, model, request_id, org_cap)
+        raise
 
     spec = GenerationSpec(
         generation_id=assistant.id,
@@ -1813,6 +1990,9 @@ async def start_regeneration(
         model_id=model.id,
         org_id=org_attribution(db, provider, user_id),
         api_key_id=api_key_id,
+        key_ctx=ctx,
+        key_request_id=request_id,
+        key_org_cap=str(org_cap) if org_cap is not None else None,
     )
     if _is_media_model(model):
         # Retry/regenerate reuses the preceding user prompt, no duplicate rows.

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
 from tollms.core.security import get_current_session_id, require_active_user
+from tollms.core.sessions import gateway_client_ip
 from tollms.models.user import User
 from tollms.api.gateway import service
 from tollms.api.gateway.schemas import (
@@ -54,7 +55,8 @@ async def chat(
     db: Session = Depends(get_db), user: User = Depends(require_active_user),
 ) -> ChatResponse:
     return await service.run_chat(
-        db, data, user_id=user.id, session_id=get_current_session_id(request)
+        db, data, user_id=user.id, session_id=get_current_session_id(request),
+        client_ip=gateway_client_ip(request),
     )
 
 
@@ -66,7 +68,8 @@ async def start_stream(
     progress events. The connection is a subscriber: dropping it never stops
     the backend generation — reattach via GET stream/{generation_id}."""
     started = await service.start_generation(
-        db, data, user_id=user.id, session_id=get_current_session_id(request)
+        db, data, user_id=user.id, session_id=get_current_session_id(request),
+        client_ip=gateway_client_ip(request),
     )
     return StreamingResponse(
         service.stream_events(db, started.generation_id, user.id, request.is_disconnected),
