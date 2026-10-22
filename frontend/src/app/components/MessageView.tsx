@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import React, { memo, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -85,7 +85,8 @@ function copyText(text: string) {
 }
 
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
-  const code = typeof children === "string" ? children : "";
+  // children are syntax-highlighted elements, not a string — extract for copy.
+  const code = extractText(children);
   return (
     <div className="relative my-2 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
       <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-3 py-1.5">
@@ -100,7 +101,7 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
           <span>Copy</span>
         </button>
       </div>
-      <pre className="overflow-x-auto p-3 text-sm text-zinc-100">{children}</pre>
+      <pre className="max-h-[480px] overflow-x-auto overflow-y-auto p-3 text-sm text-zinc-100">{children}</pre>
     </div>
   );
 }
@@ -113,7 +114,20 @@ function UserMarkdown({ content, isStreaming }: { content: string; isStreaming?:
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
-          pre: ({ children }) => <>{children}</>,
+          pre: ({ children }) => {
+            // Fenced block without a language tag: proper cell instead of
+            // the bare inline style (no max-height, broken copy).
+            // child.type is the custom `code` component (a function), so
+            // the missing language tag is the discriminator.
+            const child = React.Children.toArray(children)[0];
+            if (
+              React.isValidElement<{ className?: string; children?: React.ReactNode }>(child) &&
+              !child.props.className
+            ) {
+              return <CodeBlock>{child.props.children}</CodeBlock>;
+            }
+            return <>{children}</>;
+          },
           code: ({ className, children, ...props }) => {
             const codeStr = extractText(children);
             const isMermaid =
@@ -126,7 +140,8 @@ function UserMarkdown({ content, isStreaming }: { content: string; isStreaming?:
             if (isMermaid) {
               return <MermaidBlock chart={codeStr} />;
             }
-            const isBlock = className?.startsWith("language-");
+            // rehype-highlight prefixes "hljs ", so match anywhere.
+            const isBlock = className?.includes("language-");
             return isBlock ? (
               <CodeBlock className={className}>{children}</CodeBlock>
             ) : (

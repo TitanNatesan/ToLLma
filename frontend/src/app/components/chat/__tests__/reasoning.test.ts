@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dedentBlock,
   formatReasoningDuration,
   reasoningLabel,
   splitReasoningSteps,
@@ -65,6 +66,26 @@ More text...
     expect(splitReasoningSteps("I will think about this problem carefully.")).toBeNull();
     expect(splitReasoningSteps("1. Only one step here.")).toBeNull();
     expect(splitReasoningSteps("")).toBeNull();
+  });
+
+  it("dedents indented bodies so prose does not render as code blocks", () => {
+    const content = [
+      "1. Analyze the request.",
+      "    **Topic:** portfolio site.",
+      "    Continuation line.",
+      "2. Plan the work.",
+      "\tTabbed detail line.",
+    ].join("\n");
+
+    const outline = splitReasoningSteps(content);
+    expect(outline?.steps[0].body).toBe("**Topic:** portfolio site.\nContinuation line.");
+    expect(outline?.steps[1].body).toBe("Tabbed detail line.");
+  });
+
+  it("leaves flush text and relative nesting untouched", () => {
+    expect(dedentBlock("a\n  b\n    c")).toBe("a\n  b\n    c");
+    expect(dedentBlock("plain")).toBe("plain");
+    expect(dedentBlock("")).toBe("");
   });
 });
 

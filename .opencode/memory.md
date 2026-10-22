@@ -3957,3 +3957,24 @@ Budget-exceeded keys still generated chat responses; key restrictions (budget/ra
 - Perf (dev, Docker Desktop): denied (pure gateway overhead) ~50–280ms — 2–4ms target NOT met; dominated by session/key DB loads + indexed SUM + sync Valkey bridge. Upstream dominates admitted requests (2–13s on live model). Honest numbers, no optimization claimed.
 - Full suite: 803 passed / 27 failed / 7 errors under full-run contention — triaged: 2 real issues found+fixed (denial counter, OAuth test topology), remainder pass solo (deadlock/interference flakes incl. known `test_progress_persists` flake); one ~11h stall from real-time-wait tests in file order (documented anomaly, not a code hang — affected suites pass in bounded runs).
 - Residue (local dev only, tagged): `livepol-*@test.tollma.ai`, LiveTestProv + glm model, ExtTestKey/LiveValid keys; prior `auditkeys-*` user.
+
+---
+
+## 2026-10-22 — Conversation response rendering: code cells, mermaid errors, thinking
+
+### Requirement
+Response items rendered code as an unbounded unwrapped blob; mermaid syntax errors painted the library's boom overlay at page bottom; thinking prose showed as code boxes with raw `**`.
+
+### Root causes (all evidence-verified)
+- `className` arrives as `"hljs language-<lang>"` (rehype-highlight prefixes `hljs`), but both renderers tested `startsWith("language-")` → every labeled fence fell through to the inline-code style (no max-height, no toolbar). Unlabeled fences had no cell path at all.
+- `MessageView.CodeBlock` copy read `children` as a string, but highlighted children are elements → Copy copied `""`.
+- Mermaid v12 paints its own error SVG into the document on `render()` failure (`suppressErrorRendering` was unset) → boom overlay outside the cell.
+- Reasoning prose arrives indented; markdown renders 4-space-indented lines as code blocks.
+
+### Fix (frontend only)
+- `ResponseMarkdown.tsx` / `MessageView.tsx`: block detection via `includes("language-")`; `pre` routes unlabeled fences into `RichCodeBlock`/`CodeBlock` cells. `RichCodeBlock`: `max-h-[480px]` + scroll, Edit toggle (textarea + Done/Revert, local scratch, copy/download follow edits), kept Wrap/Download/Copy. `MessageView.CodeBlock`: `extractText` copy fix + max-height.
+- `MermaidBlock.tsx`: `suppressErrorRendering: true` (rejections stay inline, no body litter); error box capped (`max-h-32` scroll, mono).
+- `reasoning.ts`: `dedentBlock` applied to outlines/bodies in `splitReasoningSteps`; +2 unit tests.
+
+### Verification
+- `tsc` clean; vitest 157/157 (24 files). Live browser (real provider response with python fence + invalid mermaid): cell shows "Python · 1 line" + Edit/Wrap/Download/Copy, pre carries max-h classes, Edit→Done/Revert works, mermaid cell shows inline parse error with Diagram tab disabled, zero boom nodes in DOM, thinking steps render as prose with inline code spans.

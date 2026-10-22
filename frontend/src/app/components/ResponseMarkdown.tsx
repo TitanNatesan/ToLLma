@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Info,
   Lightbulb,
+  Pencil,
   ShieldAlert,
   Table,
   WrapText,
@@ -214,14 +215,19 @@ function RichCodeBlock({
 }) {
   const [copied, setCopied] = useState(false);
   const [wrap, setWrap] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editedCode, setEditedCode] = useState<string | null>(null);
   const rawCode = extractText(children);
+  // Local scratch edit: display + copy/download follow the edited text until
+  // cancelled. Never persisted — the stored message is untouched.
+  const code = editedCode ?? rawCode;
   const langMatch = className?.match(/language-([a-zA-Z0-9_-]+)/);
   const rawLang = langMatch ? langMatch[1] : "";
   const displayLang = rawLang ? getLanguageLabel(rawLang) : "Code";
-  const linesCount = rawCode.trim().split("\n").length;
+  const linesCount = code.trim().split("\n").length;
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(rawCode).then(() => {
+    void navigator.clipboard.writeText(code).then(() => {
       setCopied(true);
       toast.success("Code copied!");
       setTimeout(() => setCopied(false), 2000);
@@ -229,7 +235,7 @@ function RichCodeBlock({
   };
 
   const handleDownload = () => {
-    downloadCode(rawCode, rawLang || "txt");
+    downloadCode(code, rawLang || "txt");
   };
 
   return (
@@ -245,6 +251,20 @@ function RichCodeBlock({
           </span>
         </div>
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setEditing((v) => !v)}
+            className={cn(
+              "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition-colors",
+              editing
+                ? "bg-zinc-800 text-zinc-100 font-medium"
+                : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200",
+            )}
+            title={editing ? "Close editor" : "Edit code (local scratch, not saved to the message)"}
+          >
+            <Pencil className="size-3" />
+            <span>{editing ? "Editing" : "Edit"}</span>
+          </button>
           <button
             type="button"
             onClick={() => setWrap(!wrap)}
@@ -289,14 +309,45 @@ function RichCodeBlock({
         </div>
       </div>
       {/* Code Content */}
-      <pre
-        className={cn(
-          "p-3.5 text-xs text-zinc-100 font-mono leading-relaxed overflow-x-auto",
-          wrap && "whitespace-pre-wrap break-words",
-        )}
-      >
-        {children}
-      </pre>
+      {editing ? (
+        <div className="p-3.5">
+          <textarea
+            value={editedCode ?? rawCode}
+            onChange={(e) => setEditedCode(e.target.value)}
+            spellCheck={false}
+            rows={Math.min(Math.max(code.split("\n").length + 1, 4), 24)}
+            className="max-h-[480px] w-full resize-y overflow-y-auto rounded-md border border-zinc-800 bg-zinc-900 p-2.5 font-mono text-xs leading-relaxed text-zinc-100 focus:border-tollma-500 focus:outline-none"
+          />
+          <div className="mt-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="rounded-md bg-zinc-800 px-2.5 py-1 text-[11px] font-medium text-zinc-100 transition-colors hover:bg-zinc-700"
+            >
+              Done
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditedCode(null);
+                setEditing(false);
+              }}
+              className="rounded-md px-2.5 py-1 text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            >
+              Revert
+            </button>
+          </div>
+        </div>
+      ) : (
+        <pre
+          className={cn(
+            "max-h-[480px] overflow-y-auto overflow-x-auto p-3.5 font-mono text-xs leading-relaxed text-zinc-100",
+            wrap && "whitespace-pre-wrap break-words",
+          )}
+        >
+          {editedCode ?? children}
+        </pre>
+      )}
     </div>
   );
 }
@@ -482,7 +533,22 @@ export function ResponseMarkdown({
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight, [rehypeCitations, { maxIndex: sources?.length ?? 0 }]]}
         components={{
-          pre: ({ children }) => <>{children}</>,
+          pre: ({ children }) => {
+            // Fenced block without a language tag: render a proper cell
+            // instead of falling through to the inline-code style below
+            // (which has no max-height and no copy/edit affordances).
+            // Note: child.type is the custom `code` component (a function),
+            // not the string "code", so the language tag is the only
+            // reliable discriminator.
+            const child = React.Children.toArray(children)[0];
+            if (
+              React.isValidElement<{ className?: string; children?: React.ReactNode }>(child) &&
+              !child.props.className
+            ) {
+              return <RichCodeBlock>{child.props.children}</RichCodeBlock>;
+            }
+            return <>{children}</>;
+          },
           code: ({ className, children, ...props }) => {
             const codeStr = extractText(children);
             const isMermaid =
@@ -495,7 +561,9 @@ export function ResponseMarkdown({
             if (isMermaid) {
               return <MermaidBlock chart={codeStr} />;
             }
-            const isBlock = className?.startsWith("language-");
+            // className arrives as "hljs language-<lang>" (rehype-highlight
+            // prefixes hljs), so match anywhere, not just at the start.
+            const isBlock = className?.includes("language-");
             return isBlock ? (
               <RichCodeBlock className={className}>
                 {children}
