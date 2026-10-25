@@ -8,6 +8,7 @@ import asyncio
 import uuid
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from tollms.api.conversations.service import get_message, list_messages
@@ -15,6 +16,7 @@ from tollms.api.gateway import service as gateway_service
 from tollms.api.gateway.schemas import ChatRequest
 from tollms.core.exceptions import ConflictError, NotFoundError
 from tollms.models.message import MessageStatus
+from tollms.models.request_log import RequestLog, RequestStatus
 from tollms.services import generation as generation_engine
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_get_sync
@@ -464,3 +466,213 @@ def test_stream_timing_instant_provider(db: Session, provider_factory, model_fac
     print(f"\n[TIMING] setup={setup_ms:.0f}ms first-delta={first_delta_ms:.0f}ms total={total_ms:.0f}ms")
     assert first_delta_ms is not None and first_delta_ms < 5000
     assert total_ms < 10000
+
+
+# --- failed/partial usage accounting ------------------------------------------------
+# A provider failure after partial output must persist estimated usage + cost
+# (flagged estimated), keep exactly one request log row, and reconcile the
+# key budget with the estimate. Failures with no output bill nothing.
+
+
+def _failed_run(db, maker, provider_factory, model_factory, monkeypatch, chunks, fail_after):
+    """Drive one streaming generation until the provider raises mid-stream."""
+    p = provider_factory("FailP")
+    m = model_factory(p["id"])
+    adapter = SlowAdapter(chunks, fail_after=fail_after)
+    monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: adapter)
+
+    async def _main():
+        started = await gateway_service.start_generation(db, _request(p["id"], m["id"]))
+        events = []
+        async for raw in gateway_service.stream_events(db, started.generation_id):
+            import json
+
+            events.append(json.loads(raw[6:]))
+            if events[-1].get("done"):
+                break
+        await _await_task(started.generation_id)
+        return started, events
+
+    return asyncio.run(_main())
+
+
+def test_failed_streaming_records_estimated_usage_and_cost(
+    db: Session, provider_factory, model_factory, monkeypatch, maker
+) -> None:
+    from tollms.models.request_log import RequestLog, RequestStatus
+
+    started, events = _failed_run(
+        db, maker, provider_factory, model_factory, monkeypatch,
+        ["Hello ", "partial ", "world "], fail_after=2,
+    )
+    assert events[-1]["status"] == "failed"
+    assert events[-1].get("error")
+
+    row = _fresh(maker, started.message_id)
+    assert row.status == MessageStatus.FAILED
+    # Partial text preserved.
+    assert row.content == "Hello partial "
+    # Estimated usage recorded (never zeroed): prompt from request history,
+    # completion from the generated prefix; flagged as estimated.
+    assert row.total_tokens is not None and row.total_tokens > 0
+    assert row.completion_tokens is not None and row.completion_tokens > 0
+    assert row.total_cost is not None and row.total_cost > 0
+    assert row.usage_estimated is True
+    assert row.error_code is not None
+    assert row.latency_ms is not None and row.latency_ms >= 0
+
+    logs = db.scalars(
+        select(RequestLog).where(RequestLog.message_id == started.message_id)
+    ).all()
+    assert len(logs) == 1  # exactly one usage record, no duplicates
+    log = logs[0]
+    assert log.status == RequestStatus.FAILED.value
+    assert log.is_streaming is True
+    assert log.total_tokens == row.total_tokens
+    assert log.total_cost == row.total_cost
+    assert log.error_code == row.error_code
+
+
+def test_failed_streaming_prefers_provider_reported_usage(
+    db: Session, provider_factory, model_factory, monkeypatch, maker
+) -> None:
+    """Usage events received before the failure win over text estimates."""
+    from tollms.services.gateway.adapters.base import StreamChunk
+
+    p = provider_factory("RepP")
+    m = model_factory(p["id"])
+
+    class _UsageThenBoom(BaseProviderAdapter):
+        def __init__(self) -> None:
+            super().__init__(credentials={}, model_id="usage-mock")
+
+        async def chat_stream(self, messages):
+            yield StreamChunk(delta="partial ")
+            yield StreamChunk(
+                delta="",
+                prompt_tokens=11,
+                completion_tokens=7,
+                total_tokens=18,
+            )
+            raise RuntimeError("provider blew up after usage")
+
+    monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: _UsageThenBoom())
+
+    async def _main():
+        started = await gateway_service.start_generation(db, _request(p["id"], m["id"]))
+        async for raw in gateway_service.stream_events(db, started.generation_id):
+            import json
+
+            if json.loads(raw[6:]).get("done"):
+                break
+        await _await_task(started.generation_id)
+        return started
+
+    started = asyncio.run(_main())
+    row = _fresh(maker, started.message_id)
+    assert row.status == MessageStatus.FAILED
+    assert row.prompt_tokens == 11
+    assert row.completion_tokens == 7
+    assert row.total_tokens == 18
+
+
+def test_cancelled_streaming_records_estimated_usage(
+    db: Session, provider_factory, model_factory, slow, maker, monkeypatch
+) -> None:
+    """Client cancel after partial output keeps estimated usage, billed once."""
+    from tollms.models.request_log import RequestLog, RequestStatus
+
+    p = provider_factory("CancelP")
+    m = model_factory(p["id"])
+    adapter = SlowAdapter([f"word{i} " for i in range(30)], delay=0.02)
+    monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: adapter)
+
+    async def _main():
+        started = await gateway_service.start_generation(db, _request(p["id"], m["id"]))
+        for _ in range(200):
+            if _fresh(maker, started.message_id).content:
+                break
+            await asyncio.sleep(0.01)
+        cancelled = await gateway_service.cancel_generation(db, started.generation_id)
+        assert cancelled.status == "cancelled"
+        await _await_task(started.generation_id)
+        return started
+
+    started = asyncio.run(_main())
+    row = _fresh(maker, started.message_id)
+    assert row.status == MessageStatus.CANCELLED
+    assert 0 < len(row.content) < len("".join(f"word{i} " for i in range(30)))
+    assert row.total_tokens is not None and row.total_tokens > 0
+    assert row.total_cost is not None and row.total_cost > 0
+    assert row.usage_estimated is True
+
+    logs = db.scalars(
+        select(RequestLog).where(RequestLog.message_id == started.message_id)
+    ).all()
+    assert len(logs) == 1
+    assert logs[0].status == RequestStatus.CANCELLED.value
+    assert logs[0].total_tokens == row.total_tokens
+
+
+def test_failed_partial_output_bills_estimated_budget() -> None:
+    """Valkey reconciliation bills estimated actuals when partial text exists;
+    zero-output failures release the reservation (bill nothing)."""
+    import uuid as _uuid
+    from decimal import Decimal
+
+    from tollms.services import generation as gen_engine
+    from tollms.services.api_keys.keys import KeyContext, KeyPolicy
+    from tollms.services.gateway import limits
+    from tollms.services.gateway.adapters.base import ChatResult
+    from tollms.services.gateway.costing import CostBreakdown, UsageTokens
+
+    ctx = KeyContext(
+        key_id=_uuid.uuid4(),
+        user_id=_uuid.uuid4(),
+        name="reconcile-test",
+        key_prefix="tma_sk_live_test",
+        enabled=True,
+        expires_at=None,
+        policy=KeyPolicy(max_budget_usd=Decimal("100")),
+    )
+    provider_id, model_id = _uuid.uuid4(), _uuid.uuid4()
+
+    def _spec():
+        import types
+
+        return types.SimpleNamespace(
+            key_ctx=ctx,
+            key_request_id=f"req-{_uuid.uuid4().hex[:8]}",
+            provider_id=provider_id,
+            model_id=model_id,
+            key_org_cap=None,
+            generation_id=_uuid.uuid4(),
+            media_cost=None,
+            adapter=None,
+        )
+
+    # Partial output failure: estimate is booked against the budget.
+    before = limits.current_spend(ctx)
+    gen_engine._reconcile_key_policy(
+        _spec(),
+        completed=False,
+        result=ChatResult(text="Hello partial output " * 200),
+        tokens=UsageTokens(prompt=10, completion=500),
+        breakdown=CostBreakdown(
+            input_cost=Decimal("0.00001"),
+            output_cost=Decimal("0.0001"),
+            total_cost=Decimal("0.00011"),
+        ),
+    )
+    assert limits.current_spend(ctx) > before
+
+    # Zero-output failure: reservation released, budget untouched.
+    before2 = limits.current_spend(ctx)
+    gen_engine._reconcile_key_policy(
+        _spec(),
+        completed=False,
+        result=ChatResult(text=""),
+        tokens=UsageTokens(prompt=0, completion=0),
+        breakdown=CostBreakdown(),
+    )
+    assert limits.current_spend(ctx) == before2

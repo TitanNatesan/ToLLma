@@ -64,6 +64,9 @@ class RequestLog(TimestampedModel):
     error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
     is_regeneration: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_streaming: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # True when token/cost figures are locally estimated (provider silent,
+    # e.g. mid-stream failure with partial output) rather than provider-reported.
+    usage_estimated: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     provider = relationship("Provider", lazy="joined")
     model = relationship("AIModel", lazy="joined")

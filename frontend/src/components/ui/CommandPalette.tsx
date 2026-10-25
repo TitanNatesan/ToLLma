@@ -3,7 +3,7 @@
 import { useCallback, useState, type ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { logout } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
 import { Dialog, DialogContent } from "./primitives";

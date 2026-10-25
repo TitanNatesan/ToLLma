@@ -2,7 +2,7 @@
 
 import { memo, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   CalendarClock,
   KeyRound,
@@ -36,7 +36,7 @@ import { IpRulesEditor, ipRulesToText, parseIpRules } from "./IpRulesEditor";
 import { ModelPermissionsEditor, modelPermissionsToInput } from "./ModelPermissionsEditor";
 import { PolicyForm, policyToInput } from "./PolicyForm";
 import { Segmented } from "./SelectField";
-import { ApiKeyStatusPill, apiKeyStatus, fmtDateTime } from "./StatusPill";
+import { ApiKeyStatusPill, fmtDateTime, keyStatus } from "./StatusPill";
 import type { AIModel } from "@/types";
 import type {
   ApiKey,
@@ -130,6 +130,8 @@ export interface KeyEditDrawerProps {
   onClose: () => void;
   /** Called after a successful save (parent closes the drawer). */
   onSaved: () => void;
+  /** Same 30d spend basis the table/detail pill uses (enables budget state). */
+  cost?: number;
 }
 
 /**
@@ -137,7 +139,7 @@ export interface KeyEditDrawerProps {
  * the analytics drawer stays read-only. Only changed sections are submitted,
  * each through its own endpoint (metadata PATCH, policy/IP/models PUT).
  */
-export function KeyEditDrawer({ apiKey, open, onClose, onSaved }: KeyEditDrawerProps) {
+export function KeyEditDrawer({ apiKey, open, onClose, onSaved, cost }: KeyEditDrawerProps) {
   if (!apiKey) return null;
   return (
     <KeyEditContent
@@ -146,6 +148,7 @@ export function KeyEditDrawer({ apiKey, open, onClose, onSaved }: KeyEditDrawerP
       open={open}
       onClose={onClose}
       onSaved={onSaved}
+      cost={cost}
     />
   );
 }
@@ -158,11 +161,13 @@ const KeyEditContent = memo(function KeyEditContent({
   open,
   onClose,
   onSaved,
+  cost,
 }: {
   apiKey: ApiKey;
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
+  cost?: number;
 }) {
   const qc = useQueryClient();
   const { data: models = [] } = useModels();
@@ -191,7 +196,8 @@ const KeyEditContent = memo(function KeyEditContent({
   const [error, setError] = useState<string | null>(null);
 
   const parsedIp = useMemo(() => parseIpRules(allow, deny), [allow, deny]);
-  const status = apiKeyStatus(apiKey);
+  // Same basis as the table pill (payload-only statuses plus budget spend).
+  const status = keyStatus(apiKey, cost);
 
   const dirty = useMemo(() => {
     const metaDirty =

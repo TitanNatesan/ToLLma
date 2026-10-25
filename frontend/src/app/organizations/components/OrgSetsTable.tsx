@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowUpDown, Copy, Loader2, Pencil, ShieldCheck, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge, Button, Checkbox, DataTable, type DataTableColumn, DetailPanel,
   Dialog, DialogContent, DialogDescription, DialogTitle, EmptyState,

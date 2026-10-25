@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Code, Copy, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 

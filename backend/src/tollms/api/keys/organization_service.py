@@ -304,3 +304,236 @@ def _revoke_member_keys(db: Session, org_id: uuid.UUID, user_id: uuid.UUID, *,
         logger.info("org keys revoked on %s: user=%s count=%d", reason, user_id, len(rows))
     db.flush()
 
+
+
+def _check_org_cap_for_budget(
+    db: Session, org, key, new_max_budget_usd: Decimal | None,
+) -> None:
+    """Reject a budget change that would over-allocate the org cap (422).
+
+    Mirrors issuance: allocated counts live *enabled* keys (this key's own
+    current budget excluded, the new value included; NULL counts 0).
+    Disabled keys contribute nothing, matching `_allocated_budget`.
+    No cap configured → no-op.
+    """
+    org_cap = org.max_spend
+    if org_cap is None or not key.enabled:
+        return
+    current = (
+        key.policy.max_budget_usd
+        if key.policy is not None and key.policy.max_budget_usd is not None
+        else Decimal("0")
+    )
+    new = new_max_budget_usd if new_max_budget_usd is not None else Decimal("0")
+    if _allocated_budget(db, key.org_id) - current + new > Decimal(str(org_cap)):
+        raise ValidationError(
+            f"org budget cap exceeded: allocated + {new} > {org_cap}"
+        )
+
+
+
+def update_org_key(
+    db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, key_id: uuid.UUID,
+    data,
+) -> object:
+    """PATCH org key metadata (name/description/enabled/expires_at).
+
+    Requires ACTIVE membership + ``Keys.Update``. Same PATCH semantics as
+    personal keys (omitted untouched, explicit null clears nullable ones);
+    the secret (hash/prefix) is never touched. Enabling a budgeted key
+    re-checks the org cap so disable → raise-budget → enable cannot bypass
+    it. Invalidates the cached gateway context.
+    """
+    from tollms.models.api_key import ApiKey
+    from tollms.services.api_keys import keys as key_engine
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Keys.Update")
+    key = db.scalar(
+        _org_key_select().where(ApiKey.id == key_id, ApiKey.org_id == org_id)
+    )
+    if key is None:
+        raise NotFoundError("api key not found")
+    key_hash = key.key_hash
+    fields = data.model_dump(exclude_unset=True)
+    if fields.get("name") is not None:
+        key.name = fields["name"]
+    if "description" in fields:
+        key.description = fields["description"]
+    if fields.get("enabled") is not None:
+        key.enabled = fields["enabled"]
+    if "expires_at" in fields:
+        keys_service._ensure_future_expires(fields["expires_at"], field="expires_at")
+        key.expires_at = fields["expires_at"]
+    if key.enabled and key.policy is not None and key.policy.max_budget_usd is not None:
+        _check_org_cap_for_budget(db, org, key, key.policy.max_budget_usd)
+    _audit(db, org_id, caller_id, "key.updated", key_id=str(key_id),
+           user_id=str(key.user_id))
+    db.commit()
+    key_engine.invalidate_context(key_hash)
+    emit("key.updated", key_id=str(key_id), org_id=str(org_id),
+         user_id=str(caller_id))
+    logger.info("org key updated: %s org=%s", key_id, org_id)
+    stored = db.scalar(_org_key_select().where(ApiKey.id == key_id))
+    return _read_org_key(db, stored)
+
+
+
+def put_org_key_policy(
+    db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, key_id: uuid.UUID,
+    data,
+) -> object:
+    """Full-replace the org key policy (absent fields become NULL/unlimited).
+
+    Requires ACTIVE membership + ``Keys.Update``. Never touches the secret.
+    The org budget cap is enforced against the new max (see issuance).
+    Invalidates the cached gateway context.
+    """
+    from tollms.models.api_key import ApiKey, ApiKeyPolicy
+    from tollms.services.api_keys import keys as key_engine
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Keys.Update")
+    key = db.scalar(
+        _org_key_select().where(ApiKey.id == key_id, ApiKey.org_id == org_id)
+    )
+    if key is None:
+        raise NotFoundError("api key not found")
+    key_hash = key.key_hash
+    values = keys_service._validated_policy(data)
+    _check_org_cap_for_budget(db, org, key, values.get("max_budget_usd"))
+    if key.policy is None:
+        key.policy = ApiKeyPolicy(**values)
+    else:
+        for field, value in values.items():
+            setattr(key.policy, field, value)
+    _audit(db, org_id, caller_id, "key.policy_updated", key_id=str(key_id),
+           user_id=str(key.user_id))
+    db.commit()
+    key_engine.invalidate_context(key_hash)
+    emit("key.policy_updated", key_id=str(key_id), org_id=str(org_id),
+         user_id=str(caller_id))
+    logger.info("org key policy updated: %s org=%s", key_id, org_id)
+    stored = db.scalar(_org_key_select().where(ApiKey.id == key_id))
+    return _read_org_key(db, stored)
+
+
+
+def put_org_key_ip_rules(
+    db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, key_id: uuid.UUID,
+    items: list,
+) -> object:
+    """Replace every IP rule on the org key (empty list = no restriction).
+
+    Requires ACTIVE membership + ``Keys.Update``. Never touches the secret.
+    Invalidates the cached gateway context.
+    """
+    from tollms.models.api_key import ApiKey, ApiKeyIpRule
+    from tollms.services.api_keys import keys as key_engine
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Keys.Update")
+    key = db.scalar(
+        _org_key_select().where(ApiKey.id == key_id, ApiKey.org_id == org_id)
+    )
+    if key is None:
+        raise NotFoundError("api key not found")
+    key_hash = key.key_hash
+    rules = keys_service._validated_ip_rules(items)
+    key.ip_rules.clear()
+    db.flush()
+    key.ip_rules.extend(ApiKeyIpRule(**rule) for rule in rules)
+    _audit(db, org_id, caller_id, "key.ip_rules_updated", key_id=str(key_id),
+           user_id=str(key.user_id))
+    db.commit()
+    key_engine.invalidate_context(key_hash)
+    emit("key.ip_rules_updated", key_id=str(key_id), org_id=str(org_id),
+         user_id=str(caller_id))
+    logger.info("org key ip rules replaced: %s org=%s (%d rules)", key_id, org_id, len(rules))
+    stored = db.scalar(_org_key_select().where(ApiKey.id == key_id))
+    return _read_org_key(db, stored)
+
+
+
+def put_org_key_model_permissions(
+    db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, key_id: uuid.UUID,
+    items: list,
+) -> object:
+    """Replace every model permission on the org key (empty = unrestricted).
+
+    Requires ACTIVE membership + ``Keys.Update``. Models/providers must
+    belong to the key's own org (same escalation rule as issuance).
+    Never touches the secret. Invalidates the cached gateway context.
+    """
+    from tollms.models.api_key import ApiKey, ApiKeyModelPermission
+    from tollms.services.api_keys import keys as key_engine
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Keys.Update")
+    key = db.scalar(
+        _org_key_select().where(ApiKey.id == key_id, ApiKey.org_id == org_id)
+    )
+    if key is None:
+        raise NotFoundError("api key not found")
+    key_hash = key.key_hash
+    permissions = keys_service._validated_model_permissions(
+        db, items, caller_id, visible_org_ids=active_org_ids(db, caller_id),
+        require_org_id=org_id,
+    )
+    key.model_permissions.clear()
+    db.flush()
+    key.model_permissions.extend(ApiKeyModelPermission(**perm) for perm in permissions)
+    _audit(db, org_id, caller_id, "key.models_updated", key_id=str(key_id),
+           user_id=str(key.user_id))
+    db.commit()
+    key_engine.invalidate_context(key_hash)
+    emit("key.models_updated", key_id=str(key_id), org_id=str(org_id),
+         user_id=str(caller_id))
+    logger.info("org key model permissions replaced: %s org=%s (%d rows)",
+                key_id, org_id, len(permissions))
+    stored = db.scalar(_org_key_select().where(ApiKey.id == key_id))
+    return _read_org_key(db, stored)
+
+
+
+def rotate_org_key(
+    db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, key_id: uuid.UUID,
+) -> tuple:
+    """Replace the org key's stored hash/prefix; the old raw key dies now.
+
+    Requires ACTIVE membership + ``Keys.Rotate``. The ONLY org operation
+    that changes the secret. Tombstones the old hash so no cached context
+    can resurrect it.
+    """
+    from tollms.models.api_key import ApiKey
+    from tollms.services.api_keys import keys as key_engine
+    from tollms.services.observability.events import emit
+
+    org, mem = _member_org(db, org_id, caller_id)
+    _require_perm(db, org, mem, caller_id, "Keys.Rotate")
+    key = db.scalar(
+        _org_key_select().where(ApiKey.id == key_id, ApiKey.org_id == org_id)
+    )
+    if key is None:
+        raise NotFoundError("api key not found")
+    old_hash = key.key_hash
+    raw_key, key_prefix, key_hash = key_engine.generate_key()
+    key.key_hash = key_hash
+    key.key_prefix = key_prefix
+    key.rotation_count += 1
+    _audit(db, org_id, caller_id, "key.rotated", key_id=str(key_id),
+           user_id=str(key.user_id))
+    db.commit()
+    key_engine.invalidate_context(old_hash)
+    key_engine.write_tombstone(old_hash)
+    emit("key.rotated", key_id=str(key_id), org_id=str(org_id),
+         user_id=str(caller_id))
+    logger.info("org key rotated: %s org=%s (rotation %d)",
+                key_id, org_id, key.rotation_count)
+    stored = db.scalar(_org_key_select().where(ApiKey.id == key_id))
+    return _read_org_key(db, stored), raw_key
+

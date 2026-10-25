@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { parseApiError } from "@/lib/errors";
 import { useProviderMutations } from "@/hooks/useRegistry";
 

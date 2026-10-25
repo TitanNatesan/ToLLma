@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, Copy, Link2, RefreshCw, ShieldOff } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Button, Dialog, DialogContent, DialogTitle } from "@/components/ui/primitives";
 import { useIntelligenceMutations, useShares } from "@/hooks/useIntelligence";
 import { toastApiError } from "@/lib/errors";

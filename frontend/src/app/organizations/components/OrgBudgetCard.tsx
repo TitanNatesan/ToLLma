@@ -3,7 +3,7 @@ import { fmtBudgetAmount } from "@/app/api-keys/components/BudgetBar";
 
 import { useState } from "react";
 import { Loader2, Wallet } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Button, Card, CardContent, Dialog, DialogContent, DialogDescription,
   DialogTitle, EmptyState, ErrorState, Field, Input, LoadingState,

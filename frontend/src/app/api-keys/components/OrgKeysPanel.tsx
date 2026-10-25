@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { KeyRound } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Button, DataTable, type DataTableColumn,
   EmptyState, ErrorState, LoadingState, SearchInput,
 } from "@/components/ui";
 import { OrgKeyDetailsPanel } from "./OrgKeyDetailsPanel";
+import { OrgKeyEditDrawer } from "./OrgKeyEditDrawer";
 import { orgKeyStatus } from "./orgKeyStatus";
 import { ApiKeyStatusPill } from "./StatusPill";
 import { RawKeyDialog } from "./RawKeyDialog";
@@ -22,11 +23,12 @@ import type { Member, OrgKey } from "@/types/orgs";
 
 /** Key gates for the org view. Mirrors the old operations-tab derivation:
  * read needs root or Keys.Read, create needs Keys.Create,
- * revoke accepts Keys.Revoke or Keys.Delete. */
+ * revoke accepts Keys.Revoke or Keys.Delete, edits need Keys.Update. */
 export interface OrgKeysPerms {
   canCreateKeys: boolean;
   canReadKeys: boolean;
   canRevokeKeys: boolean;
+  canUpdateKeys: boolean;
 }
 
 const PAGE_SIZE = 15;
@@ -123,7 +125,8 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
   const [createOpen, setCreateOpen] = useState(false);
   const [revoking, setRevoking] = useState<OrgKey | null>(null);
   const [detailsKeyId, setDetailsKeyId] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ rawKey: string; name: string } | null>(null);
+  const [editKeyId, setEditKeyId] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ rawKey: string; name: string; reason: "create" | "rotate" } | null>(null);
 
   const debounced = useDebouncedValue(search.trim(), 300);
   const keys = useOrgKeys(orgId, {
@@ -189,9 +192,17 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
     { key: "used", header: "Last used", render: (k) => <span className="whitespace-nowrap">{dateLabel(k.last_used_at ?? k.used_at)}</span> },
     {
       key: "actions", header: "Actions", align: "right",
-      render: (k) => (!k.revoked && perms.canRevokeKeys ? (
-        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setRevoking(k); }}
-          data-testid={`org-key-revoke-${k.id}`}>Revoke</Button>
+      render: (k) => ((!k.revoked && (perms.canUpdateKeys || perms.canRevokeKeys)) ? (
+        <span className="inline-flex items-center justify-end gap-1">
+          {perms.canUpdateKeys && (
+            <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setEditKeyId(k.id); }}
+              data-testid={`org-key-edit-${k.id}`}>Edit</Button>
+          )}
+          {perms.canRevokeKeys && (
+            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setRevoking(k); }}
+              data-testid={`org-key-revoke-${k.id}`}>Revoke</Button>
+          )}
+        </span>
       ) : null),
     },
   ];
@@ -257,7 +268,7 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
           onClose={() => setCreateOpen(false)}
           onCreated={(raw, name) => {
             setCreateOpen(false);
-            setCreated({ rawKey: raw, name });
+            setCreated({ rawKey: raw, name, reason: "create" });
           }} />
       )}
 
@@ -271,6 +282,27 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
         orgKey={rows.find((k) => k.id === detailsKeyId) ?? null}
         open={detailsKeyId !== null}
         onClose={() => setDetailsKeyId(null)}
+        onEdit={perms.canUpdateKeys ? (k) => { setDetailsKeyId(null); setEditKeyId(k.id); } : undefined}
+      />
+
+      <OrgKeyEditDrawer
+        orgId={orgId}
+        orgKey={rows.find((k) => k.id === editKeyId) ?? null}
+        open={editKeyId !== null}
+        onClose={() => setEditKeyId(null)}
+        onSaved={() => setEditKeyId(null)}
+        onRotated={(rawKey, name) => {
+          setEditKeyId(null);
+          setCreated({ rawKey, name, reason: "rotate" });
+        }}
+        assigneeLabel={
+          editKeyId
+            ? (() => {
+                const k = rows.find((r) => r.id === editKeyId);
+                return k ? assigneeEmail(k) : undefined;
+              })()
+            : undefined
+        }
       />
 
       {created && (
@@ -278,7 +310,7 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
           open
           rawKey={created.rawKey}
           keyName={created.name}
-          reason="create"
+          reason={created.reason}
           onClose={() => setCreated(null)}
         />
       )}

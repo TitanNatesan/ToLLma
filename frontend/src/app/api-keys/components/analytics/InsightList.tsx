@@ -109,7 +109,9 @@ export function InsightList({
           <p className="text-xs text-zinc-400">No anomalies detected in this range.</p>
         </div>
       ) : (
-        <ul className="max-h-[420px] space-y-2 overflow-y-auto pr-1" data-testid={`${testId}-list`}>
+        // No inner scroll container: the list expands naturally and the
+        // drawer's own scroll carries long insight sets.
+        <ul className="space-y-2" data-testid={`${testId}-list`}>
           {ranked.map((insight) => {
             const style = severityStyle(insight.severity ?? "info");
             const Icon = style.icon;

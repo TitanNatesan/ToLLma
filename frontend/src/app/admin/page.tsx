@@ -220,6 +220,12 @@ export default function AdminPage() {
   // Deep links (`/admin#tokens`) and sidebar clicks both drive it.
   const activeId = useHashSection(ADMIN_SECTION_IDS, "overview");
 
+  // One section mounts at a time, so scroll to it after each switch —
+  // the sidebar click target unmounts before the new section exists.
+  useEffect(() => {
+    document.getElementById(activeId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [activeId]);
+
   const queryClient = useQueryClient();
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["admin"] });
 

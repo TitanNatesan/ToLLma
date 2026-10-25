@@ -344,6 +344,7 @@ def _log_request(
     tokens: UsageTokens | None = None,
     total_tokens: int | None = None,
     is_streaming: bool = False,
+    usage_estimated: bool = False,
 ) -> None:
     entry = ApiLogEntry(
         request_id=meta.request_id,
@@ -367,6 +368,7 @@ def _log_request(
         ip_address=meta.ip_address,
         user_agent=meta.user_agent,
         is_streaming=is_streaming,
+        usage_estimated=usage_estimated,
     )
     try:
         log_request(db, entry)
@@ -672,6 +674,7 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             cost=breakdown.total_cost,
             tokens=tokens,
             total_tokens=total,
+            usage_estimated=estimated,
         )
         logger.info(
             "public gateway chat: key=%s model=%s tokens=%s cost=%s latency=%.0fms",
@@ -775,6 +778,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             model_label=prepared.model_label,
             latency_ms=latency_ms,
             cost=cost,
+            usage_estimated=estimated,
         )
         logger.info(
             "public gateway media: key=%s model=%s endpoint=%s cost=%s latency=%.0fms",
@@ -1095,6 +1099,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             tokens=tokens,
             total_tokens=total,
             is_streaming=True,
+            usage_estimated=estimated,
         )
         logged = True
         logger.info(

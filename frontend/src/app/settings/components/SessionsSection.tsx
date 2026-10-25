@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Laptop, LogOut, Monitor, Smartphone } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Badge, Button, EmptyState, LoadingState } from "@/components/ui";
 import { useSessionMutations, useSessions } from "@/hooks/useSettings";
 import { fmtRelative } from "@/app/analytics/format";

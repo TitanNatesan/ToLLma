@@ -157,21 +157,23 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _media_breakdown(spec: GenerationSpec, *, partial: bool = False):
-    """(CostBreakdown, estimated) for media specs, or None for token-priced runs.
+    """(CostBreakdown, estimated) for media specs; None for token-priced runs.
 
     Actual provider usage (the adapter's ``final_cost``) always wins. Partial
-    content (cancel/failure before the media existed) bills nothing.
+    media content (cancel/failure before the media existed) bills nothing.
+    Token-priced runs always fall through to the caller so provider-reported
+    usage wins and estimates apply to partial content.
     """
     adapter_cost = getattr(getattr(spec, "adapter", None), "final_cost", None)
     if adapter_cost is not None:
         cost = Decimal(str(adapter_cost.estimated_cost))
         return CostBreakdown(output_cost=cost, total_cost=cost), bool(adapter_cost.estimated)
+    if spec.media_cost is None:
+        return None
     if partial:
         return CostBreakdown(), False
-    if spec.media_cost is not None:
-        cost = Decimal(str(spec.media_cost))
-        return CostBreakdown(output_cost=cost, total_cost=cost), True
-    return None
+    cost = Decimal(str(spec.media_cost))
+    return CostBreakdown(output_cost=cost, total_cost=cost), True
 
 
 class GenerationManager:
@@ -516,7 +518,7 @@ class GenerationManager:
             )
             row.latency_ms = latency_ms
             self._store_run(db, spec, text, tokens, breakdown, latency_ms, status, error)
-            self._log_request(db, spec, tokens, breakdown, latency_ms, status)
+            self._log_request(db, spec, tokens, breakdown, latency_ms, status, estimated)
             db.commit()
         except Exception:
             db.rollback()
@@ -573,8 +575,8 @@ class GenerationManager:
         run.latency_ms = latency_ms
         run.error = error
 
-    def _log_request(self, db, spec, tokens, breakdown, latency_ms, status) -> None:
-        """One request_logs row per finished generation (success/cancel/fail)."""
+    def _log_request(self, db, spec, tokens, breakdown, latency_ms, status, estimated: bool = False) -> None:
+        """One request-log row per finished generation (success/cancel/fail)."""
         status_map = {
             MessageStatus.COMPLETED: RequestStatus.SUCCESS,
             MessageStatus.CANCELLED: RequestStatus.CANCELLED,
@@ -607,6 +609,7 @@ class GenerationManager:
                 error_code=spec.error_code,
                 is_regeneration=spec.is_regeneration,
                 is_streaming=True,
+                usage_estimated=estimated,
             ),
         )
 
@@ -627,10 +630,11 @@ def _reconcile_key_policy(spec: GenerationSpec, *, completed: bool, result: Chat
     """Swap the pre-spawn Valkey reservation for actual usage. Never raises.
 
     Completed token runs bill actuals (provider-reported or the text estimate,
-    same as the public gateway). Media runs bill the adapter's actual cost (or
-    the rate-card estimate) with zero tokens. Cancelled/failed runs release the
-    reservation (0/0) unless the provider already reported usage — estimates
-    are never fabricated for runs that produced nothing billable.
+    same as the public gateway). Failed/cancelled runs bill their estimated
+    actuals when partial output exists (the provider bills server-side
+    generation even when delivery fails), and release the reservation (0/0)
+    only when nothing billable was produced. Media runs bill the adapter's
+    actual cost (or the rate-card estimate) with zero tokens.
     """
     if spec.key_ctx is None or spec.key_request_id is None:
         return
@@ -641,7 +645,7 @@ def _reconcile_key_policy(spec: GenerationSpec, *, completed: bool, result: Chat
         if media:
             actual_tokens = 0
             actual_cost = breakdown.total_cost if completed else Decimal(0)
-        elif completed or result.prompt_tokens or result.completion_tokens or result.total_tokens:
+        elif completed or result.prompt_tokens or result.completion_tokens or result.total_tokens or result.text:
             actual_tokens = tokens.prompt + tokens.completion
             actual_cost = breakdown.total_cost
         else:

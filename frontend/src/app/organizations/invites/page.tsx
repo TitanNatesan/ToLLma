@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Badge, Button, Card, CardContent, EmptyState, ErrorState, LoadingState, PageHeader } from "@/components/ui";
 import { useMyInvitations, useOrgMutations } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";

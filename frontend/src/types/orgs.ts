@@ -381,6 +381,8 @@ export interface OrgAnalyticsOverview {
   keys?: OrgAnalyticsRow[];
   /** Present only as [] — per-team attribution is unreliable, never render splits. */
   by_team?: OrgAnalyticsRow[];
+  /** Backend-canonical per-day roll-up ({date, requests, tokens, cost}). */
+  by_day?: OrgAnalyticsPoint[];
   timeline?: OrgAnalyticsPoint[];
   timeseries?: OrgAnalyticsPoint[];
   daily?: OrgAnalyticsPoint[];

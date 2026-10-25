@@ -737,14 +737,20 @@ def test_reservation_cleanup_on_fail_and_cancel(
     ctx = key_engine.authenticate(db, raw)
     assert ctx is not None
 
-    # Provider failure: reservation refunded, spend stays zero, no success row.
+    # Provider failure: reservation refunded, spend stays zero, one FAILED
+    # request row with unknown (NULL) usage — never fabricated.
     boom_calls: list = []
     monkeypatch.setattr(
         chat_service, "build_adapter", lambda *a, **k: _FakeChatAdapter(boom_calls, error=RuntimeError("boom")))
     with pytest.raises(Exception):
         _run(chat_service.run_chat(db, _chat_req(p["id"], m["id"], kid), user_id=uid))
     assert limits.current_spend(ctx) == Decimal(0)
-    assert _chat_rows(db, kid) == []
+    failed = [r for r in _chat_rows(db, kid) if r.status == RequestStatus.FAILED.value]
+    assert len(failed) == 1  # exactly one durable failure record, no duplicates
+    assert failed[0].total_tokens is None and failed[0].total_cost is None
+    assert failed[0].error_code is not None
+    assert failed[0].latency_ms is not None
+    assert len([r for r in _chat_rows(db, kid) if r.status == RequestStatus.SUCCESS.value]) == 0
 
     # Streaming cancel: reservation slot for the client_key is gone afterwards.
     from tollms.services import generation as generation_engine

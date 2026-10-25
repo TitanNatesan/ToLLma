@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Building2, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle, Field, Input } from "@/components/ui";
 import { parseApiError } from "@/lib/errors";
 

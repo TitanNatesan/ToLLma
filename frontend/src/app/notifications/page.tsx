@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { Bell, BellOff, Check } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge,
   Button,

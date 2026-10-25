@@ -8,12 +8,9 @@ import * as DialogPrimitives from "@radix-ui/react-dialog";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { Check } from "lucide-react";
-import { Toaster as SonnerToaster } from "sonner";
 import { cn } from "@/lib/utils";
 
-export function Toaster() {
-  return <SonnerToaster richColors closeButton />;
-}
+export { Toaster } from "./SileoToaster";
 
 // --- shadcn/ui button (cva variants + Radix Slot for asChild) ---
 const buttonVariants = cva(

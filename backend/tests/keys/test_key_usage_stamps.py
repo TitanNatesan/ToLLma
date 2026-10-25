@@ -289,7 +289,9 @@ def test_failed_and_cancelled_never_move_stamp(
     assert gw_row.input_tokens is None and gw_row.total_tokens is None and gw_row.cost is None
     assert db.get(ApiKey, uuid.UUID(gw_kid)).last_used_at is None
 
-    # In-app non-streaming failure: raises, no SUCCESS row, stamp untouched.
+    # In-app non-streaming failure: raises, records one FAILED request row
+    # with unknown (NULL) usage — never fabricated — and leaves the stamp
+    # and the message table untouched (no assistant message is created).
     class _ChatBoom(BaseProviderAdapter):
         def __init__(self) -> None:
             super().__init__(credentials={}, model_id="boom")
@@ -306,7 +308,13 @@ def test_failed_and_cancelled_never_move_stamp(
         asyncio.run(gateway_service.run_chat(
             db, _req(p["id"], m["id"], kid), _transport(), user_id=uid))
     db.expire_all()
-    assert db.scalars(select(RequestLog).where(RequestLog.api_key_id == kid)).all() == []
+    fail_rows = db.scalars(select(RequestLog).where(RequestLog.api_key_id == kid)).all()
+    assert len(fail_rows) == 1
+    assert fail_rows[0].status == RequestStatus.FAILED.value
+    assert fail_rows[0].total_tokens is None and fail_rows[0].total_cost is None
+    assert fail_rows[0].latency_ms is not None and fail_rows[0].latency_ms >= 0
+    assert fail_rows[0].message_id is None
+    assert fail_rows[0].error_code is not None
     assert db.get(ApiKey, kid).last_used_at is None
 
     # In-app streaming cancel: CANCELLED row recorded, stamp still untouched.

@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, LogOut, ShieldAlert } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Button, Card, CardContent, EmptyState, ErrorState, LoadingState, PageHeader, SectionHeader,
 } from "@/components/ui";

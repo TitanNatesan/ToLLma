@@ -22,6 +22,12 @@ import type {
 } from "@/types/orgs";
 import type { User } from "@/types";
 import type { AIModel } from "@/types";
+import type {
+  ApiKeyIpRuleInput,
+  ApiKeyModelPermissionInput,
+  ApiKeyPolicyInput,
+  ApiKeyUpdateInput,
+} from "@/types/apiKeys";
 
 const BASE = "/api/v1/orgs";
 const NOTIF = "/api/v1/notifications";
@@ -316,6 +322,57 @@ export function createOrgKey(orgId: string, payload: OrgKeyCreateInput): Promise
 
 export function revokeOrgKey(orgId: string, keyId: string): Promise<void> {
   return req<void>(`${BASE}/${orgId}/keys/${keyId}`, { method: "DELETE" });
+}
+
+export function updateOrgKey(
+  orgId: string,
+  keyId: string,
+  patch: ApiKeyUpdateInput,
+): Promise<OrgKey> {
+  return req<OrgKey>(`${BASE}/${orgId}/keys/${keyId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function updateOrgKeyPolicy(
+  orgId: string,
+  keyId: string,
+  policy: ApiKeyPolicyInput,
+): Promise<OrgKey> {
+  return req<OrgKey>(`${BASE}/${orgId}/keys/${keyId}/policy`, {
+    method: "PUT",
+    body: JSON.stringify(policy ?? {}),
+  });
+}
+
+export function updateOrgKeyIpRules(
+  orgId: string,
+  keyId: string,
+  rules: ApiKeyIpRuleInput[],
+): Promise<OrgKey> {
+  return req<OrgKey>(`${BASE}/${orgId}/keys/${keyId}/ip-rules`, {
+    method: "PUT",
+    body: JSON.stringify(rules ?? []),
+  });
+}
+
+export function updateOrgKeyModelPermissions(
+  orgId: string,
+  keyId: string,
+  permissions: ApiKeyModelPermissionInput[],
+): Promise<OrgKey> {
+  return req<OrgKey>(`${BASE}/${orgId}/keys/${keyId}/model-permissions`, {
+    method: "PUT",
+    body: JSON.stringify(permissions ?? []),
+  });
+}
+
+export function rotateOrgKey(orgId: string, keyId: string): Promise<OrgKeySecretResponse> {
+  return req<OrgKeySecretResponse>(`${BASE}/${orgId}/keys/${keyId}/rotate`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }
 
 // --- Phase B: org providers -------------------------------------------------

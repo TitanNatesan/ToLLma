@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useMemo, useState } from "react";
+import React, { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -8,10 +8,11 @@ import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
 import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   AlertCircle,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -102,6 +103,72 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
         </button>
       </div>
       <pre className="max-h-[480px] overflow-x-auto overflow-y-auto p-3 text-sm text-zinc-100">{children}</pre>
+    </div>
+  );
+}
+
+/** Collapsed height for long user requests; expansion is CSS-only (no data loss). */
+const USER_COLLAPSE_MAX_PX = 320;
+
+/**
+ * Long user prompts collapse to a readable height with Show more / Show less.
+ * The threshold comes from the rendered height (scrollHeight), not character
+ * count, so pasted code, HTML, and multiline text are all handled. State is
+ * per message instance and never touches assistant responses or code cells.
+ */
+function CollapsibleUserContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const regionId = useId();
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const measure = () => {
+      // Expanded content has no clamp, so scrollHeight can't reveal overflow;
+      // keep the prior state so Show less stays available.
+      if (expanded) return;
+      setClamped(el.scrollHeight > USER_COLLAPSE_MAX_PX + 8);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [content, expanded]);
+
+  return (
+    <div className="min-w-0">
+      <div
+        ref={bodyRef}
+        id={regionId}
+        className={clamped && !expanded ? "relative max-h-80 overflow-hidden" : "relative"}
+      >
+        <UserMarkdown content={content} isStreaming={isStreaming} />
+        {clamped && !expanded && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-zinc-100 to-transparent dark:from-zinc-800"
+          />
+        )}
+      </div>
+      {clamped && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-controls={regionId}
+          data-testid="user-message-toggle"
+          className="mt-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200/60 hover:text-zinc-800 focus-visible:outline-2 focus-visible:outline-tollma-500 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100"
+        >
+          {expanded ? "Show less" : "Show more"}
+          <ChevronDown
+            className={`size-3 transition-transform motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          />
+        </button>
+      )}
     </div>
   );
 }
@@ -403,7 +470,6 @@ function MessageViewInner({
       exit={{ opacity: 0, y: -4 }}
       id={message.id}
       initial={{ opacity: 0, y: 8 }}
-      layout
       transition={{ duration: 0.2, ease: "easeOut" }}
     >
       {!isUser && (
@@ -481,7 +547,7 @@ function MessageViewInner({
                 </div>
               </div>
             ) : (
-              <UserMarkdown content={message.content} isStreaming={isStreaming} />
+              <CollapsibleUserContent content={message.content} isStreaming={isStreaming} />
             )
           ) : (
             <>

@@ -42,15 +42,17 @@ export const SETTINGS_SECTION_IDS: readonly SettingsSectionId[] = SETTINGS_SECTI
 );
 
 /**
- * Same-document anchors: the browser sets the hash and the `scroll-smooth`
- * scroll container performs the smooth scroll (scroll-margin on the cards
- * keeps the sticky header clear). Repeat clicks on the current section are a
- * browser no-op, so scroll manually in that case.
+ * Same-document anchors, driven natively: Next.js <Link> same-page hash
+ * navigation uses history.pushState, which does NOT fire `hashchange` — so
+ * every section subscriber would go stale. Assigning window.location.hash
+ * directly fires the event and keeps highlights and content in sync.
  */
 function navigate(event: MouseEvent<HTMLAnchorElement>, hash: SettingsSectionId) {
+  event.preventDefault();
   if (window.location.hash === `#${hash}`) {
-    event.preventDefault();
     document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else {
+    window.location.hash = hash;
   }
 }
 

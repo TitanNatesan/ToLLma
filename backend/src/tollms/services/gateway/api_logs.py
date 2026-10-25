@@ -235,6 +235,9 @@ class ApiLogEntry:
     is_streaming: bool = False
     # Server-derived org attribution: the resolving key's org (None = personal).
     org_id: uuid.UUID | None = None
+    # True when token/cost figures are locally estimated (provider silent)
+    # rather than provider-reported. Unknown stays NULL, never fabricated.
+    usage_estimated: bool = False
 
 
 def _derive_total(entry: ApiLogEntry) -> int | None:
@@ -286,6 +289,7 @@ def log_request(db: Session, entry: ApiLogEntry) -> None:
             city=meta["city"],
             region=meta["region"],
             is_streaming=entry.is_streaming,
+            usage_estimated=entry.usage_estimated,
         )
         with _savepoint(db):
             db.add(row)

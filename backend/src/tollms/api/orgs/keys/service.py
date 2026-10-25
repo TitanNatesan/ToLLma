@@ -17,6 +17,11 @@ from tollms.api.keys.organization_service import (
     list_org_keys,
     revoke_org_key,
     _revoke_member_keys,
+    update_org_key,
+    put_org_key_policy,
+    put_org_key_ip_rules,
+    put_org_key_model_permissions,
+    rotate_org_key,
 )
 
 __all__ = [
@@ -29,4 +34,9 @@ __all__ = [
     'list_org_keys',
     'revoke_org_key',
     '_revoke_member_keys',
+    'update_org_key',
+    'put_org_key_policy',
+    'put_org_key_ip_rules',
+    'put_org_key_model_permissions',
+    'rotate_org_key',
 ]

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Button, Card, CardContent, Checkbox, Field, Input, Select } from "@/components/ui";
 import { lookupRepositoryModel } from "@/services/api";
 import type { AIModel } from "@/types";

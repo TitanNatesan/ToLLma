@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import { Button, ErrorState, LoadingState, Logo } from "@/components/ui";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChatComposer, type ChatSendPayload } from "@/app/components/chat/ChatComposer";
 import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";

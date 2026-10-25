@@ -1,8 +1,8 @@
 "use client";
 
 import { memo, useState } from "react";
-import { Activity, KeyRound, Network } from "lucide-react";
-import { Badge, DetailPanel } from "@/components/ui";
+import { Activity, KeyRound, Network, Pencil } from "lucide-react";
+import { Badge, Button, DetailPanel } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { fmtBudgetAmount } from "./BudgetBar";
 import { KeyAnalytics } from "./KeyAnalytics";
@@ -133,6 +133,8 @@ interface OrgKeyDetailsPanelProps {
   orgKey: OrgKey | null;
   open: boolean;
   onClose: () => void;
+  /** Present only when the viewer may edit (Keys.Update). */
+  onEdit?: (orgKey: OrgKey) => void;
 }
 
 /**
@@ -141,19 +143,21 @@ interface OrgKeyDetailsPanelProps {
  * analytics/network endpoints), plus read-only policy and model allowlist.
  * No editing here — revocation stays on the table row.
  */
-export function OrgKeyDetailsPanel({ orgKey, open, onClose }: OrgKeyDetailsPanelProps) {
+export function OrgKeyDetailsPanel({ orgKey, open, onClose, onEdit }: OrgKeyDetailsPanelProps) {
   if (!orgKey) return null;
-  return <OrgKeyDetailsContent key={orgKey.id} orgKey={orgKey} open={open} onClose={onClose} />;
+  return <OrgKeyDetailsContent key={orgKey.id} orgKey={orgKey} open={open} onClose={onClose} onEdit={onEdit} />;
 }
 
 const OrgKeyDetailsContent = memo(function OrgKeyDetailsContent({
   orgKey,
   open,
   onClose,
+  onEdit,
 }: {
   orgKey: OrgKey;
   open: boolean;
   onClose: () => void;
+  onEdit?: (orgKey: OrgKey) => void;
 }) {
   const [tab, setTab] = useState<Tab>("analytics");
   // Same input + spend basis as the org table badge (never usage-blind).
@@ -174,6 +178,19 @@ const OrgKeyDetailsContent = memo(function OrgKeyDetailsContent({
       subtitle={<span className="font-mono">{masked}</span>}
       testId="org-key-details-panel"
       label={`Details for ${orgKey.name}`}
+      actions={
+        onEdit ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onEdit(orgKey)}
+            data-testid="org-key-edit-open"
+          >
+            <Pencil className="size-3.5" />
+            Edit Key
+          </Button>
+        ) : undefined
+      }
     >
       <div className="space-y-4">
         <div className="grid grid-cols-1 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-2">

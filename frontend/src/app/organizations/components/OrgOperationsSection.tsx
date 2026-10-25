@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge, Button, DataTable, type DataTableColumn,
   DetailPanel,

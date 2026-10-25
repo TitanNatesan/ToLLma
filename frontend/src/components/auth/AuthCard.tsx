@@ -8,7 +8,7 @@ import { Eye, EyeOff, KeyRound, Loader2, Lock, Mail, ShieldCheck, User as UserIc
 import { Button } from "@/components/ui/primitives";
 import { Logo } from "@/components/ui/Logo";
 import { ApiError, googleLoginUrl, login, signup } from "@/services/api";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { useAuthStore } from "@/store/auth";
 
 interface AuthCardProps {

@@ -255,9 +255,37 @@ def org_analytics_overview(db: Session, caller_id: uuid.UUID,
     # available via ?team_id= (roster filter applied to every section above).
     by_team: list[AnalyticsTeamRow] = []
 
+    # Reliability signals over the same window/filters but ALL statuses
+    # (the sections above count successes only). Cache sums ride the same
+    # success-filtered rows as `totals`; rates are None on empty windows.
+    in_all = [RequestLog.org_id == org_id, *extra_in]
+    api_all = [ApiRequestLog.org_id == org_id, *extra_api]
+    rel_in = db.execute(select(
+        func.count(RequestLog.id),
+        func.count(RequestLog.id).filter(RequestLog.status == "success"),
+        func.coalesce(func.sum(RequestLog.cache_read_tokens), 0),
+        func.coalesce(func.sum(RequestLog.prompt_tokens), 0),
+    ).where(*in_all)).one()
+    rel_api = db.execute(select(
+        func.count(ApiRequestLog.id),
+        func.count(ApiRequestLog.id).filter(ApiRequestLog.status == "success"),
+        func.coalesce(func.sum(ApiRequestLog.cache_read_tokens), 0),
+        func.coalesce(func.sum(ApiRequestLog.input_tokens), 0),
+    ).where(*api_all)).one()
+    total_requests = int(rel_in[0] or 0) + int(rel_api[0] or 0)
+    successful_requests = int(rel_in[1] or 0) + int(rel_api[1] or 0)
+    cache_read = int(rel_in[2] or 0) + int(rel_api[2] or 0)
+    input_tokens = int(rel_in[3] or 0) + int(rel_api[3] or 0)
+    success_rate = (100.0 * successful_requests / total_requests) if total_requests else None
+    cache_base = input_tokens + cache_read
+    cache_hit_rate = (100.0 * cache_read / cache_base) if cache_base else None
+
     return AnalyticsOverview(
         totals=totals, by_day=by_day, by_model=by_model,
         by_provider=by_provider, by_user=by_user,
         by_team=by_team, by_key=by_key,
+        successful_requests=successful_requests, total_requests=total_requests,
+        success_rate=success_rate, cache_read_tokens=cache_read,
+        input_tokens=input_tokens, cache_hit_rate=cache_hit_rate,
     )
 

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowLeft, ArrowUpDown, Loader2, UsersRound } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge, Button, Card, CardContent, Checkbox, DataTable, type DataTableColumn,
   DetailPanel, Dialog, DialogContent, DialogDescription, DialogTitle,

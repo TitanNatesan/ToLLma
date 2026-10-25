@@ -3978,3 +3978,84 @@ Response items rendered code as an unbounded unwrapped blob; mermaid syntax erro
 
 ### Verification
 - `tsc` clean; vitest 157/157 (24 files). Live browser (real provider response with python fence + invalid mermaid): cell shows "Python · 1 line" + Edit/Wrap/Download/Copy, pre carries max-h classes, Edit→Done/Revert works, mermaid cell shows inline parse error with Diagram tab disabled, zero boom nodes in DOM, thinking steps render as prose with inline code spans.
+
+---
+
+## 2026-10-22 — Admin hash navigation + org analytics overhaul
+
+### Requirement
+Platform-admin sections beyond Overview never loaded; org analytics page showed "No timeline data", empty success/cache rates, and needed better organization with interactive visualization.
+
+### Root causes (all evidence-verified)
+- Next.js `<Link href="/admin#x">` same-page navigation uses history.pushState and does NOT fire `hashchange` — every hash subscriber (sidebar highlight, page content) went stale. Confirmed live: URL became `#usage` while Overview stayed rendered. Same broken pattern in Settings + Analytics sidebars.
+- Org overview API returns `by_day` (+`totals`), but the frontend `timeline()` only read `timeline/timeseries/daily/series` → chart always empty. Backend sent no success/cache aggregates at all (success-only filters), so rates were always "—".
+
+### Fix
+- Nav: `SidebarAdmin`/`SidebarSettings`/`SidebarAnalytics` click handlers preventDefault + assign `window.location.hash` natively (fires hashchange; deep links/history preserved); `AdminPage` scrolls to the mounted section on activeId change.
+- Backend `AnalyticsOverview`: additive `successful_requests/total_requests/success_rate/cache_read_tokens/input_tokens/cache_hit_rate` (both ledgers, same filters; null-safe). New `test_analytics_reliability_fields` (11 passed incl. key/team scoping, empty-window nulls).
+- Frontend org dashboard: `by_day` timeline source; section anchors (Overview/Usage over time/Breakdown/Members/Insights/Budget) with chip nav (buttons, no hash pollution); timeline Spend/Requests/Tokens toggle.
+
+### Verification
+- Live (stub for admin APIs unnecessary — real 200s): all 12 admin sections render via hash + sidebar click; deep link `#usage` → content + `aria-current=page`. Org page (real org-key chat traffic): timeline bucket renders, success 100.0%, cache 0.0%, toggle + section chips work.
+- `tsc`/`eslint` clean; vitest 157/157; backend org suites 36 passed; OpenAPI 171 paths unchanged; new-field contract verified via curl.
+- Pre-existing, untouched: e2e `admin.spec.ts` fails on stale `sidebar-nav-settings` testid (absent from src, fails with/without this change); health-SSE e2e passed. Full-blast validation deferred to CI per standing flake note.
+- Residue (local dev, tagged): render test user demoted to USER; timeline-test-org + OrgLive*/RenderProv rows remain.
+
+---
+
+## 2026-10-23 — Chat UX: user-message collapse, HTML preview + sandbox, layout stability
+
+### Requirement
+Long user prompts unbounded; HTML responses had no website preview; suspected transform/shift instability during streaming.
+
+### Root causes (all evidence-verified)
+- User bubbles rendered full content with no collapse affordance.
+- Assistant code cells had no preview path; mermaid `pre` handling existed but not HTML.
+- `motion.div layout` on every MessageView + AnimatePresence list: each streamed token re-ran FLIP layout animations (visible enlarge/shift). No other transforms on the chat path (only transitions/animate-pulse spinners + tooltips/menus, all legit).
+
+### Implementation (frontend only)
+- `MessageView.tsx`: removed `layout` from the message motion wrapper; added `CollapsibleUserContent` (useLayoutEffect + ResizeObserver on rendered height >320px, Show more/less with aria-expanded/controls, per-message state, gradient hint, no data truncation).
+- NEW `HtmlPreview.tsx`: `isPreviewableLanguage` (html/htm only), `PREVIEW_DEVICES` (390/768/1280), `preparePreviewDocument` (DOMParser→span-swap dead anchors `<a>`/`""`/`#`, target+rel on real links, prepended CSP meta, XMLSerializer; errors as inline data), sandboxed `iframe` (`sandbox=""`, no-referrer, `csp` attr via ref, srcDoc memoised), inline + `HtmlPreviewFullscreen` (fixed z-[60] overlay, device segmented control, Escape, body scroll-lock restore).
+- `ResponseMarkdown.tsx`: Preview toggle in assistant code header (html/htm only, disabled while streaming), view switch code/preview, fullscreen mount, wrap-enabled header.
+- `HtmlPreview.test.ts`: eligibility/devices/CSP-contract/no-DOM-error-shape unit tests.
+
+### Verification
+- `tsc` clean; `eslint` clean; vitest 25 files / 161 passed (incl. 4 new).
+- agent-browser vs live stub LLM: short prompt no toggle; 64-line prompt collapses (428px) ↔ expands (2621px) with state intact; Preview only on assistant HTML (Python/mermaid/user cells excluded); srcdoc shows CSP + span-swapped dead links + noopener external; dead-link click: no jump/nav; external click: parent URL unchanged; close restores code view; edits propagate to preview; fullscreen covers MI panel; Phone 390 / Tablet 768 / Desktop 1248 viewports; Close + Escape restore scroll; mid-stream Preview disabled with explanatory title; zero active message transforms; no horizontal overflow during/after streaming; no boom/duplicate-React-key regressions (7 mermaid SVGs render); console has no errors; model dropdown works.
+- Production `next build` fails at `/auth/reset-password` prerender — reproduced on pristine tree (pre-existing, unrelated).
+- Residue (local dev only): `preview-ux@test.tollma.ai` + StubProv/model/keys; stub server killed (was /tmp-only).
+
+## 2026-10-23 — Org API-key editing, org analytics nav, key-panel scroll, perf pass
+
+Requirement: editable org keys without secret change; org analytics nav that only exposes working org reports; single-scroll key details; no perf regressions.
+
+Backend (`api/keys/organization_service.py`, `api/orgs/keys/router.py` + compat re-export in `api/orgs/keys/service.py`):
+- New endpoints reusing personal validation/enforcement primitives: PATCH metadata (`update_org_key`), PUT policy/ip-rules/model-permissions, POST rotate. All scoped `org_id` + `Keys.Update`/`Keys.Rotate` (+ACTIVE membership), 404-oracle on strangers/cross-org, org-cap check on budget raise/enable, full-transaction validation before commit, context invalidate (tombstone on rotate), audit + gateway-denied metric parity with personal paths. Rotate is the ONLY path touching hash/prefix; edits verified byte-identical hash/prefix/rotation_count/created_at.
+- No migration (no schema change); `alembic check` clean; OpenAPI loads (175 paths).
+
+Frontend (`OrgKeyEditDrawer.tsx` new + `orgs.ts`/`useOrgs.ts` mutations + `OrgKeysPanel`/`OrgKeyDetailsPanel` wiring + `page.tsx` `canUpdateKeys`):
+- Edit drawer mirrors personal KeyEditDrawer (metadata/PATCH, policy/IP/models full-replace PUTs, dirty-only submits, org models/providers in ModelPermissionsEditor, assignee/org scope header, explicit two-step rotate with RawKeyDialog reuse). No secret display; edit never calls rotate.
+- KeyEditDrawer header now uses full `keyStatus(apiKey, cost)` (was usage-blind `apiKeyStatus`), matching list/detail pills.
+- Org analytics sidebar (`SidebarAnalytics`) renders 6 org sections (Overview/Usage over time/Breakdown/Members/Insights/Budget) as scroll buttons in org scope; personal 8 hash reports unchanged elsewhere.
+- `InsightList`: removed `max-h-[420px] overflow-y-auto` inner scroller; list expands in the drawer's single scroll.
+
+Tests: 10 new backend tests in `tests/test_org_phase_b.py` (secret-preservation, perms 404-matrix, atomic validation, budget/IP/model enforcement on BOTH chat+external planes, rotate semantics + history retention, org-cap guard, disable/enable round-trip). Full backend suite: 840 passed. Frontend: tsc + eslint clean, vitest 161/161.
+Browser (agent-browser, stub LLM + real gateway): org member sees no Edit/rotate affordances; edit saves name+budget, status flips to Budget exceeded consistently; $0 budget denies chat (403) and external (403) while old secret still authenticates; rotate shows new secret once, old raw 401s; org analytics section nav scrolls + highlights, refresh/direct-URL/back-button preserve context; no nested insights scroller in DOM (overflow visible); no horizontal overflow; console clean.
+E2E notes: new-file `org-subnav-key-details` 3/3 green; `api-keys-ux` needs LIVE_EMAIL/LIVE_PASSWORD (external account, unavailable here); `api-keys-status` 2 failures are pre-existing Playwright strict-mode `.or()` locator violations in the spec (fail at row-visibility before any changed assertion; single `keys-table` testid in source).
+Residue (dev only, tagged): `uite2e`/`member2@test.tollma.ai`, `UITestOrg`, `UIMock` provider, `UIKey` key (+rotated). Stub mock server was /tmp-only, stopped.
+
+## 2026-10-24 — Sileo replaces sonner for all notifications + theme-specific toast contrast
+
+Requirement: Sileo as the single notification library; theme-specific toasts with clear high-contrast text.
+
+Root cause of unreadable dark-mode toasts: the first-cut `SileoToaster` relied only on Sileo's `theme` prop (evaluated from a `.dark`-class observer) with no explicit fill/text styles — dark toasts fell back to the white `#FFFFFF` default fill with pale state-colored text (verified in user screenshot: white card, yellow-on-white title).
+
+Implementation (frontend only, no API/business-logic changes):
+- `sileo@0.1.6` installed; `sonner` removed (package.json + lock; container node_modules synced via `docker compose exec frontend npm install`).
+- New `src/lib/notify.ts`: sonner-compatible `toast` facade over Sileo (`success/error/warning/info/loading/promise/dismiss`). Maps `(message, {description, action:{label,onClick}})` → `SileoOptions({title, description, button:{title,onClick}})`; JSX messages become the body; string/shorthand + function promise forms normalized; `dismiss(id?)` → dismiss/clear. All 48 `from "sonner"` imports retargeted to `@/lib/notify` (import-line-only change at call sites).
+- New `src/components/ui/SileoToaster.tsx` ("use client"): MutationObserver on the `<html> dark` class (ToLLma theme is class-based, not OS-based), explicit per-theme `options` (dark: fill `#18181b`, title zinc-50, desc zinc-300; light: fill `#ffffff`, title zinc-900, desc zinc-600), `key={theme}` remount so mid-session toggles can't strand the old palette.
+- `primitives.tsx` Toaster → re-exports SileoToaster; `layout.tsx` imports `sileo/styles.css` (global-CSS rule: only layout may import it); `globals.css` maps `--sileo-state-info` to `--color-tollma-500` brand accent.
+- Unit tests `src/lib/__tests__/notify.test.ts` (6 tests: mapping, JSX body, action→button, single-fire, promise forms, dismiss/clear).
+
+Validation: tsc clean, eslint clean, vitest 26 files / 174 passed. Browser (agent-browser, tru@g.c, live OpenWebUI backend): key-create flow, copy, provider Validate success ("Credentials valid") + failure ("Credentials invalid", unreachable endpoint), stale-provider warning with working "Open providers" action (navigates to /providers), org invite success ("Invitation sent…"), all in dark (dark card/white title/zinc-300 body) and light (white card/zinc-900/zinc-600); Appearance Light↔Dark toggle remounts palette; no console errors. Test residue removed (junk-unreachable provider, sileo-test-key, test invitation all deleted via API).
+Limitation: Sileo action elements are not exposed in the a11y tree (library renders non-focusable elements), so keyboard users can't tab to toast actions — mouse/touch verified working.

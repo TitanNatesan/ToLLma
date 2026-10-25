@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, Mail, UserRound } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Button, Input, SettingItem } from "@/components/ui";
 import { useUpdateProfile } from "@/hooks/useSettings";
 import { ApiError, googleLoginUrl } from "@/services/api";

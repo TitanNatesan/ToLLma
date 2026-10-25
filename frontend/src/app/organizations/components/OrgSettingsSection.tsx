@@ -4,7 +4,7 @@ import { fmtBudgetAmount } from "@/app/api-keys/components/BudgetBar";
 import { useState } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge, Button, Card, CardContent, EmptyState, Field, Input, LoadingState,
 } from "@/components/ui";

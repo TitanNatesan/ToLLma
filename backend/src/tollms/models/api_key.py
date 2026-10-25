@@ -258,3 +258,7 @@ class ApiRequestLog(TimestampedModel):
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     region: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_streaming: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # True when token/cost figures are locally estimated (provider silent)
+    # rather than provider-reported. Failed in-app rows that estimated from
+    # partial output set this; unknown values stay NULL, not zero.
+    usage_estimated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

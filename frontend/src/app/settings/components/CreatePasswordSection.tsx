@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { CheckCircle2, KeyRound, ShieldCheck } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Button, Input, SettingItem, SettingsSection } from "@/components/ui";
 import { useSetPassword } from "@/hooks/useSettings";
 import { passwordStrength, validatePassword } from "@/lib/password";

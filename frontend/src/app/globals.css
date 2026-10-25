@@ -16,6 +16,13 @@
   --input-bg: #111111;
 }
 
+/* Sileo toast state colors: info follows the ToLLma brand accent so
+   notifications match the theme (incl. dark mode); success/error/warning
+   keep their universal semantic colors. */
+:root {
+  --sileo-state-info: var(--color-tollma-500);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

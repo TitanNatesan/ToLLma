@@ -4,6 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as orgApi from "@/services/orgs";
 import { ApiError } from "@/services/api";
 import type { OrgKeyCreateInput, OrgProviderCreateInput } from "@/types/orgs";
+import type {
+  ApiKeyIpRuleInput,
+  ApiKeyModelPermissionInput,
+  ApiKeyPolicyInput,
+  ApiKeyUpdateInput,
+} from "@/types/apiKeys";
 
 export const ORG_KEYS = {
   list: ["orgs"],
@@ -392,6 +398,30 @@ export function useOrgMutations(orgId?: string) {
     }),
     revokeKey: useMutation({
       mutationFn: (keyId: string) => orgApi.revokeOrgKey(orgId ?? "", keyId),
+      onSuccess: () => inv(),
+    }),
+    updateKey: useMutation({
+      mutationFn: (p: { keyId: string; patch: ApiKeyUpdateInput }) =>
+        orgApi.updateOrgKey(orgId ?? "", p.keyId, p.patch),
+      onSuccess: () => inv(),
+    }),
+    updateKeyPolicy: useMutation({
+      mutationFn: (p: { keyId: string; policy: ApiKeyPolicyInput }) =>
+        orgApi.updateOrgKeyPolicy(orgId ?? "", p.keyId, p.policy),
+      onSuccess: () => inv(),
+    }),
+    updateKeyIpRules: useMutation({
+      mutationFn: (p: { keyId: string; rules: ApiKeyIpRuleInput[] }) =>
+        orgApi.updateOrgKeyIpRules(orgId ?? "", p.keyId, p.rules),
+      onSuccess: () => inv(),
+    }),
+    updateKeyModelPermissions: useMutation({
+      mutationFn: (p: { keyId: string; permissions: ApiKeyModelPermissionInput[] }) =>
+        orgApi.updateOrgKeyModelPermissions(orgId ?? "", p.keyId, p.permissions),
+      onSuccess: () => inv(),
+    }),
+    rotateKey: useMutation({
+      mutationFn: (keyId: string) => orgApi.rotateOrgKey(orgId ?? "", keyId),
       onSuccess: () => inv(),
     }),
     createOrgProvider: useMutation({

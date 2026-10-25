@@ -478,3 +478,66 @@ def test_tables_stranger_404_on_new_params(client: TestClient, db, user_factory)
                         params={"from": "2020-01-01"}).status_code == 404
     assert stranger.get(f"{ORG}/{oid}/analytics/overview",
                         params={"team_id": team["id"]}).status_code == 404
+
+
+def test_analytics_reliability_fields(client: TestClient, db, user_factory) -> None:
+    """Additive reliability signals: success counts cover both ledgers and all
+    statuses; rates are percent floats (null when empty); scoping keeps them."""
+    user_factory()
+    root_id = _me(client)["id"]
+    org = _mkorg(client)
+    oid = org["id"]
+    key = _issue(client, oid, root_id)
+    kid = key["key"]["id"]
+
+    db.add(RequestLog(user_id=uuid.UUID(root_id), org_id=uuid.UUID(oid),
+                      status="success", prompt_tokens=100, cache_read_tokens=40,
+                      total_tokens=100, total_cost=Decimal("1.00")))
+    db.add(ApiRequestLog(request_id=f"req-{uuid.uuid4().hex[:8]}",
+                         api_key_id=uuid.UUID(kid), user_id=uuid.UUID(root_id),
+                         org_id=uuid.UUID(oid), endpoint="chat_completions",
+                         status="success", model="m", provider="p",
+                         input_tokens=160, cache_read_tokens=40,
+                         total_tokens=200, cost=Decimal("2.00")))
+    db.add(RequestLog(user_id=uuid.UUID(root_id), org_id=uuid.UUID(oid),
+                      status="failed", error_code="boom"))
+    db.commit()
+
+    body = client.get(f"{ORG}/{oid}/analytics/overview").json()
+    assert body["total_requests"] == 3
+    assert body["successful_requests"] == 2
+    assert abs(body["success_rate"] - 100.0 * 2 / 3) < 1e-6
+    assert body["cache_read_tokens"] == 80
+    assert body["input_tokens"] == 260
+    assert 0 <= body["cache_hit_rate"] <= 100
+    assert abs(body["cache_hit_rate"] - 100.0 * 80 / 340) < 1e-6
+    # Existing success-only shape is unchanged.
+    assert body["totals"]["requests"] == 2
+
+    fresh = _mkorg(client, "Fresh Org")
+    empty = client.get(f"{ORG}/{fresh['id']}/analytics/overview").json()
+    assert empty["total_requests"] == 0 and empty["successful_requests"] == 0
+    assert empty["success_rate"] is None and empty["cache_hit_rate"] is None
+
+    keyed_r = client.get(f"{ORG}/{oid}/analytics/overview", params={"key_id": kid})
+    assert keyed_r.status_code == 200, keyed_r.text
+    keyed = keyed_r.json()
+    assert keyed["total_requests"] == 1 and keyed["successful_requests"] == 1
+    assert keyed["success_rate"] == 100.0
+    assert keyed["cache_read_tokens"] == 40 and keyed["input_tokens"] == 160
+    assert abs(keyed["cache_hit_rate"] - 20.0) < 1e-6
+
+    team = _mkteam(client, oid, "RelTeam")
+    scoped_empty = client.get(f"{ORG}/{oid}/analytics/overview",
+                              params={"team_id": team["id"]}).json()
+    assert scoped_empty["total_requests"] == 0
+    assert scoped_empty["success_rate"] is None and scoped_empty["cache_hit_rate"] is None
+    assert client.post(f"{ORG}/{oid}/teams/{team['id']}/members",
+                       json={"user_id": root_id}).status_code == 200
+    scoped_r = client.get(f"{ORG}/{oid}/analytics/overview",
+                          params={"team_id": team["id"]})
+    assert scoped_r.status_code == 200, scoped_r.text
+    scoped = scoped_r.json()
+    assert scoped["total_requests"] == 3 and scoped["successful_requests"] == 2
+    assert abs(scoped["success_rate"] - 100.0 * 2 / 3) < 1e-6
+    assert scoped["cache_hit_rate"] is not None

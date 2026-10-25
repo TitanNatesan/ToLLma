@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { KeyRound, Plus, RefreshCw, ShieldAlert } from "lucide-react";
 import {
   Badge,
@@ -299,6 +299,7 @@ function PersonalApiKeysPage() {
         open={!!editKey}
         onClose={closeEdit}
         onSaved={closeEdit}
+        cost={editKey ? budgetCost[editKey.id] : undefined}
       />
 
       {secret && (
@@ -327,6 +328,7 @@ function OrgApiKeysPage({ orgId, orgName }: { orgId: string; orgName: string }) 
     canCreateKeys: can("Keys.Create"),
     canReadKeys: !!data && (data.is_root || data.permissions.includes("Keys.Read")),
     canRevokeKeys: can("Keys.Revoke") || can("Keys.Delete"),
+    canUpdateKeys: can("Keys.Update"),
   };
 
   return (

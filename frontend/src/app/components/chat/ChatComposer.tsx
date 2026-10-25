@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { useQueryClient } from "@tanstack/react-query";
 import { useChatStore } from "@/store/chat";
 import { useChatKeyStore } from "./chatKeyStore";

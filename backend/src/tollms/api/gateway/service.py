@@ -1135,6 +1135,7 @@ async def run_chat(
                 total_cost=cost[2],
                 status=RequestStatus.SUCCESS,
                 is_streaming=False,
+                usage_estimated=estimated,
             ),
         )
         db.commit()
@@ -1165,6 +1166,36 @@ async def run_chat(
         _release_chat_reservation(ctx, provider, model, request_id, org_cap)
         incr_counter("gateway.request", {"plane": "ui", "status": "failed"})
         classified = classify_provider_failure(e)
+        # Durable failure record: no message row exists on this path, so log
+        # the attempt itself (unknown usage stays NULL — never fabricated).
+        # Never breaks error propagation.
+        try:
+            try:
+                failed_org_id = org_attribution(db, provider, user_id)
+            except Exception:
+                failed_org_id = None
+            request_log_engine.record(
+                db,
+                request_log_engine.RequestLogEntry(
+                    user_id=user_id,
+                    org_id=failed_org_id,
+                    api_key_id=api_key_id,
+                    conversation_id=locals().get("conv_id"),
+                    message_id=None,
+                    provider_id=getattr(provider, "id", None),
+                    model_id=getattr(model, "id", None),
+                    request_started_at=started_at,
+                    request_completed_at=datetime.now(timezone.utc),
+                    latency_ms=(time.monotonic() - start) * 1000,
+                    status=RequestStatus.FAILED,
+                    error_code=classified.code.value,
+                    is_streaming=False,
+                ),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("gateway chat failure logging failed", exc_info=True)
         emit(
             "gateway.provider_error",
             code=classified.code.value,

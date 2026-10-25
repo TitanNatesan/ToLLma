@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import "sileo/styles.css";
 import { Shell } from "@/components/Shell";
 
 const spaceGrotesk = Space_Grotesk({

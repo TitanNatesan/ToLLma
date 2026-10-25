@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowUpDown, Copy } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge, Button, DataTable, type DataTableColumn, DetailPanel, EmptyState,
   ErrorState, LoadingState, SearchInput, SectionHeader, Select,

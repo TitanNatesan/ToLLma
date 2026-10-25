@@ -35,6 +35,9 @@ type Ext = OrgAnalyticsOverview & {
   cache_hits?: number | string | null;
   cache_requests?: number | string | null;
   successful_requests?: number | string | null;
+  total_requests?: number | string | null;
+  cache_read_tokens?: number | string | null;
+  input_tokens?: number | string | null;
   failed_requests?: number | string | null;
   error_count?: number | string | null;
 };
@@ -88,7 +91,8 @@ function rowTokens(r: OrgAnalyticsRow): number {
 }
 
 function timeline(o: OrgAnalyticsOverview): OrgAnalyticsPoint[] {
-  return o.timeline ?? o.timeseries ?? o.daily ?? o.series ?? [];
+  // Backend-canonical `by_day` first; legacy aliases kept for tolerance.
+  return o.by_day ?? o.timeline ?? o.timeseries ?? o.daily ?? o.series ?? [];
 }
 
 function pointLabel(p: OrgAnalyticsPoint, i: number): string {
@@ -99,6 +103,23 @@ function pointLabel(p: OrgAnalyticsPoint, i: number): string {
     return raw;
   }
   return `#${i + 1}`;
+}
+
+type TimelineMetric = "spend" | "requests" | "tokens";
+
+const ORG_ANALYTICS_SECTIONS = [
+  { id: "oas-overview", label: "Overview" },
+  { id: "oas-timeline", label: "Usage over time" },
+  { id: "oas-breakdown", label: "Breakdown" },
+  { id: "oas-members", label: "Members" },
+  { id: "oas-insights", label: "Insights" },
+  { id: "oas-budget", label: "Budget" },
+] as const;
+
+function scrollToSection(id: string) {
+  // Buttons, not hash links: no URL pollution, no interference with the
+  // sidebar's hash-driven report highlight.
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 type Preset = "24h" | "7d" | "30d" | "90d";
@@ -240,6 +261,7 @@ function AnalyticsBody({ data, orgId, rangeLabel, canSeeCost, canReadBudget, can
   const labels = points.map(pointLabel);
   const spendSeries = points.map((p) => num(p.spend ?? p.cost) ?? 0);
   const reqSeries = points.map((p) => num(p.requests) ?? 0);
+  const tokenSeries = points.map((p) => num(p.tokens) ?? 0);
   const donutSlices = providers.map((r) => ({ name: rowName(r), value: canSeeCost ? rowCost(r) : rowRequests(r) }));
   const modelBars = [...visModels]
     .sort((a, b) => (canSeeCost ? rowCost(b) - rowCost(a) : rowRequests(b) - rowRequests(a)))
@@ -266,6 +288,11 @@ function AnalyticsBody({ data, orgId, rangeLabel, canSeeCost, canReadBudget, can
     ? (cost / budgetCap) * 100
     : null;
 
+  // Interactive timeline metric (spend hidden without cost visibility).
+  const [metric, setMetric] = useState<TimelineMetric>(canSeeCost ? "spend" : "requests");
+  const metricSeries = metric === "spend" ? spendSeries : metric === "requests" ? reqSeries : tokenSeries;
+  const metricLabel = metric === "spend" ? "Spend" : metric === "requests" ? "Requests" : "Tokens";
+
   return (
     <div className="space-y-2.5" data-testid="org-analytics">
       <div className="flex flex-wrap items-center gap-2">
@@ -290,6 +317,17 @@ function AnalyticsBody({ data, orgId, rangeLabel, canSeeCost, canReadBudget, can
         </div>
       </div>
 
+      <nav aria-label="Analytics sections" data-testid="org-analytics-nav"
+        className="flex flex-wrap items-center gap-1.5">
+        {ORG_ANALYTICS_SECTIONS.map((s) => (
+          <button key={s.id} type="button" onClick={() => scrollToSection(s.id)}
+            className="rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-100">
+            {s.label}
+          </button>
+        ))}
+      </nav>
+
+      <section id="oas-overview" aria-label="Overview" className="scroll-mt-4">
       <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4" data-testid="org-analytics-totals">
         <Stat label="Spend" value={canSeeCost ? (cost === null ? "—" : money(cost)) : "restricted"}
           rangeLabel={rangeLabel} testId="org-analytics-cost" />
@@ -304,27 +342,44 @@ function AnalyticsBody({ data, orgId, rangeLabel, canSeeCost, canReadBudget, can
         <Stat label="Budget" value={budgetCap === null ? "Unlimited" : money(budgetCap)}
           rangeLabel="organization cap" testId="org-analytics-budget" />
       </div>
+      </section>
 
       {empty ? (
         <EmptyState icon={BarChart3} title="No usage yet"
           description="Organization usage will appear here once members start sending requests." />
       ) : (
         <>
+          <section id="oas-timeline" aria-label="Usage over time" className="scroll-mt-4">
           <Card>
             <CardContent className="p-3.5">
-              <h3 className="mb-2 text-xs font-bold">Spend &amp; requests over time <span className="font-normal text-zinc-400">· {rangeLabel}</span></h3>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-xs font-bold">Spend &amp; requests over time <span className="font-normal text-zinc-400">· {rangeLabel}</span></h3>
+                {points.length > 0 && (
+                  <div role="tablist" aria-label="Timeline metric" data-testid="org-analytics-metric"
+                    className="flex items-center gap-0.5 rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-800">
+                    {(canSeeCost ? (["spend", "requests", "tokens"] as const) : (["requests", "tokens"] as const)).map((m) => (
+                      <button key={m} type="button" role="tab" aria-selected={metric === m}
+                        onClick={() => setMetric(m)} data-testid={`org-analytics-metric-${m}`}
+                        className={metric === m
+                          ? "rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+                          : "rounded-md px-2 py-0.5 text-[11px] text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"}>
+                        {m === "spend" ? "Spend" : m === "requests" ? "Requests" : "Tokens"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               {points.length === 0 ? (
                 <p className="py-6 text-center text-xs text-zinc-400">No timeline data in this range.</p>
               ) : (
                 <AreaChart testId="org-analytics-timeline" labels={labels}
-                  series={[
-                    ...(canSeeCost ? [{ name: "Spend", values: spendSeries }] : []),
-                    { name: "Requests", values: reqSeries },
-                  ]} />
+                  series={[{ name: metricLabel, values: metricSeries }]} />
               )}
             </CardContent>
           </Card>
+          </section>
 
+          <section id="oas-breakdown" aria-label="Breakdown" className="scroll-mt-4">
           <div className="grid gap-2.5 xl:grid-cols-2">
             <Card>
               <CardContent className="p-3.5">
@@ -366,7 +421,9 @@ function AnalyticsBody({ data, orgId, rangeLabel, canSeeCost, canReadBudget, can
               </CardContent>
             </Card>
           )}
+          </section>
 
+          <section id="oas-members" aria-label="Members" className="scroll-mt-4">
           <Card>
             <CardContent className="p-3.5">
               <h3 className="mb-2 text-xs font-bold">By user</h3>
@@ -408,7 +465,9 @@ function AnalyticsBody({ data, orgId, rangeLabel, canSeeCost, canReadBudget, can
               )}
             </CardContent>
           </Card>
+          </section>
 
+          <section id="oas-insights" aria-label="Insights" className="scroll-mt-4">
           <Card>
             <CardContent className="p-3.5">
               <h3 className="mb-2 text-xs font-bold">Insights</h3>
@@ -431,10 +490,13 @@ function AnalyticsBody({ data, orgId, rangeLabel, canSeeCost, canReadBudget, can
               </ul>
             </CardContent>
           </Card>
+          </section>
         </>
       )}
 
+      <section id="oas-budget" aria-label="Budget" className="scroll-mt-4">
       <OrgBudgetCard orgId={orgId} canRead={canReadBudget} canEdit={canEditBudget} />
+      </section>
     </div>
   );
 }

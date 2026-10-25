@@ -1,7 +1,7 @@
 "use client";
 
 import { CornerDownLeft, Sparkles } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Select, SettingItem, Switch } from "@/components/ui";
 import { useUpdatePreferences } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";

@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Check, Copy } from "lucide-react";
 import {
   ChainOfThought,

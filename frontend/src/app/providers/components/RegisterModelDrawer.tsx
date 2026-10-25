@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { ORG_KEYS } from "@/hooks/useOrgs";
 import { createOrgModel } from "@/services/orgs";
 import { Badge, Button, CapabilityBadge, DetailPanel } from "@/components/ui";

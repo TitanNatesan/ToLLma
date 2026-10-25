@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Button, Checkbox, Field, Input, Select, Textarea } from "@/components/ui";
 import { useOrgMutations, usePermissionCatalog } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";

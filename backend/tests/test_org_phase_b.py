@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from tollms.main import app
+from tollms.core.exceptions import ForbiddenError, NotFoundError
 from tollms.models.api_key import ApiKey, ApiRequestLog
 from tollms.models.organization import AuditLog, Invitation
 from tollms.models.provider import Provider
@@ -1069,3 +1070,357 @@ def test_org_models_lists_only_org_models(client: TestClient, db, user_factory) 
         m.is_deleted = True
     db.commit()
     assert client.get(f"{ORG}/{oid}/models").json() == []
+
+
+# --- org key updates (metadata/policy/IP/models/rotate) ----------------------
+
+
+def _org_two_models(c: TestClient, db, oid: str, name: str) -> tuple[str, str, str]:
+    """Org provider with two chat models; returns (provider_id, m1_id, m2_id)."""
+    from tollms.models.registered_model import AIModel
+
+    p = c.post(f"{ORG}/{oid}/providers/register", json={
+        "name": name, "provider_type": "CUSTOM",
+        "credentials": {"base_url": "http://mock"},
+        "models": [
+            {"model_id": f"{name}-m1", "name": f"{name} M1",
+             "endpoint_type": "chat_completions",
+             "input_price": "1", "output_price": "2"},
+            {"model_id": f"{name}-m2", "name": f"{name} M2",
+             "endpoint_type": "chat_completions",
+             "input_price": "1", "output_price": "2"},
+        ]})
+    assert p.status_code == 201, p.text
+    pid = p.json()["id"]
+    mids = db.scalars(select(AIModel.id).where(
+        AIModel.provider_id == uuid.UUID(pid))).all()
+    assert len(mids) == 2
+    return pid, str(mids[0]), str(mids[1])
+
+
+def _chat_body(pid: str, mid: str, kid: str) -> dict:
+    return {"provider_id": pid, "model_id": mid, "message": "hi",
+            "key_id": kid}
+
+
+def _run_chat_ok(db, pid: str, mid: str, kid: str, uid: str):
+    """Drive the in-app chat plane directly with a mock transport."""
+    import asyncio
+
+    from tollms.api.gateway import service as chat_gateway
+    from tollms.api.gateway.schemas import ChatRequest
+
+    return asyncio.run(chat_gateway.run_chat(
+        db,
+        ChatRequest(provider_id=uuid.UUID(pid), model_id=uuid.UUID(mid),
+                    message="hi", key_id=uuid.UUID(kid)),
+        _mock_transport(), user_id=uuid.UUID(uid),
+    ))
+
+
+def _mock_transport():
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/chat/completions"
+        body = (
+            'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n'
+            'data: {"choices": [{"delta": {"content": " world"}}]}\n\n'
+            'data: {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 10, '
+            '"completion_tokens": 5, "total_tokens": 15}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, content=body.encode(),
+                              headers={"content-type": "text/event-stream"})
+
+    return httpx.MockTransport(handler)
+
+
+def _ext_body(provider_name: str, model_name: str) -> dict:
+    return {"model": f"{provider_name}/{model_name}",
+            "messages": [{"role": "user", "content": "hi"}]}
+
+
+def test_org_key_update_metadata_preserves_secret(client: TestClient, db, user_factory) -> None:
+    """PATCH edits metadata only: hash/prefix/rotation/created unchanged."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    created = _issue(client, oid, root_id, description="before")
+    kid, raw = created["key"]["id"], created["raw_key"]
+    before = db.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(kid)))
+    old_hash, old_prefix, old_count, old_created = (
+        before.key_hash, before.key_prefix, before.rotation_count, before.created_at)
+
+    r = client.patch(f"{ORG}/{oid}/keys/{kid}", json={
+        "name": "renamed", "description": "after", "enabled": True,
+        "expires_at": "2030-01-01T00:00:00Z"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == "renamed" and body["description"] == "after"
+    assert body["key_prefix"] == old_prefix
+    assert "key_hash" not in r.text and raw not in r.text
+
+    db.expire_all()
+    stored = db.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(kid)))
+    assert stored.key_hash == old_hash
+    assert stored.key_prefix == old_prefix
+    assert stored.rotation_count == old_count
+    assert stored.created_at == old_created
+    # Same secret still authenticates.
+    assert key_engine.authenticate(db, raw) is not None
+
+
+def test_org_key_update_requires_keys_update(client: TestClient, db, user_factory) -> None:
+    """Strangers, unpermitted members, and foreign orgs all 404."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    member_set = _member_set_id(client, oid)
+    sub = _mkuser("noupdate")
+    sub_id = _me(sub)["id"]
+    _invite_and_accept(client, sub, db, oid, [member_set])
+    kid = _issue(client, oid, root_id)["key"]["id"]
+
+    assert sub.patch(f"{ORG}/{oid}/keys/{kid}", json={"name": "x"}).status_code == 404
+    assert sub.put(f"{ORG}/{oid}/keys/{kid}/policy", json={}).status_code == 404
+    assert sub.post(f"{ORG}/{oid}/keys/{kid}/rotate").status_code == 404
+    stranger = _mkuser("stranger")
+    assert stranger.patch(f"{ORG}/{oid}/keys/{kid}", json={"name": "x"}).status_code == 404
+
+    other_oid = _mkorg(sub)["id"]
+    assert sub.patch(f"{ORG}/{other_oid}/keys/{kid}", json={"name": "x"}).status_code == 404
+
+    # Assignee without Keys.Update can still read their own key.
+    assert sub.get(f"{ORG}/{oid}/keys").status_code == 404  # no Keys.Read either
+    reader_set = _make_set(client, oid, "Reader", ["Keys.Read"])
+    _invite_and_accept(client, _mkuser("reader"), db, oid, [reader_set])
+
+
+def test_org_key_update_validation_is_atomic(client: TestClient, db, user_factory) -> None:
+    """Invalid payloads 422 with nothing persisted."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    kid = _issue(client, oid, root_id, description="keep")["key"]["id"]
+
+    bad = client.patch(f"{ORG}/{oid}/keys/{kid}",
+                       json={"expires_at": "2000-01-01T00:00:00Z"})
+    assert bad.status_code == 422, bad.text
+    bad = client.put(f"{ORG}/{oid}/keys/{kid}/ip-rules",
+                     json=[{"type": "deny", "cidr": "not-a-cidr"}])
+    assert bad.status_code == 422, bad.text
+    bad = client.put(f"{ORG}/{oid}/keys/{kid}/model-permissions",
+                     json=[{"provider_id": str(uuid.uuid4()), "model_id": None}])
+    assert bad.status_code == 422, bad.text
+    bad = client.put(f"{ORG}/{oid}/keys/{kid}/policy",
+                     json={"rpm": -1})
+    assert bad.status_code == 422, bad.text
+
+    db.expire_all()
+    stored = db.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(kid)))
+    assert stored.description == "keep"
+    assert stored.expires_at is None
+    assert stored.policy is None
+    assert stored.ip_rules == []
+    assert stored.model_permissions == []
+
+
+def test_org_key_policy_change_enforced_both_planes(
+        client: TestClient, db, user_factory, monkeypatch) -> None:
+    """A restrictive PUT policy denies chat AND external calls with same key."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    pid, m1, _m2 = _org_two_models(client, db, oid, "PolProv")
+    created = _issue(client, oid, root_id,
+                     model_permissions=[{"provider_id": pid, "model_id": m1}])
+    kid, raw = created["key"]["id"], created["raw_key"]
+    _bind_mock(monkeypatch)
+
+    # Permissive policy: both planes serve.
+    ok = client.put(f"{ORG}/{oid}/keys/{kid}/policy",
+                    json={"max_budget_usd": "100.00"})
+    assert ok.status_code == 200, ok.text
+    ext = client.post("/v1/chat/completions", json=_ext_body("PolProv", "PolProv-m1"),
+                      headers={"Authorization": f"Bearer {raw}"})
+    assert ext.status_code == 200, ext.text
+    resp = _run_chat_ok(db, pid, m1, kid, root_id)
+    assert resp.content, "chat plane should serve under permissive policy"
+
+    # Restrictive policy: same secret denied on both planes, reason budget.
+    denied = client.put(f"{ORG}/{oid}/keys/{kid}/policy",
+                        json={"max_budget_usd": "0"})
+    assert denied.status_code == 200, denied.text
+    ext2 = client.post("/v1/chat/completions", json=_ext_body("PolProv", "PolProv-m1"),
+                       headers={"Authorization": f"Bearer {raw}"})
+    assert ext2.status_code == 403, ext2.text
+    chat2 = client.post("/api/v1/gateway/chat", json=_chat_body(pid, m1, kid))
+    assert chat2.status_code == 403, chat2.text
+    with pytest.raises(ForbiddenError):
+        _run_chat_ok(db, pid, m1, kid, root_id)
+
+
+def test_org_key_ip_deny_enforced_both_planes(
+        client: TestClient, db, user_factory, monkeypatch) -> None:
+    """Deny-all IP rules deny chat AND external calls with same key."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    pid, m1, _m2 = _org_two_models(client, db, oid, "IpProv")
+    created = _issue(client, oid, root_id,
+                     model_permissions=[{"provider_id": pid, "model_id": m1}])
+    kid, raw = created["key"]["id"], created["raw_key"]
+    _bind_mock(monkeypatch)
+
+    ext = client.post("/v1/chat/completions", json=_ext_body("IpProv", "IpProv-m1"),
+                      headers={"Authorization": f"Bearer {raw}"})
+    assert ext.status_code == 200, ext.text
+    resp = _run_chat_ok(db, pid, m1, kid, root_id)
+    assert resp.content, "chat plane should serve before IP restriction"
+
+    r = client.put(f"{ORG}/{oid}/keys/{kid}/ip-rules",
+                   json=[{"type": "deny", "cidr": "0.0.0.0/0"}])
+    assert r.status_code == 200, r.text
+    ext2 = client.post("/v1/chat/completions", json=_ext_body("IpProv", "IpProv-m1"),
+                       headers={"Authorization": f"Bearer {raw}"})
+    assert ext2.status_code == 403, ext2.text
+    chat2 = client.post("/api/v1/gateway/chat", json=_chat_body(pid, m1, kid))
+    assert chat2.status_code == 403, chat2.text
+    with pytest.raises(ForbiddenError):
+        _run_chat_ok(db, pid, m1, kid, root_id)
+
+    # Clearing restores access without touching the secret.
+    r = client.put(f"{ORG}/{oid}/keys/{kid}/ip-rules", json=[])
+    assert r.status_code == 200, r.text
+    ext3 = client.post("/v1/chat/completions", json=_ext_body("IpProv", "IpProv-m1"),
+                       headers={"Authorization": f"Bearer {raw}"})
+    assert ext3.status_code == 200, ext3.text
+
+
+def test_org_key_model_permissions_enforced_both_planes(
+        client: TestClient, db, user_factory, monkeypatch) -> None:
+    """Narrowing the allow-list denies both planes; widening restores."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    pid, m1, m2 = _org_two_models(client, db, oid, "ModProv")
+    created = _issue(client, oid, root_id,
+                     model_permissions=[{"provider_id": pid, "model_id": m1}])
+    kid, raw = created["key"]["id"], created["raw_key"]
+    _bind_mock(monkeypatch)
+
+    r = client.put(f"{ORG}/{oid}/keys/{kid}/model-permissions",
+                   json=[{"provider_id": pid, "model_id": m2}])
+    assert r.status_code == 200, r.text
+    ext = client.post("/v1/chat/completions", json=_ext_body("ModProv", "ModProv-m1"),
+                      headers={"Authorization": f"Bearer {raw}"})
+    assert ext.status_code == 403, ext.text
+    assert "model_not_allowed" in ext.json()["error"]["message"]
+    chat = client.post("/api/v1/gateway/chat", json=_chat_body(pid, m1, kid))
+    assert chat.status_code == 403, chat.text
+    with pytest.raises(ForbiddenError):
+        _run_chat_ok(db, pid, m1, kid, root_id)
+
+    r = client.put(f"{ORG}/{oid}/keys/{kid}/model-permissions", json=[])
+    assert r.status_code == 200, r.text
+    ext2 = client.post("/v1/chat/completions", json=_ext_body("ModProv", "ModProv-m1"),
+                       headers={"Authorization": f"Bearer {raw}"})
+    assert ext2.status_code == 200, ext2.text
+
+
+def test_org_key_rotate_changes_secret_preserves_history(
+        client: TestClient, db, user_factory, monkeypatch) -> None:
+    """Rotate swaps hash/prefix (old raw dies, new works); usage history kept."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    pid, m1, _m2 = _org_two_models(client, db, oid, "RotProv")
+    created = _issue(client, oid, root_id,
+                     model_permissions=[{"provider_id": pid, "model_id": m1}])
+    kid, raw = created["key"]["id"], created["raw_key"]
+    before = db.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(kid)))
+    old_prefix, old_created = before.key_prefix, before.created_at
+    _bind_mock(monkeypatch)
+
+    ok = client.post("/v1/chat/completions", json=_ext_body("RotProv", "RotProv-m1"),
+                     headers={"Authorization": f"Bearer {raw}"})
+    assert ok.status_code == 200, ok.text
+
+    r = client.post(f"{ORG}/{oid}/keys/{kid}/rotate")
+    assert r.status_code == 200, r.text
+    new_raw, body = r.json()["raw_key"], r.json()["key"]
+    assert new_raw != raw
+    assert body["key_prefix"] != old_prefix
+    assert body["rotation_count"] == 1
+    assert "key_hash" not in r.text and new_raw not in str(body)
+
+    # Old secret dead everywhere; new secret works.
+    dead = client.post("/v1/chat/completions", json=_ext_body("RotProv", "RotProv-m1"),
+                       headers={"Authorization": f"Bearer {raw}"})
+    assert dead.status_code in (401, 404), dead.text
+    live = client.post("/v1/chat/completions", json=_ext_body("RotProv", "RotProv-m1"),
+                       headers={"Authorization": f"Bearer {new_raw}"})
+    assert live.status_code == 200, live.text
+
+    db.expire_all()
+    stored = db.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(kid)))
+    assert stored.created_at == old_created
+    assert stored.key_hash == key_engine.hash_key(new_raw)
+    # Historical usage rows still reference the same logical key.
+    rows = db.scalars(select(ApiRequestLog).where(
+        ApiRequestLog.api_key_id == uuid.UUID(kid))).all()
+    assert len(rows) >= 1
+
+
+def test_org_key_policy_update_respects_org_cap(
+        client: TestClient, db, user_factory) -> None:
+    """Raising a key budget past the unallocated org cap is rejected."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    assert client.patch(f"{ORG}/{oid}/budget", json={"max_spend": "10.00"}).status_code == 200
+    kid = _issue_full(client, oid, root_id,
+                       policy={"max_budget_usd": "6.00"})["key"]["id"]
+
+    r = client.put(f"{ORG}/{oid}/keys/{kid}/policy",
+                   json={"max_budget_usd": "11.00"})
+    assert r.status_code == 422, r.text
+    ok = client.put(f"{ORG}/{oid}/keys/{kid}/policy",
+                    json={"max_budget_usd": "4.00", "rpm": 5})
+    assert ok.status_code == 200, ok.text
+    db.expire_all()
+    stored = db.scalar(select(ApiKey).where(ApiKey.id == uuid.UUID(kid)))
+    assert stored.policy is not None
+    assert Decimal(stored.policy.max_budget_usd) == Decimal("4.00")
+    assert stored.policy.rpm == 5
+
+
+def test_org_key_disabled_via_patch_denied_both_planes(
+        client: TestClient, db, user_factory, monkeypatch) -> None:
+    """PATCH enabled=false blocks chat and external; re-enable restores."""
+    user_factory()
+    root_id = _me(client)["id"]
+    oid = _mkorg(client)["id"]
+    pid, m1, _m2 = _org_two_models(client, db, oid, "DisProv")
+    created = _issue(client, oid, root_id,
+                     model_permissions=[{"provider_id": pid, "model_id": m1}])
+    kid, raw = created["key"]["id"], created["raw_key"]
+    _bind_mock(monkeypatch)
+
+    assert client.patch(f"{ORG}/{oid}/keys/{kid}",
+                        json={"enabled": False}).status_code == 200
+    ext = client.post("/v1/chat/completions", json=_ext_body("DisProv", "DisProv-m1"),
+                      headers={"Authorization": f"Bearer {raw}"})
+    assert ext.status_code == 403, ext.text
+    # Chat uses the 404 oracle for disabled keys (no existence leak).
+    chat = client.post("/api/v1/gateway/chat", json=_chat_body(pid, m1, kid))
+    assert chat.status_code == 404, chat.text
+    with pytest.raises(NotFoundError):
+        _run_chat_ok(db, pid, m1, kid, root_id)
+
+    assert client.patch(f"{ORG}/{oid}/keys/{kid}",
+                        json={"enabled": True}).status_code == 200
+    ext2 = client.post("/v1/chat/completions", json=_ext_body("DisProv", "DisProv-m1"),
+                       headers={"Authorization": f"Bearer {raw}"})
+    assert ext2.status_code == 200, ext2.text

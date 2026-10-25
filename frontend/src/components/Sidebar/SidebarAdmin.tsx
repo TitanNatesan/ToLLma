@@ -53,15 +53,18 @@ export const ADMIN_SECTION_IDS: readonly AdminSectionId[] = ADMIN_SECTIONS.map(
 );
 
 /**
- * Same-document anchors: the browser sets the hash and the `scroll-smooth`
- * scroll container performs the smooth scroll (scroll-margin on the sections
- * keeps the sticky header clear). Repeat clicks on the current section are a
- * browser no-op, so scroll manually in that case.
+ * Same-document anchors, driven natively: Next.js <Link> same-page hash
+ * navigation uses history.pushState, which does NOT fire `hashchange` — so
+ * every section subscriber (sidebar highlight, page content) would go stale.
+ * Assigning window.location.hash directly fires the event and keeps deep
+ * links, history, and all subscribers in sync.
  */
 function navigate(event: MouseEvent<HTMLAnchorElement>, id: AdminSectionId) {
+  event.preventDefault();
   if (window.location.hash === `#${id}`) {
-    event.preventDefault();
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else {
+    window.location.hash = id;
   }
 }
 

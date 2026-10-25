@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Bell, Building2, Check, Plus, Search, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge, Button, Card, CardContent, CardGrid, EmptyState, ErrorState, LoadingState,
 } from "@/components/ui";

@@ -93,4 +93,12 @@ class AnalyticsOverview(BaseModel):
     by_user: list[AnalyticsUserRow] = Field(default_factory=list)
     by_team: list[AnalyticsTeamRow] = Field(default_factory=list)
     by_key: list[AnalyticsKeyRow] = Field(default_factory=list)
+    # Reliability signals over the same window/filters (all statuses).
+    # success_rate / cache_hit_rate are percent-scale floats (None when empty).
+    successful_requests: int = 0
+    total_requests: int = 0
+    success_rate: float | None = None
+    cache_read_tokens: int = 0
+    input_tokens: int = 0
+    cache_hit_rate: float | None = None
 

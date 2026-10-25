@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReactNode } from "react";
-import { extractText, rehypeCitations } from "../ResponseMarkdown";
+import { extractText, normalizeMathDelimiters, rehypeCitations } from "../ResponseMarkdown";
 
 describe("ResponseMarkdown utilities", () => {
   it("extracts text from strings and nested nodes", () => {
@@ -76,5 +76,41 @@ describe("rehypeCitations", () => {
     };
     rehypeCitations({ maxIndex: 3 })(code);
     expect(code.children![0].children).toEqual([{ type: "text", value: "x[1]" }]);
+  });
+});
+
+describe("normalizeMathDelimiters", () => {
+  it("converts display \\[...\\] to $$...$$", () => {
+    expect(normalizeMathDelimiters("Speed: \\[v = 220\\ \\text{km}\\] fast")).toBe(
+      "Speed: $$v = 220\\ \\text{km}$$ fast",
+    );
+  });
+
+  it("converts multi-line display math", () => {
+    expect(normalizeMathDelimiters("\\[\n  C = 2\\pi R\n\\]")).toBe("$$\n  C = 2\\pi R\n$$");
+  });
+
+  it("converts inline \\(...\\) to $...$", () => {
+    expect(normalizeMathDelimiters("a \\(x^2\\) b")).toBe("a $x^2$ b");
+  });
+
+  it("leaves fenced code blocks untouched", () => {
+    const src = "text \\[a\\]\n```latex\n\\[b\\]\n```\ntail \\(c\\)";
+    expect(normalizeMathDelimiters(src)).toBe("text $$a$$\n```latex\n\\[b\\]\n```\ntail $c$");
+  });
+
+  it("leaves inline code untouched", () => {
+    expect(normalizeMathDelimiters("use `\\[x\\]` here and \\(y\\)")).toBe(
+      "use `\\[x\\]` here and $y$",
+    );
+  });
+
+  it("leaves unmatched delimiters (mid-stream) and escaped brackets alone", () => {
+    expect(normalizeMathDelimiters("partial \\[x^2 + 1")).toBe("partial \\[x^2 + 1");
+    expect(normalizeMathDelimiters("literal \\\\[x]")).toBe("literal \\\\[x]");
+  });
+
+  it("leaves dollar math and plain text unchanged", () => {
+    expect(normalizeMathDelimiters("$a^2$ and $$b$$ plain")).toBe("$a^2$ and $$b$$ plain");
   });
 });

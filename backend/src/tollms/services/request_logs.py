@@ -47,6 +47,7 @@ class RequestLogEntry:
     error_code: str | None = None
     is_regeneration: bool = False
     is_streaming: bool = False
+    usage_estimated: bool = False
 
 
 def touch_key_last_used(
@@ -98,6 +99,7 @@ def record(db: Session, entry: RequestLogEntry) -> RequestLog:
         error_code=entry.error_code,
         is_regeneration=entry.is_regeneration,
         is_streaming=entry.is_streaming,
+        usage_estimated=entry.usage_estimated,
     )
     db.add(row)
     if entry.status == RequestStatus.SUCCESS:
