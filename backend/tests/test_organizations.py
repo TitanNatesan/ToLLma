@@ -59,7 +59,7 @@ def test_create_org_makes_caller_root(client: TestClient, db, user_factory) -> N
     user_factory()
     org = _mkorg(client)
     assert org["is_root"] is True
-    assert len(org["permissions"]) == 52
+    assert len(org["permissions"]) == 59
     assert {"Members.Invite", "Members.Remove", "PermissionSets.Assign",
             "Organization.TransferRoot", "Audit.Read"} <= set(org["permissions"])
     assert org["slug"].startswith("acme-corp-")
@@ -95,7 +95,7 @@ def test_permission_set_lifecycle_and_system_immutable(client: TestClient, db, u
     sets = client.get(f"{ORG}/{oid}/sets").json()
     assert {s["name"] for s in sets} == {"Owner", "Approver", "Member"}
     owner_set = next(s for s in sets if s["name"] == "Owner")
-    assert len(owner_set["permissions"]) == 52
+    assert len(owner_set["permissions"]) == 59
 
     custom = client.post(f"{ORG}/{oid}/sets",
                          json={"name": "Leads", "permissions": ["Members.Approve", "Analytics.ViewUsage"]})
@@ -113,7 +113,7 @@ def test_permission_set_lifecycle_and_system_immutable(client: TestClient, db, u
     clone = client.post(f"{ORG}/{oid}/sets/{owner_set['id']}/clone",
                         json={"name": "Owner Clone", "permissions": []})
     assert clone.status_code == 201, clone.text
-    assert len(clone.json()["permissions"]) == 52
+    assert len(clone.json()["permissions"]) == 59
 
     upd = client.patch(f"{ORG}/{oid}/sets/{sid}", json={"permissions": ["Analytics.ViewUsage"]})
     assert upd.status_code == 200 and upd.json()["permissions"] == ["Analytics.ViewUsage"]

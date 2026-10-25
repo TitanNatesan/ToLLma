@@ -20,6 +20,7 @@ from tollms.db.base import SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
     from tollms.models.api_key import ApiKey
+    from tollms.models.guardrail import GuardrailPolicy, GuardrailTrigger
     from tollms.models.provider import Provider
 
 
@@ -78,6 +79,8 @@ class Organization(SoftDeleteMixin, TimestampedModel):
     teams: Mapped[list["Team"]] = relationship(back_populates="organization")
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="organization")
     providers: Mapped[list["Provider"]] = relationship(back_populates="organization")
+    guardrail_policies: Mapped[list["GuardrailPolicy"]] = relationship(back_populates="organization")
+    guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="organization")
 
 
 class Membership(SoftDeleteMixin, TimestampedModel):

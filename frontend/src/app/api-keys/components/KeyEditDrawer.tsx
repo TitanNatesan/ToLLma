@@ -32,6 +32,7 @@ import {
   updateApiKeyPolicy,
 } from "@/services/apiKeys";
 import { EndpointPermissions } from "./EndpointPermissions";
+import { KeyGuardrailsSection } from "@/app/guardrails/components/KeyGuardrailsSection";
 import { IpRulesEditor, ipRulesToText, parseIpRules } from "./IpRulesEditor";
 import { ModelPermissionsEditor, modelPermissionsToInput } from "./ModelPermissionsEditor";
 import { PolicyForm, policyToInput } from "./PolicyForm";
@@ -532,6 +533,16 @@ const KeyEditContent = memo(function KeyEditContent({
               description="Which gateway endpoints this key may call."
             >
               <EndpointPermissions />
+            </Section>
+
+            <Separator />
+
+            <Section
+              icon={ShieldCheck}
+              title="Guardrails"
+              description="Key-specific policies. Global and provider policies apply automatically; saving here never rotates the key."
+            >
+              <KeyGuardrailsSection keyId={apiKey.id} disabled={saving} />
             </Section>
 
             {error && (

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/notify";
@@ -31,6 +32,7 @@ import {
 import { useProviders, useProviderMutations } from "@/hooks/useRegistry";
 import { useOrgMutations } from "@/hooks/useOrgs";
 import { useConnectionTemplate } from "@/hooks/useCatalog";
+import { useEffectiveGuardrails } from "@/hooks/useGuardrails";
 import { templateCredentials } from "@/services/catalog";
 import { useChatStore } from "@/store/chat";
 import {
@@ -858,6 +860,7 @@ export function ProviderWizardModal({
                 setCreds={updateCreds}
                 busy={busy}
                 orgScoped={orgId !== null}
+                providerId={editingProvider.id}
                 onSave={() => void handleEditSave()}
               />
             ) : (
@@ -1489,6 +1492,39 @@ export function ProviderWizardModal({
   }
 }
 
+/**
+ * Read-only effective guardrails for this provider (global + provider-scoped
+ * policies). Assignment lives on the guardrails page — this never invents a
+ * parallel provider policy system. The provider here is the *generation*
+ * provider; evaluator providers are chosen per-policy on the guardrails page.
+ */
+function ProviderGuardrails({ providerId }: { providerId?: string }) {
+  const q = useEffectiveGuardrails({ provider_id: providerId }, !!providerId);
+  const rows = q.data?.policies ?? [];
+  return (
+    <div className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800" data-testid="provider-guardrails">
+      <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">Guardrails</p>
+      <p className="text-[11px] text-zinc-500">
+        Effective policies for generation through this provider. Evaluator providers are configured per policy.
+      </p>
+      {q.isPending ? (
+        <p className="mt-1 text-[11px] text-zinc-400">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="mt-1 text-[11px] text-zinc-400">No policies apply. <Link href="/guardrails" className="underline">Manage guardrails</Link></p>
+      ) : (
+        <ul className="mt-1 space-y-0.5">
+          {rows.map((r) => (
+            <li key={r.id} className="text-[11px] text-zinc-600 dark:text-zinc-400">
+              {r.name} <span className="text-zinc-400">· {r.enforcement} · {r.is_enabled ? "on" : "off"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {rows.length > 0 && <Link href="/guardrails" className="text-[11px] text-tollma-600 hover:underline dark:text-tollma-400">Manage guardrails →</Link>}
+    </div>
+  );
+}
+
 function EditBody({
   name,
   setName,
@@ -1497,6 +1533,7 @@ function EditBody({
   setCreds,
   busy,
   orgScoped,
+  providerId,
   onSave,
 }: {
   name: string;
@@ -1506,6 +1543,7 @@ function EditBody({
   setCreds: (v: Record<string, string>) => void;
   busy: boolean;
   orgScoped?: boolean;
+  providerId?: string;
   onSave: () => void;
 }) {
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
@@ -1546,6 +1584,7 @@ function EditBody({
           }
         />
       ))}
+      <ProviderGuardrails providerId={providerId} />
       <Button onClick={onSave} disabled={!name.trim() || busy} data-testid="save-provider">
         Save Provider
       </Button>

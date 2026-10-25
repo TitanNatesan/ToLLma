@@ -26,7 +26,8 @@ export function destinationFor(
     pathname === "/" ||
     pathname === "/providers" ||
     pathname === "/api-keys" ||
-    pathname === "/analytics"
+    pathname === "/analytics" ||
+    pathname === "/guardrails"
   ) {
     return `${pathname}${query}`;
   }

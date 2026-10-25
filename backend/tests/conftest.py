@@ -13,9 +13,15 @@ from tollms.db.base import Base
 from tollms.main import app
 
 
+def _test_db_name() -> str:
+    # Isolated runs (parallel agents) set TOLLMS_TEST_DB to avoid sharing the
+    # default tollms_test database. Defaults preserve existing behavior.
+    return os.environ.get("TOLLMS_TEST_DB", "tollms_test")
+
+
 def _test_url() -> str:
     s = get_settings()
-    return f"postgresql+psycopg://{s.postgres_user}:{s.postgres_password}@{s.postgres_host}:{s.postgres_port}/tollms_test"
+    return f"postgresql+psycopg://{s.postgres_user}:{s.postgres_password}@{s.postgres_host}:{s.postgres_port}/{_test_db_name()}"
 
 
 def _admin_url() -> str:
@@ -26,8 +32,9 @@ def _admin_url() -> str:
 def _database() -> str:
     admin = create_engine(_admin_url(), isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
-        conn.execute(text("DROP DATABASE IF EXISTS tollms_test WITH (FORCE)"))
-        conn.execute(text("CREATE DATABASE tollms_test"))
+        name = _test_db_name()
+        conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+        conn.execute(text(f"CREATE DATABASE {name}"))
     admin.dispose()
     url = _test_url()
     engine = create_engine(url)

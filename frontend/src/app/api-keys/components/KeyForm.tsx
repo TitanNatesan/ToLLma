@@ -22,6 +22,8 @@ import {
   Textarea,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { KeyGuardrailsSection } from "@/app/guardrails/components/KeyGuardrailsSection";
+import { useOrgStore } from "@/store/org";
 import { apiKeyErrorMessage } from "@/services/apiKeys";
 import { IpRulesEditor, parseIpRules } from "./IpRulesEditor";
 import { ModelPermissionsEditor } from "./ModelPermissionsEditor";
@@ -44,6 +46,8 @@ export interface KeyFormResult {
   policy: ApiKeyPolicyInput | null;
   ipRules: ApiKeyIpRuleInput[];
   modelPermissions: ApiKeyModelPermissionInput[];
+  /** Guardrail policies to attach after the key exists. */
+  guardrail_ids: string[];
   /** Organization assignee (org scope only). */
   assigneeUserId: string | null;
 }
@@ -154,9 +158,12 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
   const [deny, setDeny] = useState("");
   const [modelPermissions, setModelPermissions] = useState<ApiKeyModelPermissionInput[]>([]);
   const [orgAssignee, setOrgAssignee] = useState(assigneeId ?? "");
+  const [guardrailIds, setGuardrailIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const context = useOrgStore((st) => st.context);
+  const guardrailOrgId = context.type === "org" ? context.orgId : undefined;
   const effectiveAssignee = assigneeId ?? orgAssignee;
   const setEffectiveAssignee = onAssigneeChange ?? setOrgAssignee;
 
@@ -211,6 +218,7 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
           policy: hasPolicyValues(policy) ? policy : null,
           ipRules: parsedIp.rules,
           modelPermissions,
+          guardrail_ids: [...guardrailIds],
           assigneeUserId: isOrg ? effectiveAssignee || null : null,
         });
       }
@@ -406,6 +414,24 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
                   models={modelsOverride}
                   providers={providersOverride}
                   configureHref={configureHref}
+                />
+              </Section>
+            </>
+          )}
+
+          {!editing && (
+            <>
+              <Separator />
+              <Section
+                icon={ShieldCheck}
+                title="Guardrails"
+                description="Attach policies to this key. Global and provider policies apply automatically; mandatory org policies cannot be removed."
+              >
+                <KeyGuardrailsSection
+                  orgId={guardrailOrgId}
+                  selectedIds={guardrailIds}
+                  onSelectionChange={setGuardrailIds}
+                  disabled={busy}
                 />
               </Section>
             </>

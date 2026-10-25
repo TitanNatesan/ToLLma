@@ -143,6 +143,10 @@ class Settings(BaseSettings):
     storage_dir: str = "storage/uploads"
     max_upload_mb: int = 25
 
+    # Laya guardrail evaluator (separately deployable FastAPI service, no creds).
+    laya_url: str = "http://laya:8001"
+    laya_timeout_ms: int = 5000
+
     # Logging
     log_level: str = "INFO"
 

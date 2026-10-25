@@ -15,6 +15,7 @@ from tollms.api.attachments.router import router as attachments_router
 from tollms.api.auth.router import router as auth_router
 from tollms.api.catalog.router import router as catalog_router
 from tollms.api.conversations.router import router as conversations_router
+from tollms.api.guardrails.router import router as guardrails_router
 from tollms.api.gateway.router import chat_router as chat_router
 from tollms.api.gateway.router import router as gateway_router
 from tollms.api.admin.router import router as admin_router
@@ -171,6 +172,7 @@ def create_app() -> FastAPI:
     app.include_router(repository_router)
     app.include_router(conversations_router)
     app.include_router(attachments_router)
+    app.include_router(guardrails_router)
     app.include_router(gateway_router)
     app.include_router(chat_router)
     app.include_router(analytics_router)

@@ -29,6 +29,8 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { KeyDetailsPanel } from "./components/KeyDetailsPanel";
 import { KeyEditDrawer } from "./components/KeyEditDrawer";
 import { KeyForm, type KeyFormResult } from "./components/KeyForm";
+import { attachKeyToGuardrails } from "@/services/guardrails";
+import { toastApiError } from "@/lib/errors";
 import { KeyTable } from "./components/KeyTable";
 import { RawKeyDialog } from "./components/RawKeyDialog";
 import type { ApiKey } from "@/types/apiKeys";
@@ -135,6 +137,16 @@ function PersonalApiKeysPage() {
       model_permissions: result.modelPermissions,
     });
 
+    // Attach selected guardrails via each policy's assignments (best-effort: the
+    // key already exists, so a failure only skips assignment, never creation).
+    if (result.guardrail_ids.length > 0 && created.key?.id) {
+      const keyId = created.key.id;
+      try {
+        await attachKeyToGuardrails(result.guardrail_ids, keyId);
+      } catch (e) {
+        toastApiError(e, { title: "Key created, guardrail assignment failed" });
+      }
+    }
     await qc.invalidateQueries({ queryKey: ["api-keys"] });
     setCreateOpen(false);
     setSecret({ rawKey: created.raw_key, apiKey: created.key, reason: "create" });

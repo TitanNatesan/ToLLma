@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
+    from tollms.models.guardrail import GuardrailAssignment, GuardrailTrigger
     from tollms.models.provider import Provider
 
 
@@ -139,3 +140,5 @@ class AIModel(SoftDeleteMixin, TimestampedModel):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     provider: Mapped["Provider"] = relationship(back_populates="models")
+    guardrail_assignments: Mapped[list["GuardrailAssignment"]] = relationship(back_populates="model")
+    guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="model")

@@ -30,6 +30,7 @@ import { ModelPermissionsEditor } from "./ModelPermissionsEditor";
 import { PolicyForm, hasPolicyValues } from "./PolicyForm";
 import { Segmented } from "./SelectField";
 import { EndpointPermissions } from "./EndpointPermissions";
+import { KeyGuardrailsSection } from "@/app/guardrails/components/KeyGuardrailsSection";
 import { parseApiError } from "@/lib/errors";
 import type { OrgKey } from "@/types/orgs";
 import type {
@@ -643,6 +644,16 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
           description="Which gateway endpoints this key may call."
         >
           <EndpointPermissions />
+        </Section>
+
+        <Separator />
+
+        <Section
+          icon={ShieldCheck}
+          title="Guardrails"
+          description="Key-specific policies. Inherited global/provider and mandatory org policies apply automatically; saving here never rotates the key."
+        >
+          <KeyGuardrailsSection orgId={orgId} keyId={orgKey.id} disabled={saving || rotating} />
         </Section>
 
         <Separator />

@@ -17,6 +17,8 @@ import { ConfirmDialog } from "@/app/organizations/components/Dialogs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useOrgKeys, useOrgModels, useOrgMutations, useOrgProviders } from "@/hooks/useOrgs";
 import { KeyForm, type KeyFormResult } from "./KeyForm";
+import { attachKeyToGuardrails } from "@/services/guardrails";
+import { toastApiError } from "@/lib/errors";
 import { parseApiError } from "@/lib/errors";
 import { ApiError } from "@/services/api";
 import type { Member, OrgKey } from "@/types/orgs";
@@ -354,6 +356,14 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
       })),
     });
     const raw = extractRawKey(res);
+    const newKeyId = (res as { key?: { id?: string }; id?: string })?.key?.id ?? (res as { id?: string })?.id;
+    if (newKeyId && result.guardrail_ids.length > 0) {
+      try {
+        await attachKeyToGuardrails(result.guardrail_ids, newKeyId, orgId);
+      } catch (e) {
+        toastApiError(e, { title: "Key created, guardrail assignment failed" });
+      }
+    }
     if (!raw) {
       throw new Error("The server did not return a key secret. The key may still have been created — check the list.");
     }

@@ -608,6 +608,8 @@ def _enforce_chat_key(
     estimated_cost: Decimal,
     request_id: str | None,
     client_ip: str | None,
+    pre_text: str | None = None,
+    pre_user_id: uuid.UUID | None = None,
 ) -> tuple[key_engine.KeyContext | None, Decimal | None]:
     """Shared in-app key-policy gate. No-op on the legacy keyless path.
 
@@ -615,6 +617,24 @@ def _enforce_chat_key(
     bad/disabled/expired keys, 403/429 on policy denies — always BEFORE any
     row creation or provider I/O by the caller.
     """
+    # Guardrail pre-check runs regardless of api_key (keyless calls pass
+    # api_key_id=None): unpriced traffic is still inspected, and blocks raise
+    # before any row creation or provider I/O by the caller.
+    if pre_text is not None:
+        from tollms.services.guardrails import enforcement as guardrail_enforcement
+
+        try:
+            guardrail_enforcement.check_pre_sync(
+                db, text=pre_text, user_id=pre_user_id,
+                provider_id=provider.id, model_id=model.id,
+                api_key_id=api_key.id if api_key is not None else None,
+                source="internal",
+                endpoint="chat", request_id=request_id,
+            )
+        except (ForbiddenError, NotFoundError, ValidationError):
+            raise
+        except Exception:
+            logger.warning("guardrail pre-check hook failed (fail-open)", exc_info=True)
     if api_key is None:
         return None, None
     ctx = key_policy.chat_key_context(db, api_key)
@@ -624,6 +644,35 @@ def _enforce_chat_key(
         estimated_tokens, estimated_cost, request_id, client_ip, org_cap,
     )
     return ctx, org_cap
+
+
+def _guardrail_post(
+    db: Session,
+    *,
+    text: str,
+    user_id: uuid.UUID | None,
+    provider: Provider,
+    model: AIModel,
+    api_key_id: uuid.UUID | None,
+    generation_id: uuid.UUID | None = None,
+    request_id: str | None = None,
+    allow_block: bool = False,
+) -> str:
+    """Guardrail post hook: audit-first, never raises, never touches Valkey
+    usage counters. Returns the worst action; non-streaming callers withhold
+    delivery when it is blocked (buffer_then_inspect only)."""
+    try:
+        from tollms.services.guardrails import enforcement as guardrail_enforcement
+
+        return guardrail_enforcement.record_post_sync(
+            db, text=text or "", user_id=user_id,
+            org_id=org_attribution(db, provider, user_id),
+            provider_id=provider.id, model_id=model.id, api_key_id=api_key_id,
+            source="internal", endpoint="chat", request_id=request_id,
+            generation_id=generation_id, allow_block=allow_block)
+    except Exception:
+        logger.warning("guardrail post hook failed", exc_info=True)
+        return "allowed"
 
 
 def _release_chat_reservation(
@@ -1036,6 +1085,7 @@ async def run_chat(
             db, api_key, provider, model,
             estimated_tokens=est_tokens, estimated_cost=est_cost,
             request_id=request_id, client_ip=client_ip,
+            pre_text=history_text, pre_user_id=user_id,
         )
         if data.conversation_id is None:
             title = data.message[:60] or (f"Attachment: {rows[0].filename}"[:60] if rows else "New conversation")
@@ -1083,6 +1133,18 @@ async def run_chat(
             assistant.api_key_id = api_key_id
             db.commit()
             db.refresh(assistant)
+        # Guardrail post: audit-first; a blocked buffer_then_inspect verdict
+        # withholds the text (usage/cost rows stand — the provider billed).
+        guard_action = _guardrail_post(
+            db, text=result.text, user_id=user_id, provider=provider,
+            model=model, api_key_id=api_key_id, generation_id=assistant.id,
+            request_id=request_id, allow_block=True,
+        )
+        content = "[withheld by guardrail policy]" if guard_action == "blocked" else result.text
+        if guard_action == "blocked" and assistant.content != content:
+            assistant.content = content
+            db.commit()
+            db.refresh(assistant)
         image_rows = attachment_service.persist_inline_images(
             db,
             images=getattr(result, "images", []),
@@ -1100,7 +1162,7 @@ async def run_chat(
                 generation_number=1,
                 provider_id=provider.id,
                 model_id=model.id,
-                content=result.text,
+                content=content,
                 status=MessageStatus.COMPLETED.value,
                 is_active=True,
                 prompt_tokens=tokens.prompt,
@@ -1149,7 +1211,7 @@ async def run_chat(
         )
         incr_counter("gateway.request", {"plane": "ui", "status": "success"})
         return ChatResponse(
-            conversation_id=conv_id, message_id=assistant.id, content=result.text,
+            conversation_id=conv_id, message_id=assistant.id, content=content,
             prompt_tokens=usage[0], completion_tokens=usage[1], total_tokens=usage[2],
             cache_read_tokens=tokens.cache_read, cache_write_tokens=tokens.cache_write,
             reasoning_tokens=tokens.reasoning,
@@ -1392,6 +1454,7 @@ async def _setup_generation(
         db, api_key, provider, model,
         estimated_tokens=est_tokens, estimated_cost=est_cost,
         request_id=request_id, client_ip=client_ip,
+        pre_text=history_text, pre_user_id=user_id,
     )
     if data.conversation_id is None:
         title = data.message[:60] or (f"Attachment: {rows[0].filename}"[:60] if rows else "New conversation")
@@ -1951,6 +2014,7 @@ async def start_regeneration(
         db, api_key, provider, model,
         estimated_tokens=est_tokens, estimated_cost=est_cost,
         request_id=request_id, client_ip=client_ip,
+        pre_text=history_text, pre_user_id=user_id,
     )
 
     started_at = datetime.now(timezone.utc)

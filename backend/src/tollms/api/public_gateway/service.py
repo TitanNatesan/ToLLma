@@ -537,6 +537,9 @@ def _prepare(
     _require_capability(model, unified.endpoint)
     if unified.endpoint in CHAT_ENDPOINTS:
         _require_chat_capabilities(model, unified)
+    # Guardrail pre: after capability gates, before limits.check_request.
+    # Blocks raise 403; warns are logged+emitted (no response metadata field).
+    _guardrail_pre(db, ctx, unified, provider, model, meta)
     org_cap = _org_cap_usd(db, ctx)
     estimated_cost = _estimated_cost(db, provider, model, unified)
     # Same stored-spend truth as the in-app gate: deny when Postgres already
@@ -591,6 +594,48 @@ def _prepare(
     )
     prepared.org_cap = org_cap
     return prepared
+
+
+
+
+def _guardrail_pre(db: Session, ctx: KeyContext, unified: UnifiedRequest,
+                   provider: Provider, model: AIModel, meta: ClientMeta) -> None:
+    """Public-plane pre hook. Lazy import: guardrail engines never import api."""
+    try:
+        from tollms.services.guardrails import enforcement as guardrail_enforcement
+
+        guardrail_enforcement.check_pre_sync(
+            db, text="\n".join(m.content for m in unified.as_chat_messages()),
+            user_id=ctx.user_id, org_id=getattr(ctx, "org_id", None),
+            provider_id=provider.id, model_id=model.id, api_key_id=ctx.key_id,
+            source="external", endpoint=unified.endpoint,
+            request_id=meta.request_id)
+    except (ForbiddenError, NotFoundError):
+        raise
+    except Exception:
+        logger.warning("public gateway guardrail pre failed (fail-open)", exc_info=True)
+
+
+def _guardrail_post(db: Session, prepared: "_Prepared", text: str, *,
+                    allow_block: bool) -> str:
+    """Public-plane post hook: audit-first, never raises, never touches Valkey
+    usage counters. Streaming callers pass allow_block=False (delivery already
+    happened — a blocked verdict is still recorded as blocked, never
+    downgraded)."""
+    try:
+        from tollms.services.guardrails import enforcement as guardrail_enforcement
+
+        return guardrail_enforcement.record_post_sync(
+            db, text=text or "", user_id=prepared.ctx.user_id,
+            org_id=getattr(prepared.ctx, "org_id", None),
+            provider_id=prepared.provider.id, model_id=prepared.model.id,
+            api_key_id=prepared.ctx.key_id, source="external",
+            endpoint=prepared.unified.endpoint,
+            request_id=prepared.meta.request_id, generation_id=None,
+            allow_block=allow_block)
+    except Exception:
+        logger.warning("public gateway guardrail post failed", exc_info=True)
+        return "allowed"
 
 
 # --- non-streaming execution ----------------------------------------------------------
@@ -680,11 +725,13 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             "public gateway chat: key=%s model=%s tokens=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, total, breakdown.total_cost, latency_ms,
         )
+        guard_action = _guardrail_post(db, prepared, result.text, allow_block=True)
+        text = "[withheld by guardrail policy]" if guard_action == "blocked" else result.text
         return ChatOutcome(
             request_id=prepared.meta.request_id,
             model_identifier=prepared.unified.model_identifier,
             provider_label=prepared.provider_label,
-            text=result.text,
+            text=text,
             usage=tokens,
             total_tokens=total,
             breakdown=breakdown,
@@ -1106,11 +1153,14 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             "public gateway stream done: key=%s model=%s tokens=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, total, breakdown.total_cost, latency_ms,
         )
+        # Guardrail post on streams is audit-only (delivery already happened).
+        _guardrail_post(db, prepared, result.text, allow_block=False)
         for frame in _close(tokens, total):
             yield frame
     except asyncio.CancelledError:
         if not logged:
             _release_reservation(prepared)
+            _guardrail_post(db, prepared, result.text, allow_block=False)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="cancelled",
@@ -1125,6 +1175,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         # no frames may be emitted here, but the terminal row still applies.
         if not logged:
             _release_reservation(prepared)
+            _guardrail_post(db, prepared, result.text, allow_block=False)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="cancelled",

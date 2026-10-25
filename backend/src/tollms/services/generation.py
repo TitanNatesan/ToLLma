@@ -520,9 +520,29 @@ class GenerationManager:
             self._store_run(db, spec, text, tokens, breakdown, latency_ms, status, error)
             self._log_request(db, spec, tokens, breakdown, latency_ms, status, estimated)
             db.commit()
+            # Guardrail post: streaming delivery cannot be withheld, so this is
+            # audit-only (allow_block=False) — a blocked verdict is still
+            # recorded with action=blocked, never downgraded.
+            if status in (MessageStatus.COMPLETED, MessageStatus.CANCELLED) and (text or "").strip():
+                self._guardrail_post(db, spec, text)
         except Exception:
             db.rollback()
             logger.warning("generation %s: final store failed", spec.generation_id, exc_info=True)
+
+    def _guardrail_post(self, db, spec: GenerationSpec, text: str) -> None:
+        """Audit-only post hook. Never raises, never touches usage counters."""
+        try:
+            from tollms.services.guardrails import enforcement as guardrail_enforcement
+
+            guardrail_enforcement.record_post_sync(
+                db, text=text or "", user_id=spec.user_id, org_id=spec.org_id,
+                provider_id=spec.provider_id, model_id=spec.model_id,
+                api_key_id=spec.api_key_id, source="internal", endpoint="chat",
+                request_id=spec.key_request_id, generation_id=spec.generation_id,
+                allow_block=False)
+        except Exception:
+            logger.warning("generation %s: guardrail post hook failed",
+                           spec.generation_id, exc_info=True)
 
     def _store_inline_images(self, db, spec: GenerationSpec, result: ChatResult) -> list:
         """Provider-returned chat images -> attachments on the message row.

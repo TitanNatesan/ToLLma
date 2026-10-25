@@ -98,6 +98,15 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("Audit.Read", "Read audit log"),
         ("Audit.Export", "Export audit log"),
     ],
+    "Guardrails": [
+        ("Guardrails.Create", "Create guardrails"),
+        ("Guardrails.Read", "View guardrails"),
+        ("Guardrails.Update", "Update guardrails"),
+        ("Guardrails.Delete", "Delete guardrails"),
+        ("Guardrails.Test", "Test guardrails"),
+        ("Guardrails.ViewEvents", "View guardrail events"),
+        ("Guardrails.ManageCredentials", "Manage guardrail credentials"),
+    ],
 }
 
 

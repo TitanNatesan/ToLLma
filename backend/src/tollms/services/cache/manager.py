@@ -292,6 +292,34 @@ def call_sync(coro: Coroutine[Any, Any, Any], *, timeout: float = 5.0, default: 
         return default
 
 
+def call_sync_strict(coro: Coroutine[Any, Any, Any], *, timeout: float = 5.0) -> Any:
+    """Bridge that propagates ApplicationException (rate-limit 429,
+    fail-closed 503) instead of swallowing it. Bridge/transport failures
+    become ServiceUnavailableError (fail-closed). For quota-style gates that
+    must deny, never default-allow."""
+
+    async def _scoped_strict() -> Any:
+        token = _client_mod._bridge_mode.set(True)
+        try:
+            return await coro
+        finally:
+            _client_mod._bridge_mode.reset(token)
+
+    from tollms.core.exceptions import ApplicationException, ServiceUnavailableError
+
+    try:
+        loop = _bridge()
+        if loop is None:
+            coro.close()
+            raise ServiceUnavailableError("validation limiter unavailable")
+        return asyncio.run_coroutine_threadsafe(_scoped_strict(), loop).result(timeout=timeout)
+    except ApplicationException:
+        raise
+    except Exception:
+        logger.warning("strict cache sync bridge failed", exc_info=True)
+        raise ServiceUnavailableError("validation limiter unavailable") from None
+
+
 def cache_get_sync(key: str) -> Any:
     return call_sync(get_manager().get(key))
 

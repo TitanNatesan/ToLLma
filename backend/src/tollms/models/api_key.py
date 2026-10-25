@@ -33,6 +33,7 @@ from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
     from tollms.models.message import Message
+    from tollms.models.guardrail import GuardrailAssignment, GuardrailTrigger
     from tollms.models.organization import Organization
 
 
@@ -137,6 +138,8 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
         back_populates="api_key", cascade="all, delete-orphan"
     )
     messages: Mapped[list["Message"]] = relationship(back_populates="api_key")
+    guardrail_assignments: Mapped[list["GuardrailAssignment"]] = relationship(back_populates="api_key")
+    guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="api_key")
 
 
 class ApiKeyPolicy(TimestampedModel):
