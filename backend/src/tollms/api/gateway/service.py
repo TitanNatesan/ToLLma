@@ -226,10 +226,12 @@ def media_cost_estimate(db: Session, provider, model, endpoint: str, options: di
     )
 
 
-def caching_for_model(db: Session, provider, model, conversation_id) -> caching_engine.CachingPlan:
+def caching_for_model(db: Session, provider, model, conversation_id=None) -> caching_engine.CachingPlan:
     """Provider-aware prompt-cache plan for a freshly built adapter.
 
     Unsupported models get a disabled plan, so the request body is unchanged.
+    OpenAI keys are stable per (provider, model) — conversation_id is accepted
+    for caller compat but never enters the key.
     """
     if _is_media_model(model):
         return caching_engine.plan(provider.provider_type.value, supported=False)
@@ -239,6 +241,8 @@ def caching_for_model(db: Session, provider, model, conversation_id) -> caching_
         supported=caching_engine.supports_prompt_caching(model, repo),
         conversation_id=str(conversation_id) if conversation_id else None,
         model_id=model.model_id,
+        provider_id=getattr(provider, "id", None),
+        model_row_id=getattr(model, "id", None),
     )
 
 
@@ -1807,6 +1811,24 @@ def _terminal_from_row(db, msg, attachments: list | None = None) -> dict:
         "model_name": model_name or "Unknown",
         "content": msg.content,
         **({"error": msg.error} if msg.error else {}),
+        "usage": {
+            "prompt_tokens": msg.prompt_tokens or 0,
+            "completion_tokens": msg.completion_tokens or 0,
+            "total_tokens": msg.total_tokens or ((msg.prompt_tokens or 0) + (msg.completion_tokens or 0)),
+            "cache_read_tokens": msg.cache_read_tokens or 0,
+            "cache_write_tokens": msg.cache_write_tokens or 0,
+            "reasoning_tokens": msg.reasoning_tokens or 0,
+        },
+        "cost": {
+            "input_cost": str(msg.input_cost or 0),
+            "output_cost": str(msg.output_cost or 0),
+            "total_cost": str(msg.total_cost or 0),
+            "cache_read_cost": str(msg.cache_read_cost or 0),
+            "cache_write_cost": str(msg.cache_write_cost or 0),
+            "reasoning_cost": str(msg.reasoning_cost or 0),
+        },
+        "usage_estimated": bool(msg.usage_estimated),
+        "latency_ms": msg.latency_ms,
         "attachments": [
             a.model_dump(mode="json") if hasattr(a, "model_dump") else a
             for a in (attachments or [])

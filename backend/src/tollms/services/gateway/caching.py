@@ -3,8 +3,9 @@
 Cache strategy per provider family:
 
 * ``OPENAI`` — prefix caching is automatic; a stable ``prompt_cache_key``
-  (derived from the conversation id) keeps a conversation's requests on the
-  same cache route.
+  scoped per (provider, model) keeps identical prefixes on the same cache
+  route across requests/conversations. Content still determines hits; the
+  key is a routing hint only (adapters add the field, messages unchanged).
 * ``CUSTOM`` (OpenAI-compatible gateways) — implicit only: unknown request
   fields can be rejected by strict servers, so the body is left untouched.
 * ``ANTHROPIC_MESSAGES`` — explicit ephemeral cache breakpoint on the system
@@ -22,6 +23,7 @@ attach the plan to the adapter; adapters that see no plan send today's body.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -53,14 +55,27 @@ def plan(
     supported: bool,
     conversation_id: str | None = None,
     model_id: str | None = None,
+    provider_id: uuid.UUID | str | None = None,
+    model_row_id: uuid.UUID | str | None = None,
 ) -> CachingPlan:
     """Select a caching strategy. Never raises; unsupported input disables it."""
     if not supported:
         return CachingPlan(enabled=False, strategy="none", reason="model_unsupported")
     family = (provider_type or "").upper()
     if family == "OPENAI":
-        key = f"tollma:{conversation_id}" if conversation_id else None
-        return CachingPlan(enabled=True, strategy="openai", cache_key=key, reason="native_prefix_cache")
+        # Stable per (provider, model): conversation_id is intentionally
+        # ignored (legacy param, kept for caller compat) — a per-conversation
+        # key fragments the prefix cache (fresh UUID per new conversation
+        # means every key is unique) and new-conversation repeats never hit.
+        # Missing ids fall back to no key (automatic prefix caching, hits
+        # driven by content as before).
+        if provider_id is not None and model_row_id is not None:
+            key = f"tollma:oai:{provider_id}:{model_row_id}"
+        else:
+            key = None
+        return CachingPlan(
+            enabled=True, strategy="openai", cache_key=key, reason="native_prefix_cache"
+        )
     if family in _IMPLICIT_NOOP:
         return CachingPlan(enabled=True, strategy="implicit", reason="compatible_prefix_cache")
     if family in _IMPLICIT_FAMILIES:
@@ -129,7 +144,8 @@ def bedrock_messages(plan_: CachingPlan | None, messages: list[dict]) -> list[di
     Together with the system cache point this caches the whole stable prefix
     for the next turn. Bedrock ignores cache points below the model's minimum
     cacheable length, so this is always safe; non-Bedrock plans return the
-    list untouched.
+    list untouched. Floor is model-specific (Claude Haiku 4.5: 4096 tokens
+    before the checkpoint) — sub-threshold prefixes succeed with cw=0/cr=0.
     """
     if plan_ is None or not plan_.enabled or plan_.strategy != "bedrock":
         return messages

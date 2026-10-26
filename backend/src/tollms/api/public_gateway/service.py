@@ -580,6 +580,13 @@ def _prepare(
         )
         raise
     adapter.max_output_tokens = model.max_output_tokens
+    # Prompt-cache plan, same engine as internal Chat: Bedrock Claude ids get
+    # cachePoints when the model declares support; OpenAI gets a stable
+    # per-(provider,model) key shared with the internal plane (cross-plane
+    # prefix reuse); implicit families stay byte-identical.
+    from tollms.api.gateway.service import caching_for_model as _plan_for
+
+    adapter.prompt_cache = _plan_for(db, provider, model, None)
     messages = unified.as_chat_messages()
     prepared = _Prepared(
         ctx=ctx,
@@ -983,10 +990,23 @@ def _usage_details(tokens: UsageTokens, total: int) -> dict[str, Any]:
         "completion_tokens": tokens.completion,
         "total_tokens": total,
     }
-    if tokens.cache_read or tokens.cache_write:
+    if tokens.cache_read:
         usage["prompt_tokens_details"] = {"cached_tokens": tokens.cache_read}
     if tokens.reasoning:
         usage["completion_tokens_details"] = {"reasoning_tokens": tokens.reasoning}
+    return usage
+
+
+def _responses_usage_details(tokens: UsageTokens, total: int) -> dict[str, Any]:
+    usage: dict[str, Any] = {
+        "input_tokens": tokens.prompt,
+        "output_tokens": tokens.completion,
+        "total_tokens": total,
+    }
+    if tokens.cache_read:
+        usage["input_tokens_details"] = {"cached_tokens": tokens.cache_read}
+    if tokens.reasoning:
+        usage["output_tokens_details"] = {"reasoning_tokens": tokens.reasoning}
     return usage
 
 
@@ -1087,16 +1107,21 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
     def _close(tokens: UsageTokens, total: int) -> list[str]:
         nonlocal sequence
         if fmt == "anthropic":
+            anthropic_usage: dict[str, Any] = {
+                "input_tokens": tokens.prompt,
+                "output_tokens": tokens.completion,
+            }
+            if tokens.cache_write:
+                anthropic_usage["cache_creation_input_tokens"] = tokens.cache_write
+            if tokens.cache_read:
+                anthropic_usage["cache_read_input_tokens"] = tokens.cache_read
             return [
                 _sse({"type": "content_block_stop", "index": 0}, "content_block_stop"),
                 _sse(
                     {
                         "type": "message_delta",
                         "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                        "usage": {
-                            "input_tokens": tokens.prompt,
-                            "output_tokens": tokens.completion,
-                        },
+                        "usage": anthropic_usage,
                     },
                     "message_delta",
                 ),
@@ -1121,11 +1146,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                             "content": [{"type": "output_text", "text": result.text, "annotations": []}],
                         }
                     ],
-                    "usage": {
-                        "input_tokens": tokens.prompt,
-                        "output_tokens": tokens.completion,
-                        "total_tokens": total,
-                    },
+                    "usage": _responses_usage_details(tokens, total),
                 },
             }
             sequence += 1

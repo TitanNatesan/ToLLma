@@ -31,10 +31,24 @@ def test_unsupported_model_disables_caching_gracefully() -> None:
 
 
 def test_openai_plan_uses_conversation_cache_key() -> None:
-    plan = caching.plan("OPENAI", supported=True, conversation_id="conv-123")
+    import uuid as uuid_mod
+
+    provider_id, model_row_id = uuid_mod.uuid4(), uuid_mod.uuid4()
+    plan = caching.plan(
+        "OPENAI", supported=True, conversation_id="conv-123",
+        provider_id=provider_id, model_row_id=model_row_id,
+    )
     assert plan.enabled and plan.strategy == "openai"
-    assert caching.openai_params(plan) == {"prompt_cache_key": "tollma:conv-123"}
-    # No conversation id -> enabled, no request change beyond the empty key.
+    assert caching.openai_params(plan) == {
+        "prompt_cache_key": f"tollma:oai:{provider_id}:{model_row_id}"
+    }
+    # Conversation id is ignored: same (provider, model) shares one route.
+    other = caching.plan(
+        "OPENAI", supported=True, conversation_id="conv-456",
+        provider_id=provider_id, model_row_id=model_row_id,
+    )
+    assert caching.openai_params(other) == caching.openai_params(plan)
+    # No provider/model ids -> enabled, no key (automatic prefix caching).
     assert caching.openai_params(caching.plan("OPENAI", supported=True)) == {}
 
 
@@ -109,11 +123,16 @@ def test_openai_adapter_sends_cache_key_only_when_planned() -> None:
             transport=httpx.MockTransport(handler),
         )
         if with_cache:
-            adapter.prompt_cache = caching.plan("OPENAI", supported=True, conversation_id="conv-9")
+            import uuid as uuid_mod
+
+            adapter.prompt_cache = caching.plan(
+                "OPENAI", supported=True, conversation_id="conv-9",
+                provider_id=uuid_mod.uuid4(), model_row_id=uuid_mod.uuid4(),
+            )
         await adapter.chat([ChatMessage(role="user", content="hello")])
 
     asyncio.run(run(True))
-    assert seen[0]["prompt_cache_key"] == "tollma:conv-9"
+    assert seen[0]["prompt_cache_key"].startswith("tollma:oai:")
     asyncio.run(run(False))
     assert "prompt_cache_key" not in seen[1]
 
