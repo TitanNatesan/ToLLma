@@ -9,6 +9,7 @@ from tollms.models.api_key import (  # noqa: F401
     IpRuleType,
 )
 from tollms.models.attachment import Attachment  # noqa: F401
+from tollms.models.benchmark import BenchmarkRun  # noqa: F401
 from tollms.models.conversation import Conversation  # noqa: F401
 from tollms.models.message import Message, Role  # noqa: F401
 from tollms.models.message_history import GenerationRun, MessageVersion  # noqa: F401
@@ -50,6 +51,12 @@ from tollms.models.guardrail import (  # noqa: F401
     Severity,
     Source,
     Stage,
+)
+from tollms.models.prompt_logging import (  # noqa: F401
+    PromptLog,
+    PromptLoggingKeyTarget,
+    PromptLoggingSetting,
+    PromptLoggingTeamTarget,
 )
 from tollms.models.request_log import ExportEvent, RequestLog, RequestStatus  # noqa: F401
 from tollms.models.search_index import ConversationSearchEntry  # noqa: F401

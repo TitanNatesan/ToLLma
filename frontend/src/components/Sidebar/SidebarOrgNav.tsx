@@ -25,6 +25,7 @@ import { useOrg, useOrgs } from "@/hooks/useOrgs";
 export type OrgSection =
   | "overview" | "chat" | "members" | "teams" | "sets" | "providers" | "guardrails" | "operations"
   | "budgets" | "analytics" | "audit" | "settings" | "docs"
+  | "prompt-logs"
   // Legacy sections: no nav item; the page redirects them to operations+tab.
   | "keys" | "requests" | "invitations";
 
@@ -46,6 +47,7 @@ const ITEMS: Item[] = [
   { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "providers", label: "Providers", icon: Cpu },
   { id: "guardrails", label: "Guardrails", icon: ShieldCheck },
+  { id: "prompt-logs", label: "Prompt Logs", icon: ScrollText },
   { id: "keys", label: "API Keys", icon: KeyRound },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "docs", label: "API Docs", icon: BookOpen },
@@ -62,6 +64,7 @@ const UNIFIED_HREF: Partial<Record<OrgSection, string>> = {
   chat: "/",
   providers: "/providers",
   guardrails: "/guardrails",
+  "prompt-logs": "/prompt-logs",
   keys: "/api-keys",
   analytics: "/analytics",
   docs: "/docs",
@@ -107,6 +110,7 @@ export function useOrgNavItems(orgId: string): OrgNavEntry[] {
         case "overview":
         case "providers":
         case "guardrails":
+        case "prompt-logs":
         case "keys":
         case "analytics":
         case "docs":

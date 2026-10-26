@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from tollms.api.analytics.router import router as analytics_router
 from tollms.api.analytics_api.router import router as analytics_api_router
+from tollms.api.benchmarks.router import router as benchmarks_router
 from tollms.api.attachments.router import router as attachments_router
 from tollms.api.auth.router import router as auth_router
 from tollms.api.catalog.router import router as catalog_router
@@ -26,6 +27,7 @@ from tollms.api.health.router import router as health_router
 from tollms.api.models.router import router as models_router
 from tollms.api.notifications.router import router as notifications_router
 from tollms.api.orgs.router import router as orgs_router
+from tollms.api.prompt_logging.router import router as prompt_logging_router
 from tollms.api.providers.router import router as providers_router
 from tollms.api.repository.router import router as repository_router
 from tollms.api.settings.router import router as settings_router
@@ -167,6 +169,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(catalog_router)
+    app.include_router(prompt_logging_router)
     app.include_router(providers_router)
     app.include_router(models_router)
     app.include_router(repository_router)
@@ -177,6 +180,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(analytics_router)
     app.include_router(analytics_api_router)
+    app.include_router(benchmarks_router)
     app.include_router(settings_router)
     app.include_router(search_router)
     app.include_router(exports_router)

@@ -58,6 +58,15 @@ function apiBase(): string {
   return process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 }
 
+/**
+ * Absolute backend URL for a relative API path. Use this when the raw
+ * Response is needed (e.g. reading the `X-Next-Cursor` pagination header),
+ * since apiRequest only returns the parsed body.
+ */
+export function apiUrl(path: string): string {
+  return `${apiBase()}${path}`;
+}
+
 export class ApiError extends Error {
   /** Seconds from the `Retry-After` header on 429s, when present. */
   public retryAfterSeconds: number | null;

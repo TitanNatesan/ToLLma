@@ -15,6 +15,8 @@ from tollms.db.base import SoftDeleteMixin, TimestampedModel
 if TYPE_CHECKING:
     from tollms.models.conversation import Conversation
     from tollms.models.guardrail import GuardrailPolicy, GuardrailTrigger
+    from tollms.models.benchmark import BenchmarkRun
+    from tollms.models.prompt_logging import PromptLog, PromptLoggingSetting
     from tollms.models.provider import Provider
 
 
@@ -114,3 +116,6 @@ class User(SoftDeleteMixin, TimestampedModel):
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="owner")
     guardrail_policies: Mapped[list["GuardrailPolicy"]] = relationship(back_populates="owner")
     guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="owner")
+    prompt_logging_settings: Mapped[list["PromptLoggingSetting"]] = relationship(back_populates="owner")
+    prompt_logs: Mapped[list["PromptLog"]] = relationship(back_populates="owner")
+    benchmark_runs: Mapped[list["BenchmarkRun"]] = relationship(back_populates="owner")

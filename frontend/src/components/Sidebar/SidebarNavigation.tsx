@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, BookOpen, Cpu, KeyRound, LogOut, MessageSquare, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
+import { BarChart3, BookOpen, Cpu, KeyRound, LogOut, MessageSquare, ScrollText, Settings, ShieldCheck, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logout } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
@@ -20,6 +20,7 @@ export const PERSONAL_NAV: NavItem[] = [
   { href: "/providers", label: "Providers", icon: Cpu },
   { href: "/api-keys", label: "API Keys", icon: KeyRound },
   { href: "/guardrails", label: "Guardrails", icon: ShieldCheck },
+  { href: "/prompt-logs", label: "Prompt Logs", icon: ScrollText },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/docs", label: "API Docs", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },

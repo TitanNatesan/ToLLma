@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from tollms.models.message import Message
     from tollms.models.guardrail import GuardrailAssignment, GuardrailTrigger
     from tollms.models.organization import Organization
+    from tollms.models.prompt_logging import PromptLog, PromptLoggingKeyTarget
 
 
 class IpRuleType(str, enum.Enum):
@@ -140,6 +141,10 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
     messages: Mapped[list["Message"]] = relationship(back_populates="api_key")
     guardrail_assignments: Mapped[list["GuardrailAssignment"]] = relationship(back_populates="api_key")
     guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="api_key")
+    prompt_logs: Mapped[list["PromptLog"]] = relationship(back_populates="api_key")
+    prompt_logging_key_targets: Mapped[list["PromptLoggingKeyTarget"]] = relationship(
+        back_populates="api_key"
+    )
 
 
 class ApiKeyPolicy(TimestampedModel):

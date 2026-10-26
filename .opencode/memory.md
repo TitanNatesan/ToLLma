@@ -4174,3 +4174,105 @@ Defects found live + fixed: (1) monitor short-circuit returned allowed on evalua
 Benchmarks (Haiku primary, interleaved, monotonic): internal non-stream 20×5, external /v1/messages 20×5, streams 16×5 per plane, /test evaluator-stage. Laya overhead ≈ +0–0.24s; OpenAI ≈ +1.5–1.8s (Moderation RTT, incl. TTFB on streams); gpt-oss escalation ≈ +3s when triggered (decision-only benign identical). All success 100%. Outliers noted (oai-hybrid ext max 23.75s; internal oai stream max 20.68s).
 Failures: laya-down → internal+external 200 fallback_continued + ConnectError rows; first-failure latency +5–14s (bounded, health-cache fast-fail after), notifications deduped hourly→repeat-verified with 1-min bucket, recovery notification on restore. Bad LLM ref → ValueError fallback, no recursion. OAI bad-cred overlay → fallback, nothing persisted (422 validate-then-persist held). Timeout 1ms → fallback. Malformed JEV → raises at adapter (mocked-transport check; live-host test blocked by SSRF allowlist by design). Unknown-model 404 during outage (gates intact). Streaming with policies: usage_estimated=false, real cost accounting.
 Validation: backend pytest 878 passed; alembic check clean; tsc + eslint clean; vitest 27/190. Browser: 4 policies listed w/ evaluators + key scoping, trigger history w/ redacted reasons, notifications page failure+recovery entries. Scratch (FAIL-*/bench-fail key/mock/mock files/tokens/raws) deleted. Limitations: OpenAI key arrived via chat (accepted exposure, rotation advised); email via local outbox path only (in-app verified); JEV live test blocked by SSRF guard (by design); member-permission matrix API-tested, not multi-browser.
+
+## 2026-10-26 — Workspace Prompt Logging backend
+
+Requirement: per-workspace prompt capture (personal/org, global/teams modes) with encrypted bodies, metadata ledger, retention expiry, and read/purge APIs — backend only, guardrails precedent (404-oracles, gateway hooks, sync bridge).
+
+Implementation:
+- models/prompt_logging.py (new): PromptLoggingSetting (SoftDelete+Timestamped, exactly-one-workspace CHECK, partial unique live indexes per user_id/org_id), PromptLoggingTeamTarget (Timestamped link, unique setting+team), PromptLog (Timestamped-only immutable ledger, Fernet ciphers, 512KB truncate flags, expires_at, org/user/key/request/expires/status indexes). Registered in models/__init__.py; back_populates added on User/Organization/Team/ApiKey/Conversation/Provider/AIModel.
+- alembic j4k5l6m7n8o9 (head, down i3j4k5l6m7n8): 3 tables + indexes incl. partial uniques; `alembic upgrade head` + `alembic check` clean.
+- guards.py: new PromptLogs group (Read/ViewContent/Manage/Delete); Owner auto-includes via catalog.
+- api/prompt_logging/{router,schemas,service,settings,records}.py: settings GET/PUT (upsert versioned, teams validated 422, empty-teams logs nothing, org writes audit / personal skips), teams list, logs list (metadata-only, cursor X-Next-Cursor, AND filters, q=request_id only, forged IDs 404), detail (bodies only with ViewContent else content_restricted), DELETE (Delete+audit), purge (expire content, keep metadata), retention (default 90/effective/next_run). Mounted /api/v1/prompt-logs.
+- services/prompt_logging/{resolution,capture,retention}.py: provenance-pinned resolution (personal key→personal only, org key→own org only + team∩, legacy→personal; never raises); capture_post (flags, Fernet, truncate, expires_at=now+retention, fail-open, no Valkey, no content in logs) + capture_post_sync (thread+fresh Session bridge, fail-open 'skipped'); retention.expire_due_logs (NULL ciphers, never deletes).
+- Hooks (all sync-bridge, fail-open): gateway run_chat success+failure, generation _store_final (completed/cancelled-partial/failed mapping), public _execute_chat/_execute_media success+failure, _stream_chat terminal/cancel/disconnect/failure. Media captures text only.
+- scheduler: daily `promptlog-cleanup` lock-guarded job (skipped under pytest via start()).
+- tests: test_prompt_logging.py (24) + test_prompt_logging_hooks.py (10) — resolution A–E/multi-org, flags, teams, oracles, perms, pagination/filters, retention, fail-open (mocked write failure → generation still 200), streaming partial mapping, external format+usage intact, personal-key-never-org-logged.
+- Incidental test maintenance: head pin i3j4k5l6m7n8→j4k5l6m7n8o9; Owner catalog count 59→63 (4 new codes).
+
+Validation: full `pytest -q` → 912 passed; `alembic check` clean; OpenAPI 239 ops, no duplicate (path,method). Note: container shadowed tests/test_organizations.py (stale inode); pushed host content via `tee /app/...` to resync — rerun green, no other files affected.
+
+Limitations: no per-team usage attribution beyond team_ids snapshot; detail decryption failure surfaces content_restricted (safe default); retention job daily granularity only.
+
+## 2026-10-25 - Prompt logging review-findings fix batch (B7/B2/B1/B3/M1/M2/m3 + DB indexes)
+
+Requirement: fix verified Workspace Prompt Logging review findings, backend/** only.
+Implemented:
+- B7 (data-ownership): internal-chat hook (`api/gateway/service.py::_promptlog_capture`) now passes `key_provenance=None` so the ApiKey row resolves server-side (streaming driver already did); `services/prompt_logging/resolution.py::_derive_provenance` made the key row authoritative even when a stale hint is passed (hint is fallback only for keyless/deleted-key traffic). Regression tests: personal-provider+org-key → org log; provider-A-hint+key-B → org B.
+- B2: `LogMeta` gains `fields` (from ciphers), `duration_ms` (= latency_ms), `completed_at` (created_at+latency), `key_name` (single batched query per page; null when key deleted). Detail path resolves the single key name.
+- B1: `GET /logs` returns `LogList{items:[...]}` (canonical) + keeps `X-Next-Cursor` header.
+- B3: `PurgeResult.expired` → `expired_count` (repo-wide check: only router + tests consumed it; frontend already expected `expired_count`).
+- M1: added `capture_post_async` (`asyncio.to_thread` + timeout, fail-open `skipped`); all async hook paths (`api/gateway`, `api/public_gateway`, `services/generation` incl. `async _store_final`) await it. Sync `capture_post_sync` kept for sync callers (tests).
+- M2: non-streaming paths (`run_chat`, public `_execute_chat`) compute the guardrail post verdict first, then ledger the already-withheld marker (`[withheld by guardrail policy]`) — verdict threaded through, never re-evaluated. Streaming paths keep capturing delivered bytes (honest audit); rule documented in code comments.
+- m3: truncated attacker-controlled echoes (`invalid status`, `invalid mode`); `status` query param gained `max_length=32`.
+- DB: new migration `k5l6m7n8o9p0` (head `j4k5l6m7n8o9` untouched) + matching model indexes `ix_prompt_logs_{conversation,provider,model}` (composite with `created_at` per convention).
+- Tests: updated list/purge contract assertions; new B2 derived-field tests, B7 hook tests, M2 withheld-marker tests (internal + public); head-pin test updated to `k5l6m7n8o9p0`.
+Verification: `pytest -q` full suite 930 passed + head-pin fix verified (931 total green); `alembic upgrade head` + `alembic check` clean; `app.openapi()` 239 ops, route-walk 247 registrations with zero duplicate (path, method). Scope: no frontend/** writes.
+
+## 2026-10-26 - Prompt log display enrichment (names + int duration)
+
+Requirement: list/detail expose raw UUIDs for user/provider/model and unrounded float durations; enrich backend-only (no migration, no frontend edits).
+Implemented:
+- schemas.py: `LogMeta` gains `user_email`, `provider_name`, `model_name` (all `str | None`); `duration_ms` retyped `float | None` → `int | None` (stored `latency_ms` stays raw float).
+- records.py: new `_live_map` generic batched id→value lookup (single query per entity per page, `is_deleted=False` filtered so soft-deleted refs surface None); `_key_names` reimplemented on it (now also soft-delete-safe) + new `_user_emails` (users.email), `_provider_names` (providers.name), `_model_names` (models.model_id display id). `list_logs` issues exactly 4 constant batch queries (keys/users/providers/models) regardless of page size; `get_log_detail` reuses the same helpers (constant queries for one row). `_meta` rounds `duration_ms = round(float(latency_ms))`, keeps `latency_ms` raw and `completed_at` float-precise. Rows are pre-scope-filtered so name/email exposure stays within the caller's authorized workspace.
+- Tests: new `backend/tests/test_prompt_logging_names.py` (2 tests) — names present on list + detail with fractional latency 4803.219999999999 → `duration_ms == 4803` (int) and raw `latency_ms` preserved; soft-delete of key/provider/model → nulls not crashes; soft-deleted user → `user_email None` via service-level check (API auth would block a deleted caller).
+Verification: `pytest tests/test_prompt_logging*.py -q` → 63 passed (61 existing + 2 new). Ruff: no new findings (I001/RUF059/UP017 hits are pre-existing repo style debt on untouched lines; reverted an accidental whole-file `ruff --fix/format` churn to keep the diff functional-only). No migration (no schema change).
+
+## 2026-10-26 — Workspace Prompt Logging: implementation + end-to-end validation
+
+Requirement: workspace-controlled prompt/response logging for personal + org workspaces, team targeting, key-provenance isolation, settings UI, Prompt Logs page, retention, audit, full test + browser validation.
+
+Implementation (uncommitted): models/prompt_logging.py (Setting + TeamTarget + immutable PromptLog w/ Fernet ciphers, CHECK owner scope, partial unique live indexes); migrations j4k5l6m7n8o9 (tables) + k5l6m7n8o9p0 (3 filter indexes); api/prompt_logging (router/service/settings/records, /api/v1/prompt-logs); services/prompt_logging (resolution/capture/retention); PromptLogs.{Read,ViewContent,Manage,Delete} catalog codes; gateway hooks (internal run_chat + generation._store_final + public chat/media/stream terminal/cancel/fail); daily promptlog-cleanup job (expires content, keeps metadata); frontend app/prompt-logs (Logs/Settings tabs, filters, detail drawer, URL-synced state) + nav entries.
+
+Fixes from independent review (all verified): key-org mis-attribution hint (now key-row wins), list/detail contract mismatches (envelope, derived fields, purge key, status enum, summary format, null guards), sync join blocking loop (async capture), guardrail-blocked output persistence rule, attacker-echo truncation, 3 missing indexes, display enrichment (user email/provider/model names, int durations).
+
+Validation: backend pytest 941 passed; alembic check clean; OpenAPI no-dupe; frontend tsc+lint clean, vitest 227 passed. Browser (tru root, memberA/B test users): personal enable→capture→disable stops; org-global org-key capture w/ attribution; team-targeting (member logged, non-member not, personal key never org-logged); Read-only member sees metadata but content_restricted bodies + read-only settings; all mutations 404-oracle; streaming full capture; client-abort → partial row; input-only fields; filters/pagination/URL sync; purge → expired state, bodies gone, metadata kept; audit rows for settings/deletes. Cleanup: removed test keys/teams/sets/memberships, disabled logging, shredded temp creds. Residual: promptlog-memberA/B test users (no immediate delete flow; deletion is scheduled), pre-existing bench keys untouched.
+
+## 2026-10-26 - Prompt-log key targets + reviewer fixes; benchmark runs
+
+Requirement: (WS1) per-key prompt-logging allow-list (PromptLoggingKeyTarget,
+PromptLog.match_source) plus reviewer fixes M1-M6; (WS2) BenchmarkRun storage
+with API at /api/v1/benchmarks. Backend-only, Alembic migration per model change.
+Implementation summary:
+- Models: new PromptLoggingKeyTarget (setting_id/api_key_id CASCADE, unique pair,
+  Timestamped only) + PromptLog.match_source VARCHAR(16) nullable (null = legacy
+  rows); new BenchmarkRun (creator user_id, nullable org_id, labels, conditions
+  JSONB, latency/token/cost aggregates, no body columns) with explicit
+  relationship()/back_populates on both sides.
+- Migration l6m7n8o9p0q1 (child of k5l6m7n8o9p0): both tables + indexes +
+  match_source column; `alembic upgrade head` + `alembic check` clean.
+- Semantics (resolution.py docstring): workspace pin first via unchanged
+  _derive_provenance; key-lookup exception -> ("unknown",None) -> no-capture
+  (M1); disabled -> none; global -> match_source=global ignoring targets;
+  teams -> team_hit OR key_hit (key live = not is_deleted), empty both -> none;
+  global upsert clears stored targets.
+- Settings: key_ids list[str] (max 100) w/ 404-oracle workspace pin
+  (personal: org_id NULL + user match; org: org match); team_ids capped at 100.
+- Reviewer fixes: M2 settings/delete/purge audit inside single committing
+  transaction (500 + rollback on audit failure); M4 max_length=64 on from/to +
+  _parse_time truncates to 64 in message only; M5 _resolve_member requires ACTIVE;
+  M6 enrichment documented as intended batching; status fallback to failed;
+  M3 accepted gap comment in retention.py.
+- Benchmarks api/benchmarks/{router,schemas,service}.py: POST /runs 201,
+  GET /runs cursor/limit newest-first, DELETE creator-or-root 204; auth personal
+  owner-only / org ACTIVE + Analytics.ViewUsage (404 otherwise); recursive
+  input_text/output_text rejection (422) + extra=forbid on create.
+Files changed: models/{prompt_logging,benchmark,api_key,user,organization}.py,
+models/__init__.py, services/prompt_logging/{resolution,capture,retention}.py,
+api/prompt_logging/{schemas,router,settings,records}.py,
+api/orgs/common/guards.py, api/benchmarks/* (new), main.py (mount),
+alembic/versions/l6m7n8o9p0q1_*.py, tests/{test_prompt_logging_key_targets,
+test_benchmark_runs}.py (new), tests/test_guardrails_engines.py (head pin).
+Testing: full suite `docker compose exec backend pytest -q` -> 960 passed;
+OpenAPI duplicate (path,method) check -> none (199 paths).
+Architecture notes: resolution stays fail-closed (never raises); capture
+fail-open; ledger rows immutable/metadata-only; benchmark ledger holds
+aggregates + sampling plan only, never bodies.
+
+## 2026-10-26 — Prompt Logging acceptance audit: key-specific logging, benchmarks, caching validation
+
+Independent audit of Workspace Prompt Logging. Implemented key-specific targeting (PromptLoggingKeyTarget + match_source column, migration l6m7n8o9p0q1, OR semantics teams|keys, global clears targets, personal key UI), benchmark runs ledger (BenchmarkRun + /api/v1/benchmarks, Chat Benchmarks drawer). Reviewer findings re-verified against tree: B7/M1/M2/M4/M5 already fixed in-tree; contract mismatches fixed and browser-verified.
+Benchmarks (gpt-oss:20b, sequential, concurrency 1, warmup 5): internal A/B n=200 p50 1080/1165ms, interleaved A/B p50 823/823 (0ms overhead); external A/B n=200/198 p50 751/779 (+28ms), interleaved 715/715 (0ms); key-specific + team org scenarios 50-100 each, all captured with correct match_source; streaming both planes measured. No duplicate log rows; 422s create no rows; truncation enforced at 512KiB (stored 524288, flagged).
+Caching: Bedrock sends cachePoint (code correct) but 0 cache-reads in 9 controlled long-prefix trials; 6 varying-suffix trials wrote cache each time (cw≈4330, billed at write premium → net cost increase); 1 historical read hit exists (2026-10-21 org Bedrock multi-turn: write-only $0.00649 → hit $0.00347 = 47% total saving). Verdict: not reliably live-verified; no other live cache-capable provider available (OpenAI/Anthropic-direct absent; external plane never sets prompt cache).
+Live outage during benchmarks (upstream DNS/connect failures) verified fail paths: 500+ failed prompt-log rows with error codes, fallback behavior intact, no phantom successes. Session cap (10/user) evicted interactive sessions during benchmark re-logins — noted operationally.
+Validation: backend pytest 941 passed; alembic check clean; OpenAPI no-dupe; tsc+lint clean; vitest 227 passed; browser (tru/memberB): key UI, team UI, benchmarks drawer, read-only gating, content_restricted, expired states, filters/URL sync, audit rows. Cleanup: test keys/teams/memberships removed, 1249 benchmark conversations deleted via service layer, settings reset to disabled, secrets shredded. Residual: pre-existing bench-* keys + older conversations untouched; promptlog-memberA/B users already absent.

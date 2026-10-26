@@ -107,6 +107,12 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("Guardrails.ViewEvents", "View guardrail events"),
         ("Guardrails.ManageCredentials", "Manage guardrail credentials"),
     ],
+    "PromptLogs": [
+        ("PromptLogs.Read", "View prompt log metadata"),
+        ("PromptLogs.ViewContent", "View prompt log bodies"),
+        ("PromptLogs.Manage", "Manage prompt logging settings"),
+        ("PromptLogs.Delete", "Delete and purge prompt logs"),
+    ],
 }
 
 
@@ -210,7 +216,10 @@ def _parse_time(value: str | None, name: str, *, end_of_day: bool = False) -> da
             else:
                 parsed = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
     except ValueError:
-        raise ValidationError(f"invalid {name}: {value!r}; expected ISO date/datetime") from None
+        # Truncated: the value is attacker-controlled (query param).
+        raise ValidationError(
+            f"invalid {name}: {str(value)[:64]!r}; expected ISO date/datetime"
+        ) from None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed

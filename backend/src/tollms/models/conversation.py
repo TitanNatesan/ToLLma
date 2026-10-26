@@ -11,6 +11,7 @@ from tollms.db.base import SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
     from tollms.models.attachment import Attachment
+    from tollms.models.prompt_logging import PromptLog
     from tollms.models.user import User
 
 
@@ -46,6 +47,7 @@ class Conversation(SoftDeleteMixin, TimestampedModel):
         foreign_keys="Message.conversation_id",
     )
     owner: Mapped["User | None"] = relationship(back_populates="conversations")
+    prompt_logs: Mapped[list["PromptLog"]] = relationship(back_populates="conversation")
     attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="Attachment.created_at"
     )

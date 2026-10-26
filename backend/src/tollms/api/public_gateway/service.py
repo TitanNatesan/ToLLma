@@ -638,6 +638,34 @@ def _guardrail_post(db: Session, prepared: "_Prepared", text: str, *,
         return "allowed"
 
 
+async def _promptlog_capture(db: Session, prepared: _Prepared, *,
+                       input_text: str | None, output_text: str | None,
+                       status: str, error_code: str | None = None,
+                       latency_ms: float | None = None,
+                       tokens: UsageTokens | None = None) -> None:
+    """Prompt-log hook: immutable ledger write, fail-open always. Never raises,
+    never touches Valkey usage counters, never logs content or raw keys."""
+    try:
+        from tollms.services.prompt_logging import capture as promptlog_capture
+
+        ctx = prepared.ctx
+        await promptlog_capture.capture_post_async(
+            db, input_text=input_text, output_text=output_text,
+            user_id=ctx.user_id, org_id=getattr(ctx, "org_id", None),
+            api_key_id=ctx.key_id,
+            key_provenance=("organization" if getattr(ctx, "org_id", None)
+                            is not None else "personal"),
+            provider_id=prepared.provider.id, model_id=prepared.model.id,
+            conversation_id=None, endpoint=prepared.unified.endpoint,
+            source="external", request_id=prepared.meta.request_id,
+            generation_id=None, status=status,
+            tokens=({"prompt": tokens.prompt, "completion": tokens.completion}
+                    if tokens is not None else None),
+            latency_ms=latency_ms, error_code=error_code, allow_store=True)
+    except Exception:
+        logger.warning("public gateway promptlog hook failed", exc_info=True)
+
+
 # --- non-streaming execution ----------------------------------------------------------
 
 
@@ -725,8 +753,15 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             "public gateway chat: key=%s model=%s tokens=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, total, breakdown.total_cost, latency_ms,
         )
+        # Guardrail rule: this non-streaming path withholds delivery on a
+        # blocked buffer_then_inspect verdict, so the ledger stores the same
+        # marker — never the blocked text (verdict threaded through, not
+        # re-evaluated). Streaming paths capture delivered bytes instead.
         guard_action = _guardrail_post(db, prepared, result.text, allow_block=True)
         text = "[withheld by guardrail policy]" if guard_action == "blocked" else result.text
+        await _promptlog_capture(db, prepared, input_text=prepared.history_text,
+                           output_text=text, status="completed",
+                           latency_ms=latency_ms, tokens=tokens)
         return ChatOutcome(
             request_id=prepared.meta.request_id,
             model_identifier=prepared.unified.model_identifier,
@@ -754,6 +789,10 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             error_code=classified.code.value,
             latency_ms=latency_ms,
         )
+        await _promptlog_capture(db, prepared, input_text=prepared.history_text,
+                           output_text="", status="failed",
+                           error_code=classified.code.value,
+                           latency_ms=latency_ms)
         # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
         # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
         try:
@@ -831,6 +870,10 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             "public gateway media: key=%s model=%s endpoint=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, unified.endpoint, cost, latency_ms,
         )
+        # Media bytes are never captured: text prompt only, when present.
+        await _promptlog_capture(db, prepared, input_text=unified.prompt or "",
+                           output_text="", status="completed",
+                           latency_ms=latency_ms)
         return MediaOutcome(
             request_id=prepared.meta.request_id,
             model_identifier=unified.model_identifier,
@@ -858,6 +901,10 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             error_code=classified.code.value,
             latency_ms=latency_ms,
         )
+        await _promptlog_capture(db, prepared, input_text=prepared.unified.prompt or "",
+                           output_text="", status="failed",
+                           error_code=classified.code.value,
+                           latency_ms=latency_ms)
         # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
         # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
         try:
@@ -1153,6 +1200,9 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             "public gateway stream done: key=%s model=%s tokens=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, total, breakdown.total_cost, latency_ms,
         )
+        await _promptlog_capture(db, prepared, input_text=prepared.history_text,
+                           output_text=result.text, status="completed",
+                           latency_ms=latency_ms, tokens=tokens)
         # Guardrail post on streams is audit-only (delivery already happened).
         _guardrail_post(db, prepared, result.text, allow_block=False)
         for frame in _close(tokens, total):
@@ -1160,6 +1210,11 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
     except asyncio.CancelledError:
         if not logged:
             _release_reservation(prepared)
+            await _promptlog_capture(
+                db, prepared, input_text=prepared.history_text,
+                output_text=result.text,
+                status="partial" if (result.text or "").strip() else "cancelled",
+                latency_ms=(time.monotonic() - prepared.started) * 1000)
             _guardrail_post(db, prepared, result.text, allow_block=False)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
@@ -1175,6 +1230,11 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         # no frames may be emitted here, but the terminal row still applies.
         if not logged:
             _release_reservation(prepared)
+            await _promptlog_capture(
+                db, prepared, input_text=prepared.history_text,
+                output_text=result.text,
+                status="partial" if (result.text or "").strip() else "cancelled",
+                latency_ms=(time.monotonic() - prepared.started) * 1000)
             _guardrail_post(db, prepared, result.text, allow_block=False)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
@@ -1202,6 +1262,11 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 latency_ms=(time.monotonic() - prepared.started) * 1000,
                 is_streaming=True,
             )
+            await _promptlog_capture(
+                db, prepared, input_text=prepared.history_text,
+                output_text=result.text, status="failed",
+                error_code=classified.code.value,
+                latency_ms=(time.monotonic() - prepared.started) * 1000)
             logged = True
         # Failure-triggered revalidation: prepared.provider is always set here
         # (resolved in _prepare before any I/O). Throttled; never raises.

@@ -14,6 +14,7 @@ from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
     from tollms.models.guardrail import GuardrailAssignment, GuardrailTrigger
+    from tollms.models.prompt_logging import PromptLog
     from tollms.models.provider import Provider
 
 
@@ -142,3 +143,4 @@ class AIModel(SoftDeleteMixin, TimestampedModel):
     provider: Mapped["Provider"] = relationship(back_populates="models")
     guardrail_assignments: Mapped[list["GuardrailAssignment"]] = relationship(back_populates="model")
     guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="model")
+    prompt_logs: Mapped[list["PromptLog"]] = relationship(back_populates="model")

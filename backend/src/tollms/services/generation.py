@@ -413,7 +413,7 @@ class GenerationManager:
     async def _finish_completed(self, db, spec: GenerationSpec, result: ChatResult) -> dict:
         tokens, breakdown, estimated = self._price(db, spec, result, partial=False)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None, estimated)
+        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None, estimated)
         _reconcile_key_policy(spec, completed=True, result=result, tokens=tokens, breakdown=breakdown)
         attachments = self._store_inline_images(db, spec, result)
         await self._cache_write_state(spec, MessageStatus.COMPLETED.value, result.text)
@@ -429,7 +429,7 @@ class GenerationManager:
         error = reason if failed else None
         tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, status, error, estimated)
+        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, status, error, estimated)
         _reconcile_key_policy(spec, completed=False, result=result, tokens=tokens, breakdown=breakdown)
         await self._cache_write_state(spec, status.value, result.text)
         self._invalidate_usage(spec)
@@ -440,7 +440,7 @@ class GenerationManager:
         spec.error_code = classified.code.value
         tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error, estimated)
+        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error, estimated)
         _reconcile_key_policy(spec, completed=False, result=result, tokens=tokens, breakdown=breakdown)
         await self._cache_write_state(spec, MessageStatus.FAILED.value, result.text)
         self._invalidate_usage(spec)
@@ -483,7 +483,7 @@ class GenerationManager:
         breakdown = calculate(tokens, prices_for_model(_price_holder(spec), repo))
         return tokens, breakdown, estimated
 
-    def _store_final(
+    async def _store_final(
         self, db, spec, text, tokens, breakdown, latency_ms, status, error, estimated: bool = False
     ) -> None:
         try:
@@ -519,6 +519,13 @@ class GenerationManager:
             row.latency_ms = latency_ms
             self._store_run(db, spec, text, tokens, breakdown, latency_ms, status, error)
             self._log_request(db, spec, tokens, breakdown, latency_ms, status, estimated)
+            # Streaming delivery already happened, so the ledger captures the
+            # actually-delivered bytes (honest audit) — never a withheld
+            # marker. Only non-streaming buffer_then_inspect callers withhold.
+            await self._promptlog_capture(
+                db, spec, text, tokens,
+                status=_promptlog_status(status, text),
+                latency_ms=latency_ms, estimated=estimated)
             db.commit()
             # Guardrail post: streaming delivery cannot be withheld, so this is
             # audit-only (allow_block=False) — a blocked verdict is still
@@ -528,6 +535,30 @@ class GenerationManager:
         except Exception:
             db.rollback()
             logger.warning("generation %s: final store failed", spec.generation_id, exc_info=True)
+
+    async def _promptlog_capture(self, db, spec: GenerationSpec, text: str, tokens,
+                             *, status: str, latency_ms: float | None,
+                             estimated: bool = False) -> None:
+        """Immutable ledger write for every terminal generation (completed,
+        cancelled-partial, failed). Fail-open: never raises, never touches
+        Valkey usage counters, never logs content."""
+        try:
+            from tollms.services.prompt_logging import capture as promptlog_capture
+
+            await promptlog_capture.capture_post_async(
+                db, input_text=spec.history_text, output_text=text,
+                user_id=spec.user_id, org_id=spec.org_id,
+                api_key_id=spec.api_key_id, key_provenance=None,
+                provider_id=spec.provider_id, model_id=spec.model_id,
+                conversation_id=spec.conversation_id, endpoint="chat",
+                source="internal", request_id=spec.key_request_id,
+                generation_id=spec.generation_id, status=status,
+                tokens={"prompt": tokens.prompt, "completion": tokens.completion},
+                latency_ms=latency_ms, error_code=spec.error_code,
+                allow_store=True)
+        except Exception:
+            logger.warning("generation %s: promptlog hook failed",
+                           spec.generation_id, exc_info=True)
 
     def _guardrail_post(self, db, spec: GenerationSpec, text: str) -> None:
         """Audit-only post hook. Never raises, never touches usage counters."""
@@ -644,6 +675,20 @@ class GenerationManager:
                 cache_invalidate_sync(cache_keys.analytics_pattern(spec.user_id))
         except Exception:
             logger.warning("generation %s: usage invalidation failed", spec.generation_id, exc_info=True)
+
+
+def _promptlog_status(status, text: str | None) -> str:
+    """Terminal message status -> ledger status. Cancelled runs that produced
+    text are partial; empty cancels stay cancelled."""
+    from tollms.models.message import MessageStatus
+
+    if status == MessageStatus.CANCELLED and (text or "").strip():
+        return "partial"
+    return {
+        MessageStatus.COMPLETED: "completed",
+        MessageStatus.CANCELLED: "cancelled",
+        MessageStatus.FAILED: "failed",
+    }.get(status, "failed")
 
 
 def _reconcile_key_policy(spec: GenerationSpec, *, completed: bool, result: ChatResult, tokens, breakdown) -> None:

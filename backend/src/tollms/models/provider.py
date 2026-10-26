@@ -14,6 +14,7 @@ from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 if TYPE_CHECKING:
     from tollms.models.organization import Organization
     from tollms.models.guardrail import GuardrailAssignment, GuardrailEvaluatorConfig, GuardrailTrigger
+    from tollms.models.prompt_logging import PromptLog
     from tollms.models.registered_model import AIModel
     from tollms.models.user import User
 
@@ -88,3 +89,4 @@ class Provider(SoftDeleteMixin, TimestampedModel):
     guardrail_evaluator_configs: Mapped[list["GuardrailEvaluatorConfig"]] = relationship(back_populates="provider")
     guardrail_assignments: Mapped[list["GuardrailAssignment"]] = relationship(back_populates="provider")
     guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="provider")
+    prompt_logs: Mapped[list["PromptLog"]] = relationship(back_populates="provider")

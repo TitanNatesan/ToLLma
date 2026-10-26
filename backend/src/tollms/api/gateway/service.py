@@ -675,6 +675,49 @@ def _guardrail_post(
         return "allowed"
 
 
+async def _promptlog_capture(
+    db: Session,
+    *,
+    input_text: str | None,
+    output_text: str | None,
+    user_id: uuid.UUID | None,
+    org_id: uuid.UUID | None,
+    api_key,
+    provider,
+    model,
+    conversation_id: uuid.UUID | None,
+    request_id: str | None,
+    generation_id: uuid.UUID | None,
+    status: str,
+    tokens=None,
+    latency_ms: float | None = None,
+    error_code: str | None = None,
+) -> None:
+    """Prompt-log hook: immutable ledger write, fail-open always. Never raises,
+    never touches Valkey usage counters, never logs content.
+
+    Provenance resolves server-side from the ApiKey row (``key_provenance``
+    stays None): a personal provider + org key logs to the key's org, and a
+    provider-org-A + key-org-B mismatch attributes B — never the provider's
+    org. Same rule as the streaming driver (generation.py passes None too).
+    """
+    try:
+        from tollms.services.prompt_logging import capture as promptlog_capture
+
+        await promptlog_capture.capture_post_async(
+            db, input_text=input_text, output_text=output_text, user_id=user_id,
+            org_id=org_id, api_key_id=getattr(api_key, "id", None),
+            key_provenance=None,
+            provider_id=getattr(provider, "id", None),
+            model_id=getattr(model, "id", None),
+            conversation_id=conversation_id, endpoint="chat", source="internal",
+            request_id=request_id, generation_id=generation_id, status=status,
+            tokens=tokens, latency_ms=latency_ms, error_code=error_code,
+            allow_store=True)
+    except Exception:
+        logger.warning("promptlog hook failed (fail-open)", exc_info=True)
+
+
 def _release_chat_reservation(
     ctx: key_engine.KeyContext | None,
     provider: Provider,
@@ -1201,6 +1244,16 @@ async def run_chat(
             ),
         )
         db.commit()
+        # Guardrail rule: the post verdict above already withheld delivery
+        # (buffer_then_inspect), so the ledger stores the same marker — never
+        # the blocked text. Streaming paths instead capture delivered bytes.
+        await _promptlog_capture(
+            db, input_text=history_text, output_text=content, user_id=user_id,
+            org_id=org_attribution(db, provider, user_id), api_key=api_key,
+            provider=provider, model=model, conversation_id=conv_id,
+            request_id=request_id, generation_id=assistant.id, status="completed",
+            tokens={"prompt": tokens.prompt, "completion": tokens.completion},
+            latency_ms=latency_ms)
         _reconcile_chat_usage(
             db, ctx, provider, model, tokens, breakdown,
             request_id=request_id, org_cap=org_cap,
@@ -1228,6 +1281,18 @@ async def run_chat(
         _release_chat_reservation(ctx, provider, model, request_id, org_cap)
         incr_counter("gateway.request", {"plane": "ui", "status": "failed"})
         classified = classify_provider_failure(e)
+        # Prompt-log failure record: input captured when the policy allows
+        # (output empty, outcome marked failed). Never breaks propagation.
+        await _promptlog_capture(
+            db, input_text=locals().get("history_text") or data.message or "",
+            output_text="", user_id=user_id,
+            org_id=locals().get("failed_org_id"),
+            api_key=locals().get("api_key"),
+            provider=locals().get("provider"), model=locals().get("model"),
+            conversation_id=locals().get("conv_id"),
+            request_id=request_id, generation_id=None, status="failed",
+            latency_ms=(time.monotonic() - start) * 1000,
+            error_code=classified.code.value)
         # Durable failure record: no message row exists on this path, so log
         # the attempt itself (unknown usage stays NULL — never fabricated).
         # Never breaks error propagation.

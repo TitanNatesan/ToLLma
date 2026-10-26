@@ -7,6 +7,7 @@ import {
   Download,
   FileJson,
   FileText,
+  FlaskConical,
   GitBranch,
   Layers,
   MoreVertical,
@@ -29,6 +30,7 @@ import {
   DropdownMenuTrigger,
   Tooltip,
 } from "@/components/ui";
+import { BenchmarksDrawer } from "./chat/BenchmarksDrawer";
 import { useConversation, useConversationMutations, useUsage } from "@/hooks/useChat";
 import { useBranchTree } from "@/hooks/useIntelligence";
 import { ShareDialog } from "@/components/ui/ShareDialog";
@@ -63,6 +65,7 @@ export function ChatHeader() {
   const [titleInput, setTitleInput] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [benchmarksOpen, setBenchmarksOpen] = useState(false);
   const streaming = useChatStore((s) => s.streaming);
   const { data: branchTree } = useBranchTree(activeConversationId);
 
@@ -279,6 +282,19 @@ export function ChatHeader() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          <Tooltip content="View benchmarks">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 w-8 p-0 ml-0.5 text-zinc-500"
+              onClick={() => setBenchmarksOpen(true)}
+              aria-label="View benchmarks"
+              data-testid="benchmarks-open"
+            >
+              <FlaskConical className="size-4" />
+            </Button>
+          </Tooltip>
+
           {/* Open Intelligence Panel (only shown when panel is closed) */}
           {!rightSidebarOpen && (
             <Tooltip content="Show Intelligence">
@@ -298,6 +314,8 @@ export function ChatHeader() {
       </div>
 
       <ShareDialog conversationId={activeConversationId} onOpenChange={setShareOpen} open={shareOpen} />
+
+      <BenchmarksDrawer open={benchmarksOpen} onClose={() => setBenchmarksOpen(false)} />
 
       <ConfirmDialog
         open={deleteOpen}
