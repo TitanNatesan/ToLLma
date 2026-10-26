@@ -26,6 +26,7 @@ import { KeyGuardrailsSection } from "@/app/guardrails/components/KeyGuardrailsS
 import { useOrgStore } from "@/store/org";
 import { apiKeyErrorMessage } from "@/services/apiKeys";
 import { IpRulesEditor, parseIpRules } from "./IpRulesEditor";
+import { KeyLoggingField } from "./KeyLoggingField";
 import { ModelPermissionsEditor } from "./ModelPermissionsEditor";
 import { PolicyForm, hasPolicyValues, policyToInput } from "./PolicyForm";
 import { Segmented } from "./SelectField";
@@ -50,6 +51,8 @@ export interface KeyFormResult {
   guardrail_ids: string[];
   /** Organization assignee (org scope only). */
   assigneeUserId: string | null;
+  /** Prompt-logging override; null = inherit (nothing is sent). */
+  logging_enabled: boolean | null;
 }
 
 export interface KeyAssignee {
@@ -159,6 +162,8 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
   const [modelPermissions, setModelPermissions] = useState<ApiKeyModelPermissionInput[]>([]);
   const [orgAssignee, setOrgAssignee] = useState(assigneeId ?? "");
   const [guardrailIds, setGuardrailIds] = useState<Set<string>>(new Set());
+  // Prompt-logging override (null = inherit; only non-null is ever sent).
+  const [logging, setLogging] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -220,6 +225,7 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
           modelPermissions,
           guardrail_ids: [...guardrailIds],
           assigneeUserId: isOrg ? effectiveAssignee || null : null,
+          logging_enabled: logging,
         });
       }
     } catch (e) {
@@ -414,6 +420,26 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
                   models={modelsOverride}
                   providers={providersOverride}
                   configureHref={configureHref}
+                />
+              </Section>
+            </>
+          )}
+
+          {!editing && (
+            <>
+              <Separator />
+              <Section
+                icon={ShieldCheck}
+                title="Prompt logging"
+                description="Override workspace logging for this key. Inherited follows the workspace and team policy."
+              >
+                <KeyLoggingField
+                  orgId={isOrg && context.type === "org" ? context.orgId : undefined}
+                  keyId={null}
+                  value={logging}
+                  onChange={setLogging}
+                  disabled={busy}
+                  testIdPrefix="key-form"
                 />
               </Section>
             </>

@@ -235,6 +235,7 @@ function OrgDashboardInner() {
         {section === "teams" && (
           <OrgTeamsTable orgId={orgId} members={members.data ?? []} sets={sets.data ?? []}
             isRoot={data.is_root} myPermissions={data.permissions}
+            canManageLogging={data.is_root || data.permissions.includes("PromptLogs.Manage")}
             canReadAudit={data.is_root || can("Audit.Read")}
             perms={{
               canRead: can("Teams.Read"),

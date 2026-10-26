@@ -33,7 +33,7 @@ def _clip(text: str | None) -> tuple[str, bool]:
     return body, False
 
 
-def capture_post(
+def build_row_kwargs(
     db: Session,
     *,
     input_text: str | None,
@@ -54,9 +54,14 @@ def capture_post(
     latency_ms: float | None = None,
     error_code: str | None = None,
     allow_store: bool = True,
-) -> PromptLog | None:
-    """Write one immutable row honoring the resolved policy. Returns the row,
-    or None when skipped (disabled, out-of-scope, allow_store False)."""
+) -> dict[str, Any] | None:
+    """Policy resolution + truncation + encryption, synchronously.
+
+    Returns immutable, fully-encrypted ``PromptLog`` kwargs, or None when
+    skipped (disabled, out-of-scope, allow_store False). Never touches the
+    DB beyond policy reads and never raises (fail-closed to None). Shared by
+    the sync writer and the async queue (which encrypts at enqueue so the
+    worker only persists — raw credentials/content never cross threads)."""
     try:
         if not allow_store:
             return None
@@ -70,7 +75,7 @@ def capture_post(
         now = _utcnow()
         bounded_in, in_truncated = _clip(input_text)
         bounded_out, out_truncated = _clip(output_text)
-        row = PromptLog(
+        return dict(
             workspace_type=(
                 "organization" if setting.org_id is not None else "personal"
             ),
@@ -106,6 +111,20 @@ def capture_post(
             content_expired=False,
             expires_at=now + timedelta(days=max(1, setting.retention_days or 90)),
         )
+    except Exception:
+        # Resolution/encryption failure — never content in app logs.
+        logger.warning("promptlog build failed", exc_info=True)
+        return None
+
+
+def capture_post(db: Session, **kwargs: Any) -> PromptLog | None:
+    """Write one immutable row honoring the resolved policy. Returns the row,
+    or None when skipped (disabled, out-of-scope, allow_store False)."""
+    try:
+        row_kwargs = build_row_kwargs(db, **kwargs)
+        if row_kwargs is None:
+            return None
+        row = PromptLog(**row_kwargs)
         db.add(row)
         db.commit()
         try:

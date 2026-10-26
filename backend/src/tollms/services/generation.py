@@ -543,9 +543,9 @@ class GenerationManager:
         cancelled-partial, failed). Fail-open: never raises, never touches
         Valkey usage counters, never logs content."""
         try:
-            from tollms.services.prompt_logging import capture as promptlog_capture
+            from tollms.services.prompt_logging import queue as promptlog_queue
 
-            await promptlog_capture.capture_post_async(
+            promptlog_queue.enqueue_post(
                 db, input_text=spec.history_text, output_text=text,
                 user_id=spec.user_id, org_id=spec.org_id,
                 api_key_id=spec.api_key_id, key_provenance=None,

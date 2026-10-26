@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/notify";
 import {
   CalendarClock,
@@ -23,6 +24,9 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { useOrgModels, useOrgMutations, useOrgProviders } from "@/hooks/useOrgs";
+import { updateKeyLoggingState } from "@/services/promptLogs";
+import { usePromptLoggingSettings } from "@/hooks/usePromptLogs";
+import { KeyLoggingField } from "./KeyLoggingField";
 import { ApiKeyStatusPill, asNumber, fmtDateTime } from "./StatusPill";
 import { orgKeyStatus } from "./orgKeyStatus";
 import { IpRulesEditor, ipRulesToText, parseIpRules } from "./IpRulesEditor";
@@ -249,6 +253,7 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
   assigneeLabel?: string;
 }) {
   const mut = useOrgMutations(orgId);
+  const qc = useQueryClient();
   const modelsQuery = useOrgModels(orgId);
   const providersQuery = useOrgProviders(orgId);
   const models = modelsQuery.data ?? [];
@@ -277,6 +282,21 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
   const [deny, setDeny] = useState(initialIp.deny);
   const [permissions, setPermissions] =
     useState<ApiKeyModelPermissionInput[]>(initialPermissions);
+  // Logging override: untouched until the user picks a value, so unrelated
+  // edits never touch logging. The stored explicit value comes from policy.
+  const [loggingTouched, setLoggingTouched] = useState<{ touched: boolean; value: boolean | null }>({
+    touched: false,
+    value: null,
+  });
+  const loggingSettings = usePromptLoggingSettings(orgId);
+  const serverLogging: boolean | null =
+    loggingSettings.data && typeof loggingSettings.data.key_states[orgKey.id] === "boolean"
+      ? (loggingSettings.data.key_states[orgKey.id] as boolean)
+      : null;
+  const loggingValue = loggingTouched.touched ? loggingTouched.value : serverLogging;
+  const loggingDirty =
+    !loggingSettings.isError && !!loggingSettings.data && loggingTouched.touched && loggingTouched.value !== serverLogging;
+  const keyTeamIds = orgKey.team_id ? [orgKey.team_id] : [];
   const [saving, setSaving] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [rotateArmed, setRotateArmed] = useState(false);
@@ -314,7 +334,7 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
     permissions,
     initialPermissions,
   ]);
-  const isDirty = dirty.meta || dirty.policy || dirty.ip || dirty.models;
+  const isDirty = dirty.meta || dirty.policy || dirty.ip || dirty.models || loggingDirty;
 
   function reset() {
     setName(orgKey.name);
@@ -326,6 +346,7 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
     setAllow(initialIp.allow);
     setDeny(initialIp.deny);
     setPermissions(initialPermissions);
+    setLoggingTouched({ touched: false, value: null });
     setRotateArmed(false);
     setError(null);
   }
@@ -398,7 +419,11 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
       if (dirty.models) {
         tasks.push(mut.updateKeyModelPermissions.mutateAsync({ keyId: orgKey.id, permissions }));
       }
+      if (loggingDirty) {
+        tasks.push(updateKeyLoggingState(orgId, orgKey.id, loggingValue));
+      }
       await Promise.all(tasks);
+      if (loggingDirty) await qc.invalidateQueries({ queryKey: ["prompt-logs"] });
       toast.success("Organization key updated.");
       onSaved();
     } catch (e) {
@@ -655,6 +680,28 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
         >
           <KeyGuardrailsSection orgId={orgId} keyId={orgKey.id} disabled={saving || rotating} />
         </Section>
+
+        {!loggingSettings.isError && (
+          <>
+            <Separator />
+
+            <Section
+              icon={ShieldCheck}
+              title="Prompt logging"
+              description="Override workspace logging for this key. Only sent when changed."
+            >
+              <KeyLoggingField
+                orgId={orgId}
+                keyId={orgKey.id}
+                keyTeamIds={keyTeamIds}
+                value={loggingValue}
+                onChange={(v) => setLoggingTouched({ touched: true, value: v })}
+                disabled={saving || rotating}
+                testIdPrefix="org-key-edit"
+              />
+            </Section>
+          </>
+        )}
 
         <Separator />
 

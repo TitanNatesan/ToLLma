@@ -8,6 +8,7 @@ import {
   KeyRound,
   MonitorSmartphone,
   Palette,
+  ScrollText,
   Server,
   SlidersHorizontal,
   UserRound,
@@ -31,6 +32,7 @@ export const SETTINGS_SECTIONS = [
   { hash: "account", label: "Account", icon: KeyRound },
   { hash: "sessions", label: "Sessions", icon: MonitorSmartphone },
   { hash: "providers", label: "Providers", icon: Server },
+  { hash: "logging", label: "Logging", icon: ScrollText },
   { hash: "organizations", label: "Organizations", icon: Building2 },
   { hash: "danger-zone", label: "Danger zone", icon: AlertTriangle },
 ] as const satisfies readonly SettingsSectionDef[];

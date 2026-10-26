@@ -14,6 +14,7 @@ import { AccountSecuritySection } from "./components/AccountSecuritySection";
 import { DangerZoneSection } from "./components/DangerZoneSection";
 import { SessionsSection } from "./components/SessionsSection";
 import { ProvidersSection } from "./components/ProvidersSection";
+import { WorkspaceLoggingSection } from "@/components/logging/WorkspaceLoggingSection";
 import { OrganizationsSection } from "./components/OrganizationsSection";
 
 /** Settings: profile, appearance (accent system), chat prefs, password, sessions. */
@@ -91,6 +92,16 @@ export default function SettingsPage() {
             testId="settings-section-providers"
           >
             <ProvidersSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="logging"
+            active={activeId === "logging"}
+            title="Prompt logging"
+            description="Which requests keep message bodies. Global toggle, effective state, and full controls."
+            testId="settings-section-logging"
+          >
+            <WorkspaceLoggingSection canManage />
           </SettingsCard>
 
           <SettingsCard

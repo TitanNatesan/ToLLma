@@ -9,11 +9,12 @@ import {
   Badge, Button, Card, CardContent, EmptyState, Field, Input, LoadingState,
 } from "@/components/ui";
 import { ConfirmDialog } from "./Dialogs";
+import { WorkspaceLoggingSection } from "@/components/logging/WorkspaceLoggingSection";
 import { isForbiddenError, isNotFoundError, useOrgBudget, useOrgMutations } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import type { Organization } from "@/types/orgs";
 
-type Tab = "profile" | "privacy" | "sharing" | "budgets" | "danger";
+type Tab = "profile" | "privacy" | "sharing" | "budgets" | "logging" | "danger";
 
 function money(v: number | string | null | undefined): string {
   if (v === null || v === undefined || v === "") return "—";
@@ -41,6 +42,7 @@ export function OrgSettingsSection({ orgId, org, canManage }: {
           { id: "privacy", label: "Privacy" },
           { id: "sharing", label: "Sharing" },
           { id: "budgets", label: "Budgets" },
+          { id: "logging", label: "Logging" },
           { id: "danger", label: "Danger zone" },
         ] as const).map((t) => (
           <button key={t.id} type="button" role="tab" id={`org-settings-tabbtn-${t.id}`} aria-selected={tab === t.id} aria-controls={`org-settings-panel-${t.id}`}
@@ -71,6 +73,11 @@ export function OrgSettingsSection({ orgId, org, canManage }: {
       {tab === "budgets" && (
         <div role="tabpanel" id="org-settings-panel-budgets" aria-labelledby="org-settings-tabbtn-budgets">
           <BudgetsTab orgId={orgId} />
+        </div>
+      )}
+      {tab === "logging" && (
+        <div role="tabpanel" id="org-settings-panel-logging" aria-labelledby="org-settings-tabbtn-logging">
+          <LoggingTab orgId={orgId} canManage={canManage} />
         </div>
       )}
       {tab === "danger" && (
@@ -310,6 +317,22 @@ function BudgetsTab({ orgId }: { orgId: string }) {
             </div>
           </dl>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LoggingTab({ orgId, canManage }: { orgId: string; canManage: boolean }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <h3 className="text-xs font-bold">Prompt logging</h3>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          Workspace capture policy at a glance. Per-team and per-key overrides live under Prompt Logs.
+        </p>
+        <div className="mt-2">
+          <WorkspaceLoggingSection orgId={orgId} canManage={canManage} />
+        </div>
       </CardContent>
     </Card>
   );

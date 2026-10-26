@@ -102,3 +102,58 @@ class AnalyticsOverview(BaseModel):
     input_tokens: int = 0
     cache_hit_rate: float | None = None
 
+
+
+class MemberAnalyticsKeyRow(BaseModel):
+    """Per-key attribution for one member: gateway rows grouped by key plus
+    in-app request_logs rows that reference a key. Keyless in-app rows count
+    in totals but not here."""
+
+    key_id: uuid.UUID
+    key_name: str | None = None
+    requests: int = 0
+    tokens: int = 0
+    cost: Decimal | None = None
+
+
+class MemberAnalyticsTrendPoint(BaseModel):
+    bucket: str
+    requests: int = 0
+    tokens: int = 0
+    cost: Decimal | None = None
+
+
+class MemberAnalytics(BaseModel):
+    """One member's org-scoped usage: org-attributed internal generations
+    (request_logs by user+org) plus the member's org-issued gateway keys
+    (api_request_logs by user+org). The two tables are disjoint planes
+    (internal vs public gateway) — in-app keyed generations write only
+    request_logs — so summing them never double-counts.
+
+    Personal-key traffic (org_id NULL) is excluded by the org_id filter;
+    revoked/deleted keys stay attributed (history retained, names resolved
+    best-effort). blocked counts guardrail blocks (action=blocked) for the
+    member+org in the window — window-scoped, not per-request joined — and
+    blocked_source names the approximation."""
+
+    user_id: uuid.UUID
+    requests: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    blocked: int = 0
+    blocked_source: str = "guardrail_triggers"
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    # Null when the caller lacks Analytics.ViewCost.
+    total_cost: Decimal | None = None
+    avg_cost_per_request: Decimal | None = None
+    by_model: list[AnalyticsModelRow] = Field(default_factory=list)
+    by_provider: list[AnalyticsProviderRow] = Field(default_factory=list)
+    by_key: list[MemberAnalyticsKeyRow] = Field(default_factory=list)
+    trend: list[MemberAnalyticsTrendPoint] = Field(default_factory=list)
+    last_activity: str | None = None
+    last_model: str | None = None
+    last_key: str | None = None

@@ -24,6 +24,7 @@ from tollms.models.api_key import ApiKey
 from tollms.models.organization import Team
 from tollms.models.prompt_logging import (
     MODES,
+    PromptLoggingKeyOverride,
     PromptLoggingKeyTarget,
     PromptLoggingSetting,
     PromptLoggingTeamTarget,
@@ -66,10 +67,38 @@ def _key_ids(db: Session, setting_id: uuid.UUID) -> list[str]:
             PromptLoggingKeyTarget.setting_id == setting_id))]
 
 
+def _team_states(db: Session, setting_id: uuid.UUID) -> dict[str, bool]:
+    rows = db.execute(
+        select(PromptLoggingTeamTarget.team_id, PromptLoggingTeamTarget.enabled).where(
+            PromptLoggingTeamTarget.setting_id == setting_id)).all()
+    return {str(tid): bool(enabled) for tid, enabled in rows}
+
+
+def _key_states(db: Session, setting_id: uuid.UUID,
+                key_ids: list[str]) -> dict[str, bool | None]:
+    """Effective per-key state for every listed key: the explicit override
+    value, or True (inherit defaults to on for listed ids)."""
+    overrides = dict(db.execute(
+        select(PromptLoggingKeyOverride.api_key_id,
+               PromptLoggingKeyOverride.enabled).where(
+            PromptLoggingKeyOverride.setting_id == setting_id)).all())
+    states: dict[str, bool | None] = {}
+    for kid in key_ids:
+        parsed = uuid.UUID(kid)
+        if parsed in overrides:
+            value = overrides[parsed]
+            states[kid] = None if value is None else bool(value)
+        else:
+            states[kid] = True
+    return states
+
+
 def _summary(setting: PromptLoggingSetting | None,
-             team_ids: list[uuid.UUID]) -> dict:
+             team_ids: list[uuid.UUID],
+             team_states: dict[str, bool] | None = None,
+             key_states: dict[str, bool | None] | None = None) -> dict:
     if setting is None:
-        return {"enabled": False, "capture": "none",
+        return {"enabled": False, "capture": "none", "mandatory": False,
                 "scope": "all", "retention_days": DEFAULT_RETENTION_DAYS}
     if not setting.enabled:
         capture = "none"
@@ -81,9 +110,22 @@ def _summary(setting: PromptLoggingSetting | None,
         capture = "output"
     else:
         capture = "metadata"
-    scope = "all" if (setting.mode or "global") == "global" else {"teams": len(team_ids)}
+    if (setting.mode or "global") == "global":
+        scope: object = "all"
+    else:
+        # Enabled-only (mirrors resolution._target_team_ids enabled=True):
+        # disabled teams/keys never count toward scope.
+        states = team_states or {}
+        enabled_teams = sum(1 for tid in team_ids if states.get(str(tid), True) is True)
+        if key_states:
+            enabled_keys = sum(1 for v in key_states.values() if v is not False)
+            scope = {"teams": enabled_teams, "keys": enabled_keys}
+        else:
+            scope = {"teams": enabled_teams}
+    mandatory = bool(setting.enabled) and (setting.mode or "global") == "global"
     return {"enabled": bool(setting.enabled), "capture": capture,
-            "scope": scope, "retention_days": setting.retention_days}
+            "mandatory": mandatory, "scope": scope,
+            "retention_days": setting.retention_days}
 
 
 def read_setting(db: Session, setting: PromptLoggingSetting | None,
@@ -97,16 +139,22 @@ def read_setting(db: Session, setting: PromptLoggingSetting | None,
             id=uuid.uuid4(), user_id=None if org_id else caller_id, org_id=org_id,
             enabled=False, mode="global", capture_input=False, capture_output=False,
             retention_days=DEFAULT_RETENTION_DAYS, version=0, updated_by=None,
-            team_ids=[], key_ids=[], effective_summary=_summary(None, []),
+            team_ids=[], key_ids=[], team_states={}, key_states={},
+            effective_summary=_summary(None, []),
             created_at=now, updated_at=now)
     teams = _team_ids(db, setting.id)
+    keys = _key_ids(db, setting.id)
+    t_states = _team_states(db, setting.id)
+    k_states = _key_states(db, setting.id, keys)
     return SettingsRead(
         id=setting.id, user_id=setting.user_id, org_id=setting.org_id,
         enabled=setting.enabled, mode=setting.mode,
         capture_input=setting.capture_input, capture_output=setting.capture_output,
         retention_days=setting.retention_days, version=setting.version,
-        updated_by=setting.updated_by, team_ids=teams, key_ids=_key_ids(db, setting.id),
-        effective_summary=_summary(setting, teams),
+        updated_by=setting.updated_by, team_ids=teams, key_ids=keys,
+        team_states=t_states,
+        key_states=k_states,
+        effective_summary=_summary(setting, teams, t_states, k_states),
         created_at=setting.created_at, updated_at=setting.updated_at)
 
 
@@ -126,7 +174,7 @@ def _validate_teams(db: Session, org_id: uuid.UUID, team_ids: list[uuid.UUID]) -
     for team_id in team_ids:
         team = by_id.get(team_id)
         if team is None or team.org_id != org_id:
-            raise ValidationError(f"team {team_id} does not belong to this organization")
+            raise NotFoundError("prompt log not found")
 
 
 def _validate_keys(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
@@ -160,6 +208,52 @@ def _validate_keys(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
     return list(dict.fromkeys(parsed))
 
 
+def _parse_team_states(raw: dict, team_ids: list[uuid.UUID]) -> dict[str, bool]:
+    """team_states keys must be listed team_ids (absent = default True).
+    Malformed UUIDs are 404 oracles (no existence leak); unlisted ids are
+    422 (same-request client error)."""
+    listed = {str(tid) for tid in team_ids}
+    states: dict[str, bool] = {}
+    for key, value in raw.items():
+        try:
+            parsed = str(uuid.UUID(str(key)))
+        except (ValueError, TypeError, AttributeError):
+            raise NotFoundError("prompt log not found") from None
+        if parsed not in listed:
+            raise ValidationError("team_states must reference listed team_ids")
+        states[parsed] = bool(value)
+    return states
+
+
+def _parse_key_states(raw: dict, key_ids: list[uuid.UUID]) -> dict[str, bool | None]:
+    """key_states keys must be listed key_ids (absent = default True).
+    Malformed UUIDs are 404 oracles; unlisted ids are 422."""
+    listed = {str(kid) for kid in key_ids}
+    states: dict[str, bool | None] = {}
+    for key, value in raw.items():
+        try:
+            parsed = str(uuid.UUID(str(key)))
+        except (ValueError, TypeError, AttributeError):
+            raise NotFoundError("prompt log not found") from None
+        if parsed not in listed:
+            raise ValidationError("key_states must reference listed key_ids")
+        states[parsed] = None if value is None else bool(value)
+    return states
+
+
+def _reject_weakened_global(enabled: bool, mode: str,
+                            team_states: dict[str, bool],
+                            key_states: dict[str, bool | None]) -> None:
+    """A global mandatory policy cannot be weakened: while the resulting
+    setting is enabled in global mode, any explicit team/key force-off is
+    422 — including forged requests. Inherit (null) is not a disable."""
+    if enabled and (mode or "global") == "global":
+        if any(v is False for v in team_states.values()):
+            raise ValidationError("team_states cannot disable while global capture is enabled")
+        if any(v is False for v in key_states.values()):
+            raise ValidationError("key_states cannot disable while global capture is enabled")
+
+
 def upsert_settings(db: Session, caller_id: uuid.UUID, data) :
     """Create-or-update the workspace setting (versioned). Org writes audit
     in the SAME committing transaction (single db.commit; an audit failure
@@ -181,9 +275,15 @@ def upsert_settings(db: Session, caller_id: uuid.UUID, data) :
     elif team_ids:
         raise ValidationError("team_ids require an organization workspace")
     key_ids = _validate_keys(db, caller_id, org_id, key_inputs)
+    team_states = _parse_team_states(data.team_states or {}, team_ids)
+    key_states = _parse_key_states(data.key_states or {}, key_ids)
+    if org_id is None and team_states:
+        raise ValidationError("team_states require an organization workspace")
+    _reject_weakened_global(bool(data.enabled), mode, team_states, key_states)
     if mode == "global":
         # Global matches everything: stored targets are cleared (return empties).
         team_ids, key_ids = [], []
+        team_states, key_states = {}, {}
 
     setting = _live_setting(db, caller_id, org_id)
     if setting is None:
@@ -206,11 +306,19 @@ def upsert_settings(db: Session, caller_id: uuid.UUID, data) :
             db.delete(row)
         for row in list(setting.key_targets or []):
             db.delete(row)
+        for row in list(setting.key_overrides or []):
+            db.delete(row)
         db.flush()
     for team_id in team_ids:
-        db.add(PromptLoggingTeamTarget(setting_id=setting.id, team_id=team_id))
+        db.add(PromptLoggingTeamTarget(
+            setting_id=setting.id, team_id=team_id,
+            enabled=team_states.get(str(team_id), True)))
     for kid in key_ids:
         db.add(PromptLoggingKeyTarget(setting_id=setting.id, api_key_id=kid))
+        state = key_states.get(str(kid))
+        if state is not None:
+            db.add(PromptLoggingKeyOverride(
+                setting_id=setting.id, api_key_id=kid, enabled=state))
     db.flush()
     try:
         if org_id is not None:
@@ -228,6 +336,101 @@ def upsert_settings(db: Session, caller_id: uuid.UUID, data) :
         raise ApplicationException("prompt logging settings update failed") from exc
     db.refresh(setting)
     # Disabling never auto-deletes: rows and targets persist untouched.
+    return read_setting(db, setting, caller_id, org_id)
+
+
+def _mandatory_guard(setting: PromptLoggingSetting, enabled_value: bool | None) -> None:
+    """Sub-endpoint parity with PUT /settings: an explicit force-off while
+    the setting is enabled in global mode is 422 (mandatory not weakenable)."""
+    if (enabled_value is False and setting.enabled
+            and (setting.mode or "global") == "global"):
+        raise ValidationError("cannot disable while global capture is enabled")
+
+
+def _touch_setting(db: Session, setting: PromptLoggingSetting,
+                   caller_id: uuid.UUID) -> None:
+    setting.version = (setting.version or 1) + 1
+    setting.updated_by = caller_id
+    db.flush()
+
+
+def set_team_state(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
+                   team_id: uuid.UUID, enabled: bool):
+    """Force one listed team on/off. Manage-gated; unknown/cross-workspace
+    teams, unlisted teams, and missing settings are the same 404 oracle."""
+    _scope(db, caller_id, org_id, "PromptLogs.Manage")
+    if org_id is None:
+        raise NotFoundError("prompt log not found")  # personal has no teams
+    team = db.get(Team, team_id)
+    if team is None or team.is_deleted or team.org_id != org_id:
+        raise NotFoundError("prompt log not found")
+    setting = _live_setting(db, caller_id, org_id)
+    if setting is None:
+        raise NotFoundError("prompt log not found")
+    _mandatory_guard(setting, enabled)
+    row = db.scalar(select(PromptLoggingTeamTarget).where(
+        PromptLoggingTeamTarget.setting_id == setting.id,
+        PromptLoggingTeamTarget.team_id == team_id))
+    if row is None:
+        raise NotFoundError("prompt log not found")
+    row.enabled = bool(enabled)
+    _touch_setting(db, setting, caller_id)
+    try:
+        _audit(db, org_id, caller_id, "prompt_logs.settings.update",
+               setting_id=str(setting.id), enabled=bool(setting.enabled),
+               mode=setting.mode)
+        db.commit()
+    except ApplicationException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise ApplicationException("prompt logging settings update failed") from exc
+    db.refresh(setting)
+    return read_setting(db, setting, caller_id, org_id)
+
+
+def set_key_state(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
+                  key_id: uuid.UUID, enabled: bool | None):
+    """Force one listed key on/off/inherit (null deletes the override row).
+    Manage-gated; unknown/cross-workspace keys, unlisted keys, and missing
+    settings are the same 404 oracle."""
+    _scope(db, caller_id, org_id, "PromptLogs.Manage")
+    _validate_keys(db, caller_id, org_id, [str(key_id)])  # 404 oracle
+    setting = _live_setting(db, caller_id, org_id)
+    if setting is None:
+        raise NotFoundError("prompt log not found")
+    _mandatory_guard(setting, enabled)
+    listed = db.scalar(select(PromptLoggingKeyTarget.id).where(
+        PromptLoggingKeyTarget.setting_id == setting.id,
+        PromptLoggingKeyTarget.api_key_id == key_id))
+    if listed is None:
+        raise NotFoundError("prompt log not found")
+    row = db.scalar(select(PromptLoggingKeyOverride).where(
+        PromptLoggingKeyOverride.setting_id == setting.id,
+        PromptLoggingKeyOverride.api_key_id == key_id))
+    if enabled is None:
+        if row is not None:
+            db.delete(row)
+    elif row is None:
+        db.add(PromptLoggingKeyOverride(
+            setting_id=setting.id, api_key_id=key_id, enabled=bool(enabled)))
+    else:
+        row.enabled = bool(enabled)
+    _touch_setting(db, setting, caller_id)
+    try:
+        if org_id is not None:
+            _audit(db, org_id, caller_id, "prompt_logs.settings.update",
+                   setting_id=str(setting.id), enabled=bool(setting.enabled),
+                   mode=setting.mode)
+        db.commit()
+    except ApplicationException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise ApplicationException("prompt logging settings update failed") from exc
+    db.refresh(setting)
     return read_setting(db, setting, caller_id, org_id)
 
 

@@ -453,3 +453,64 @@ export interface TeamCreateInput {
   description?: string;
   set_ids?: string[];
 }
+
+// --- Member analytics (parallel backend; tolerant until the contract lands) ---
+
+/** Range params for GET /orgs/{id}/members/{userId}/analytics. */
+export interface MemberAnalyticsParams {
+  from?: string;
+  to?: string;
+}
+
+export interface MemberAnalyticsModelRow {
+  model: string;
+  requests: number | string | null;
+  tokens: number | string | null;
+  cost: number | string | null;
+}
+
+export interface MemberAnalyticsProviderRow {
+  provider: string;
+  requests: number | string | null;
+  tokens: number | string | null;
+  cost: number | string | null;
+}
+
+/** Key attribution: names only — the analytics read never carries secrets. */
+export interface MemberAnalyticsKeyRow {
+  key_id: string;
+  key_name: string | null;
+  requests: number | string | null;
+  tokens: number | string | null;
+  cost: number | string | null;
+}
+
+export interface MemberAnalyticsTrendPoint {
+  bucket: string;
+  requests: number | string | null;
+  tokens: number | string | null;
+  cost: number | string | null;
+}
+
+/** GET /orgs/{id}/members/{userId}/analytics. Cost fields are null without
+ *  ViewCost; every breakdown degrades to [] on older backends. */
+export interface MemberAnalytics {
+  requests: number | string | null;
+  succeeded: number | string | null;
+  failed: number | string | null;
+  blocked: number | string | null;
+  input_tokens: number | string | null;
+  output_tokens: number | string | null;
+  total_tokens: number | string | null;
+  cache_read_tokens: number | string | null;
+  cache_write_tokens: number | string | null;
+  total_cost: number | string | null;
+  avg_cost_per_request: number | string | null;
+  by_model: MemberAnalyticsModelRow[];
+  by_provider: MemberAnalyticsProviderRow[];
+  by_key: MemberAnalyticsKeyRow[];
+  trend: MemberAnalyticsTrendPoint[];
+  last_activity: string | null;
+  last_model: string | null;
+  last_key: string | null;
+}

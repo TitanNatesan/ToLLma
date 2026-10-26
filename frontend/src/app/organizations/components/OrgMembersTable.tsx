@@ -10,7 +10,8 @@ import {
 } from "@/components/ui";
 import { AssignSetsDialog, ConfirmDialog } from "./Dialogs";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { isForbiddenError, isNotFoundError, useMembers, useOrgAnalyticsOverview, useOrgKeys, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
+import { isForbiddenError, isNotFoundError, useMembers, useOrgKeys, useOrgMutations, useOrgSets } from "@/hooks/useOrgs";
+import { MemberAnalyticsSection } from "./MemberAnalyticsSection";
 import { copyWithToast } from "@/lib/clipboard";
 import { parseApiError } from "@/lib/errors";
 import type { Member } from "@/types/orgs";
@@ -225,22 +226,12 @@ function MemberDetailDrawer({ orgId, member, onClose, canRemove, canSuspend, can
   canViewUsage: boolean;
 }) {
   const mut = useOrgMutations(orgId);
-  const orgSets = useOrgSets(orgId, { limit: 200 });
-  const analytics = useOrgAnalyticsOverview(orgId, { enabled: canViewUsage && member !== null });
+  const orgSets = useOrgSets(orgId, { limit: 200 }, { enabled: member !== null });
   const keysQuery = useOrgKeys(orgId, { enabled: member !== null });
   const [assigning, setAssigning] = useState(false);
   const [confirm, setConfirm] = useState<"suspend" | "resume" | "remove" | null>(null);
 
   const open = member !== null;
-  const memberId = member?.user_id ?? null;
-  const memberEmail = member?.email ?? null;
-  const usage = useMemo(() => {
-    const rows = analytics.data ? (analytics.data.by_user ?? analytics.data.users ?? analytics.data.by_member ?? analytics.data.members ?? []) : [];
-    // Join by user id; fall back to email while older backends omit user_id.
-    return rows.find((r) => memberId !== null && r.user_id === memberId)
-      ?? rows.find((r) => (r.email ?? r.user_email) === memberEmail)
-      ?? null;
-  }, [analytics.data, memberId, memberEmail]);
   const assignedIds = useMemo(() => {
     const ids = new Set(member?.set_ids ?? []);
     if (ids.size > 0) return (orgSets.data ?? []).filter((s) => ids.has(s.id)).map((s) => s.id);
@@ -395,18 +386,8 @@ function MemberDetailDrawer({ orgId, member, onClose, canRemove, canSuspend, can
 
             <section className="flex flex-col gap-1.5">
               <SectionHeader title="Usage" tone="label" />
-              {!canViewUsage ? (
-                <p className="text-zinc-500">You need analytics permission to view usage.</p>
-              ) : analytics.isLoading ? (
-                <p className="text-zinc-500">Loading usage…</p>
-              ) : usage ? (
-                <dl className="grid gap-1 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
-                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Total requests</dt><dd className="font-mono">{String(usage.requests ?? usage.total_requests ?? "—")}</dd></div>
-                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Total tokens</dt><dd className="font-mono">{String(usage.tokens ?? usage.total_tokens ?? "—")}</dd></div>
-                  <div className="flex justify-between gap-2"><dt className="text-zinc-500">Total cost</dt><dd className="font-mono">{String(usage.cost ?? usage.total_cost ?? usage.spend ?? "—")}</dd></div>
-                </dl>
-              ) : (
-                <p className="text-zinc-500">No usage recorded for this member in range.</p>
+              {member && (
+                <MemberAnalyticsSection orgId={orgId} userId={member.user_id} canView={canViewUsage} />
               )}
             </section>
 

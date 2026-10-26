@@ -12,9 +12,22 @@ class SettingsUpdate(BaseModel):
     mode: str = "global"
     team_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     key_ids: list[str] | None = Field(default=None, max_length=100)
+    # Hierarchical enablement: per-team force on/off and per-key on/off/
+    # inherit (null). Absent entries default to True for listed ids.
+    team_states: dict[str, bool] | None = None
+    key_states: dict[str, bool | None] | None = None
     capture_input: bool = False
     capture_output: bool = False
     retention_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class TeamStateUpdate(BaseModel):
+    enabled: bool
+
+
+class KeyStateUpdate(BaseModel):
+    # null resets to inherit (deletes the override row).
+    enabled: bool | None = None
 
 
 class SettingsRead(BaseModel):
@@ -30,6 +43,8 @@ class SettingsRead(BaseModel):
     updated_by: uuid.UUID | None
     team_ids: list[uuid.UUID] = Field(default_factory=list)
     key_ids: list[str] = Field(default_factory=list)
+    team_states: dict[str, bool] = Field(default_factory=dict)
+    key_states: dict[str, bool | None] = Field(default_factory=dict)
     effective_summary: dict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
@@ -105,3 +120,6 @@ class RetentionRead(BaseModel):
     default_days: int = 90
     effective_days: int = 90
     next_run: datetime
+    # Async capture queue health (WS2): depth gauge + last worker error.
+    queue_depth: int = 0
+    last_error: str | None = None

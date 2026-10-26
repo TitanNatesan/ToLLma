@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { toast } from "@/lib/notify";
 import {
@@ -18,6 +19,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useOrgKeys, useOrgModels, useOrgMutations, useOrgProviders } from "@/hooks/useOrgs";
 import { KeyForm, type KeyFormResult } from "./KeyForm";
 import { attachKeyToGuardrails } from "@/services/guardrails";
+import { updateKeyLoggingState } from "@/services/promptLogs";
 import { toastApiError } from "@/lib/errors";
 import { parseApiError } from "@/lib/errors";
 import { ApiError } from "@/services/api";
@@ -327,6 +329,7 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
   onCreated: (rawKey: string, keyName: string) => void;
 }) {
   const mut = useOrgMutations(orgId);
+  const qc = useQueryClient();
   const providersQuery = useOrgProviders(orgId);
   const modelsQuery = useOrgModels(orgId);
   const orgProviders = (providersQuery.data ?? []).map((p) => ({
@@ -362,6 +365,14 @@ function OrgKeyCreateDialog({ orgId, members, onClose, onCreated }: {
         await attachKeyToGuardrails(result.guardrail_ids, newKeyId, orgId);
       } catch (e) {
         toastApiError(e, { title: "Key created, guardrail assignment failed" });
+      }
+    }
+    if (result.logging_enabled !== null && newKeyId) {
+      try {
+        await updateKeyLoggingState(orgId, newKeyId, result.logging_enabled);
+        await qc.invalidateQueries({ queryKey: ["prompt-logs"] });
+      } catch (e) {
+        toastApiError(e, { title: "Key created, logging override failed" });
       }
     }
     if (!raw) {

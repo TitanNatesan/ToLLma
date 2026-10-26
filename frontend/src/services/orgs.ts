@@ -572,3 +572,75 @@ export function replaceTeamSets(orgId: string, teamId: string, setIds: string[])
     body: JSON.stringify({ set_ids: setIds }),
   });
 }
+
+// --- Member analytics (parallel backend; 404 while landing → empty states) ---
+
+function asNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "string" ? Number(v) : (v as number);
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+function asStr(v: unknown): string | null {
+  return typeof v === "string" && v ? v : null;
+}
+
+/** Normalize one member-analytics read: canonical fields win, missing
+ *  breakdowns degrade to []. Never throws; never surfaces secrets (the
+ *  contract carries names only — anything else is dropped). */
+export function normalizeMemberAnalytics(raw: unknown): import("@/types/orgs").MemberAnalytics {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const rows = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
+  return {
+    requests: asNum(r.requests),
+    succeeded: asNum(r.succeeded),
+    failed: asNum(r.failed),
+    blocked: asNum(r.blocked),
+    input_tokens: asNum(r.input_tokens),
+    output_tokens: asNum(r.output_tokens),
+    total_tokens: asNum(r.total_tokens),
+    cache_read_tokens: asNum(r.cache_read_tokens),
+    cache_write_tokens: asNum(r.cache_write_tokens),
+    total_cost: asNum(r.total_cost),
+    avg_cost_per_request: asNum(r.avg_cost_per_request),
+    by_model: rows(r.by_model).map((e) => ({
+      model: asStr(e.model) ?? "—",
+      requests: asNum(e.requests),
+      tokens: asNum(e.tokens),
+      cost: asNum(e.cost),
+    })),
+    by_provider: rows(r.by_provider).map((e) => ({
+      provider: asStr(e.provider) ?? "—",
+      requests: asNum(e.requests),
+      tokens: asNum(e.tokens),
+      cost: asNum(e.cost),
+    })),
+    by_key: rows(r.by_key).map((e) => ({
+      key_id: asStr(e.key_id) ?? "",
+      key_name: asStr(e.key_name),
+      requests: asNum(e.requests),
+      tokens: asNum(e.tokens),
+      cost: asNum(e.cost),
+    })).filter((e) => e.key_id !== "" || e.key_name !== null),
+    trend: rows(r.trend).map((e) => ({
+      bucket: asStr(e.bucket) ?? "",
+      requests: asNum(e.requests),
+      tokens: asNum(e.tokens),
+      cost: asNum(e.cost),
+    })).filter((e) => e.bucket !== ""),
+    last_activity: asStr(r.last_activity),
+    last_model: asStr(r.last_model),
+    last_key: asStr(r.last_key),
+  };
+}
+
+export async function getMemberAnalytics(
+  orgId: string,
+  userId: string,
+  params?: import("@/types/orgs").MemberAnalyticsParams,
+): Promise<import("@/types/orgs").MemberAnalytics> {
+  const payload = await req<unknown>(
+    `${BASE}/${orgId}/members/${encodeURIComponent(userId)}/analytics${qs(params ?? {})}`,
+  );
+  return normalizeMemberAnalytics(payload);
+}

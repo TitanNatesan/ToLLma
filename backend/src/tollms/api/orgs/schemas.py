@@ -65,10 +65,13 @@ from tollms.api.orgs.analytics.schemas import (
     AnalyticsKeyRow,
     AnalyticsTeamRow,
     AnalyticsOverview,
+    MemberAnalytics,
+    MemberAnalyticsKeyRow,
+    MemberAnalyticsTrendPoint,
 )
 
 from tollms.api.orgs.providers.schemas import (
     OrgProviderRegister,
 )
 
-__all__ = ['OrgCreate', 'OrgUpdate', 'OrgRead', 'OrgCard', 'PermissionSetCreate', 'PermissionSetUpdate', 'PermissionSetRead', 'AssignSets', 'TeamCreate', 'TeamUpdate', 'TeamMemberAdd', 'TeamMemberRead', 'TeamSetRead', 'TeamRead', 'TeamDetail', 'TeamRef', 'MemberRead', 'InviteCreate', 'InvitationRead', 'PermissionSetSummary', 'InviterRef', 'InvitePreview', 'AcceptNewRequest', 'AcceptNewResponse', 'RejectNewResponse', 'AuditRead', 'NotificationRead', 'OrgKeyCreate', 'OrgKeyRead', 'OrgKeyCreated', 'BudgetRead', 'BudgetUpdate', 'AnalyticsTotals', 'AnalyticsDayPoint', 'AnalyticsModelRow', 'AnalyticsProviderRow', 'AnalyticsUserRow', 'AnalyticsKeyRow', 'AnalyticsTeamRow', 'AnalyticsOverview', 'OrgProviderRegister']
+__all__ = ['OrgCreate', 'OrgUpdate', 'OrgRead', 'OrgCard', 'PermissionSetCreate', 'PermissionSetUpdate', 'PermissionSetRead', 'AssignSets', 'TeamCreate', 'TeamUpdate', 'TeamMemberAdd', 'TeamMemberRead', 'TeamSetRead', 'TeamRead', 'TeamDetail', 'TeamRef', 'MemberRead', 'InviteCreate', 'InvitationRead', 'PermissionSetSummary', 'InviterRef', 'InvitePreview', 'AcceptNewRequest', 'AcceptNewResponse', 'RejectNewResponse', 'AuditRead', 'NotificationRead', 'OrgKeyCreate', 'OrgKeyRead', 'OrgKeyCreated', 'BudgetRead', 'BudgetUpdate', 'AnalyticsTotals', 'AnalyticsDayPoint', 'AnalyticsModelRow', 'AnalyticsProviderRow', 'AnalyticsUserRow', 'AnalyticsKeyRow', 'AnalyticsTeamRow', 'AnalyticsOverview', 'MemberAnalytics', 'MemberAnalyticsKeyRow', 'MemberAnalyticsTrendPoint', 'OrgProviderRegister']

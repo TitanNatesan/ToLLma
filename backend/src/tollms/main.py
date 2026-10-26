@@ -42,6 +42,7 @@ from tollms.core.security import ACCESS_COOKIE, decode_token
 from tollms.services import cache as cache_service
 from tollms.services import generation as generation_engine
 from tollms.services.jobs import scheduler as jobs_scheduler
+from tollms.services.prompt_logging import queue as promptlog_queue
 from tollms.services.model_repository import scheduler as repository_scheduler
 from tollms.services.observability.events import emit as emit_event
 
@@ -53,7 +54,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await generation_engine.manager.clear_all_cached_state()
     repository_scheduler.start()
     jobs_scheduler.start()
+    promptlog_queue.start()
     yield
+    promptlog_queue.stop()
     await _shutdown_generations()
     jobs_scheduler.shutdown()
     repository_scheduler.shutdown()

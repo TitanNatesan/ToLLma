@@ -67,9 +67,9 @@ export function useMembers(orgId: string, params?: orgApi.MemberQuery & { enable
   return useQuery({ queryKey: key, queryFn: () => orgApi.listMembers(orgId, query), staleTime: 0, refetchOnWindowFocus: true, enabled: enabled ?? true });
 }
 
-export function useOrgSets(orgId: string, params?: orgApi.SetQuery) {
+export function useOrgSets(orgId: string, params?: orgApi.SetQuery, options?: { enabled?: boolean }) {
   const key = params ? [...ORG_KEYS.sets(orgId), params] : ORG_KEYS.sets(orgId);
-  return useQuery({ queryKey: key, queryFn: () => orgApi.listSets(orgId, params), staleTime: 0, refetchOnWindowFocus: true });
+  return useQuery({ queryKey: key, queryFn: () => orgApi.listSets(orgId, params), staleTime: 0, refetchOnWindowFocus: true, enabled: options?.enabled ?? true });
 }
 
 export function usePermissionCatalog() {
@@ -90,9 +90,9 @@ export function useJoinRequests(orgId: string, params?: orgApi.RequestQuery) {
   return useQuery({ queryKey: key, queryFn: () => orgApi.listRequests(orgId, params), staleTime: 0, refetchOnWindowFocus: true });
 }
 
-export function useOrgAudit(orgId: string, params?: orgApi.AuditQuery) {
+export function useOrgAudit(orgId: string, params?: orgApi.AuditQuery, options?: { enabled?: boolean }) {
   const key = params ? [...ORG_KEYS.audit(orgId), params] : ORG_KEYS.audit(orgId);
-  return useQuery({ queryKey: key, queryFn: () => orgApi.getAudit(orgId, params ?? 100), staleTime: 0, refetchOnWindowFocus: true });
+  return useQuery({ queryKey: key, queryFn: () => orgApi.getAudit(orgId, params ?? 100), staleTime: 0, refetchOnWindowFocus: true, enabled: options?.enabled ?? true });
 }
 
 export function useMyInvitations() {
@@ -207,6 +207,26 @@ export function useOrgAnalyticsOverview(
     refetchOnWindowFocus: true,
     retry: false,
     enabled: options?.enabled ?? true,
+  });
+}
+
+/** Member analytics (ViewUsage; cost null without ViewCost). 404 while the
+ *  backend lands is surfaced to the caller — the section renders empty. */
+export function useMemberAnalytics(
+  orgId: string,
+  userId: string | null,
+  options?: { enabled?: boolean; params?: import("@/types/orgs").MemberAnalyticsParams },
+) {
+  const key = options?.params
+    ? [...ORG_KEYS.members(orgId), "analytics", userId, options.params]
+    : [...ORG_KEYS.members(orgId), "analytics", userId];
+  return useQuery({
+    queryKey: key,
+    queryFn: () => orgApi.getMemberAnalytics(orgId, userId as string, options?.params),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    retry: false,
+    enabled: (options?.enabled ?? true) && !!userId,
   });
 }
 

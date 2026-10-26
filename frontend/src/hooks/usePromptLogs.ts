@@ -10,7 +10,9 @@ import {
   listPromptLogTeams,
   listPromptLogs,
   purgePromptLogs,
+  updateKeyLoggingState,
   updatePromptLoggingSettings,
+  updateTeamLoggingState,
   type PromptLogFilters,
   type PromptLoggingUpdateInput,
 } from "@/services/promptLogs";
@@ -48,6 +50,34 @@ export function useUpdatePromptLoggingSettings(orgId?: string | null) {
       updatePromptLoggingSettings(scope ? { ...body, org_id: scope } : body),
     onSuccess: async () => {
       // No optimistic state: invalidate, then refetch the persisted policy.
+      await qc.invalidateQueries({ queryKey: PROMPT_LOGS_KEYS.all });
+      await qc.refetchQueries({ queryKey: PROMPT_LOGS_KEYS.settings(scope) });
+    },
+  });
+}
+
+/** Per-team override (immediate); invalidates the persisted policy on success. */
+export function useUpdateTeamLoggingState(orgId?: string | null) {
+  const qc = useQueryClient();
+  const scope = orgId ?? undefined;
+  return useMutation({
+    mutationFn: (p: { teamId: string; enabled: boolean }) =>
+      updateTeamLoggingState(scope, p.teamId, p.enabled),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: PROMPT_LOGS_KEYS.all });
+      await qc.refetchQueries({ queryKey: PROMPT_LOGS_KEYS.settings(scope) });
+    },
+  });
+}
+
+/** Per-key override (`null` = reset to inherit); invalidates on success. */
+export function useUpdateKeyLoggingState(orgId?: string | null) {
+  const qc = useQueryClient();
+  const scope = orgId ?? undefined;
+  return useMutation({
+    mutationFn: (p: { keyId: string; enabled: boolean | null }) =>
+      updateKeyLoggingState(scope, p.keyId, p.enabled),
+    onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: PROMPT_LOGS_KEYS.all });
       await qc.refetchQueries({ queryKey: PROMPT_LOGS_KEYS.settings(scope) });
     },

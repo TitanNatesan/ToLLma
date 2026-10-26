@@ -2,6 +2,15 @@
 
 import os
 
+# Test Valkey isolation: the dev server and live users share Valkey DB 0
+# (sessions, verify nonces, cache), and the compose environment pins
+# VALKEY_DB=0, so setdefault would be a no-op. Force the whole suite onto
+# DB 15 (unless explicitly given another non-zero DB): the per-test
+# `tollma:*` flush stays hermetic within the suite but can never delete
+# live dev state.
+if os.environ.get("VALKEY_DB", "0") == "0":
+    os.environ["VALKEY_DB"] = "15"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text

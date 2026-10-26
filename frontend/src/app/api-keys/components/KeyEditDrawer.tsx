@@ -31,6 +31,9 @@ import {
   updateApiKeyModelPermissions,
   updateApiKeyPolicy,
 } from "@/services/apiKeys";
+import { updateKeyLoggingState } from "@/services/promptLogs";
+import { usePromptLoggingSettings } from "@/hooks/usePromptLogs";
+import { KeyLoggingField } from "./KeyLoggingField";
 import { EndpointPermissions } from "./EndpointPermissions";
 import { KeyGuardrailsSection } from "@/app/guardrails/components/KeyGuardrailsSection";
 import { IpRulesEditor, ipRulesToText, parseIpRules } from "./IpRulesEditor";
@@ -193,6 +196,20 @@ const KeyEditContent = memo(function KeyEditContent({
   const [deny, setDeny] = useState(initialIp.deny);
   const [permissions, setPermissions] =
     useState<ApiKeyModelPermissionInput[]>(initialPermissions);
+  // Logging override: untouched until the user picks a value, so unrelated
+  // edits never touch logging. The stored explicit value comes from policy.
+  const [loggingTouched, setLoggingTouched] = useState<{ touched: boolean; value: boolean | null }>({
+    touched: false,
+    value: null,
+  });
+  const loggingSettings = usePromptLoggingSettings();
+  const serverLogging: boolean | null =
+    loggingSettings.data && typeof loggingSettings.data.key_states[apiKey.id] === "boolean"
+      ? (loggingSettings.data.key_states[apiKey.id] as boolean)
+      : null;
+  const loggingValue = loggingTouched.touched ? loggingTouched.value : serverLogging;
+  const loggingDirty =
+    !loggingSettings.isError && !!loggingSettings.data && loggingTouched.touched && loggingTouched.value !== serverLogging;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -228,7 +245,7 @@ const KeyEditContent = memo(function KeyEditContent({
     permissions,
     initialPermissions,
   ]);
-  const isDirty = dirty.meta || dirty.policy || dirty.ip || dirty.models;
+  const isDirty = dirty.meta || dirty.policy || dirty.ip || dirty.models || loggingDirty;
 
   function reset() {
     setName(apiKey.name);
@@ -240,6 +257,7 @@ const KeyEditContent = memo(function KeyEditContent({
     setAllow(initialIp.allow);
     setDeny(initialIp.deny);
     setPermissions(initialPermissions);
+    setLoggingTouched({ touched: false, value: null });
     setError(null);
   }
 
@@ -306,8 +324,10 @@ const KeyEditContent = memo(function KeyEditContent({
         tasks.push(updateApiKeyIpRules(apiKey.id, rules));
       }
       if (dirty.models) tasks.push(updateApiKeyModelPermissions(apiKey.id, permissions));
+      if (loggingDirty) tasks.push(updateKeyLoggingState(undefined, apiKey.id, loggingValue));
       await Promise.all(tasks);
       await qc.invalidateQueries({ queryKey: ["api-keys"] });
+      if (loggingDirty) await qc.invalidateQueries({ queryKey: ["prompt-logs"] });
       toast.success("Key updated");
       onSaved();
     } catch (e) {
@@ -544,6 +564,26 @@ const KeyEditContent = memo(function KeyEditContent({
             >
               <KeyGuardrailsSection keyId={apiKey.id} disabled={saving} />
             </Section>
+
+            {!loggingSettings.isError && (
+              <>
+                <Separator />
+
+                <Section
+                  icon={ShieldCheck}
+                  title="Prompt logging"
+                  description="Override workspace logging for this key. Only sent when changed."
+                >
+                  <KeyLoggingField
+                    keyId={apiKey.id}
+                    value={loggingValue}
+                    onChange={(v) => setLoggingTouched({ touched: true, value: v })}
+                    disabled={saving}
+                    testIdPrefix="key-edit"
+                  />
+                </Section>
+              </>
+            )}
 
             {error && (
               <p

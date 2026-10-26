@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from tollms.api.prompt_logging import service
 from tollms.api.prompt_logging.schemas import (
+    KeyStateUpdate,
     LogDetail,
     LogList,
     PurgeRequest,
@@ -15,6 +16,7 @@ from tollms.api.prompt_logging.schemas import (
     SettingsRead,
     SettingsUpdate,
     TeamRef,
+    TeamStateUpdate,
 )
 from tollms.core.deps import get_db
 from tollms.core.security import require_active_user
@@ -35,6 +37,22 @@ def write_settings(data: SettingsUpdate,
                    db: Session = Depends(get_db),
                    user: User = Depends(require_active_user)) -> SettingsRead:
     return service.upsert_settings(db, user.id, data)
+
+
+@router.put("/settings/teams/{team_id}", response_model=SettingsRead)
+def write_team_state(team_id: uuid.UUID, data: TeamStateUpdate,
+                     org_id: uuid.UUID | None = None,
+                     db: Session = Depends(get_db),
+                     user: User = Depends(require_active_user)) -> SettingsRead:
+    return service.set_team_state(db, user.id, org_id, team_id, data.enabled)
+
+
+@router.put("/settings/keys/{key_id}", response_model=SettingsRead)
+def write_key_state(key_id: uuid.UUID, data: KeyStateUpdate,
+                    org_id: uuid.UUID | None = None,
+                    db: Session = Depends(get_db),
+                    user: User = Depends(require_active_user)) -> SettingsRead:
+    return service.set_key_state(db, user.id, org_id, key_id, data.enabled)
 
 
 @router.get("/teams", response_model=list[TeamRef])

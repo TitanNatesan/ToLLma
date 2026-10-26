@@ -54,6 +54,7 @@ from tollms.models.guardrail import (  # noqa: F401
 )
 from tollms.models.prompt_logging import (  # noqa: F401
     PromptLog,
+    PromptLoggingKeyOverride,
     PromptLoggingKeyTarget,
     PromptLoggingSetting,
     PromptLoggingTeamTarget,

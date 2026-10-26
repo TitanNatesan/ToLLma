@@ -376,8 +376,10 @@ def purge_logs(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
 
 
 def retention_info(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None):
-    """{default_days, effective_days, next_run (next UTC midnight daily job)}."""
+    """{default_days, effective_days, next_run (next UTC midnight daily job),
+    queue_depth, last_error (async capture worker health)}."""
     from tollms.api.prompt_logging.schemas import RetentionRead
+    from tollms.services.prompt_logging import queue as promptlog_queue
 
     if org_id is None:
         setting = _live_setting(db, caller_id, None)
@@ -387,5 +389,12 @@ def retention_info(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None):
     effective = setting.retention_days if setting else DEFAULT_RETENTION_DAYS
     now = datetime.now(timezone.utc)
     next_run = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    queue_stats = promptlog_queue.stats()
+    raw_error = queue_stats.get("last_error")
+    # Error code only - strip any raw DB/driver text (legacy values may
+    # still carry Exc: message).
+    last_error = str(raw_error).split(":")[0].strip()[:64] if raw_error else None
     return RetentionRead(default_days=DEFAULT_RETENTION_DAYS,
-                         effective_days=effective, next_run=next_run)
+                         effective_days=effective, next_run=next_run,
+                         queue_depth=int(queue_stats.get("queue_depth") or 0),
+                         last_error=last_error)

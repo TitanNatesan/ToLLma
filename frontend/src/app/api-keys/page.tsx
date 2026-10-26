@@ -24,6 +24,7 @@ import {
   rotateApiKey,
   updateApiKey,
 } from "@/services/apiKeys";
+import { updateKeyLoggingState } from "@/services/promptLogs";
 import { OrgKeysPanel } from "./components/OrgKeysPanel";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { KeyDetailsPanel } from "./components/KeyDetailsPanel";
@@ -145,6 +146,15 @@ function PersonalApiKeysPage() {
         await attachKeyToGuardrails(result.guardrail_ids, keyId);
       } catch (e) {
         toastApiError(e, { title: "Key created, guardrail assignment failed" });
+      }
+    }
+    // Prompt-logging override only when the user changed it (null = inherit).
+    if (result.logging_enabled !== null && created.key?.id) {
+      try {
+        await updateKeyLoggingState(undefined, created.key.id, result.logging_enabled);
+        await qc.invalidateQueries({ queryKey: ["prompt-logs"] });
+      } catch (e) {
+        toastApiError(e, { title: "Key created, logging override failed" });
       }
     }
     await qc.invalidateQueries({ queryKey: ["api-keys"] });

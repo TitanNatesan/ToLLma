@@ -36,6 +36,12 @@ export interface PromptLoggingSettings {
   /** Key targets (OR alongside team targets when enabled and not global).
    *  Absent on older backends — always normalized to an array. */
   key_ids: string[];
+  /** Hierarchical overrides (parallel backend): explicit per-team on/off.
+   *  Absent on older backends — normalized to {}. */
+  team_states: Record<string, boolean>;
+  /** Hierarchical overrides: explicit per-key on/off, null = inherit.
+   *  Absent on older backends — normalized to {}. */
+  key_states: Record<string, boolean | null>;
   capture_input: boolean;
   capture_output: boolean;
   retention_days: number | null;
@@ -53,6 +59,9 @@ export interface PromptLoggingUpdateInput {
   team_ids?: string[];
   /** Key targets, max 100 (UUIDs). Only meaningful in teams mode; global clears. */
   key_ids?: string[];
+  /** Hierarchical overrides: global ON + any explicit disable is a 422. */
+  team_states?: Record<string, boolean>;
+  key_states?: Record<string, boolean | null>;
   capture_input: boolean;
   capture_output: boolean;
   retention_days?: number | null;
@@ -147,6 +156,24 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : {};
+}
+
+/** `{uuid: boolean}` override map; non-boolean values are dropped. Never throws. */
+function asBoolRecord(v: unknown): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [k, val] of Object.entries(asRecord(v))) {
+    if (typeof val === "boolean") out[k] = val;
+  }
+  return out;
+}
+
+/** `{uuid: boolean|null}` override map; anything else is dropped. Never throws. */
+function asTristateRecord(v: unknown): Record<string, boolean | null> {
+  const out: Record<string, boolean | null> = {};
+  for (const [k, val] of Object.entries(asRecord(v))) {
+    if (typeof val === "boolean" || val === null) out[k] = val;
+  }
+  return out;
 }
 
 /** Normalize one list/detail row: canonical fields win, legacy variance fills gaps. Never throws. */
@@ -265,6 +292,8 @@ export function normalizeLoggingSettings(raw: unknown): PromptLoggingSettings {
     mode,
     team_ids: asStringArray(r.team_ids),
     key_ids: asStringArray(r.key_ids),
+    team_states: asBoolRecord(r.team_states),
+    key_states: asTristateRecord(r.key_states),
     capture_input: r.capture_input !== false,
     capture_output: r.capture_output !== false,
     retention_days: asNumber(r.retention_days),
@@ -291,6 +320,37 @@ export async function updatePromptLoggingSettings(
     method: "PUT",
     body: JSON.stringify(body),
   });
+  return normalizeLoggingSettings(raw);
+}
+
+/**
+ * Per-team override. Org scoping rides `?org_id=` (personal scope omits it).
+ * Resolves to the workspace default when the backend has no team row yet.
+ */
+export async function updateTeamLoggingState(
+  orgId: string | null | undefined,
+  teamId: string,
+  enabled: boolean,
+): Promise<PromptLoggingSettings> {
+  const raw = await apiRequest<unknown>(
+    `${PROMPT_LOGS_BASE}/settings/teams/${encodeURIComponent(teamId)}${orgQs(orgId ?? undefined)}`,
+    { method: "PUT", body: JSON.stringify({ enabled }) },
+  );
+  return normalizeLoggingSettings(raw);
+}
+
+/**
+ * Per-key override; `null` resets to inherit. Org scoping rides `?org_id=`.
+ */
+export async function updateKeyLoggingState(
+  orgId: string | null | undefined,
+  keyId: string,
+  enabled: boolean | null,
+): Promise<PromptLoggingSettings> {
+  const raw = await apiRequest<unknown>(
+    `${PROMPT_LOGS_BASE}/settings/keys/${encodeURIComponent(keyId)}${orgQs(orgId ?? undefined)}`,
+    { method: "PUT", body: JSON.stringify({ enabled }) },
+  );
   return normalizeLoggingSettings(raw);
 }
 

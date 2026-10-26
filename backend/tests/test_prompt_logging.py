@@ -152,7 +152,7 @@ def test_org_team_target_validation(client: TestClient, db: Session, user_factor
 
     r = client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True,
                                            "mode": "teams", "team_ids": [stranger_team["id"]]})
-    assert r.status_code == 422, r.text  # cross-org team rejected
+    assert r.status_code == 404, r.text  # cross-org team is a 404 oracle
 
     r = client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True,
                                            "mode": "teams", "team_ids": [team["id"]]})
@@ -500,8 +500,9 @@ def test_retention_expiry_job(client: TestClient, db: Session, user_factory) -> 
 def test_retention_info(client: TestClient, user_factory) -> None:
     user_factory()
     body = client.get(f"{PL}/retention").json()
-    assert body == {"default_days": 90, "effective_days": 90,
-                    "next_run": body["next_run"]}
+    assert body["default_days"] == 90 and body["effective_days"] == 90
+    assert body["next_run"] and body["queue_depth"] == 0
+    assert body["last_error"] is None
     _enable_personal(client, retention_days=30)
     assert client.get(f"{PL}/retention").json()["effective_days"] == 30
 

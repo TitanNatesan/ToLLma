@@ -646,10 +646,10 @@ async def _promptlog_capture(db: Session, prepared: _Prepared, *,
     """Prompt-log hook: immutable ledger write, fail-open always. Never raises,
     never touches Valkey usage counters, never logs content or raw keys."""
     try:
-        from tollms.services.prompt_logging import capture as promptlog_capture
+        from tollms.services.prompt_logging import queue as promptlog_queue
 
         ctx = prepared.ctx
-        await promptlog_capture.capture_post_async(
+        promptlog_queue.enqueue_post(
             db, input_text=input_text, output_text=output_text,
             user_id=ctx.user_id, org_id=getattr(ctx, "org_id", None),
             api_key_id=ctx.key_id,

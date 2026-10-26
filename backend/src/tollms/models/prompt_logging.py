@@ -76,6 +76,9 @@ class PromptLoggingSetting(SoftDeleteMixin, TimestampedModel):
     key_targets: Mapped[list["PromptLoggingKeyTarget"]] = relationship(
         back_populates="setting", cascade="all, delete-orphan"
     )
+    key_overrides: Mapped[list["PromptLoggingKeyOverride"]] = relationship(
+        back_populates="setting", cascade="all, delete-orphan"
+    )
 
 
 class PromptLoggingTeamTarget(TimestampedModel):
@@ -83,6 +86,9 @@ class PromptLoggingTeamTarget(TimestampedModel):
 
     No soft-delete (link table, like team_memberships): an empty target list
     in teams mode logs nothing, never falls back to global.
+
+    Per-team enablement: ``enabled=False`` removes the team from the match
+    set without deleting the row (hierarchical enablement).
     """
 
     __tablename__ = "prompt_logging_team_targets"
@@ -98,6 +104,7 @@ class PromptLoggingTeamTarget(TimestampedModel):
     team_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
     )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     setting: Mapped["PromptLoggingSetting"] = relationship(back_populates="targets")
     team: Mapped["Team"] = relationship(back_populates="prompt_logging_targets")
@@ -128,6 +135,36 @@ class PromptLoggingKeyTarget(TimestampedModel):
     api_key: Mapped["ApiKey"] = relationship(back_populates="prompt_logging_key_targets")
 
 
+class PromptLoggingKeyOverride(TimestampedModel):
+    """Per-key enablement override within one setting (hierarchical enablement).
+
+    The key allow-list (``PromptLoggingKeyTarget``) stays the eligibility
+    set: a listed key with no override row defaults to True (inherit). An
+    explicit row forces the leg on (True, captures even without a team hit)
+    or off (False, vetoes capture even when a team hits). ``enabled=None``
+    (NULL) is inherit — equivalent to no row; the API deletes NULL rows.
+    No soft-delete (link table).
+    """
+
+    __tablename__ = "prompt_logging_key_overrides"
+    __table_args__ = (
+        Index("uq_prompt_logging_key_overrides", "setting_id", "api_key_id", unique=True),
+        Index("ix_prompt_logging_key_overrides_setting", "setting_id"),
+        Index("ix_prompt_logging_key_overrides_key", "api_key_id"),
+    )
+
+    setting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("prompt_logging_settings.id", ondelete="CASCADE"), nullable=False
+    )
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=False
+    )
+    enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    setting: Mapped["PromptLoggingSetting"] = relationship(back_populates="key_overrides")
+    api_key: Mapped["ApiKey"] = relationship(back_populates="prompt_logging_key_overrides")
+
+
 class PromptLog(TimestampedModel):
     """Append-only prompt ledger. Immutable like guardrail_triggers: expiry
     NULLs the ciphers (content_expired) but metadata rows are never deleted."""
@@ -141,6 +178,19 @@ class PromptLog(TimestampedModel):
         Index("ix_prompt_logs_provider", "provider_id", "created_at"),
         Index("ix_prompt_logs_model", "model_id", "created_at"),
         Index("ix_prompt_logs_request", "request_id"),
+        # Queue idempotency: redeliveries of one capture (same request_id AND
+        # generation_id) collapse here; NULL request_ids (legacy rows) are
+        # exempt. Composite — NOT request_id alone: internal chat reuses one
+        # request_id per conversation across many generations, so a bare
+        # request_id unique index would both brick the migration on live data
+        # and drop legitimate rows as "duplicates".
+        Index(
+            "uq_prompt_logs_request_delivery",
+            "request_id",
+            "generation_id",
+            unique=True,
+            postgresql_where=text("request_id IS NOT NULL"),
+        ),
         Index("ix_prompt_logs_expires", "expires_at"),
         Index("ix_prompt_logs_status", "status"),
         Index("ix_prompt_logs_created", "created_at"),
@@ -159,7 +209,8 @@ class PromptLog(TimestampedModel):
     key_provenance: Mapped[str] = mapped_column(String(16), default="personal", nullable=False)
     team_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     # Which allow-list leg matched: global|team|key. NULL only for rows
-    # written before key targets existed (legacy rows).
+    # written before key targets existed (legacy rows). Explicit key
+    # overrides surface as key (force-on); team hits stay team.
     match_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True

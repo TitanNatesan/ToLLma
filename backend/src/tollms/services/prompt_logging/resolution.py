@@ -8,15 +8,22 @@ Server-enforced semantics (this module is authoritative):
    sentinel, which resolves to no-capture (never guess personal).
 2. Setting disabled (or absent) -> no-capture.
 3. mode == global -> match (match_source="global"); allow-list targets are
-   ignored entirely.
-4. mode == teams -> match iff team_hit (caller's ACTIVE team memberships
-   intersect the setting's team targets) OR key_hit (the call's api_key_id
-   is a live, non-deleted entry in the setting's key targets). Revoked or
-   disabled keys fail auth upstream anyway, so the ledger checks deletion
-   only. match_source is "team" (team leg hit; takes precedence when both
-   hit) or "key".
-5. Teams mode with empty team targets AND empty key targets -> no-capture
-   (never falls through to global).
+   ignored entirely. While a setting is enabled in global mode the API
+   refuses any explicit disable (team/key force-off is 422) — a global
+   mandatory policy cannot be weakened, including via forged requests.
+4. mode == teams -> hierarchical enablement over the two allow-lists:
+     a. Per-key override (NULL/absent = inherit = default True for listed
+        keys): False vetoes capture even when a team hits; True captures
+        (match_source="key") even without a team hit.
+     b. Otherwise (inherit): team_hit (caller's ACTIVE team memberships
+        intersect the setting's ENABLED team targets; multi-team = OR) OR
+        key_hit (the call's api_key_id is a live, non-deleted entry in the
+        setting's key targets). Revoked or disabled keys fail auth upstream
+        anyway, so the ledger checks deletion only. match_source is "team"
+        (team leg hit; takes precedence when both hit) or "key".
+5. Teams mode with no enabled team targets AND no eligible key -> no-capture
+   (never falls through to global). Personal workspaces have no teams: only
+   the key leg (override or listed key) or global mode can match.
 
 Personal-key/user traffic resolves ONLY the personal setting of that user;
 org-key traffic resolves ONLY the org setting of the key's org. An org
@@ -32,7 +39,11 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tollms.models.prompt_logging import PromptLoggingSetting, PromptLoggingTeamTarget
+from tollms.models.prompt_logging import (
+    PromptLoggingKeyOverride,
+    PromptLoggingSetting,
+    PromptLoggingTeamTarget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,17 +107,38 @@ def _user_team_ids(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> set[uu
 
 
 def _target_team_ids(db: Session, setting_id: uuid.UUID) -> list[uuid.UUID]:
+    """ENABLED team targets only: enabled=False removes the team from the
+    match set without deleting the row. Lookup failures fail closed."""
     try:
         return list(
             db.scalars(
                 select(PromptLoggingTeamTarget.team_id).where(
-                    PromptLoggingTeamTarget.setting_id == setting_id
+                    PromptLoggingTeamTarget.setting_id == setting_id,
+                    PromptLoggingTeamTarget.enabled.is_(True),
                 )
             )
         )
     except Exception:
         logger.warning("promptlog target lookup failed", exc_info=True)
         return []
+
+
+def _key_override(db: Session, setting_id: uuid.UUID,
+                  api_key_id: uuid.UUID | None) -> bool | None:
+    """Explicit per-key override (True/False) or None (inherit). Fail-closed
+    to inherit on lookup errors — a DB blip must not veto or force capture."""
+    if api_key_id is None:
+        return None
+    try:
+        return db.scalar(
+            select(PromptLoggingKeyOverride.enabled).where(
+                PromptLoggingKeyOverride.setting_id == setting_id,
+                PromptLoggingKeyOverride.api_key_id == api_key_id,
+            )
+        )
+    except Exception:
+        logger.warning("promptlog key-override lookup failed", exc_info=True)
+        return None
 
 
 def _target_key_ids(db: Session, setting_id: uuid.UUID) -> list[uuid.UUID]:
@@ -180,8 +212,17 @@ def _match_teams_mode(
     user_id: uuid.UUID,
     api_key_id: uuid.UUID | None,
 ) -> ResolvedSetting:
-    """Shared teams-mode matcher: match iff team_hit OR key_hit. Empty team
-    AND key target lists match nothing (never fall back to global)."""
+    """Shared teams-mode matcher (hierarchical enablement).
+
+    Key override wins: False vetoes everything, True captures as key. On
+    inherit, team_hit (OR across enabled targets) or listed-live key_hit
+    captures; team takes precedence when both hit. Empty/disabled target
+    lists match nothing (never fall back to global)."""
+    override = _key_override(db, setting.id, api_key_id)
+    if override is False:
+        return ResolvedSetting()
+    if override is True:
+        return ResolvedSetting(setting=setting, team_ids=[], match_source="key")
     targets = _target_team_ids(db, setting.id)
     key_targets = _target_key_ids(db, setting.id)
     if not targets and not key_targets:

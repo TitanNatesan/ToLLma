@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { ScrollText } from "lucide-react";
 import {
+  Badge,
   Button,
   Checkbox,
   EmptyState,
@@ -23,15 +24,23 @@ import {
   usePromptLogRetention,
   usePromptLogTeams,
   usePromptLoggingSettings,
+  useUpdateKeyLoggingState,
   useUpdatePromptLoggingSettings,
+  useUpdateTeamLoggingState,
 } from "@/hooks/usePromptLogs";
 import { useChatKeys } from "@/hooks/useChatKeys";
 import { useOrgKeys } from "@/hooks/useOrgs";
 import {
+  GLOBAL_MANDATORY_COPY,
   buildSettingsPayload,
-  formatEffectiveSummary,
+  formatEffectiveSummaryWithStates,
   formatLogTime,
+  isGlobalLoggingLocked,
   loggingPrecedenceCopy,
+  resolveKeyLogging,
+  resolveTeamLogging,
+  scopeBadgeLabel,
+  scopeEffectiveLine,
   validateSettingsDraft,
   type SettingsDraft,
 } from "./promptLogLogic";
@@ -57,7 +66,7 @@ export function PromptLogsSettings({
   canManage: boolean;
 }) {
   const settings = usePromptLoggingSettings(orgId);
-  const teams = usePromptLogTeams(orgId, isOrg && canManage);
+  const teams = usePromptLogTeams(orgId, isOrg);
   const retention = usePromptLogRetention(orgId, true);
   const update = useUpdatePromptLoggingSettings(orgId);
   // Personal key targets: the user's eligible chat keys (never secrets).
@@ -72,6 +81,21 @@ export function PromptLogsSettings({
   const [draft, setDraft] = useState<SettingsDraft | null>(null);
   const [keySearch, setKeySearch] = useState("");
   const [confirmGlobal, setConfirmGlobal] = useState(false);
+  const [pendingTeam, setPendingTeam] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  /** Key → owning team ids, so team overrides can resolve key inheritance. */
+  const keyTeamIds = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (isOrg) {
+      for (const k of orgKeys.data ?? []) {
+        const teamId = (k as { team_id?: unknown }).team_id;
+        if (typeof teamId === "string" && teamId) map.set(k.id, [teamId]);
+      }
+    }
+    return map;
+  }, [isOrg, orgKeys.data]);
+  const updateTeam = useUpdateTeamLoggingState(orgId);
+  const updateKey = useUpdateKeyLoggingState(orgId);
   const s = settings.data;
 
   const keyOptions: KeyOption[] = useMemo(() => {
@@ -146,6 +170,41 @@ export function PromptLogsSettings({
     });
   }
 
+  // Hierarchical overrides act on the persisted policy (immediate PUTs), so
+  // the global lock follows the server state — not the unsaved draft.
+  const globalLocked = isGlobalLoggingLocked(s);
+  const explicitKeyCount = keyOptions.filter(
+    (k) => resolveKeyLogging(s, k.id, keyTeamIds.get(k.id) ?? []).explicit !== null,
+  ).length;
+
+  async function persistTeamState(teamId: string, enabled: boolean) {
+    if (readonly || globalLocked) return;
+    setPendingTeam(teamId);
+    try {
+      await updateTeam.mutateAsync({ teamId, enabled });
+      toast.success(`Team logging ${enabled ? "enabled" : "disabled"}.`);
+    } catch (e) {
+      toastApiError(e, { title: "Could not update team logging" });
+    } finally {
+      setPendingTeam(null);
+    }
+  }
+
+  async function persistKeyState(keyId: string, enabled: boolean | null) {
+    if (readonly || globalLocked) return;
+    setPendingKey(keyId);
+    try {
+      await updateKey.mutateAsync({ keyId, enabled });
+      toast.success(
+        enabled === null ? "Key logging reset to inherit." : `Key logging ${enabled ? "enabled" : "disabled"}.`,
+      );
+    } catch (e) {
+      toastApiError(e, { title: "Could not update key logging" });
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
   async function persist(current: SettingsDraft) {
     try {
       // One shape for the PUT body (personal scope keeps key targets; teams stay empty).
@@ -185,7 +244,7 @@ export function PromptLogsSettings({
         </p>
       )}
 
-      <SettingsSection title="Capture" description={formatEffectiveSummary(s.effective_summary)}>
+      <SettingsSection title="Capture" description={formatEffectiveSummaryWithStates(s.effective_summary, s)}>
         <SettingItem label="Enabled" description="When off, new requests are not recorded.">
           <Switch
             checked={form.enabled}
@@ -303,6 +362,11 @@ export function PromptLogsSettings({
         <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400" data-testid="prompt-settings-precedence">
           {loggingPrecedenceCopy(form)}
         </p>
+        {isOrg && form.mode === "global" && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300" data-testid="prompt-settings-global-note">
+            {GLOBAL_MANDATORY_COPY}
+          </p>
+        )}
         <SettingItem label="Capture prompt input" description="Store request message bodies.">
           <Checkbox
             checked={form.capture_input}
@@ -327,6 +391,124 @@ export function PromptLogsSettings({
           </p>
         )}
       </SettingsSection>
+
+      {(isOrg || keyOptions.length > 0) && (
+        <SettingsSection
+          title="Per-scope overrides"
+          description={
+            globalLocked
+              ? "Global logging is on: every team and key is logged, so these controls are locked."
+              : "Immediate per-team and per-key overrides. Key overrides win over team overrides; either beats the workspace default."
+          }
+        >
+          {isOrg && (
+            <div className="py-2" data-testid="prompt-settings-team-states">
+              <p className="mb-1.5 text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                Teams
+              </p>
+              {teams.isPending ? (
+                <LoadingState message="Loading teams…" />
+              ) : teams.error || !teams.data ? (
+                <ErrorState
+                  title="Could not load teams"
+                  message={teams.error ? parseApiError(teams.error).message : "Not found"}
+                  onRetry={() => void teams.refetch()}
+                />
+              ) : teams.data.length === 0 ? (
+                <p className="text-xs text-zinc-500">No teams in this organization yet.</p>
+              ) : (
+                <ul className="flex flex-col gap-1.5">
+                  {teams.data.map((t) => {
+                    const view = resolveTeamLogging(s, t.id);
+                    return (
+                      <li
+                        key={t.id}
+                        className="flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 dark:border-zinc-800"
+                        data-testid={`prompt-settings-teamstate-${t.id}`}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium">{t.name}</span>
+                        <Badge variant={view.effective ? "success" : "outline"}>{scopeBadgeLabel(view)}</Badge>
+                        {view.locked && <Badge variant="secondary">locked</Badge>}
+                        <Switch
+                          checked={view.effective}
+                          disabled={readonly || view.locked || pendingTeam !== null}
+                          onCheckedChange={(v) => void persistTeamState(t.id, v)}
+                          aria-label={`Logging for team ${t.name}`}
+                          data-testid={`prompt-settings-teamstate-toggle-${t.id}`}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+          <div className="py-2" data-testid="prompt-settings-key-states">
+            <p className="mb-1.5 text-xs font-medium text-zinc-800 dark:text-zinc-200">
+              Keys {explicitKeyCount > 0 && <span className="font-normal text-zinc-500">({explicitKeyCount} override{explicitKeyCount === 1 ? "" : "s"})</span>}
+            </p>
+            {keysPending ? (
+              <LoadingState message="Loading keys…" />
+            ) : keysError ? (
+              <p className="text-xs text-zinc-500">Key overrides aren&apos;t available right now.</p>
+            ) : keyOptions.length === 0 ? (
+              <p className="text-xs text-zinc-500">No eligible keys yet.</p>
+            ) : (
+              <ul className="flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1">
+                {visibleKeys.map((k) => {
+                  const view = resolveKeyLogging(s, k.id, keyTeamIds.get(k.id) ?? []);
+                  return (
+                    <li
+                      key={k.id}
+                      className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 dark:border-zinc-800"
+                      data-testid={`prompt-settings-keystate-${k.id}`}
+                    >
+                      <span className="inline-flex min-w-0 flex-1 items-baseline gap-1.5">
+                        <span className="truncate text-xs font-medium">{k.name}</span>
+                        {k.hint && (
+                          <span className="shrink-0 font-mono text-[10px] text-zinc-400">{k.hint}</span>
+                        )}
+                      </span>
+                      <Badge variant={view.effective ? "success" : "outline"}>{scopeBadgeLabel(view)}</Badge>
+                      {view.locked && <Badge variant="secondary">locked</Badge>}
+                      <Select
+                        value={view.explicit === null ? "inherit" : view.explicit ? "on" : "off"}
+                        onChange={(e) => {
+                          const raw = (e.target as HTMLSelectElement).value;
+                          void persistKeyState(k.id, raw === "inherit" ? null : raw === "on");
+                        }}
+                        disabled={readonly || view.locked || pendingKey !== null}
+                        sizeVariant="sm"
+                        className="w-28"
+                        aria-label={`Logging override for key ${k.name}`}
+                        data-testid={`prompt-settings-keystate-select-${k.id}`}
+                      >
+                        <option value="inherit">Inherited</option>
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                      </Select>
+                      <span className="w-full text-[11px] text-zinc-500" data-testid={`prompt-settings-keystate-effective-${k.id}`}>
+                        {scopeEffectiveLine(view)}
+                        {view.explicit !== null && !readonly && !view.locked && (
+                          <button
+                            type="button"
+                            onClick={() => void persistKeyState(k.id, null)}
+                            disabled={pendingKey !== null}
+                            className="ml-2 font-medium text-tollma-600 underline-offset-2 hover:underline dark:text-tollma-400"
+                            data-testid={`prompt-settings-keystate-reset-${k.id}`}
+                          >
+                            Reset to inherit
+                          </button>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </SettingsSection>
+      )}
 
       <SettingsSection title="Retention">
         <SettingItem

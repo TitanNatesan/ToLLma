@@ -702,9 +702,9 @@ async def _promptlog_capture(
     org. Same rule as the streaming driver (generation.py passes None too).
     """
     try:
-        from tollms.services.prompt_logging import capture as promptlog_capture
+        from tollms.services.prompt_logging import queue as promptlog_queue
 
-        await promptlog_capture.capture_post_async(
+        promptlog_queue.enqueue_post(
             db, input_text=input_text, output_text=output_text, user_id=user_id,
             org_id=org_id, api_key_id=getattr(api_key, "id", None),
             key_provenance=None,
