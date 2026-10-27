@@ -183,7 +183,7 @@ export function SidebarOrgNav({ orgId }: { orgId: string }) {
             <Link key={id} href={href} data-testid={`sidebar-org-${id}`}
               aria-current={isActive ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+                "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60",
                 isActive
                   ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                   : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",

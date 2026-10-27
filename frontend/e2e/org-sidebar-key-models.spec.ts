@@ -68,9 +68,10 @@ test.describe("org sidebar + key model lifecycle", () => {
     await expect(page.getByTestId("workspace-menu")).toBeVisible();
     const items = page.locator('[data-testid^="workspace-menu-org-"]');
     await expect(items).toHaveCount(2, { timeout: 20000 });
-    // Switch context by clicking the second org.
+    // Switch context by clicking the second org. Settings is
+    // scope-agnostic so the URL stays while the context flips.
     await items.nth(1).click();
-    await expect(page).toHaveURL(/\/organizations\/[0-9a-f-]{36}/, { timeout: 20000 });
+    await expect(page).toHaveURL(/\/settings/, { timeout: 20000 });
     // Final nav rule: org scope shows ONLY the org nav (personal hidden).
     await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
     await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);

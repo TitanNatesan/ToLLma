@@ -15,6 +15,7 @@ from tollms.api.catalog.schemas import (
     ProviderCatalogPage,
     ProviderCatalogRead,
 )
+from tollms.api.orgs.common.guards import _escape_like
 from tollms.core.exceptions import NotFoundError
 from tollms.models.model_repository import SyncRun
 from tollms.models.provider_catalog import ProviderCatalog
@@ -48,18 +49,19 @@ def list_providers(
     elif gateway_supported is False:
         stmt = stmt.where(ProviderCatalog.gateway_supported.is_(False))
     if search and search.strip():
-        q = f"%{search.strip().lower()}%"
+        # LIKE wildcards (%, _, \) match literally — user input is escaped.
+        q = f"%{_escape_like(search.strip().lower())}%"
         stmt = stmt.where(
             or_(
-                func.lower(ProviderCatalog.name).like(q),
-                func.lower(ProviderCatalog.slug).like(q),
+                func.lower(ProviderCatalog.name).like(q, escape="\\"),
+                func.lower(ProviderCatalog.slug).like(q, escape="\\"),
             )
         )
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     page = max(page, 1)
     page_size = min(max(page_size, 1), 200)
     rows = db.execute(
-        stmt.order_by(ProviderCatalog.name).offset((page - 1) * page_size).limit(page_size)
+        stmt.order_by(ProviderCatalog.name).offset(min((page - 1) * page_size, 5000)).limit(page_size)
     ).scalars().all()
     return ProviderCatalogPage(items=[_read(r) for r in rows], total=total, page=page, page_size=page_size)
 

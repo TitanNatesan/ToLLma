@@ -13,8 +13,8 @@ from tollms.core.security import require_active_user
 from tollms.models.user import User
 
 # NOTE: no settings/ package — PATCH /{org_id} (update_organization:
-# visibility_mode / personal_sharing_enforced) is the whole org-settings
-# surface (no other settings functions exist).
+# description / website / industry / location / size) is the whole
+# org-settings surface (no other settings functions exist).
 router = APIRouter()
 
 

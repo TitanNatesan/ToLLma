@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowUpDown, Copy } from "lucide-react";
 import { toast } from "@/lib/notify";
 import {
@@ -47,9 +48,65 @@ function CountList({ items, empty }: { items: string[]; empty?: string }) {
   );
 }
 
-type SortKey = "email" | "joined" | "keys" | "state";
+export type MemberSortKey = "email" | "joined" | "keys" | "state";
 
-export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspend, canAssign, canViewUsage, isRoot, myPermissions, onInvite }: {
+export interface MemberFilters {
+  search: string;
+  state: string;
+  sortKey: MemberSortKey;
+  sortDir: 1 | -1;
+  page: number;
+}
+
+export const EMPTY_MEMBER_FILTERS: MemberFilters = {
+  search: "",
+  state: "",
+  sortKey: "email",
+  sortDir: 1,
+  page: 0,
+};
+
+/** Members filter controls. Horizontal in the table header; vertical in the
+ * section sidebar (same components/state, no duplicated copies). */
+export function OrgMembersFilters({ value, onChange, layout = "horizontal" }: {
+  value: MemberFilters;
+  onChange: (f: MemberFilters) => void;
+  layout?: "horizontal" | "vertical";
+}) {
+  const wrap = layout === "vertical"
+    ? "flex flex-col gap-2"
+    : "flex flex-nowrap items-center gap-2 overflow-x-auto pb-1";
+  const selectClass = layout === "vertical" ? "w-full" : "w-32";
+  return (
+    <div className={wrap}>
+      <div className={layout === "vertical" ? "w-full" : "min-w-44 flex-1"}>
+        <SearchInput value={value.search} onChange={(e) => onChange({ ...value, search: e.target.value, page: 0 })}
+          onClear={() => onChange({ ...value, search: "" })} placeholder="Search members…" aria-label="Search members"
+          data-testid="org-members-search" />
+      </div>
+      <Select value={value.state} onChange={(e) => onChange({ ...value, state: e.target.value, page: 0 })} sizeVariant="sm"
+        className={selectClass} aria-label="Filter by state" data-testid="org-members-state">
+        <option value="">All states</option>
+        <option value="active">Active</option>
+        <option value="suspended">Suspended</option>
+      </Select>
+      <Select value={value.sortKey} onChange={(e) => onChange({ ...value, sortKey: e.target.value as MemberSortKey, page: 0 })} sizeVariant="sm"
+        className={selectClass} aria-label="Sort members" data-testid="org-members-sort">
+        <option value="email">Email</option>
+        <option value="joined">Joined</option>
+        <option value="keys">Keys</option>
+        <option value="state">Status</option>
+      </Select>
+      <Button size="sm" variant="outline" onClick={() => onChange({ ...value, sortDir: value.sortDir === 1 ? -1 : 1, page: 0 })}
+        aria-label={value.sortDir === 1 ? "Sort descending" : "Sort ascending"}
+        data-testid="org-members-sort-dir">
+        <ArrowUpDown className="size-3.5" aria-hidden />
+      </Button>
+    </div>
+  );
+}
+
+export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspend, canAssign, canViewUsage, isRoot, myPermissions, onInvite, filters, onFilters, hideFilters }: {
   orgId: string;
   canRead: boolean;
   canInvite: boolean;
@@ -60,13 +117,33 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
   isRoot: boolean;
   myPermissions: string[];
   onInvite: () => void;
+  /** Controlled filter state (section sidebar). Defaults to internal state. */
+  filters?: MemberFilters;
+  onFilters?: (f: MemberFilters) => void;
+  /** Hide the in-header filter bar (it renders in the sidebar instead). */
+  hideFilters?: boolean;
 }) {
-  const [search, setSearch] = useState("");
-  const [state, setState] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("email");
-  const [sortDir, setSortDir] = useState<1 | -1>(1);
-  const [page, setPage] = useState(0);
-  const [viewing, setViewing] = useState<Member | null>(null);
+  const [internal, setInternal] = useState<MemberFilters>(EMPTY_MEMBER_FILTERS);
+  const filtersValue = filters ?? internal;
+  const setFiltersValue = onFilters ?? setInternal;
+  const { search, state, sortKey, sortDir, page } = filtersValue;
+  const setPage = (p: number | ((prev: number) => number)) =>
+    setFiltersValue({ ...filtersValue, page: typeof p === "function" ? p(filtersValue.page) : p });
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Deep link (?member=): row clicks open the drawer without navigating away.
+  // Selection is derived from the URL (no mirror state).
+  const memberParam = searchParams.get("member");
+  function view(member: Member | null) {
+    const id = member?.user_id ?? null;
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("member") ?? null) === id) return;
+    if (id) params.set("member", id);
+    else params.delete("member");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
 
   const debounced = useDebouncedValue(search.trim(), 300);
   const members = useMembers(orgId, {
@@ -91,6 +168,8 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
     });
     return list;
   }, [members.data, sortKey, sortDir]);
+
+  const viewing = memberParam ? (rows.find((m) => m.user_id === memberParam) ?? null) : null;
 
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -129,7 +208,7 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
       key: "actions", header: "Actions", align: "right",
       render: (m) => (
         <span className="flex justify-end gap-1.5">
-          <Button size="sm" variant="outline" onClick={() => setViewing(m)}
+          <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); view(m); }}
             data-testid={`org-view-${m.user_id}`}>View</Button>
         </span>
       ),
@@ -138,34 +217,16 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
 
   return (
     <div className="space-y-2.5" data-testid="org-members">
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
-        <div className="min-w-44 flex-1">
-          <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            onClear={() => setSearch("")} placeholder="Search members…" aria-label="Search members"
-            data-testid="org-members-search" />
+      {!hideFilters && (
+        <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+          <div className="min-w-0 flex-1">
+            <OrgMembersFilters value={filtersValue} onChange={setFiltersValue} />
+          </div>
+          {canInvite && (
+            <Button size="sm" onClick={onInvite} data-testid="org-invite-open">Invite user</Button>
+          )}
         </div>
-        <Select value={state} onChange={(e) => { setState(e.target.value); setPage(0); }} sizeVariant="sm"
-          className="w-32" aria-label="Filter by state" data-testid="org-members-state">
-          <option value="">All states</option>
-          <option value="active">Active</option>
-          <option value="suspended">Suspended</option>
-        </Select>
-        <Select value={sortKey} onChange={(e) => { setSortKey(e.target.value as SortKey); setPage(0); }} sizeVariant="sm"
-          className="w-32" aria-label="Sort members" data-testid="org-members-sort">
-          <option value="email">Email</option>
-          <option value="joined">Joined</option>
-          <option value="keys">Keys</option>
-          <option value="state">Status</option>
-        </Select>
-        <Button size="sm" variant="outline" onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}
-          aria-label={sortDir === 1 ? "Sort descending" : "Sort ascending"}
-          data-testid="org-members-sort-dir">
-          <ArrowUpDown className="size-3.5" aria-hidden />
-        </Button>
-        {canInvite && (
-          <Button size="sm" onClick={onInvite} data-testid="org-invite-open">Invite user</Button>
-        )}
-      </div>
+      )}
 
       {members.isLoading && <LoadingState message="Loading members…" />}
       {members.isError && isForbiddenError(members.error) && (
@@ -197,7 +258,8 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
               ) : undefined} />
           ) : (
             <DataTable columns={columns} rows={visible} rowKey={(m) => m.user_id}
-              testId="org-members-table" emptyMessage="No members" />
+              testId="org-members-table" emptyMessage="No members"
+              onRowClick={(m) => view(m)} rowTestId={(m) => `org-member-row-${m.user_id}`} />
           )}
           {pageCount > 1 && (
             <div className="flex items-center justify-end gap-2">
@@ -210,7 +272,7 @@ export function OrgMembersTable({ orgId, canRead, canInvite, canRemove, canSuspe
         </>
       )}
 
-      <MemberDetailDrawer orgId={orgId} member={viewing} onClose={() => setViewing(null)}
+      <MemberDetailDrawer orgId={orgId} member={viewing} onClose={() => view(null)}
         canRemove={canRemove} canSuspend={canSuspend} canAssign={canAssign} canViewUsage={canViewUsage} />
     </div>
   );

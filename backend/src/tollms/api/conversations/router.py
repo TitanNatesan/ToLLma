@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from tollms.core.deps import get_db
@@ -32,8 +32,15 @@ def create(data: ConversationCreate, db: Session = Depends(get_db), user: User =
 
 
 @router.get("", response_model=list[ConversationRead])
-def list_all(search: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> list[ConversationRead]:
-    convs = service.list_conversations(db, search=search, user_id=user.id)
+def list_all(response: Response, search: str | None = None,
+             limit: int = Query(default=20, ge=1, le=100),
+             cursor: str | None = None,
+             db: Session = Depends(get_db),
+             user: User = Depends(require_active_user)) -> list[ConversationRead]:
+    convs, next_cursor = service.list_conversations(
+        db, search=search, user_id=user.id, limit=limit, cursor=cursor)
+    if next_cursor is not None:
+        response.headers["X-Next-Cursor"] = next_cursor
     out = []
     for c in convs:
         item = ConversationRead.model_validate(c)

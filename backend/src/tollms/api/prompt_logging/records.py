@@ -237,7 +237,8 @@ def list_logs(db: Session, caller_id: uuid.UUID, *,
     if end is not None:
         stmt = stmt.where(PromptLog.created_at < end)
     if q is not None and q.strip():
-        stmt = stmt.where(PromptLog.request_id.ilike(f"%{q.strip()[:128]}%"))
+        escaped = q.strip()[:128].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        stmt = stmt.where(PromptLog.request_id.ilike(f"%{escaped}%", escape="\\"))
     decoded = _decode_cursor(cursor)
     if decoded is not None:
         created_at, row_id = decoded

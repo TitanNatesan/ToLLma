@@ -146,7 +146,7 @@ def list_members(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, *,
     like = _search_like(search)
     if like is not None:
         stmt = stmt.join(User, User.id == Membership.user_id).where(
-            or_(func.lower(User.email).like(like), func.lower(User.full_name).like(like)))
+            or_(func.lower(User.email).like(like, escape="\\"), func.lower(User.full_name).like(like, escape="\\")))
     stmt = stmt.order_by(Membership.is_root.desc(), Membership.created_at)
     lim = _clamp_limit(limit, None)
     if lim is not None:

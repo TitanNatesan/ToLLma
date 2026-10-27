@@ -30,7 +30,7 @@ export function DocsNav() {
             aria-current={active ? "page" : undefined}
             data-testid={`docs-nav-${item.slug}`}
             className={cn(
-              "min-w-36 flex-1 rounded-lg border px-3 py-2 transition-colors md:min-w-0",
+              "min-w-36 flex-1 rounded-lg border px-3 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 md:min-w-0",
               active
                 ? "border-tollma-500/40 bg-tollma-50 dark:bg-tollma-950/30"
                 : "border-transparent hover:border-zinc-200 hover:bg-zinc-50 dark:hover:border-zinc-800 dark:hover:bg-zinc-900/60",

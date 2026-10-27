@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowUpDown, Loader2, UsersRound } from "lucide-react";
 import { toast } from "@/lib/notify";
 import {
@@ -87,9 +88,55 @@ export interface TeamPerms {
   canAssignSets: boolean;
 }
 
-type SortKey = "name" | "members" | "created";
+export type TeamSortKey = "name" | "members" | "created";
 
-export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissions, canReadAudit, canManageLogging }: {
+export interface TeamFilters {
+  search: string;
+  sortKey: TeamSortKey;
+  sortDir: 1 | -1;
+  page: number;
+}
+
+export const EMPTY_TEAM_FILTERS: TeamFilters = {
+  search: "",
+  sortKey: "name",
+  sortDir: 1,
+  page: 0,
+};
+
+/** Teams filter controls. Horizontal in the table header; vertical in the
+ * section sidebar (same components/state, no duplicated copies). */
+export function OrgTeamsFilters({ value, onChange, layout = "horizontal" }: {
+  value: TeamFilters;
+  onChange: (f: TeamFilters) => void;
+  layout?: "horizontal" | "vertical";
+}) {
+  const wrap = layout === "vertical"
+    ? "flex flex-col gap-2"
+    : "flex flex-nowrap items-center gap-2 overflow-x-auto pb-1";
+  const selectClass = layout === "vertical" ? "w-full" : "w-32";
+  return (
+    <div className={wrap}>
+      <div className={layout === "vertical" ? "w-full" : "min-w-44 flex-1"}>
+        <SearchInput value={value.search} onChange={(e) => onChange({ ...value, search: e.target.value, page: 0 })}
+          onClear={() => onChange({ ...value, search: "" })} placeholder="Search teams…" aria-label="Search teams"
+          data-testid="org-teams-search" />
+      </div>
+      <Select value={value.sortKey} onChange={(e) => onChange({ ...value, sortKey: e.target.value as TeamSortKey, page: 0 })} sizeVariant="sm"
+        className={selectClass} aria-label="Sort teams" data-testid="org-teams-sort">
+        <option value="name">Name</option>
+        <option value="members">Members</option>
+        <option value="created">Created</option>
+      </Select>
+      <Button size="sm" variant="outline" onClick={() => onChange({ ...value, sortDir: value.sortDir === 1 ? -1 : 1, page: 0 })}
+        aria-label={value.sortDir === 1 ? "Sort descending" : "Sort ascending"}>
+        <ArrowUpDown className="size-3.5" aria-hidden />
+      </Button>
+    </div>
+  );
+}
+
+export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissions, canReadAudit, canManageLogging, filters, onFilters, hideFilters, createOpen, onCreateOpen }: {
   orgId: string;
   members: Member[];
   sets: PermissionSet[];
@@ -99,13 +146,37 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
   canReadAudit: boolean;
   /** PromptLogs.Manage (or root): gates the team logging toggle. */
   canManageLogging: boolean;
+  /** Controlled filter state (section sidebar). Defaults to internal state. */
+  filters?: TeamFilters;
+  onFilters?: (f: TeamFilters) => void;
+  /** Hide the in-header filter bar (it renders in the sidebar instead). */
+  hideFilters?: boolean;
+  /** Controlled create dialog (the New team button lives in the main header). */
+  createOpen?: boolean;
+  onCreateOpen?: (open: boolean) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<1 | -1>(1);
-  const [page, setPage] = useState(0);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [managing, setManaging] = useState<string | null>(null);
+  const [internal, setInternal] = useState<TeamFilters>(EMPTY_TEAM_FILTERS);
+  const filtersValue = filters ?? internal;
+  const setFiltersValue = onFilters ?? setInternal;
+  const { search, sortKey, sortDir, page } = filtersValue;
+  const setPage = (p: number | ((prev: number) => number)) =>
+    setFiltersValue({ ...filtersValue, page: typeof p === "function" ? p(filtersValue.page) : p });
+  const [internalCreate, setInternalCreate] = useState(false);
+  const createOpenValue = createOpen ?? internalCreate;
+  const setCreateOpen = onCreateOpen ?? setInternalCreate;
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Deep link (?team=): selection is derived from the URL (no mirror state).
+  const managing = searchParams.get("team");
+  function setManaging(id: string | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("team") ?? null) === id) return;
+    if (id) params.set("team", id);
+    else params.delete("team");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
 
   const debounced = useDebouncedValue(search.trim(), 300);
   const teams = useTeams(orgId, {
@@ -161,28 +232,18 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
 
   return (
     <div className="space-y-2.5" data-testid="org-teams">
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
-        <div className="min-w-44 flex-1">
-          <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            onClear={() => setSearch("")} placeholder="Search teams…" aria-label="Search teams"
-            data-testid="org-teams-search" />
+      {!hideFilters && (
+        <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+          <div className="min-w-0 flex-1">
+            <OrgTeamsFilters value={filtersValue} onChange={setFiltersValue} />
+          </div>
+          {perms.canCreate && (
+            <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="org-team-create-open">
+              <UsersRound className="size-3.5" aria-hidden /> New team
+            </Button>
+          )}
         </div>
-        <Select value={sortKey} onChange={(e) => { setSortKey(e.target.value as SortKey); setPage(0); }} sizeVariant="sm"
-          className="w-32" aria-label="Sort teams" data-testid="org-teams-sort">
-          <option value="name">Name</option>
-          <option value="members">Members</option>
-          <option value="created">Created</option>
-        </Select>
-        <Button size="sm" variant="outline" onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}
-          aria-label={sortDir === 1 ? "Sort descending" : "Sort ascending"}>
-          <ArrowUpDown className="size-3.5" aria-hidden />
-        </Button>
-        {perms.canCreate && (
-          <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="org-team-create-open">
-            <UsersRound className="size-3.5" aria-hidden /> New team
-          </Button>
-        )}
-      </div>
+      )}
 
       {teams.isLoading && <LoadingState message="Loading teams…" />}
       {teams.isError && isForbidden(teams.error) && (
@@ -216,7 +277,8 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
             {rows.length} team{rows.length === 1 ? "" : "s"}
             {pageCount > 1 && ` · page ${safePage + 1} of ${pageCount}`}
           </p>
-          <DataTable columns={columns} rows={visible} rowKey={(t) => t.id} testId="org-teams-table" />
+          <DataTable columns={columns} rows={visible} rowKey={(t) => t.id} testId="org-teams-table"
+            onRowClick={(t) => setManaging(t.id)} />
           {pageCount > 1 && (
             <div className="flex items-center justify-end gap-2">
               <Button size="sm" variant="outline" disabled={safePage === 0}
@@ -228,7 +290,7 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
         </>
       )}
 
-      {createOpen && (
+      {createOpenValue && (
         <TeamCreateDialog orgId={orgId} sets={sets} canAssignSets={perms.canAssignSets}
           isRoot={isRoot} myPermissions={myPermissions} canManageLogging={canManageLogging}
           onClose={() => setCreateOpen(false)} />

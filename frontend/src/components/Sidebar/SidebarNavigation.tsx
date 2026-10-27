@@ -42,7 +42,7 @@ function NavRow({ item, active }: { item: NavItem; active: boolean }) {
       aria-current={active ? "page" : undefined}
       data-testid={`sidebar-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
       className={cn(
-        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60",
         active
           ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
           : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
@@ -94,7 +94,7 @@ export function SidebarLogoutNav() {
         aria-label="Log out"
         data-testid="logout-btn"
         className={cn(
-          "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+          "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60",
           "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
         )}
       >

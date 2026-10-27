@@ -28,6 +28,8 @@ def list_logs(
     limit: int = 50,
     offset: int = 0,
 ) -> RequestLogPage:
+    offset = min(max(offset, 0), 5000)
+    limit = min(max(limit, 1), 200)
     filters = [
         RequestLog.user_id == user_id if user_id is not None else RequestLog.user_id.is_(None)
     ]

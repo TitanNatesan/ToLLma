@@ -36,6 +36,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useOrgStore } from "@/store/org";
 import { useOrgProviders, useOrgs } from "@/hooks/useOrgs";
+import { useWorkspaceSearch, type WorkspaceHit } from "@/hooks/useWorkspaceSearch";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -84,6 +85,18 @@ function PaletteItem({
   );
 }
 
+const KIND_ICON: Record<string, ComponentType<{ className?: string }>> = {
+  conversation: MessageSquare,
+  member: Users,
+  team: UsersRound,
+  set: ShieldCheck,
+  key: KeyRound,
+  provider: Cpu,
+  guardrail: ShieldCheck,
+  'prompt-log': ScrollText,
+  audit: ScrollText,
+};
+
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <div className="px-3 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
@@ -125,11 +138,31 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const isOrg = context.type === "org";
   const orgEntry = useOrgs().data?.find((o) => isOrg && o.id === context.orgId);
   const can = (...codes: string[]) =>
-    !!orgEntry && (orgEntry.is_root || codes.some((c) => orgEntry.permissions.includes(c)));
+    !isOrg || (!!orgEntry && (orgEntry.is_root || codes.some((c) => orgEntry.permissions.includes(c))));
   const { data: orgProviders = [] } = useOrgProviders(isOrg ? context.orgId : "", {
     enabled: isOrg && (!!orgEntry?.is_root || !!orgEntry?.permissions.includes("Providers.Read")),
   });
   const scopeProviders = isOrg ? orgProviders : providers;
+
+  // Workspace-scoped search: server conversation search + permission-gated
+  // entity lists (members/teams/sets/keys/guardrails), debounced 250ms with
+  // stale cancellation inside the hook. No secrets ever render (key hits
+  // carry names only).
+  const ws = useWorkspaceSearch(query, { open, orgId: isOrg ? context.orgId : null, can });
+  const wsActive = query.trim().length >= 2;
+  const providerHits = wsActive
+    ? scopeProviders
+        .filter((p) => p.name.toLowerCase().includes(query.trim().toLowerCase()))
+        .slice(0, 5)
+        .map((p) => ({
+          id: `provider:${p.id}`,
+          kind: "provider",
+          title: p.name,
+          subtitle: providerTypeLabel(p.provider_type),
+          href: `/providers?provider=${encodeURIComponent(p.id)}`,
+          testId: `cmd-hit-provider-${p.id}`,
+        }) satisfies WorkspaceHit)
+    : [];
 
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
@@ -161,6 +194,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     { label: "Providers", description: "Browse registered providers", href: "/providers", keywords: "go to providers registry", Icon: Cpu, testId: "cmd-nav-providers" },
     { label: "API Keys", description: "Manage gateway keys", href: "/api-keys", keywords: "go to api keys tokens", Icon: KeyRound, testId: "cmd-nav-keys" },
     { label: "Analytics", description: "Usage and cost insights", href: "/analytics", keywords: "go to analytics usage costs", Icon: BarChart3, testId: "cmd-nav-analytics" },
+    { label: "Guardrails", description: "Policy enforcement", href: "/guardrails", keywords: "go to guardrails policies enforcement", Icon: ShieldCheck, testId: "cmd-nav-guardrails" },
+    { label: "Prompt Logs", description: "Request history", href: "/prompt-logs", keywords: "go to prompt logs requests history", Icon: ScrollText, testId: "cmd-nav-prompt-logs" },
     { label: "API Docs", description: "Integration reference", href: "/docs", keywords: "go to api docs reference", Icon: BookOpen, testId: "cmd-nav-docs" },
     ...(isOrg
       ? [
@@ -171,7 +206,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           ...(can("Keys.Read", "Members.Read", "Members.Invite", "Members.Approve", "Members.Update") ? [{ label: "Operations", description: "Invitations and join requests", href: `/organizations/${context.orgId}?section=operations`, keywords: "go to operations invitations requests", Icon: Settings2, testId: "cmd-nav-org-operations" }] : []),
           { label: "Budgets", description: "Spending caps and allocation", href: `/organizations/${context.orgId}?section=budgets`, keywords: "go to budgets spending caps", Icon: Wallet, testId: "cmd-nav-org-budgets" },
           ...(can("Audit.Read") ? [{ label: "Audit Logs", description: "Security and activity trail", Icon: ScrollText, keywords: "go to audit logs", href: `/organizations/${context.orgId}?section=audit`, testId: "cmd-nav-org-audit" }] : []),
-          { label: "Organization settings", description: "Profile, sharing and danger zone", href: `/organizations/${context.orgId}?section=settings`, keywords: "go to organization settings", Icon: Settings, testId: "cmd-nav-org-settings" },
+          { label: "Organization settings", description: "Profile and danger zone", href: `/organizations/${context.orgId}?section=settings`, keywords: "go to organization settings", Icon: Settings, testId: "cmd-nav-org-settings" },
         ]
       : [
           { label: "Settings", description: "Workspace preferences", href: "/settings", keywords: "go to settings preferences", Icon: Settings, testId: "cmd-nav-settings" },
@@ -248,6 +283,68 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
               </div>
             </Command.Group>
 
+            {/* Workspace search results (server conversations + gated entities) */}
+            {wsActive && ws.pending && (
+              <Command.Group>
+                <SectionHeading>Workspace results</SectionHeading>
+                <p className="px-3 py-4 text-center text-xs text-zinc-400" data-testid="cmd-search-loading">
+                  Searching workspace…
+                </p>
+              </Command.Group>
+            )}
+            {wsActive && ws.error && (
+              <Command.Group>
+                <SectionHeading>Workspace results</SectionHeading>
+                <div className="flex flex-col items-center gap-1.5 px-4 py-4 text-center">
+                  <p className="text-xs text-zinc-500">Workspace search failed.</p>
+                  <button
+                    type="button"
+                    onClick={() => ws.retry()}
+                    data-testid="cmd-search-retry"
+                    className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </Command.Group>
+            )}
+            {ws.groups.map((group) => (
+              <Command.Group key={group.kind}>
+                <SectionHeading>{group.label}</SectionHeading>
+                <div className="space-y-0.5">
+                  {group.hits.map((hit) => (
+                    <PaletteItem
+                      key={hit.id}
+                      value={`${hit.kind} ${hit.title} ${hit.subtitle ?? ""}`}
+                      onSelect={() => run(() => router.push(hit.href))}
+                      testId={hit.testId}
+                      icon={KIND_ICON[hit.kind] ?? Search}
+                      title={hit.title}
+                      description={hit.subtitle}
+                    />
+                  ))}
+                </div>
+              </Command.Group>
+            ))}
+            {providerHits.length > 0 && (
+              <Command.Group>
+                <SectionHeading>Providers</SectionHeading>
+                <div className="space-y-0.5">
+                  {providerHits.map((hit) => (
+                    <PaletteItem
+                      key={hit.id}
+                      value={`provider ${hit.title} ${hit.subtitle ?? ""}`}
+                      onSelect={() => run(() => router.push(hit.href))}
+                      testId={hit.testId}
+                      icon={Cpu}
+                      title={hit.title}
+                      description={hit.subtitle}
+                    />
+                  ))}
+                </div>
+              </Command.Group>
+            )}
+
             {/* Scope-aware navigation */}
             <Command.Group>
               <SectionHeading>
@@ -302,8 +399,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
               </div>
             </Command.Group>
 
-            {/* Recent Conversations */}
-            {filteredConvs.length > 0 && (
+            {/* Recent Conversations (local filter; hidden while workspace search runs) */}
+            {!wsActive && filteredConvs.length > 0 && (
               <Command.Group>
                 <SectionHeading>Recent Conversations</SectionHeading>
                 <div className="space-y-0.5">

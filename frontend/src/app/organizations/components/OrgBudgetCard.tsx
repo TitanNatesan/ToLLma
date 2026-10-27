@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Loader2, Wallet } from "lucide-react";
 import { toast } from "@/lib/notify";
 import {
-  Button, Card, CardContent, Dialog, DialogContent, DialogDescription,
+  Button, Card, CardContent, DetailPanel, Dialog, DialogContent, DialogDescription,
   DialogTitle, EmptyState, ErrorState, Field, Input, LoadingState,
 } from "@/components/ui";
 import { isForbiddenError, useOrgBudget, useOrgMutations } from "@/hooks/useOrgs";
@@ -42,6 +42,8 @@ export function OrgBudgetCard({ orgId, canRead, canEdit }: {
   const budget = useOrgBudget(orgId, { enabled: canRead });
   const mut = useOrgMutations(orgId);
   const [editing, setEditing] = useState(false);
+  // Summary panel: same cap/allocated/unallocated numbers, plus scope note.
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [cap, setCap] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,8 +83,15 @@ export function OrgBudgetCard({ orgId, canRead, canEdit }: {
           <h3 className="flex items-center gap-1.5 text-xs font-bold">
             <Wallet className="size-3.5" aria-hidden /> Budget pools
           </h3>
-          {canEdit && data && !budget.isLoading && (
-            <Button size="sm" variant="outline" data-testid="org-budget-edit"
+          <div className="flex items-center gap-1.5">
+            {data && !budget.isLoading && (
+              <Button size="sm" variant="ghost" data-testid="org-budget-summary"
+                onClick={() => setSummaryOpen(true)}>
+                Details
+              </Button>
+            )}
+            {canEdit && data && !budget.isLoading && (
+              <Button size="sm" variant="outline" data-testid="org-budget-edit"
               onClick={() => {
                 setCap(capN === null ? "" : String(capN));
                 setError(null);
@@ -90,8 +99,27 @@ export function OrgBudgetCard({ orgId, canRead, canEdit }: {
               }}>
               Edit cap
             </Button>
-          )}
+            )}
+          </div>
         </div>
+      <DetailPanel open={summaryOpen} onClose={() => setSummaryOpen(false)} testId="org-budget-summary-panel"
+        title="Budget summary"
+        subtitle="Organization-wide spend pool — caps apply to every member key.">
+        {data && (
+          <dl className="space-y-1 text-xs">
+            {[
+              ["Cap", capN === null ? "Unlimited" : money(capN)],
+              ["Allocated", money(data.allocated)],
+              ["Unallocated", money(data.unallocated)],
+            ].map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-2 rounded border border-zinc-100 px-2 py-1 dark:border-zinc-900">
+                <dt className="text-zinc-500">{k}</dt>
+                <dd className="font-mono text-[11px]">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DetailPanel>
 
         {budget.isLoading && <LoadingState message="Loading budget…" />}
         {budget.isError && isForbiddenError(budget.error) && (

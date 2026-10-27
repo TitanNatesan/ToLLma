@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, PanelLeftOpen, Search } from "lucide-react";
+import { Bell, ChevronsUpDown, PanelLeftOpen, Search } from "lucide-react";
 import { useChatStore } from "@/store/chat";
 import { useAuthStore } from "@/store/auth";
 import { useOrgStore } from "@/store/org";
@@ -64,13 +64,15 @@ function RailButton({
 /**
  * Collapsed-sidebar icon rail (desktop). Top: reveal control, command
  * palette search, notifications. Middle (scrollable): scope-aware
- * navigation icons with tooltips, always visible. Bottom: profile avatar
- * opening the workspace menu. The show/hide chevron lives only in the
- * expanded sidebar footer; the rail never hides its navigation.
+ * navigation icons with tooltips (hidden when navigation is hidden via the
+ * rail toggle or the expanded footer chevron, which share navVisible).
+ * Bottom: rail toggle, then profile avatar opening the workspace menu.
  */
 export function SidebarReveal({ onOpenCommandPalette }: { onOpenCommandPalette?: () => void }) {
   const router = useRouter();
   const setLeftSidebar = useChatStore((s) => s.setLeftSidebar);
+  const navVisible = useChatStore((s) => s.navVisible);
+  const setNavVisible = useChatStore((s) => s.setNavVisible);
   const user = useAuthStore((s) => s.user);
   const context = useOrgStore((s) => s.context);
   const pathname = usePathname();
@@ -111,7 +113,7 @@ export function SidebarReveal({ onOpenCommandPalette }: { onOpenCommandPalette?:
       <div className="my-1 h-px w-6 shrink-0 bg-zinc-200 dark:bg-zinc-800" aria-hidden />
 
       <nav aria-label={isOrg ? "Organization sections" : "Personal navigation"} className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto">
-        {!isOrg &&
+        {navVisible && !isOrg &&
           PERSONAL_NAV.map((item) => (
             <RailButton
               key={item.href}
@@ -125,6 +127,7 @@ export function SidebarReveal({ onOpenCommandPalette }: { onOpenCommandPalette?:
             </RailButton>
           ))}
         {isOrg &&
+          navVisible &&
           orgEntries.map((entry) => (
             <RailButton
               key={entry.id}
@@ -140,6 +143,19 @@ export function SidebarReveal({ onOpenCommandPalette }: { onOpenCommandPalette?:
       </nav>
 
       <div className="my-1 h-px w-6 shrink-0 bg-zinc-200 dark:bg-zinc-800" aria-hidden />
+
+      <Tooltip content={navVisible ? "Hide navigation" : "Show navigation"} side="right">
+        <button
+          type="button"
+          onClick={() => setNavVisible(!navVisible)}
+          aria-label={navVisible ? "Hide navigation" : "Show navigation"}
+          aria-expanded={navVisible}
+          data-testid="rail-nav-toggle"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        >
+          <ChevronsUpDown className="size-4" aria-hidden />
+        </button>
+      </Tooltip>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

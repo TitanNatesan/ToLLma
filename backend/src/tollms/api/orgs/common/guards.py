@@ -124,6 +124,45 @@ PERMISSION_CATALOG = [code for group in PERMISSION_GROUPS.values() for code, _ i
 PERMISSION_LABELS = {code: label for group in PERMISSION_GROUPS.values() for code, label in group}
 
 
+# Prerequisite ladder: creating/updating/deleting a resource requires its
+# read permission (update->read, delete->read). Assigning a permission
+# requires possessing it (enforced by _check_grantable) plus the relevant
+# assign authority (enforced by the caller's _require_perm, e.g.
+# PermissionSets.Assign). PromptLogs is exempt: custodial erase (Delete /
+# purge) must work without read visibility (least privilege).
+_PREREQ_OPS = ("Create", "Update", "Delete")
+_PREREQ_EXEMPT_GROUPS = ("PromptLogs",)
+
+
+def _group_of(code: str) -> str:
+    return code.partition(".")[0]
+
+
+def _read_of(code: str) -> str:
+    return f"{_group_of(code)}.Read"
+
+
+PREREQUISITES: dict[str, list[str]] = {
+    code: [_read_of(code)]
+    for code in PERMISSION_CATALOG
+    if code.partition(".")[2] in _PREREQ_OPS
+    and _group_of(code) not in _PREREQ_EXEMPT_GROUPS
+    and _read_of(code) in PERMISSION_CATALOG
+}
+
+
+def _validate_prerequisites(codes: list[str]) -> None:
+    """Reject permission sets whose mutation codes lack their read
+    prerequisite (422)."""
+    missing = sorted({
+        need for code in set(codes)
+        for need in PREREQUISITES.get(code, [])
+        if need not in codes
+    })
+    if missing:
+        raise ValidationError(f"missing prerequisite permissions: {', '.join(missing)}")
+
+
 
 SYSTEM_SET_DEFS = {
     "Owner": ("Full organization control (all permissions).", list(PERMISSION_CATALOG)),
@@ -176,14 +215,28 @@ def _clamp_limit(limit: int | None, default: int | None) -> int | None:
 
 
 def _clamp_offset(offset: int) -> int:
-    return max(offset or 0, 0)
+    """Floor at 0 and cap deep paging (bounded table scans only).
 
+    Offsets past 5000 clamp to 5000, so deep pages may repeat tail
+    content — bounded-work tradeoff (documented)."""
+    return min(max(offset or 0, 0), 5000)
+
+
+
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards so search text matches literally.
+
+    PostgreSQL LIKE treats backslash as the default escape character, so
+    callers can pass the result straight to .like()/.ilike() with no
+    per-site escape argument. Same pattern as services/admin/*._like.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _search_like(value: str | None) -> str | None:
     if value is None or not value.strip():
         return None
-    return f"%{value.strip().lower()}%"
+    return f"%{_escape_like(value.strip().lower())}%"
 
 
 
@@ -314,15 +367,21 @@ def _require_perm(db: Session, org: Organization, mem: Membership, user_id: uuid
     perms = effective_permissions(db, org.id, user_id)
     if code not in perms and not mem.is_root:
         raise NotFoundError(_ORG_NOT_FOUND)
+    if not mem.is_root:
+        missing = [need for need in PREREQUISITES.get(code, []) if need not in perms]
+        if missing:
+            raise NotFoundError(_ORG_NOT_FOUND)
     return perms
 
 
 
 def _check_grantable(granter: set[str], codes: list[str]) -> None:
-    """Escalation hard rule: never grant what you do not possess."""
+    """Escalation hard rule: never grant what you do not possess. Sets whose
+    mutation codes lack their read prerequisite are rejected (422)."""
     unknown = [c for c in codes if c not in PERMISSION_CATALOG]
     if unknown:
         raise ValidationError(f"unknown permissions: {', '.join(sorted(unknown))}")
+    _validate_prerequisites(codes)
     excess = [c for c in codes if c not in granter]
     if excess:
         raise NotFoundError("permission set not found")
@@ -340,5 +399,12 @@ def _resolve_sets(db: Session, org_id: uuid.UUID, set_ids: list[uuid.UUID]) -> l
     ).scalars().all()
     if len(rows) != len(set(set_ids)):
         raise NotFoundError("permission set not found")
-    return list(rows)
+    out = list(rows)
+    _validate_prerequisites(sorted({
+        r[0] for r in db.execute(
+            select(PermissionSetPermission.code).where(
+                PermissionSetPermission.set_id.in_([r.id for r in out]))
+        ).all()
+    }))
+    return out
 

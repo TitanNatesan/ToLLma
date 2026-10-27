@@ -12,6 +12,7 @@ from tollms.api.orgs.common.guards import (
     _parse_uuid,
     _require_perm,
 )
+from tollms.api.orgs.common.audit_registry import format_event
 from tollms.api.orgs.schemas import AuditRead
 from tollms.core.exceptions import ValidationError
 from tollms.models.organization import AuditLog
@@ -50,7 +51,7 @@ def get_audit(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, limit: int = 1
     if cursor:
         text = cursor.strip()
         try:
-            off = max(int(text), 0)
+            off = min(max(int(text), 0), 5000)
         except (ValueError, TypeError):
             anchor_id = _parse_uuid(text, "cursor")
             anchor = db.get(AuditLog, anchor_id) if anchor_id is not None else None
@@ -70,6 +71,7 @@ def get_audit(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, limit: int = 1
     return [AuditRead(id=r.id, action=r.action, actor_user_id=r.actor_user_id,
                       target=dict(r.target or {}), created_at=r.created_at,
                       actor_email=(users[r.actor_user_id].email if r.actor_user_id in users else None),
-                      actor_name=(users[r.actor_user_id].full_name if r.actor_user_id in users else None))
+                      actor_name=(users[r.actor_user_id].full_name if r.actor_user_id in users else None),
+                      display_title=format_event(r.action))
             for r in rows]
 

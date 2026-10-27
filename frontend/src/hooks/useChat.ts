@@ -1,11 +1,12 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createConversation,
   deleteConversation,
   getConversation,
   getUsage,
+  listConversationPage,
   listConversations,
   pinConversation,
   renameConversation,
@@ -14,6 +15,23 @@ import { useChatStore } from "@/store/chat";
 
 export function useConversations(search: string) {
   return useQuery({ queryKey: ["conversations", search], queryFn: () => listConversations(search || undefined) });
+}
+
+const CONVERSATION_PAGE_LIMIT = 20;
+
+/** Cursor-paged conversation feed for infinite scroll. The backend may not
+ * paginate yet (bare array → single page, no next); the shape tolerates both.
+ * Search/workspace changes reset via the query key. */
+export function useConversationsInfinite(search: string) {
+  return useInfiniteQuery({
+    queryKey: ["conversations", "infinite", search],
+    queryFn: ({ pageParam }: { pageParam?: string }) =>
+      listConversationPage(search || undefined, { limit: CONVERSATION_PAGE_LIMIT, cursor: pageParam }),
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    initialPageParam: undefined as string | undefined,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+  });
 }
 
 // Paused while streaming: the id-change fetch could otherwise resolve after the

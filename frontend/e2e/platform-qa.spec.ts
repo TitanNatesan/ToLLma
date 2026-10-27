@@ -75,7 +75,7 @@ async function dashOps(page: Page, orgId: string, tab: "requests" | "invitations
   await expect(page.getByTestId("org-section-operations")).toBeVisible({ timeout: 20000 });
   await expect(page.getByTestId("org-operations")).toBeVisible({ timeout: 20000 });
   await page.getByTestId(`org-ops-tab-${tab}`).click();
-  await expect(page.getByTestId(`org-ops-tab-${tab}`)).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId(`org-ops-tab-${tab}`)).toHaveAttribute("aria-current", "page");
 }
 
 async function myOrgId(page: Page, name: string): Promise<string> {

@@ -135,18 +135,18 @@ export function GuardrailsTable({
           align: "right",
           render: (p) => (
             <span className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-              <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800" onClick={() => onView(p)} data-testid={`guardrail-view-${p.id}`}>View</button>
+              <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-800" onClick={() => onView(p)} data-testid={`guardrail-view-${p.id}`}>View</button>
               {canEdit && (
-                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800" onClick={() => onEdit(p)} data-testid={`guardrail-edit-${p.id}`}>Edit</button>
+                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-800" onClick={() => onEdit(p)} data-testid={`guardrail-edit-${p.id}`}>Edit</button>
               )}
               {canClone && (
-                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800" onClick={() => onClone(p)} data-testid={`guardrail-clone-${p.id}`}>Clone</button>
+                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-800" onClick={() => onClone(p)} data-testid={`guardrail-clone-${p.id}`}>Clone</button>
               )}
               {canTest && (
-                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800" onClick={() => onTest(p)} data-testid={`guardrail-test-${p.id}`}>Test</button>
+                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-800" onClick={() => onTest(p)} data-testid={`guardrail-test-${p.id}`}>Test</button>
               )}
               {canDelete && (
-                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20" onClick={() => onDelete(p)} data-testid={`guardrail-delete-${p.id}`}>Delete</button>
+                <button type="button" className="rounded px-1.5 py-1 text-[11px] text-red-600 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-red-950/20" onClick={() => onDelete(p)} data-testid={`guardrail-delete-${p.id}`}>Delete</button>
               )}
             </span>
           ),

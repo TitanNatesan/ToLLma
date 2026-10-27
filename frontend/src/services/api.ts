@@ -217,8 +217,62 @@ export const mapDiscoveredModels = (body: { provider_type?: string; base_url?: s
   post<{ mapped: MappedModel[] }>("/api/v1/model-repository/map", body);
 
 // --- Conversations ---
+export interface ConversationPage {
+  items: Conversation[];
+  /** Opaque cursor for the next page; null when the backend has no more (or
+   *  is an older shape without pagination — then the single page is all). */
+  nextCursor: string | null;
+}
+
+function asConversationPage(payload: unknown): ConversationPage {
+  if (Array.isArray(payload)) return { items: payload as Conversation[], nextCursor: null };
+  if (payload && typeof payload === "object") {
+    const rec = payload as Record<string, unknown>;
+    for (const key of ["items", "conversations", "results", "data"]) {
+      if (Array.isArray(rec[key])) {
+        const next = rec.next_cursor ?? rec.nextCursor ?? rec.cursor ?? null;
+        return { items: rec[key] as Conversation[], nextCursor: typeof next === "string" ? next : null };
+      }
+    }
+  }
+  return { items: [], nextCursor: null };
+}
+
 export const listConversations = (search?: string) =>
   get<Conversation[]>(`/api/v1/conversations${search ? `?search=${encodeURIComponent(search)}` : ""}`);
+
+/** Cursor-paged conversation read. The next-page cursor travels the
+ * `X-Next-Cursor` response header (falling back to a body cursor field),
+ * so this stays a raw fetch: apiRequest only returns the parsed body.
+ * Older backends ignore the params and return a bare array (single page). */
+export const listConversationPage = async (
+  search?: string,
+  opts?: { limit?: number; cursor?: string; signal?: AbortSignal },
+): Promise<ConversationPage> => {
+  const q = new URLSearchParams();
+  if (search) q.set("search", search);
+  q.set("limit", String(opts?.limit ?? 20));
+  if (opts?.cursor) q.set("cursor", opts.cursor);
+  const headers = new Headers();
+  const token = getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(apiUrl(`/api/v1/conversations?${q.toString()}`), {
+    cache: "no-store",
+    credentials: "include",
+    headers,
+    signal: opts?.signal,
+  });
+  const headerCursor = res.headers.get("X-Next-Cursor");
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    let data: unknown = body;
+    try { data = JSON.parse(body); } catch { /* not JSON */ }
+    throw new ApiError(res.status, res.statusText, data, `GET /api/v1/conversations -> ${res.status}`);
+  }
+  const payload: unknown = await res.json().catch(() => []);
+  const page = asConversationPage(payload);
+  return { items: page.items, nextCursor: headerCursor || page.nextCursor };
+};
 export const getConversation = (id: string) => get<Conversation>(`/api/v1/conversations/${id}`);
 export const createConversation = (body: { title?: string; provider_id?: string | null; model_id?: string | null }) =>
   post<Conversation>("/api/v1/conversations", body);
@@ -472,10 +526,13 @@ async function consumeStream(res: Response, cb: StreamCallbacks): Promise<void> 
         } catch {
           continue;
         }
-        if (typeof event.delta === "string") cb.onDelta(event.delta);
+        // Terminal frames carry the full content too — done MUST win over
+        // content/snapshot, otherwise onDone (usage, toast, cleanup) never
+        // fires and the stream just ends silently.
+        if (event.done) cb.onDone(event as unknown as StreamDone);
+        else if (typeof event.delta === "string") cb.onDelta(event.delta);
         else if (typeof event.content === "string") cb.onSnapshot?.(event.content);
         else if (typeof event.conversation_id === "string") cb.onMeta?.(event as unknown as StreamMeta);
-        else if (event.done) cb.onDone(event as unknown as StreamDone);
         else if (typeof event.error === "string" && !event.done) cb.onError(event.error);
       }
     }

@@ -45,24 +45,26 @@ class OrgCreate(BaseModel):
 
 
 class OrgUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     website: str | None = Field(default=None, max_length=255)
     industry: str | None = Field(default=None, max_length=80)
     location: str | None = Field(default=None, max_length=120)
     size: str | None = Field(default=None, max_length=32)
-    visibility_mode: str | None = None
-    personal_sharing_enforced: bool | None = None
 
     @field_validator("description", "website", "industry", "location", "size")
     @classmethod
     def _clean_fields(cls, v: str | None) -> str | None:
         return _clean(v)
 
-    @field_validator("visibility_mode")
+    @field_validator("name")
     @classmethod
-    def _mode(cls, v: str | None) -> str | None:
-        if v is not None and v not in ("metadata_only", "full_conversation_access"):
-            raise ValueError("unknown visibility mode")
+    def _update_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not _NAME_RE.match(v):
+            raise ValueError("invalid organization name")
         return v
 
 
@@ -77,8 +79,6 @@ class OrgRead(BaseModel):
     location: str | None
     size: str | None
     status: str
-    visibility_mode: str
-    personal_sharing_enforced: bool
     is_root: bool = False
     permissions: list[str] = Field(default_factory=list)
     created_at: datetime

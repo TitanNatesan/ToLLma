@@ -69,7 +69,7 @@ function PromptLogsPageInner() {
             aria-selected={tab === t}
             onClick={() => setTab(t)}
             data-testid={`tab-${t}`}
-            className={`px-3 py-2 text-xs font-medium capitalize ${tab === t ? "border-b-2 border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100" : "text-zinc-500"}`}
+            className={`rounded-t px-3 py-2 text-xs font-medium capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 ${tab === t ? "border-b-2 border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100" : "text-zinc-500"}`}
           >
             {t}
           </button>

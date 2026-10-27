@@ -97,6 +97,34 @@ describe("api client", () => {
     expect(done).toMatchObject({ done: true, status: "completed" });
   });
 
+  it("fires onDone for terminal frames that carry content (production shape)", async () => {
+    // The backend terminal envelope always includes the full content
+    // (_terminal_from_row); done must win over the snapshot branch or the
+    // stream ends silently with no usage, toast, or cleanup.
+    const sse =
+      'data: {"conversation_id": "c1", "generation_id": "g1", "message_id": "m1", "status": "running"}\n\n' +
+      'data: {"delta": "Hi"}\n\n' +
+      'data: {"done": true, "generation_id": "g1", "message_id": "m1", "status": "completed", "content": "Hi"}\n\n';
+    const stream = new ReadableStream({
+      start: (c) => {
+        c.enqueue(new TextEncoder().encode(sse));
+        c.close();
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream)));
+    let done: unknown = null;
+    await streamChat(
+      { provider_id: "p", model_id: "m", message: "hi" },
+      {
+        signal: new AbortController().signal,
+        onDone: (d) => (done = d),
+        onDelta: () => {},
+        onError: () => {},
+      },
+    );
+    expect(done).toMatchObject({ done: true, status: "completed", content: "Hi" });
+  });
+
   it("surfaces provider errors", async () => {
     const stream = new ReadableStream({
       start: (c) => {

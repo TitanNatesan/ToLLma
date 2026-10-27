@@ -85,7 +85,7 @@ export function MediaCard({
       {kind === "image" ? (
         <button
           aria-label={`Open ${filename} in the media viewer`}
-          className="group relative block w-full cursor-zoom-in bg-zinc-950/5 dark:bg-black/40"
+          className="group relative block w-full cursor-zoom-in bg-zinc-950/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:bg-black/40"
           data-testid={`message-image-${filename}`}
           onClick={onOpen}
           type="button"
@@ -111,7 +111,7 @@ export function MediaCard({
         </button>
       ) : (
         <div
-          className="group relative w-full bg-black"
+          className="group relative w-full bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60"
           data-testid={`message-video-${filename}`}
           role="button"
           tabIndex={0}
@@ -168,7 +168,7 @@ export function MediaCard({
           </span>
         )}
         <a
-          className="ml-auto inline-flex items-center gap-1 text-tollma-600 transition-colors hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300"
+          className="ml-auto inline-flex items-center gap-1 rounded text-tollma-600 transition-colors hover:text-tollma-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:text-tollma-400 dark:hover:text-tollma-300"
           data-testid="media-card-download"
           download={filename}
           href={src}

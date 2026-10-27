@@ -46,13 +46,14 @@ export const GUARDRAILS_KEYS = {
 };
 
 /** Governance list: always fresh, refetch on focus. 404-oracle never retries. */
-export function useGuardrails(orgId?: string | null) {
+export function useGuardrails(orgId?: string | null, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: GUARDRAILS_KEYS.list(orgId ?? undefined),
     queryFn: () => listGuardrails(orgId ?? undefined),
     staleTime: 0,
     refetchOnWindowFocus: true,
     retry: (count, e) => (isGuardrailStatus(e, 404) ? false : count < 1),
+    enabled: options?.enabled ?? true,
   });
 }
 

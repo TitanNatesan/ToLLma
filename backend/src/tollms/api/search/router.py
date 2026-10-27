@@ -24,6 +24,8 @@ def search(
     end: datetime | None = None,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    org_id: uuid.UUID | None = None,
+    types: str | None = Query(default=None, max_length=256),
     db: Session = Depends(get_db),
     user: User = Depends(require_active_user),
 ) -> SearchResponse:
@@ -37,6 +39,8 @@ def search(
         end=end,
         limit=limit,
         offset=offset,
+        org_id=org_id,
+        types=types,
     )
 
 

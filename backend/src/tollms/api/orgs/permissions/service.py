@@ -54,7 +54,7 @@ def list_sets(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, *,
     )
     like = _search_like(search)
     if like is not None:
-        stmt = stmt.where(func.lower(PermissionSet.name).like(like))
+        stmt = stmt.where(func.lower(PermissionSet.name).like(like, escape="\\"))
     stmt = stmt.order_by(PermissionSet.is_system.desc(), PermissionSet.name)
     lim = _clamp_limit(limit, None)
     if lim is not None:

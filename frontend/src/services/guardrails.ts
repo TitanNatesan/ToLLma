@@ -331,19 +331,19 @@ export function deleteGuardrail(id: string, orgId?: string | null): Promise<void
 }
 
 export function cloneGuardrail(id: string, orgId?: string | null): Promise<GuardrailPolicy> {
-  return post<GuardrailPolicy>(`${policyPath(id, orgId)}/clone`, undefined);
+  return post<GuardrailPolicy>(`${GUARDRAILS_BASE}/${encodeURIComponent(id)}/clone${orgQs(orgId)}`, undefined);
 }
 
 export function enableGuardrail(id: string, orgId?: string | null): Promise<GuardrailPolicy> {
-  return post<GuardrailPolicy>(`${policyPath(id, orgId)}/enable`, undefined);
+  return post<GuardrailPolicy>(`${GUARDRAILS_BASE}/${encodeURIComponent(id)}/enable${orgQs(orgId)}`, undefined);
 }
 
 export function disableGuardrail(id: string, orgId?: string | null): Promise<GuardrailPolicy> {
-  return post<GuardrailPolicy>(`${policyPath(id, orgId)}/disable`, undefined);
+  return post<GuardrailPolicy>(`${GUARDRAILS_BASE}/${encodeURIComponent(id)}/disable${orgQs(orgId)}`, undefined);
 }
 
 export function testGuardrail(id: string, body: GuardrailTestInput, orgId?: string | null): Promise<GuardrailTestResult> {
-  return post<GuardrailTestResult>(`${policyPath(id, orgId)}/test`, body);
+  return post<GuardrailTestResult>(`${GUARDRAILS_BASE}/${encodeURIComponent(id)}/test${orgQs(orgId)}`, body);
 }
 
 export async function listGuardrailTemplates(): Promise<GuardrailTemplate[]> {
@@ -363,11 +363,11 @@ export function validateGuardrailCredentials(body: CredentialsValidateInput): Pr
 }
 
 export function listEvaluators(policyId: string, orgId?: string | null): Promise<GuardrailEvaluator[]> {
-  return get<GuardrailEvaluator[]>(`${policyPath(policyId, orgId)}/evaluators`);
+  return get<GuardrailEvaluator[]>(`${GUARDRAILS_BASE}/${encodeURIComponent(policyId)}/evaluators${orgQs(orgId)}`);
 }
 
 export function createEvaluator(policyId: string, body: EvaluatorCreateInput, orgId?: string | null): Promise<GuardrailEvaluator> {
-  return post<GuardrailEvaluator>(`${policyPath(policyId, orgId)}/evaluators`, body);
+  return post<GuardrailEvaluator>(`${GUARDRAILS_BASE}/${encodeURIComponent(policyId)}/evaluators${orgQs(orgId)}`, body);
 }
 
 export function patchEvaluator(evaluatorId: string, body: EvaluatorPatchInput, orgId?: string | null): Promise<GuardrailEvaluator> {

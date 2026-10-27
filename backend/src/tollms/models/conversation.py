@@ -22,6 +22,8 @@ class Conversation(SoftDeleteMixin, TimestampedModel):
         Index("ix_conversations_created", "created_at"),
         Index("ix_conversations_pinned", "is_pinned"),
         Index("ix_conversations_user", "user_id"),
+        # Newest-first per-user listing (created_at desc, id desc).
+        Index("ix_conversations_user_created", "user_id", "created_at"),
     )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(

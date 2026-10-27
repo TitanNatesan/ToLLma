@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   Badge, Button, DataTable, type DataTableColumn, DetailPanel,
   EmptyState, ErrorState, Input, LoadingState, SearchInput,
 } from "@/components/ui";
-import { auditTargetRows, describeAuditEvent, REDACTED } from "./auditDescriptions";
+import { auditTargetRows, describeAuditEvent, displayAuditValue, isKnownAuditAction, REDACTED } from "./auditDescriptions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { getAuditPage } from "@/services/orgs";
 import { ORG_KEYS, isForbiddenError, isNotFoundError } from "@/hooks/useOrgs";
@@ -47,19 +48,86 @@ function timeLabel(iso: string): string {
   }
 }
 
-export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: boolean }) {
-  const [search, setSearch] = useState("");
-  const [action, setAction] = useState("");
-  const [actor, setActor] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [inspecting, setInspecting] = useState<AuditEntry | null>(null);
+export interface AuditFilters {
+  search: string;
+  action: string;
+  actor: string;
+  from: string;
+  to: string;
+}
+
+export const EMPTY_AUDIT_FILTERS: AuditFilters = {
+  search: "",
+  action: "",
+  actor: "",
+  from: "",
+  to: "",
+};
+
+/** Audit filter controls. Horizontal in the table header; vertical in the
+ * section sidebar (same components/state, no duplicated copies). */
+export function OrgAuditFilters({ value, onChange, layout = "horizontal" }: {
+  value: AuditFilters;
+  onChange: (f: AuditFilters) => void;
+  layout?: "horizontal" | "vertical";
+}) {
+  const wrap = layout === "vertical"
+    ? "flex flex-col gap-2"
+    : "flex flex-nowrap items-center gap-2 overflow-x-auto pb-1";
+  const inputClass = layout === "vertical" ? "h-8 w-full text-xs" : "h-8 w-36 text-xs";
+  return (
+    <div className={wrap}>
+      <div className={layout === "vertical" ? "w-full" : "min-w-44 flex-1"}>
+        <SearchInput value={value.search} onChange={(e) => onChange({ ...value, search: e.target.value })}
+          onClear={() => onChange({ ...value, search: "" })} placeholder="Search events…" aria-label="Search audit events"
+          data-testid="org-audit-search" />
+      </div>
+      <Input value={value.action} onChange={(e) => onChange({ ...value, action: e.target.value })} placeholder="Action filter"
+        aria-label="Filter by action" data-testid="org-audit-action" className={inputClass} maxLength={80} />
+      <Input value={value.actor} onChange={(e) => onChange({ ...value, actor: e.target.value })} placeholder="Actor filter"
+        aria-label="Filter by actor" data-testid="org-audit-actor" className={inputClass} maxLength={120} />
+      <Input type="date" value={value.from} onChange={(e) => onChange({ ...value, from: e.target.value })}
+        aria-label="From date" data-testid="org-audit-from" className={inputClass} />
+      <Input type="date" value={value.to} onChange={(e) => onChange({ ...value, to: e.target.value })}
+        aria-label="To date" data-testid="org-audit-to" className={inputClass} />
+    </div>
+  );
+}
+
+export function OrgAuditTable({ orgId, canRead, filters, onFilters, hideFilters }: {
+  orgId: string;
+  canRead: boolean;
+  /** Controlled filter state (section sidebar). Defaults to internal state. */
+  filters?: AuditFilters;
+  onFilters?: (f: AuditFilters) => void;
+  /** Hide the in-header filter bar (it renders in the sidebar instead). */
+  hideFilters?: boolean;
+}) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  // Selection is derived from the URL (no mirror state).
+  const [internal, setInternal] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS);
+  const filtersValue = filters ?? internal;
+  const setFiltersValue = onFilters ?? setInternal;
+  const { search, action, actor, from, to } = filtersValue;
+  // Deep link (?event=): row clicks open the drawer without navigating away;
+  // the id stays in the URL so the selection is shareable and survives reload.
+  const eventParam = searchParams.get("event");
+  function inspect(entry: AuditEntry | null) {
+    const id = entry?.id ?? null;
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("event") ?? null) === id) return;
+    if (id) params.set("event", id);
+    else params.delete("event");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
 
   const debouncedSearch = useDebouncedValue(search.trim().toLowerCase(), 300);
   const debouncedAction = useDebouncedValue(action.trim(), 300);
   const debouncedActor = useDebouncedValue(actor.trim(), 300);
 
-  const filters = useMemo(() => ({
+  const queryFilters = useMemo(() => ({
     action: debouncedAction || undefined,
     actor: debouncedActor || undefined,
     from: from || undefined,
@@ -67,9 +135,9 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
   }), [debouncedAction, debouncedActor, from, to]);
 
   const query = useInfiniteQuery({
-    queryKey: [...ORG_KEYS.audit(orgId), { ...filters, limit: PAGE_LIMIT }],
+    queryKey: [...ORG_KEYS.audit(orgId), { ...queryFilters, limit: PAGE_LIMIT }],
     queryFn: ({ pageParam }: { pageParam?: string }) =>
-      getAuditPage(orgId, { ...filters, limit: PAGE_LIMIT, cursor: pageParam }),
+      getAuditPage(orgId, { ...queryFilters, limit: PAGE_LIMIT, cursor: pageParam }),
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     initialPageParam: undefined as string | undefined,
     staleTime: 0,
@@ -109,9 +177,9 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
       key: "action", header: "Action",
       render: (a) => {
         const d = describeAuditEvent(a.action, a.target ?? {});
-        const known = !d.title.startsWith("Unknown event");
+        const known = isKnownAuditAction(a.action);
         return (
-          <span className="min-w-0" title={known ? undefined : `Unknown event: ${a.action} — no description available`}>
+          <span className="min-w-0" title={known ? undefined : `Unrecognized event: ${a.action} — showing a readable fallback`}>
             <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100">{d.title}</span>
             <span className="block truncate font-mono text-[10px] text-zinc-400">{a.action}</span>
           </span>
@@ -133,29 +201,23 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
     {
       key: "actions", header: "Actions", align: "right",
       render: (a) => (
-        <Button size="sm" variant="outline" onClick={() => setInspecting(a)}
+        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); inspect(a); }}
           data-testid={`org-audit-inspect-${a.id}`}>Inspect</Button>
       ),
     },
   ];
 
+  const inspecting = eventParam
+    ? entries.find((e) => e.id === eventParam) ?? null
+    : null;
+
   return (
     <div className="space-y-2.5" data-testid="org-audit">
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
-        <div className="min-w-44 flex-1">
-          <SearchInput value={search} onChange={(e) => setSearch(e.target.value)}
-            onClear={() => setSearch("")} placeholder="Search events…" aria-label="Search audit events"
-            data-testid="org-audit-search" />
+      {!hideFilters && (
+        <div className="min-w-0">
+          <OrgAuditFilters value={filtersValue} onChange={setFiltersValue} />
         </div>
-        <Input value={action} onChange={(e) => setAction(e.target.value)} placeholder="Action filter"
-          aria-label="Filter by action" data-testid="org-audit-action" className="h-8 w-36 text-xs" maxLength={80} />
-        <Input value={actor} onChange={(e) => setActor(e.target.value)} placeholder="Actor filter"
-          aria-label="Filter by actor" data-testid="org-audit-actor" className="h-8 w-36 text-xs" maxLength={120} />
-        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-          aria-label="From date" data-testid="org-audit-from" className="h-8 w-36 text-xs" />
-        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-          aria-label="To date" data-testid="org-audit-to" className="h-8 w-36 text-xs" />
-      </div>
+      )}
 
       {query.isLoading && <LoadingState message="Loading audit log…" />}
       {query.isError && isForbiddenError(query.error) && (
@@ -174,7 +236,7 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
       )}
       {!query.isLoading && !query.isError && entries.length === 0 && (
         <EmptyState title="No audit events"
-          description={debouncedSearch || filters.action || filters.actor || from || to
+          description={debouncedSearch || queryFilters.action || queryFilters.actor || from || to
             ? "No events match these filters."
             : "Recorded organization activity will appear here."} />
       )}
@@ -195,7 +257,7 @@ export function OrgAuditTable({ orgId, canRead }: { orgId: string; canRead: bool
         </>
       )}
 
-      <AuditDetailDrawer entry={inspecting} orgName={undefined} onClose={() => setInspecting(null)} />
+      <AuditDetailDrawer entry={inspecting} orgName={undefined} onClose={() => inspect(null)} />
     </div>
   );
 }
@@ -273,8 +335,8 @@ function BeforeAfter({ value }: { value: Record<string, unknown> | null }) {
       {Object.entries(value).slice(0, 12).map(([k, v]) => (
         <div key={k} className="flex justify-between gap-2">
           <dt className="font-mono text-[11px] text-zinc-500">{k}</dt>
-          <dd className="truncate text-right font-mono text-[11px]">
-            {typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : "recorded"}
+          <dd className="truncate text-right font-mono text-[11px]" title={k}>
+            {displayAuditValue(k, v)}
           </dd>
         </div>
       ))}

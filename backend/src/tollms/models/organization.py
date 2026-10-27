@@ -70,8 +70,6 @@ class Organization(SoftDeleteMixin, TimestampedModel):
     size: Mapped[str | None] = mapped_column(String(32), nullable=True)
     root_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=OrgStatus.ACTIVE.value)
-    visibility_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="metadata_only")
-    personal_sharing_enforced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     audit_retention_days: Mapped[int] = mapped_column(nullable=False, default=365)
     # Org spend cap in USD (NULL = unlimited). Enforced at the backend layer.
     max_spend: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)

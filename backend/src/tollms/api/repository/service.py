@@ -6,6 +6,7 @@ Router -> this module -> services.model_repository.* -> tollms.models.*.
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from tollms.api.orgs.common.guards import _escape_like
 from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.models.canonical_model import CanonicalModel
 from tollms.models.model_repository import RepositoryModel, SyncRun
@@ -82,12 +83,13 @@ def list_entries(
     stmt = select(RepositoryModel).where(RepositoryModel.is_deleted.is_(False))
     if provider:
         stmt = stmt.where(RepositoryModel.provider == provider.strip().lower())
-    if search:
-        like = f"%{search}%"
+    if search and search.strip():
+        # LIKE wildcards (%, _, \) match literally — user input is escaped.
+        like = f"%{_escape_like(search.strip())}%"
         stmt = stmt.where(
-            RepositoryModel.canonical_name.ilike(like)
-            | RepositoryModel.display_name.ilike(like)
-            | RepositoryModel.provider_model_id.ilike(like)
+            RepositoryModel.canonical_name.ilike(like, escape="\\")
+            | RepositoryModel.display_name.ilike(like, escape="\\")
+            | RepositoryModel.provider_model_id.ilike(like, escape="\\")
         )
     if capability:
         stmt = stmt.where(getattr(RepositoryModel, capability).is_(True))
@@ -117,7 +119,8 @@ def list_entries(
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     page = max(page, 1)
     page_size = min(max(page_size, 1), 200)
-    rows = list(db.scalars(stmt.order_by(RepositoryModel.canonical_name).offset((page - 1) * page_size).limit(page_size)))
+    # Deep paging is capped: unbounded page offsets cause excessive DB work.
+    rows = list(db.scalars(stmt.order_by(RepositoryModel.canonical_name).offset(min((page - 1) * page_size, 5000)).limit(page_size)))
     return rows, total
 
 
@@ -131,12 +134,13 @@ def list_canonicals(
     page_size: int = 50,
 ) -> tuple[list[CanonicalModel], int]:
     stmt = select(CanonicalModel).where(CanonicalModel.is_deleted.is_(False))
-    if search:
-        like = f"%{search}%"
+    if search and search.strip():
+        # LIKE wildcards (%, _, \) match literally — user input is escaped.
+        like = f"%{_escape_like(search.strip())}%"
         stmt = stmt.where(
-            CanonicalModel.canonical_id.ilike(like)
-            | CanonicalModel.name.ilike(like)
-            | CanonicalModel.family.ilike(like)
+            CanonicalModel.canonical_id.ilike(like, escape="\\")
+            | CanonicalModel.name.ilike(like, escape="\\")
+            | CanonicalModel.family.ilike(like, escape="\\")
         )
     if family:
         stmt = stmt.where(CanonicalModel.family == family.strip())
@@ -145,7 +149,8 @@ def list_canonicals(
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     page = max(page, 1)
     page_size = min(max(page_size, 1), 200)
-    rows = list(db.scalars(stmt.order_by(CanonicalModel.canonical_id).offset((page - 1) * page_size).limit(page_size)))
+    # Deep paging is capped: unbounded page offsets cause excessive DB work.
+    rows = list(db.scalars(stmt.order_by(CanonicalModel.canonical_id).offset(min((page - 1) * page_size, 5000)).limit(page_size)))
     return rows, total
 
 

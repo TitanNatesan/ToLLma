@@ -52,7 +52,7 @@ export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?:
       </Tooltip>
       <Link
         href="/"
-        className="group flex min-w-0 flex-1 items-center gap-2 py-0.5"
+        className="group flex min-w-0 flex-1 items-center gap-2 rounded-md py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60"
         data-testid="app-logo"
         title="ToLLma home"
       >
@@ -66,7 +66,7 @@ export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?:
       <Tooltip content="Open Command Palette (Ctrl+K)">
         <button
           onClick={onOpenCommandPalette}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
           data-testid="sidebar-command-palette-btn"
           aria-label="Open command palette"
         >
@@ -76,7 +76,7 @@ export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?:
       <Tooltip content={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}>
         <button
           onClick={() => router.push("/notifications")}
-          className="relative flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          className="relative flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
           data-testid="sidebar-notifications-btn"
           aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
         >
@@ -94,7 +94,7 @@ export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?:
       <Tooltip content={isDark ? "Switch to light mode" : "Switch to dark mode"}>
         <button
           onClick={toggleTheme}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
           data-testid="theme-toggle-btn"
           aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
         >

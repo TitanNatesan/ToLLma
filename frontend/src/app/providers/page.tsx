@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "@/lib/notify";
 import {
   Badge,
@@ -95,6 +96,16 @@ const MATCH_BADGE: Record<string, string> = {
 };
 
 export default function ProvidersPage() {
+  // useSearchParams (?provider= deep link) needs a Suspense boundary or the
+  // production build fails.
+  return (
+    <Suspense fallback={<LoadingState message="Loading providers…" className="flex-1 py-16" />}>
+      <ProvidersPageInner />
+    </Suspense>
+  );
+}
+
+function ProvidersPageInner() {
   // Scope: personal workspace behaves exactly as before; an org context
   // reuses this identical UI with org data (each scope reads its own list
   // query, so org rows never mix with personal rows and vice versa).
@@ -186,10 +197,31 @@ export default function ProvidersPage() {
   const [deleteModelTarget, setDeleteModelTarget] = useState<AIModel | null>(null);
 
   // Determine active provider: either from store or first available provider
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Deep link (?provider=): selecting a provider keeps the id in the URL so
+  // the detail view is shareable and survives reload.
+  useEffect(() => {
+    const param = searchParams.get("provider");
+    if (param && providers.some((pr) => pr.id === param) && param !== selectedProviderId) {
+      setSelectedProviderId(param);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, providers]);
   const activeId =
     selectedProviderId && providers.some((p) => p.id === selectedProviderId)
       ? selectedProviderId
       : providers[0]?.id ?? null;
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("provider") ?? null) === (activeId ?? null)) return;
+    if (activeId) params.set("provider", activeId);
+    else params.delete("provider");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProviderId, providers]);
 
   const selected = providers.find((p) => p.id === activeId) ?? null;
   const orgModelsQuery = useOrgProviderModels(orgId ?? "", activeId, { enabled: isOrg && canRead });

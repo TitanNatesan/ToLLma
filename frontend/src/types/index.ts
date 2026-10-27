@@ -578,10 +578,20 @@ export interface SearchResult {
   rank: number;
 }
 
+export interface SearchGroupHit {
+  id: string;
+  type: string;
+  title: string;
+  subtitle: string | null;
+  snippet: string | null;
+  created_at: string | null;
+}
+
 export interface SearchResponse {
   query: string;
   total: number;
   results: SearchResult[];
+  groups?: Record<string, SearchGroupHit[]>;
 }
 
 export interface MessageVersion {

@@ -22,7 +22,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
           onChange={onChange}
           className={cn(
             "h-8 w-full rounded-md border border-zinc-200 bg-zinc-50/50 pl-8 pr-7 text-xs transition-colors",
-            "placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/60 dark:focus:border-zinc-500",
+            "placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:border-zinc-800 dark:bg-zinc-900/60 dark:focus:border-zinc-500",
           )}
           {...props}
         />
@@ -30,7 +30,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
           <button
             type="button"
             onClick={onClear}
-            className="absolute right-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+            className="absolute right-2 rounded text-zinc-400 hover:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:text-zinc-200"
             aria-label="Clear search"
           >
             <X className="size-3" />

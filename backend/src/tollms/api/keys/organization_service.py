@@ -211,7 +211,7 @@ def list_org_keys(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID, *,
     )
     like = _search_like(search)
     if like is not None:
-        stmt = stmt.where(func.lower(ApiKey.name).like(like))
+        stmt = stmt.where(func.lower(ApiKey.name).like(like, escape="\\"))
     stmt = stmt.order_by(ApiKey.created_at.desc())
     lim = _clamp_limit(limit, None)
     if lim is not None:

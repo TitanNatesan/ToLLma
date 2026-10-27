@@ -14,7 +14,7 @@ export { Toaster } from "./SileoToaster";
 
 // --- shadcn/ui button (cva variants + Radix Slot for asChild) ---
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -113,7 +113,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
     <input
       className={cn(
         "flex h-9 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm transition-colors",
-        "focus-visible:outline-none focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -127,7 +127,7 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
     <textarea
       className={cn(
         "flex min-h-16 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm transition-colors",
-        "focus-visible:outline-none focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -170,12 +170,13 @@ export function Checkbox({
           type="checkbox"
           checked={checked}
           disabled={disabled}
-          className="peer sr-only"
+          className="peer absolute inset-0 h-full w-full cursor-pointer opacity-0 focus-visible:outline-none"
           {...props}
         />
         <div
+          aria-hidden
           className={cn(
-            "flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
+            "pointer-events-none flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
             "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900",
             "group-hover:border-zinc-400 dark:group-hover:border-zinc-500",
             "peer-focus-visible:ring-2 peer-focus-visible:ring-tollma-500/60 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",

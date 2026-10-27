@@ -100,7 +100,7 @@ def list_requests(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, *,
     # Unknown status: filter ignored (documented) — all request statuses.
     like = _search_like(search)
     if like is not None:
-        stmt = stmt.where(func.lower(Invitation.email).like(like))
+        stmt = stmt.where(func.lower(Invitation.email).like(like, escape="\\"))
     lim = _clamp_limit(limit, None)
     if lim is not None:
         stmt = stmt.limit(lim)

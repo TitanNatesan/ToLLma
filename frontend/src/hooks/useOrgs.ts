@@ -76,18 +76,19 @@ export function usePermissionCatalog() {
   return useQuery({ queryKey: ["orgs", "permission-catalog"], queryFn: orgApi.permissionCatalog });
 }
 
-export function useOrgInvitations(orgId: string, params?: orgApi.InvitationQuery) {
+export function useOrgInvitations(orgId: string, params?: orgApi.InvitationQuery, options?: { enabled?: boolean }) {
   const key = params ? [...ORG_KEYS.invitations(orgId), params] : ORG_KEYS.invitations(orgId);
   return useQuery({
     queryKey: key,
     queryFn: () => orgApi.listInvitations(orgId, params?.status, params),
     staleTime: 0,
+    enabled: options?.enabled ?? true,
   });
 }
 
-export function useJoinRequests(orgId: string, params?: orgApi.RequestQuery) {
+export function useJoinRequests(orgId: string, params?: orgApi.RequestQuery, options?: { enabled?: boolean }) {
   const key = params ? [...ORG_KEYS.requests(orgId), params] : ORG_KEYS.requests(orgId);
-  return useQuery({ queryKey: key, queryFn: () => orgApi.listRequests(orgId, params), staleTime: 0, refetchOnWindowFocus: true });
+  return useQuery({ queryKey: key, queryFn: () => orgApi.listRequests(orgId, params), staleTime: 0, refetchOnWindowFocus: true, enabled: options?.enabled ?? true });
 }
 
 export function useOrgAudit(orgId: string, params?: orgApi.AuditQuery, options?: { enabled?: boolean }) {

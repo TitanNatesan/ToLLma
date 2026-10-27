@@ -7,10 +7,11 @@ import uuid
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from tollms.api.orgs.common.audit import _audit, _notify
+from tollms.api.orgs.common.audit import _audit
 from tollms.api.orgs.common.guards import (
     PERMISSION_GROUPS,
     SYSTEM_SET_DEFS,
+    _escape_like,
     _live_membership,
     _member_org,
     _require_perm,
@@ -35,7 +36,6 @@ def _read_org(db: Session, org: Organization, user_id: uuid.UUID) -> OrgRead:
     return OrgRead(
         id=org.id, name=org.name, slug=org.slug, description=org.description, website=org.website,
         industry=org.industry, location=org.location, size=org.size, status=org.status,
-        visibility_mode=org.visibility_mode, personal_sharing_enforced=org.personal_sharing_enforced,
         is_root=bool(mem and mem.is_root), permissions=sorted(perms), created_at=org.created_at,
     )
 
@@ -84,11 +84,12 @@ def list_my_organizations(db: Session, user_id: uuid.UUID) -> list[OrgRead]:
 
 
 def search_organizations(db: Session, query: str, limit: int = 20) -> list[OrgCard]:
-    q = f"%{query.strip().lower()}%"
+    # LIKE wildcards (%, _, \) match literally — user input is escaped.
+    q = f"%{_escape_like(query.strip().lower())}%"
     rows = db.execute(
         select(Organization).where(
             Organization.is_deleted.is_(False), Organization.status == OrgStatus.ACTIVE.value,
-            or_(func.lower(Organization.name).like(q), func.lower(Organization.slug).like(q)),
+            or_(func.lower(Organization.name).like(q, escape="\\"), func.lower(Organization.slug).like(q, escape="\\")),
         ).order_by(Organization.name).limit(min(max(limit, 1), 50))
     ).scalars().all()
     return [
@@ -103,36 +104,15 @@ def update_organization(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, **fi
     org, mem = _member_org(db, org_id, user_id)
     _require_perm(db, org, mem, user_id, "Organization.Settings")
     changed: dict = {}
-    for key in ("description", "website", "industry", "location", "size", "visibility_mode",
-                "personal_sharing_enforced"):
+    # Slug stays immutable (URLs/bookmarks); name is freely editable.
+    for key in ("name", "description", "website", "industry", "location", "size"):
         if key in fields and fields[key] is not None:
             setattr(org, key, fields[key])
             changed[key] = fields[key]
-    if "visibility_mode" in changed or "personal_sharing_enforced" in changed:
-        _notify_members_policy_change(db, org, {k: v for k, v in changed.items()
-                                                if k in ("visibility_mode", "personal_sharing_enforced")})
-    _audit(db, org.id, user_id, "org.policy_changed" if set(changed) & {"visibility_mode", "personal_sharing_enforced"} else "org.updated", **{k: str(v) for k, v in changed.items()})
+    _audit(db, org.id, user_id, "org.updated", **{k: str(v) for k, v in changed.items()})
     db.commit()
     db.refresh(org)
     return _read_org(db, org, user_id)
-
-
-
-def _notify_members_policy_change(db: Session, org: Organization, changed: dict) -> None:
-    if not changed:
-        return
-    member_ids = [
-        r[0] for r in db.execute(
-            select(Membership.user_id).where(
-                Membership.org_id == org.id, Membership.is_deleted.is_(False),
-                Membership.state == MembershipState.ACTIVE.value,
-            )
-        ).all()
-    ]
-    for uid in member_ids:
-        _notify(db, uid, "org.policy_changed", f"Organization policy updated: {org.name}",
-                org_id=org.id, changed=list(changed))
-
 
 
 def ensure_system_sets(db: Session) -> dict[str, PermissionSet]:

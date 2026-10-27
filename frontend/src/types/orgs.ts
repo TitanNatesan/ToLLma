@@ -14,8 +14,6 @@ export interface Organization {
   location: string | null;
   size: string | null;
   status: string;
-  visibility_mode: string;
-  personal_sharing_enforced: boolean;
   is_root: boolean;
   permissions: string[];
   created_at: string;

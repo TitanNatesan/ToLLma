@@ -1,16 +1,17 @@
 """Conversations, messages, usage + cost calculation. Prices are per 1M tokens."""
 
+import base64
 import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from tollms.api.attachments import service as attachment_service
 from tollms.api.attachments.schemas import AttachmentRead
-from tollms.core.exceptions import NotFoundError
+from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_delete_sync, cache_get_sync, cache_set_sync
@@ -52,25 +53,69 @@ def get_conversation(
     return conv
 
 
+def _decode_list_cursor(cursor: str | None):
+    """Keyset (created_at+id base64, prompt-logs pattern) or plain offset."""
+    if not cursor:
+        return None
+    text = cursor.strip()
+    if text.isdigit():
+        return ("offset", max(int(text), 0))
+    try:
+        raw = base64.urlsafe_b64decode(text.encode()).decode()
+        created_s, row_id = raw.split("|", 1)
+        return ("keyset", datetime.fromisoformat(created_s), uuid.UUID(row_id))
+    except (ValueError, TypeError):
+        raise ValidationError("invalid cursor") from None
+
+
 def list_conversations(
-    db: Session, *, search: str | None = None, user_id: uuid.UUID | None = None
-) -> list[Conversation]:
+    db: Session, *, search: str | None = None, user_id: uuid.UUID | None = None,
+    limit: int = 20, cursor: str | None = None,
+) -> tuple[list[Conversation], str | None]:
+    """Newest-first stable listing (created_at desc, id desc) with limit
+    (default 20, max 100) + cursor paging. The search filter runs
+    server-side before paging. Returns (rows, next_cursor)."""
+    lim = min(max(int(limit or 20), 1), 100)
     stmt = (
         select(Conversation)
         .where(Conversation.is_deleted.is_(False))
-        .order_by(Conversation.is_pinned.desc(), Conversation.updated_at.desc())
+        .order_by(Conversation.created_at.desc(), Conversation.id.desc())
     )
     if user_id is not None:
         stmt = stmt.where(Conversation.user_id == user_id)
     if search:
-        # Search title OR message content via EXISTS subquery
+        # Escape LIKE wildcards so search text matches literally (Postgres
+        # backslash escape). Search title OR message content via EXISTS.
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         content_match = select(Message.id).where(
             Message.conversation_id == Conversation.id,
             Message.is_deleted.is_(False),
-            Message.content.ilike(f"%{search}%"),
+            Message.content.ilike(f"%{escaped}%", escape="\\"),
         ).exists()
-        stmt = stmt.where(or_(Conversation.title.ilike(f"%{search}%"), content_match))
-    rows = list(db.scalars(stmt))
+        stmt = stmt.where(or_(Conversation.title.ilike(f"%{escaped}%", escape="\\"), content_match))
+    off = 0
+    decoded = _decode_list_cursor(cursor)
+    if decoded is not None:
+        if decoded[0] == "offset":
+            off = min(decoded[1], 5000)
+        else:
+            _, created_at, row_id = decoded
+            stmt = stmt.where(or_(
+                Conversation.created_at < created_at,
+                and_(Conversation.created_at == created_at, Conversation.id < row_id),
+            ))
+    if off:
+        stmt = stmt.offset(off)
+    rows = list(db.scalars(stmt.limit(lim + 1)))
+    next_cursor: str | None = None
+    if len(rows) > lim:
+        last = rows[lim - 1]
+        created = last.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        raw = f"{created.isoformat()}|{last.id}"
+        next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
+        rows = rows[:lim]
     # Transient count (serialized as message_count) so clients can hide drafts.
     counts = dict(
         db.execute(
@@ -84,7 +129,7 @@ def list_conversations(
     )
     for conv in rows:
         conv.message_count = int(counts.get(conv.id, 0))
-    return rows
+    return rows, next_cursor
 
 
 def get_conversation_with_messages(

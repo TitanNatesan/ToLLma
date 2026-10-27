@@ -49,11 +49,18 @@ export interface OpsPerms {
  * Legacy ?section=keys|requests|invitations redirect here (see page);
  * keys moved to the scope-aware /api-keys page. */
 // members stays in the prop contract (the [id] page passes it); keys moved to /api-keys.
-export function OrgOperationsSection({ orgId, perms, initialTab }: {
+export function OrgOperationsSection({ orgId, perms, initialTab, requestsFilters, onRequestsFilters, invitationsFilters, onInvitationsFilters, hideFilters }: {
   orgId: string;
   members: Member[];
   perms: OpsPerms;
   initialTab: OpsTab;
+  /** Controlled per-tab filter state (operations sidebar). Defaults to internal. */
+  requestsFilters?: RequestsFilters;
+  onRequestsFilters?: (f: RequestsFilters) => void;
+  invitationsFilters?: InvitationsFilters;
+  onInvitationsFilters?: (f: InvitationsFilters) => void;
+  /** Hide in-tab filter bars (they render in the sidebar instead). */
+  hideFilters?: boolean;
 }) {
   // Tab lives in ?tab= so it is shareable and survives back/forward; a
   // legacy tab=keys deep link lands on requests (the [id] page redirects
@@ -74,6 +81,7 @@ export function OrgOperationsSection({ orgId, perms, initialTab }: {
 
   return (
     <div className="space-y-2.5" data-testid="org-operations">
+      {!hideFilters && (
       <div className="flex gap-1 rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800" role="tablist"
         aria-label="Operations" data-testid="org-ops-tabs">
         {([
@@ -82,7 +90,7 @@ export function OrgOperationsSection({ orgId, perms, initialTab }: {
         ] as const).map((t) => (
           <button key={t.id} type="button" role="tab" id={`org-ops-tabbtn-${t.id}`} aria-selected={tab === t.id} aria-controls={`org-ops-panel-${t.id}`}
             onClick={() => setTab(t.id)} data-testid={`org-ops-tab-${t.id}`}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium transition-colors ${tab === t.id
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 ${tab === t.id
               ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
               : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"}`}>
             {t.label}
@@ -94,17 +102,90 @@ export function OrgOperationsSection({ orgId, perms, initialTab }: {
           </button>
         ))}
       </div>
+      )}
 
       {tab === "requests" && (
-        <div role="tabpanel" id="org-ops-panel-requests" aria-labelledby="org-ops-tabbtn-requests">
-          <RequestsTab orgId={orgId} canReview={perms.canReviewRequests} />
+        <div {...(hideFilters
+          ? { role: "region", "aria-label": "Membership requests" }
+          : { role: "tabpanel", id: "org-ops-panel-requests", "aria-labelledby": "org-ops-tabbtn-requests" })}>
+          <RequestsTab orgId={orgId} canReview={perms.canReviewRequests}
+            filters={requestsFilters} onFilters={onRequestsFilters} hideFilters={hideFilters} />
         </div>
       )}
       {tab === "invitations" && (
-        <div role="tabpanel" id="org-ops-panel-invitations" aria-labelledby="org-ops-tabbtn-invitations">
-          <InvitationsTab orgId={orgId} canManage={perms.canInvite} canRead={perms.canReadInvitations} />
+        <div {...(hideFilters
+          ? { role: "region", "aria-label": "Invitations" }
+          : { role: "tabpanel", id: "org-ops-panel-invitations", "aria-labelledby": "org-ops-tabbtn-invitations" })}>
+          <InvitationsTab orgId={orgId} canManage={perms.canInvite} canRead={perms.canReadInvitations}
+            filters={invitationsFilters} onFilters={onInvitationsFilters} hideFilters={hideFilters} />
         </div>
       )}
+    </div>
+  );
+}
+
+export type ReqStatus = "pending" | "all" | "accepted" | "rejected" | "expired" | "closed";
+
+export interface RequestsFilters {
+  search: string;
+  status: ReqStatus;
+  page: number;
+}
+
+export const EMPTY_REQUESTS_FILTERS: RequestsFilters = { search: "", status: "pending", page: 0 };
+
+/** Join-request filter controls. Vertical in the operations sidebar. */
+export function OrgRequestsFilters({ value, onChange }: {
+  value: RequestsFilters;
+  onChange: (f: RequestsFilters) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <SearchInput value={value.search} onChange={(e) => onChange({ ...value, search: e.target.value, page: 0 })}
+        onClear={() => onChange({ ...value, search: "", page: 0 })} placeholder="Search requests…" aria-label="Search join requests"
+        data-testid="org-requests-search" />
+      <Select value={value.status} onChange={(e) => onChange({ ...value, status: e.target.value as ReqStatus, page: 0 })} sizeVariant="sm"
+        className="w-full" aria-label="Filter by status" data-testid="org-requests-status">
+        <option value="pending">Pending</option>
+        <option value="all">All</option>
+        <option value="accepted">Accepted</option>
+        <option value="rejected">Rejected</option>
+        <option value="expired">Expired</option>
+        <option value="closed">Closed</option>
+      </Select>
+    </div>
+  );
+}
+
+export type InvStatus = "all" | "pending" | "accepted" | "rejected" | "expired" | "closed";
+
+export interface InvitationsFilters {
+  search: string;
+  status: InvStatus;
+  page: number;
+}
+
+export const EMPTY_INVITATIONS_FILTERS: InvitationsFilters = { search: "", status: "all", page: 0 };
+
+/** Invitation filter controls. Vertical in the operations sidebar. */
+export function OrgInvitationsFilters({ value, onChange }: {
+  value: InvitationsFilters;
+  onChange: (f: InvitationsFilters) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <SearchInput value={value.search} onChange={(e) => onChange({ ...value, search: e.target.value, page: 0 })}
+        onClear={() => onChange({ ...value, search: "", page: 0 })} placeholder="Search invitations…" aria-label="Search invitations"
+        data-testid="org-invitations-search" />
+      <Select value={value.status} onChange={(e) => onChange({ ...value, status: e.target.value as InvStatus, page: 0 })} sizeVariant="sm"
+        className="w-full" aria-label="Filter by status" data-testid="org-invitations-status">
+        <option value="all">All</option>
+        <option value="pending">Pending</option>
+        <option value="accepted">Accepted</option>
+        <option value="rejected">Rejected</option>
+        <option value="expired">Expired</option>
+        <option value="closed">Closed</option>
+      </Select>
     </div>
   );
 }
@@ -125,12 +206,19 @@ function reviewerOf(r: Invitation): string {
   return r.reviewer_name ?? r.reviewer_email ?? r.reviewed_by?.name ?? r.reviewed_by?.email ?? "—";
 }
 
-type ReqStatus = "pending" | "all" | "accepted" | "rejected" | "expired" | "closed";
-
-function RequestsTab({ orgId, canReview }: { orgId: string; canReview: boolean }) {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<ReqStatus>("pending");
-  const [page, setPage] = useState(0);
+function RequestsTab({ orgId, canReview, filters, onFilters, hideFilters }: {
+  orgId: string;
+  canReview: boolean;
+  filters?: RequestsFilters;
+  onFilters?: (f: RequestsFilters) => void;
+  hideFilters?: boolean;
+}) {
+  const [internal, setInternal] = useState<RequestsFilters>(EMPTY_REQUESTS_FILTERS);
+  const filtersValue = filters ?? internal;
+  const setFiltersValue = onFilters ?? setInternal;
+  const { search, status, page } = filtersValue;
+  const setPage = (p: number | ((prev: number) => number)) =>
+    setFiltersValue({ ...filtersValue, page: typeof p === "function" ? p(filtersValue.page) : p });
   const [reviewing, setReviewing] = useState<{ id: string; email: string } | null>(null);
   const [rejecting, setRejecting] = useState<{ id: string; email: string } | null>(null);
 
@@ -194,23 +282,8 @@ function RequestsTab({ orgId, canReview }: { orgId: string; canReview: boolean }
 
   return (
     <div className="space-y-2" data-testid="org-requests">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-44 flex-1">
-          <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            onClear={() => { setSearch(""); setPage(0); }} placeholder="Search requests…" aria-label="Search join requests"
-            data-testid="org-requests-search" />
-        </div>
-        <Select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setPage(0); }} sizeVariant="sm"
-          className="w-32" aria-label="Filter by status" data-testid="org-requests-status">
-          <option value="pending">Pending</option>
-          <option value="all">All</option>
-          <option value="accepted">Accepted</option>
-          <option value="rejected">Rejected</option>
-          <option value="expired">Expired</option>
-          <option value="closed">Closed</option>
-        </Select>
-        <span className="text-xs text-zinc-500">{rows.length} request{rows.length === 1 ? "" : "s"}</span>
-      </div>
+      {!hideFilters && <OrgRequestsFilters value={filtersValue} onChange={setFiltersValue} />}
+      <span className="text-xs text-zinc-500">{rows.length} request{rows.length === 1 ? "" : "s"}</span>
 
       {requests.isLoading && <LoadingState message="Loading join requests…" />}
       {requests.isError && (
@@ -283,12 +356,20 @@ function deliveryOf(i: Invitation): string {
   return i.last_sent_at ? `last sent ${dateLabel(i.last_sent_at)}` : "—";
 }
 
-type InvStatus = "all" | "pending" | "accepted" | "rejected" | "expired" | "closed";
-
-function InvitationsTab({ orgId, canManage, canRead }: { orgId: string; canManage: boolean; canRead: boolean }) {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<InvStatus>("all");
-  const [page, setPage] = useState(0);
+function InvitationsTab({ orgId, canManage, canRead, filters, onFilters, hideFilters }: {
+  orgId: string;
+  canManage: boolean;
+  canRead: boolean;
+  filters?: InvitationsFilters;
+  onFilters?: (f: InvitationsFilters) => void;
+  hideFilters?: boolean;
+}) {
+  const [internal, setInternal] = useState<InvitationsFilters>(EMPTY_INVITATIONS_FILTERS);
+  const filtersValue = filters ?? internal;
+  const setFiltersValue = onFilters ?? setInternal;
+  const { search, status, page } = filtersValue;
+  const setPage = (p: number | ((prev: number) => number)) =>
+    setFiltersValue({ ...filtersValue, page: typeof p === "function" ? p(filtersValue.page) : p });
   const [revoking, setRevoking] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState<Invitation | null>(null);
 
@@ -358,23 +439,8 @@ function InvitationsTab({ orgId, canManage, canRead }: { orgId: string; canManag
 
   return (
     <div className="space-y-2" data-testid="org-invitations">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-44 flex-1">
-          <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            onClear={() => { setSearch(""); setPage(0); }} placeholder="Search invitations…" aria-label="Search invitations"
-            data-testid="org-invitations-search" />
-        </div>
-        <Select value={status} onChange={(e) => { setStatus(e.target.value as InvStatus); setPage(0); }} sizeVariant="sm"
-          className="w-32" aria-label="Filter by status" data-testid="org-invitations-status">
-          <option value="all">All</option>
-          <option value="pending">Pending</option>
-          <option value="accepted">Accepted</option>
-          <option value="rejected">Rejected</option>
-          <option value="expired">Expired</option>
-          <option value="closed">Closed</option>
-        </Select>
-        <span className="text-xs text-zinc-500">{rows.length} invitation{rows.length === 1 ? "" : "s"}</span>
-      </div>
+      {!hideFilters && <OrgInvitationsFilters value={filtersValue} onChange={setFiltersValue} />}
+      <span className="text-xs text-zinc-500">{rows.length} invitation{rows.length === 1 ? "" : "s"}</span>
 
       {invitations.isLoading && <LoadingState message="Loading invitations…" />}
       {invitations.isError && isNotFound(invitations.error) && (

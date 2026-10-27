@@ -269,7 +269,7 @@ function InviteLandingInner() {
                 <p className="font-semibold">What accepting means</p>
                 <ul className="mt-1 list-disc space-y-0.5 pl-4">
                   <li>You join <strong>{data.org_name}</strong> with the sets above.</li>
-                  <li>The organization may see your membership and shared usage under its visibility policy.</li>
+                  <li>You join with the membership and access shown above.</li>
                   <li>Your personal account, personal assets, and other organizations are unaffected.</li>
                   <li>You can leave at any time unless you are the root owner.</li>
                 </ul>

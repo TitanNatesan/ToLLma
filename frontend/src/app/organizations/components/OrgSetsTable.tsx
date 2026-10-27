@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowUpDown, Copy, Loader2, Pencil, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "@/lib/notify";
 import {
@@ -36,24 +37,94 @@ function assigneeLabel(s: PermissionSet): string {
   return `${m ?? 0} member${(m ?? 0) === 1 ? "" : "s"} · ${t ?? 0} team${(t ?? 0) === 1 ? "" : "s"}`;
 }
 
-type SortKey = "name" | "perms" | "updated";
+export type SetSortKey = "name" | "perms" | "updated";
 
-export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }: {
+export interface SetFilters {
+  search: string;
+  sortKey: SetSortKey;
+  sortDir: 1 | -1;
+  page: number;
+}
+
+export const EMPTY_SET_FILTERS: SetFilters = {
+  search: "",
+  sortKey: "name",
+  sortDir: 1,
+  page: 0,
+};
+
+/** Permission-set filter controls. Horizontal in the table header; vertical
+ * in the section sidebar (same components/state, no duplicated copies). */
+export function OrgSetsFilters({ value, onChange, layout = "horizontal" }: {
+  value: SetFilters;
+  onChange: (f: SetFilters) => void;
+  layout?: "horizontal" | "vertical";
+}) {
+  const wrap = layout === "vertical"
+    ? "flex flex-col gap-2"
+    : "flex flex-nowrap items-center gap-2 overflow-x-auto pb-1";
+  const selectClass = layout === "vertical" ? "w-full" : "w-32";
+  return (
+    <div className={wrap}>
+      <div className={layout === "vertical" ? "w-full" : "min-w-44 flex-1"}>
+        <SearchInput value={value.search} onChange={(e) => onChange({ ...value, search: e.target.value, page: 0 })}
+          onClear={() => onChange({ ...value, search: "" })} placeholder="Search sets…" aria-label="Search permission sets"
+          data-testid="org-sets-search" />
+      </div>
+      <Select value={value.sortKey} onChange={(e) => onChange({ ...value, sortKey: e.target.value as SetSortKey, page: 0 })} sizeVariant="sm"
+        className={selectClass} aria-label="Sort sets" data-testid="org-sets-sort">
+        <option value="name">Name</option>
+        <option value="perms">Permissions</option>
+        <option value="updated">Updated</option>
+      </Select>
+      <Button size="sm" variant="outline" onClick={() => onChange({ ...value, sortDir: value.sortDir === 1 ? -1 : 1, page: 0 })}
+        aria-label={value.sortDir === 1 ? "Sort descending" : "Sort ascending"}>
+        <ArrowUpDown className="size-3.5" aria-hidden />
+      </Button>
+    </div>
+  );
+}
+
+export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete, filters, onFilters, hideFilters, creating, onCreating }: {
   orgId: string;
   canRead: boolean;
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
+  /** Controlled filter state (section sidebar). Defaults to internal state. */
+  filters?: SetFilters;
+  onFilters?: (f: SetFilters) => void;
+  /** Hide the in-header filter bar (it renders in the sidebar instead). */
+  hideFilters?: boolean;
+  /** Controlled create dialog (the New set button lives in the main header). */
+  creating?: boolean;
+  onCreating?: (open: boolean) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<1 | -1>(1);
-  const [page, setPage] = useState(0);
-  const [creating, setCreating] = useState(false);
+  const [internal, setInternal] = useState<SetFilters>(EMPTY_SET_FILTERS);
+  const filtersValue = filters ?? internal;
+  const setFiltersValue = onFilters ?? setInternal;
+  const { search, sortKey, sortDir, page } = filtersValue;
+  const setPage = (p: number | ((prev: number) => number)) =>
+    setFiltersValue({ ...filtersValue, page: typeof p === "function" ? p(filtersValue.page) : p });
+  const [internalCreating, setInternalCreating] = useState(false);
+  const creatingValue = creating ?? internalCreating;
+  const setCreating = onCreating ?? setInternalCreating;
   const [editing, setEditing] = useState<PermissionSet | null>(null);
   const [deleting, setDeleting] = useState<PermissionSet | null>(null);
   const [cloning, setCloning] = useState<PermissionSet | null>(null);
-  const [viewing, setViewing] = useState<PermissionSet | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Deep link (?set=): viewing is derived from the URL (no mirror state).
+  const setParam = searchParams.get("set");
+  function viewSet(s: PermissionSet | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("set") ?? null) === (s?.id ?? null)) return;
+    if (s) params.set("set", s.id);
+    else params.delete("set");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
 
   const debounced = useDebouncedValue(search.trim(), 300);
   const sets = useOrgSets(orgId, { search: debounced || undefined, limit: 200 });
@@ -77,6 +148,7 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const visible = rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  const viewing = setParam ? (rows.find((s) => s.id === setParam) ?? null) : null;
 
   if (!canRead) {
     return (
@@ -123,7 +195,7 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
       key: "actions", header: "Actions", align: "right",
       render: (s) => (
         <span className="flex justify-end gap-1.5">
-          <Button size="sm" variant="outline" onClick={() => setViewing(s)}
+          <Button size="sm" variant="outline" onClick={() => viewSet(s)}
             data-testid={`org-set-view-${s.id}`}>View</Button>
           {editable(s) ? (
             <Button size="sm" variant="outline" onClick={() => setEditing(s)}
@@ -157,28 +229,18 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
 
   return (
     <div data-testid="org-sets">
-      <div className="mb-2.5 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
-        <div className="min-w-44 flex-1">
-          <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            onClear={() => setSearch("")} placeholder="Search sets…" aria-label="Search permission sets"
-            data-testid="org-sets-search" />
+      {!hideFilters && (
+        <div className="mb-2.5 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+          <div className="min-w-0 flex-1">
+            <OrgSetsFilters value={filtersValue} onChange={setFiltersValue} />
+          </div>
+          {canCreate && (
+            <Button size="sm" onClick={() => setCreating(true)} data-testid="org-set-create">
+              <ShieldCheck className="size-3.5" aria-hidden /> New set
+            </Button>
+          )}
         </div>
-        <Select value={sortKey} onChange={(e) => { setSortKey(e.target.value as SortKey); setPage(0); }} sizeVariant="sm"
-          className="w-32" aria-label="Sort sets" data-testid="org-sets-sort">
-          <option value="name">Name</option>
-          <option value="perms">Permissions</option>
-          <option value="updated">Updated</option>
-        </Select>
-        <Button size="sm" variant="outline" onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}
-          aria-label={sortDir === 1 ? "Sort descending" : "Sort ascending"}>
-          <ArrowUpDown className="size-3.5" aria-hidden />
-        </Button>
-        {canCreate && (
-          <Button size="sm" onClick={() => setCreating(true)} data-testid="org-set-create">
-            <ShieldCheck className="size-3.5" aria-hidden /> New set
-          </Button>
-        )}
-      </div>
+      )}
       <p className="mb-2 text-xs text-zinc-500">System sets are immutable — clone them to customize. Grants can never exceed your own permissions.</p>
 
       {sets.isLoading && <LoadingState message="Loading permission sets…" />}
@@ -207,7 +269,8 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
       )}
       {rows.length > 0 && (
         <>
-          <DataTable columns={columns} rows={visible} rowKey={(s) => s.id} testId="org-sets-table" />
+          <DataTable columns={columns} rows={visible} rowKey={(s) => s.id} testId="org-sets-table"
+            onRowClick={(s) => viewSet(s)} />
           {pageCount > 1 && (
             <div className="mt-2 flex items-center justify-end gap-2">
               <Button size="sm" variant="outline" disabled={safePage === 0}
@@ -219,7 +282,7 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
         </>
       )}
 
-      {(creating || editing) && (
+      {(creatingValue || editing) && (
         <SetEditDialog
           initial={editing}
           onClose={() => { setCreating(false); setEditing(null); }}
@@ -227,7 +290,7 @@ export function OrgSetsTable({ orgId, canRead, canCreate, canUpdate, canDelete }
           onUpdate={(id, payload) => mut.updateSet.mutateAsync({ setId: id, payload })} />
       )}
 
-      <SetDetailDrawer set_={viewing} onClose={() => setViewing(null)} />
+      <SetDetailDrawer set_={viewing} onClose={() => viewSet(null)} />
 
       <ConfirmDialog open={deleting !== null} title={`Delete "${deleting?.name}"?`} destructive
         confirmLabel="Delete set" testId="org-set-delete-dialog"
@@ -287,6 +350,20 @@ function SetEditDialog({ initial, onClose, onCreate, onUpdate }: {
     }
   }
 
+  // Prerequisite ladder (mirrors the backend rule): a Create/Update/Delete
+  // grant needs its group's Read grant, otherwise saving fails with a 422.
+  const missingReads = (() => {
+    const have = new Set(picked);
+    const missing = new Set<string>();
+    for (const code of picked) {
+      const [group, op] = code.split(".");
+      if ((op === "Create" || op === "Update" || op === "Delete") && !have.has(`${group}.Read`)) {
+        missing.add(`${group}.Read`);
+      }
+    }
+    return [...missing];
+  })();
+
   return (
     <Dialog open onOpenChange={(n) => { if (!n && !busy) onClose(); }}>
       <DialogContent className="max-w-lg p-4" data-testid="org-set-dialog">
@@ -321,6 +398,11 @@ function SetEditDialog({ initial, onClose, onCreate, onUpdate }: {
               );
             })}
           </div>
+          {missingReads.length > 0 && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300" data-testid="org-set-prereq-hint">
+              Managing without viewing is not allowed: also select {missingReads.join(", ")} or saving will be rejected.
+            </p>
+          )}
           {error && (
             <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
               {error}

@@ -152,7 +152,7 @@ def list_teams(db: Session, user_id: uuid.UUID, org_id: uuid.UUID, *,
     stmt = select(Team).where(Team.org_id == org_id, Team.is_deleted.is_(False))
     like = _search_like(search)
     if like is not None:
-        stmt = stmt.where(func.lower(Team.name).like(like))
+        stmt = stmt.where(func.lower(Team.name).like(like, escape="\\"))
     stmt = stmt.order_by(Team.name)
     lim = _clamp_limit(limit, None)
     if lim is not None:

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/notify";
 import { KeyRound, Plus, RefreshCw, ShieldAlert } from "lucide-react";
@@ -68,7 +69,14 @@ function PersonalApiKeysPage() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [editKeyId, setEditKeyId] = useState<string | null>(null);
-  const [detailsKeyId, setDetailsKeyId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Deep link (?key=): row clicks open the drawer without navigating away.
+  // Selection is derived from the URL (no mirror state): shareable, survives
+  // reload, and honors back/forward for free.
+  const keyParam = searchParams.get("key");
   const [rotateTarget, setRotateTarget] = useState<ApiKey | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
   const [secret, setSecret] = useState<RawKeyState | null>(null);
@@ -81,6 +89,7 @@ function PersonalApiKeysPage() {
     refetchOnWindowFocus: true,
   });
   const keys = useMemo(() => keysQuery.data ?? [], [keysQuery.data]);
+  const detailsKey = keys.find((k) => k.id === keyParam) ?? null;
 
   // Only budgeted keys need a spend lookup; each row's 30d cost feeds the bar.
   const budgetedKeys = useMemo(
@@ -105,10 +114,7 @@ function PersonalApiKeysPage() {
   }, [budgetedKeys, budgetQueries]);
   const budgetLoading = budgetQueries.some((query) => query.isPending);
 
-  const detailsKey = useMemo(
-    () => keys.find((key) => key.id === detailsKeyId) ?? null,
-    [keys, detailsKeyId],
-  );
+
   const editKey = useMemo(
     () => keys.find((key) => key.id === editKeyId) ?? null,
     [keys, editKeyId],
@@ -121,8 +127,16 @@ function PersonalApiKeysPage() {
   const handleRefresh = useCallback(() => {
     void qc.invalidateQueries({ predicate: (query) => isKeysFamilyQueryKey(query.queryKey) });
   }, [qc]);
-  const closeDetails = useCallback(() => setDetailsKeyId(null), []);
-  const openDetails = useCallback((apiKey: ApiKey) => setDetailsKeyId(apiKey.id), []);
+  const closeDetails = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("key");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [searchParams, pathname, router]);
+  const openDetails = useCallback((apiKey: ApiKey) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("key", apiKey.id);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [searchParams, pathname, router]);
   const openEdit = useCallback((apiKey: ApiKey) => setEditKeyId(apiKey.id), []);
   const closeEdit = useCallback(() => setEditKeyId(null), []);
 
@@ -194,7 +208,11 @@ function PersonalApiKeysPage() {
     if (!deleteTarget) return;
     await deleteApiKey(deleteTarget.id);
     await qc.invalidateQueries({ queryKey: ["api-keys"] });
-    if (detailsKeyId === deleteTarget.id) setDetailsKeyId(null);
+    if (keyParam === deleteTarget.id) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('key');
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    }
     if (editKeyId === deleteTarget.id) setEditKeyId(null);
     setDeleteTarget(null);
     toast.success("API key deleted");
@@ -386,6 +404,16 @@ function OrgApiKeysPage({ orgId, orgName }: { orgId: string; orgName: string }) 
 /** Scope-aware entry: personal keeps today's behavior exactly; an org context
  * renders the identical shell with org data (the old operations KeysTab UI). */
 export default function ApiKeysPage() {
+  // useSearchParams (?key= deep link) needs a Suspense boundary or the
+  // production build fails — same pattern as the prompt-logs page.
+  return (
+    <Suspense fallback={<LoadingState message="Loading API keys…" className="py-16" />}>
+      <ApiKeysPageInner />
+    </Suspense>
+  );
+}
+
+function ApiKeysPageInner() {
   const context = useOrgStore((s) => s.context);
   if (context.type === "org") {
     return <OrgApiKeysPage key={context.orgId} orgId={context.orgId} orgName={context.orgName} />;

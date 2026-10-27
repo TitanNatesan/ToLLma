@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { toast } from "@/lib/notify";
@@ -15,6 +16,8 @@ import { ApiKeyStatusPill } from "./StatusPill";
 import { RawKeyDialog } from "./RawKeyDialog";
 import { fmtBudgetAmount } from "./BudgetBar";
 import { ConfirmDialog } from "@/app/organizations/components/Dialogs";
+import { OrgContextSidebar } from "@/app/organizations/components/OrgContextSidebar";
+import { SidebarPanelPortal } from "@/components/Sidebar/SidebarPanelPortal";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useOrgKeys, useOrgModels, useOrgMutations, useOrgProviders } from "@/hooks/useOrgs";
 import { KeyForm, type KeyFormResult } from "./KeyForm";
@@ -128,7 +131,19 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
   const [page, setPage] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [revoking, setRevoking] = useState<OrgKey | null>(null);
-  const [detailsKeyId, setDetailsKeyId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Deep link (?key=): selection is derived from the URL (no mirror state).
+  const keyParam = searchParams.get("key");
+  function showDetails(id: string | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("key") ?? null) === id) return;
+    if (id) params.set("key", id);
+    else params.delete("key");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
   const [editKeyId, setEditKeyId] = useState<string | null>(null);
   const [created, setCreated] = useState<{ rawKey: string; name: string; reason: "create" | "rotate" } | null>(null);
 
@@ -140,6 +155,7 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
   const mut = useOrgMutations(orgId);
 
   const rows = keys.data ?? [];
+  const detailsKey = keyParam ? (rows.find((k) => k.id === keyParam) ?? null) : null;
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const visible = rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
@@ -214,11 +230,6 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
   return (
     <div className="space-y-2" data-testid="org-keys">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-44 flex-1">
-          <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            onClear={() => { setSearch(""); setPage(0); }} placeholder="Search keys…" aria-label="Search API keys"
-            data-testid="org-keys-search" />
-        </div>
         <span className="text-xs text-zinc-500">{rows.length} key{rows.length === 1 ? "" : "s"}</span>
         {perms.canCreateKeys && (
           <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="org-key-create-open">
@@ -226,6 +237,15 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
           </Button>
         )}
       </div>
+      <div className="flex flex-col gap-4">
+        <SidebarPanelPortal>
+        <OrgContextSidebar heading="Key filters" testId="org-keys-sidebar" bare storageKey="org-keys-sidebar-collapsed">
+          <SearchInput value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+            onClear={() => { setSearch(""); setPage(0); }} placeholder="Search keys…" aria-label="Search API keys"
+            data-testid="org-keys-search" />
+        </OrgContextSidebar>
+        </SidebarPanelPortal>
+        <div className="min-w-0 flex-1 space-y-2">
 
       {keys.isLoading && <LoadingState message="Loading API keys…" />}
       {keys.isError && isNotFound(keys.error) && (
@@ -250,7 +270,7 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
         <>
           <DataTable columns={columns} rows={visible} rowKey={(k) => k.id} testId="org-keys-table"
             rowTestId={(k) => `org-key-row-${k.id}`}
-            onRowClick={(k) => setDetailsKeyId(k.id)} />
+            onRowClick={(k) => showDetails(k.id)} />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-zinc-400" data-testid="org-keys-pages">
               Page {safePage + 1} of {pageCount} · {visible.length} of {rows.length} keys
@@ -283,10 +303,10 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
         onConfirm={() => revoke().then(() => setRevoking(null))} />
 
       <OrgKeyDetailsPanel
-        orgKey={rows.find((k) => k.id === detailsKeyId) ?? null}
-        open={detailsKeyId !== null}
-        onClose={() => setDetailsKeyId(null)}
-        onEdit={perms.canUpdateKeys ? (k) => { setDetailsKeyId(null); setEditKeyId(k.id); } : undefined}
+        orgKey={detailsKey}
+        open={detailsKey !== null}
+        onClose={() => showDetails(null)}
+        onEdit={perms.canUpdateKeys ? (k) => { showDetails(null); setEditKeyId(k.id); } : undefined}
       />
 
       <OrgKeyEditDrawer
@@ -318,6 +338,8 @@ export function OrgKeysPanel({ orgId, members, perms }: { orgId: string; members
           onClose={() => setCreated(null)}
         />
       )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -16,6 +16,8 @@ import {
   Select,
 } from "@/components/ui";
 import { ConfirmDialog } from "@/app/api-keys/components/ConfirmDialog";
+import { OrgContextSidebar } from "@/app/organizations/components/OrgContextSidebar";
+import { SidebarPanelPortal } from "@/components/Sidebar/SidebarPanelPortal";
 import { toast } from "@/lib/notify";
 import { parseApiError, toastApiError } from "@/lib/errors";
 import { copyWithToast } from "@/lib/clipboard";
@@ -240,7 +242,19 @@ export function PromptLogsPanel({
   const router = useRouter();
   const pathname = usePathname();
   const [filter, setFilter] = useState<LogFilter>(() => filterFromParams((k) => searchParams.get(k)));
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Deep link (?requestId=): selecting a log keeps the id in the URL so the
+  // detail drawer is shareable and survives reload. Matches request_id first,
+  // then the row id (command palette may carry either). Selection is derived
+  // from the URL (no mirror state); the drawer resolves the row id once the
+  // page containing it loads.
+  const requestParam = searchParams.get("requestId");
+  function selectLog(id: string | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("requestId") ?? null) === id) return;
+    if (id) params.set("requestId", id);
+    else params.delete("requestId");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
   const [confirmPurge, setConfirmPurge] = useState(false);
   const mut = usePromptLogMutations(orgId);
 
@@ -266,6 +280,8 @@ export function PromptLogsPanel({
     perms.canRead,
   );
   const rows = useMemo(() => mergeLogPages((feed.data?.pages ?? []).map((p) => p)), [feed.data]);
+  const selectedRow = requestParam ? rows.find((r) => r.request_id === requestParam || r.id === requestParam) : undefined;
+  const selectedId = selectedRow ? selectedRow.id : null;
   const filteredOut = !isFilterEmpty(filter);
 
   function set<K extends keyof LogFilter>(key: K, value: string) {
@@ -284,15 +300,10 @@ export function PromptLogsPanel({
   }
 
   return (
-    <div className="space-y-3 p-4" data-testid="prompt-logs-panel">
-      {settingsLoaded && !loggingEnabled && (
-        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" data-testid="prompt-logs-disabled">
-          Prompt logging is currently disabled — new requests are not being recorded. A Manager can re-enable it in Settings.
-        </p>
-      )}
-
-      <div className="flex flex-wrap gap-2">
-        <div className="min-w-40 flex-1">
+    <div className="p-4" data-testid="prompt-logs-panel">
+      <div className="flex flex-col gap-4">
+        <SidebarPanelPortal>
+        <OrgContextSidebar heading="Log filters" testId="prompt-log-sidebar" bare storageKey="prompt-log-sidebar-collapsed">
           <SearchInput
             value={filter.q}
             onChange={(e) => set("q", e.target.value)}
@@ -301,63 +312,63 @@ export function PromptLogsPanel({
             aria-label="Search by request ID"
             data-testid="prompt-log-search"
           />
-        </div>
-        {(
-          [
-            ["user_id", "User"],
-            ["key_id", "Key"],
-            ["team_id", "Team"],
-            ["provider_id", "Provider"],
-            ["model_id", "Model"],
-          ] as const
-        ).map(([k, label]) => (
-          <div key={k} className="w-32">
+          {(
+            [
+              ["user_id", "User"],
+              ["key_id", "Key"],
+              ["team_id", "Team"],
+              ["provider_id", "Provider"],
+              ["model_id", "Model"],
+            ] as const
+          ).map(([k, label]) => (
             <Input
+              key={k}
               value={filter[k]}
               onChange={(e) => set(k, e.target.value)}
               placeholder={label}
               aria-label={`${label} filter`}
-              className="h-8 text-xs"
+              className="h-8 w-full text-xs"
               data-testid={`prompt-log-filter-${k}`}
             />
-          </div>
-        ))}
-        <div className="w-28">
+          ))}
           <Select value={filter.status} onChange={(e) => set("status", e.target.value)} aria-label="Status filter" data-testid="prompt-log-filter-status">
             <option value="">Status</option>
             {PROMPT_LOG_STATUSES.map((st) => (
               <option key={st} value={st}>{st}</option>
             ))}
           </Select>
-        </div>
-        <div className="flex items-center gap-2">
           <Input
             type="datetime-local"
             value={filter.from}
             onChange={(e) => set("from", e.target.value)}
             aria-label="From (inclusive)"
-            className="h-8 text-xs"
+            className="h-8 w-full text-xs"
             data-testid="prompt-log-filter-from"
           />
-          <span className="text-xs text-zinc-400">→</span>
           <Input
             type="datetime-local"
             value={filter.to}
             onChange={(e) => set("to", e.target.value)}
             aria-label="To (exclusive)"
-            className="h-8 text-xs"
+            className="h-8 w-full text-xs"
             data-testid="prompt-log-filter-to"
           />
-        </div>
-        {perms.canDelete && (
-          <Button size="sm" variant="outline" onClick={() => setConfirmPurge(true)} data-testid="prompt-log-purge">
-            Purge expired
-          </Button>
-        )}
-      </div>
-      <p className="text-[11px] text-zinc-400" data-testid="prompt-log-timezone-note">
-        Times shown in your timezone. From is inclusive, To is exclusive (both converted to UTC).
-      </p>
+          {perms.canDelete && (
+            <Button size="sm" variant="outline" onClick={() => setConfirmPurge(true)} data-testid="prompt-log-purge">
+              Purge expired
+            </Button>
+          )}
+        </OrgContextSidebar>
+        </SidebarPanelPortal>
+        <div className="min-w-0 flex-1 space-y-3">
+          {settingsLoaded && !loggingEnabled && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" data-testid="prompt-logs-disabled">
+              Prompt logging is currently disabled — new requests are not being recorded. A Manager can re-enable it in Settings.
+            </p>
+          )}
+          <p className="text-[11px] text-zinc-400" data-testid="prompt-log-timezone-note">
+            Times shown in your timezone. From is inclusive, To is exclusive (both converted to UTC).
+          </p>
 
       {feed.isPending ? (
         <LoadingState message="Loading prompt logs…" className="py-12" />
@@ -426,7 +437,7 @@ export function PromptLogsPanel({
             rowKey={(r) => r.id}
             emptyMessage="No prompt logs in this range"
             testId="prompt-logs-table"
-            onRowClick={(r) => setSelectedId(r.id)}
+            onRowClick={(r) => selectLog(r.id)}
             rowTestId={(r) => `prompt-log-row-${r.id}`}
           />
           {feed.hasNextPage && (
@@ -443,7 +454,10 @@ export function PromptLogsPanel({
         </>
       )}
 
-      <LogDetailDrawer id={selectedId} orgId={orgId} perms={perms} onClose={() => setSelectedId(null)} />
+        </div>
+      </div>
+
+      <LogDetailDrawer id={selectedId} orgId={orgId} perms={perms} onClose={() => selectLog(null)} />
 
       <ConfirmDialog
         open={confirmPurge}

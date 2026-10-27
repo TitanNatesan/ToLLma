@@ -18,6 +18,7 @@ import { SidebarProviders } from "./SidebarProviders";
 import { SidebarAnalytics, ANALYTICS_REPORT_IDS, type AnalyticsReportId } from "./SidebarAnalytics";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarOrgNav } from "./SidebarOrgNav";
+import { SidebarContextSlot } from "./SidebarPanelPortal";
 
 /** Hash fragment follows for section navigators (fragment navigation fires hashchange). */
 function subscribeSectionHash(callback: () => void) {
@@ -206,6 +207,11 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
              single navigation. */
           <div aria-hidden className="flex-1" />
         )}
+        {/* Page-owned contextual panel (filters, section nav, summaries).
+            Pages portal their controls here via SidebarPanelPortal so all
+            filtering lives in the main layout sidebar instead of a second
+            content column. Empty on pages without a panel. */}
+        <SidebarContextSlot />
       </div>
 
       {/* Bottom-anchored nav above the footer: personal links always, plus
@@ -216,7 +222,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
           Hidden only via the footer chevron. */}
       {!isAdminPage && navShown && (
         <div
-          className="shrink-0 border-t border-zinc-200 dark:border-zinc-800"
+          className="flex max-h-[46vh] min-h-0 shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800"
           onMouseEnter={peekNavOpen}
           onMouseLeave={schedulePeekClose}
           onFocus={peekNavOpen}
@@ -226,12 +232,14 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
           }}
           onFocusCapture={peekNavOpen}
         >
-          {scopeOrgId ? (
-            <SidebarOrgNav orgId={scopeOrgId} />
-          ) : (
-            <SidebarPersonalNav />
-          )}
-          <div className="border-t border-zinc-200 dark:border-zinc-800">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {scopeOrgId ? (
+              <SidebarOrgNav orgId={scopeOrgId} />
+            ) : (
+              <SidebarPersonalNav />
+            )}
+          </div>
+          <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800">
             <SidebarLogoutNav />
           </div>
         </div>
@@ -248,7 +256,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
             aria-current={isAdminPage ? "page" : undefined}
             data-testid="sidebar-nav-admin"
             className={cn(
-              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60",
               "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
               isAdminPage && "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900",
             )}
@@ -326,7 +334,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
             setSidebarWidth(Math.min(450, sidebarWidth + 16));
           }
         }}
-        className="group absolute right-0 top-0 bottom-0 w-2 -mx-0.5 z-10 cursor-col-resize focus-visible:outline-none"
+        className="group absolute right-0 top-0 bottom-0 w-2 -mx-0.5 z-10 cursor-col-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60"
       >
         <div className="mx-auto h-full w-1 transition-colors group-hover:bg-zinc-400/50 group-active:bg-zinc-500 group-focus-visible:bg-zinc-400/50" />
       </div>

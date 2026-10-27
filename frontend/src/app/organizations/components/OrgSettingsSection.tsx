@@ -3,18 +3,17 @@ import { fmtBudgetAmount } from "@/app/api-keys/components/BudgetBar";
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { toast } from "@/lib/notify";
 import {
   Badge, Button, Card, CardContent, EmptyState, Field, Input, LoadingState,
 } from "@/components/ui";
-import { ConfirmDialog } from "./Dialogs";
 import { WorkspaceLoggingSection } from "@/components/logging/WorkspaceLoggingSection";
 import { isForbiddenError, isNotFoundError, useOrgBudget, useOrgMutations } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
 import type { Organization } from "@/types/orgs";
 
-type Tab = "profile" | "privacy" | "sharing" | "budgets" | "logging" | "danger";
+type SettingsTab = "profile" | "budgets" | "logging" | "danger";
 
 function money(v: number | string | null | undefined): string {
   if (v === null || v === undefined || v === "") return "—";
@@ -23,65 +22,46 @@ function money(v: number | string | null | undefined): string {
   return fmtBudgetAmount(n);
 }
 
-/** Settings as tabs: profile, privacy, sharing, budgets summary, danger zone.
+/** Settings: profile, budgets summary, logging, danger zone.
  * Only backend-supported actions render enabled; everything unimplemented
  * renders disabled with an "Unavailable" badge — never fake buttons. */
+export const SETTINGS_TABS = ["profile", "budgets", "logging", "danger"] as const;
+
+export function isSettingsTab(v: string | null): v is SettingsTab {
+  return v === "profile" || v === "budgets" || v === "logging" || v === "danger";
+}
+
 export function OrgSettingsSection({ orgId, org, canManage }: {
   orgId: string;
   org: Organization;
   canManage: boolean;
 }) {
-  const [tab, setTab] = useState<Tab>("profile");
+  // Active tab lives in ?settingsTab= so it is shareable and survives
+  // back/forward; the section sidebar renders the nav (same testids).
+  const searchParams = useSearchParams();
+  const param = searchParams.get("settingsTab");
+  const tab: SettingsTab = isSettingsTab(param) ? param : "profile";
 
   return (
     <div className="max-w-3xl space-y-2.5" data-testid="org-settings">
-      <div className="flex gap-1 rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800" role="tablist"
-        aria-label="Organization settings" data-testid="org-settings-tabs">
-        {([
-          { id: "profile", label: "Profile" },
-          { id: "privacy", label: "Privacy" },
-          { id: "sharing", label: "Sharing" },
-          { id: "budgets", label: "Budgets" },
-          { id: "logging", label: "Logging" },
-          { id: "danger", label: "Danger zone" },
-        ] as const).map((t) => (
-          <button key={t.id} type="button" role="tab" id={`org-settings-tabbtn-${t.id}`} aria-selected={tab === t.id} aria-controls={`org-settings-panel-${t.id}`}
-            onClick={() => setTab(t.id)} data-testid={`org-settings-tab-${t.id}`}
-            className={`flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors ${tab === t.id
-              ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100"
-              : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
 
       {tab === "profile" && (
-        <div role="tabpanel" id="org-settings-panel-profile" aria-labelledby="org-settings-tabbtn-profile">
+        <div role="region" aria-label="Organization profile">
           <ProfileTab orgId={orgId} org={org} canManage={canManage} />
         </div>
       )}
-      {tab === "privacy" && (
-        <div role="tabpanel" id="org-settings-panel-privacy" aria-labelledby="org-settings-tabbtn-privacy">
-          <PrivacyTab orgId={orgId} org={org} canManage={canManage} />
-        </div>
-      )}
-      {tab === "sharing" && (
-        <div role="tabpanel" id="org-settings-panel-sharing" aria-labelledby="org-settings-tabbtn-sharing">
-          <SharingTab orgId={orgId} org={org} canManage={canManage} />
-        </div>
-      )}
       {tab === "budgets" && (
-        <div role="tabpanel" id="org-settings-panel-budgets" aria-labelledby="org-settings-tabbtn-budgets">
+        <div role="region" aria-label="Budgets">
           <BudgetsTab orgId={orgId} />
         </div>
       )}
       {tab === "logging" && (
-        <div role="tabpanel" id="org-settings-panel-logging" aria-labelledby="org-settings-tabbtn-logging">
+        <div role="region" aria-label="Prompt logging">
           <LoggingTab orgId={orgId} canManage={canManage} />
         </div>
       )}
       {tab === "danger" && (
-        <div role="tabpanel" id="org-settings-panel-danger" aria-labelledby="org-settings-tabbtn-danger">
+        <div role="region" aria-label="Danger zone">
           <DangerTab />
         </div>
       )}
@@ -129,7 +109,7 @@ function ProfileTab({ orgId, org, canManage }: { orgId: string; org: Organizatio
         <div>
           <h3 className="text-xs font-bold">Organization profile</h3>
           <p className="mt-0.5 text-xs text-zinc-500">
-            Saved via PATCH — applies immediately and is audit-logged. Slug <span className="font-mono">/{org.slug}</span> never changes.
+            Scope: this organization only — visible to every member. Saved via PATCH — applies immediately and is audit-logged. Slug <span className="font-mono">/{org.slug}</span> never changes.
           </p>
         </div>
         <Field label="Name">
@@ -174,103 +154,6 @@ function ProfileTab({ orgId, org, canManage }: { orgId: string; org: Organizatio
   );
 }
 
-function PrivacyTab({ orgId, org, canManage }: { orgId: string; org: Organization; canManage: boolean }) {
-  const mut = useOrgMutations(orgId);
-  const [busy, setBusy] = useState(false);
-
-  async function save(mode: string) {
-    setBusy(true);
-    try {
-      await mut.updateOrg.mutateAsync({ visibility_mode: mode });
-      toast.success("Visibility mode updated. Members notified.");
-    } catch (e) {
-      toast.error(parseApiError(e).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <h3 className="text-xs font-bold">Privacy</h3>
-        <p className="mt-0.5 text-xs text-zinc-500">Controls what the organization sees of member conversations.</p>
-        <div className="mt-3 flex gap-1.5" role="radiogroup" aria-label="Conversation visibility">
-          {(["metadata_only", "full_conversation_access"] as const).map((m) => (
-            <Button key={m} size="sm" variant={org.visibility_mode === m ? "default" : "outline"}
-              disabled={busy || !canManage}
-              onClick={() => void save(m)}
-              data-testid={`org-vis-${m}`}>
-              {m === "metadata_only" ? "Metadata Only" : "Full Conversation Access"}
-            </Button>
-          ))}
-        </div>
-        <p className="mt-2 text-[11px] text-zinc-500">
-          Metadata Only shares user, model, provider, tokens, costs, and timestamps — never message content.
-          Full access additionally reveals prompts, responses, and attachments, and every read is audit-logged.
-        </p>
-        {!canManage && (
-          <p className="mt-2 text-[11px] text-zinc-400">You need organization-settings permission to change this.</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function SharingTab({ orgId, org, canManage }: { orgId: string; org: Organization; canManage: boolean }) {
-  const mut = useOrgMutations(orgId);
-  const [busy, setBusy] = useState(false);
-  const [confirmSharing, setConfirmSharing] = useState(false);
-
-  async function save(value: boolean, ok: string) {
-    setBusy(true);
-    try {
-      await mut.updateOrg.mutateAsync({ personal_sharing_enforced: value });
-      toast.success(ok);
-    } catch (e) {
-      toast.error(parseApiError(e).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-xs font-bold">Personal Usage Sharing</h3>
-            <p className="mt-0.5 text-xs text-zinc-500">
-              Off by default. When enabled, members must share personal usage metadata. Members are notified on change.
-              Message content stays private either way.
-            </p>
-          </div>
-          <Button size="sm" variant={org.personal_sharing_enforced ? "default" : "outline"}
-            disabled={busy || !canManage}
-            onClick={() => {
-              if (!org.personal_sharing_enforced) {
-                setConfirmSharing(true);
-                return;
-              }
-              void save(false, "Sharing enforcement disabled.");
-            }} data-testid="org-enforce-toggle">
-            {org.personal_sharing_enforced ? "Enforced" : "Off"}
-            {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-          </Button>
-        </div>
-        {!canManage && (
-          <p className="mt-2 text-[11px] text-zinc-400">You need organization-settings permission to change this.</p>
-        )}
-        <ConfirmDialog open={confirmSharing} title="Enable Personal Usage Sharing?"
-          confirmLabel="Enable Sharing" testId="org-sharing-dialog"
-          description="Members will be notified that personal usage metadata will be shared with this organization. Message content stays private."
-          onClose={() => setConfirmSharing(false)}
-          onConfirm={() => save(true, "Sharing enforcement enabled.").then(() => setConfirmSharing(false))} />
-      </CardContent>
-    </Card>
-  );
-}
-
 function BudgetsTab({ orgId }: { orgId: string }) {
   const budget = useOrgBudget(orgId);
   const cap = budget.data ? (budget.data.max_spend ?? budget.data.max_budget_usd ?? budget.data.cap) : undefined;
@@ -281,7 +164,7 @@ function BudgetsTab({ orgId }: { orgId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-xs font-bold">Budgets</h3>
-            <p className="mt-0.5 text-xs text-zinc-500">Organization spend pool at a glance. Caps are edited under Budgets.</p>
+            <p className="mt-0.5 text-xs text-zinc-500">Scope: this organization&apos;s shared spend pool. Impact: read-only here — caps are edited under Budgets by budget managers.</p>
           </div>
           <Link href={`/organizations/${orgId}?section=budgets`} data-testid="org-budgets-link">
             <Button size="sm" variant="outline">Open Budgets</Button>
@@ -328,7 +211,7 @@ function LoggingTab({ orgId, canManage }: { orgId: string; canManage: boolean })
       <CardContent className="p-4">
         <h3 className="text-xs font-bold">Prompt logging</h3>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Workspace capture policy at a glance. Per-team and per-key overrides live under Prompt Logs.
+          Scope: workspace-wide capture defaults for this org. Impact: per-team and per-key overrides live under Prompt Logs; global ON locks every scope.
         </p>
         <div className="mt-2">
           <WorkspaceLoggingSection orgId={orgId} canManage={canManage} />
@@ -351,7 +234,7 @@ function DangerTab() {
           <h3 className="text-xs font-bold text-red-700 dark:text-red-300">Danger Zone</h3>
         </div>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Irreversible organization actions. Only backend-supported actions render enabled.
+          Scope: the entire organization and every member. Impact: irreversible — only backend-supported actions render enabled.
         </p>
         {actions.length === 0 ? (
           <EmptyState title="No danger-zone actions" description="Nothing here needs your attention." />

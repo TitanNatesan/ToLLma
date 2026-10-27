@@ -244,7 +244,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
 
   return (
     <main
-      className="relative flex min-h-dvh w-full items-center justify-center bg-zinc-950 px-4 py-4"
+      className="relative flex min-h-dvh w-full items-center justify-center overflow-x-clip bg-zinc-950 px-4 py-4"
       data-testid={mode === "login" ? "login-page" : "signup-page"}
     >
       {/* Ambient background glow */}

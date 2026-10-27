@@ -135,8 +135,9 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        # Export downloads read Content-Disposition to name the file.
-        expose_headers=["Content-Disposition", "X-Export-Total-Count", "X-Export-Truncated"],
+        # Export downloads read Content-Disposition to name the file; paged
+        # lists expose X-Next-Cursor so browser fetch can read the cursor.
+        expose_headers=["Content-Disposition", "X-Export-Total-Count", "X-Export-Truncated", "X-Next-Cursor"],
         max_age=86400,
     )
     register_handlers(app)

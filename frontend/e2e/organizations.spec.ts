@@ -185,7 +185,9 @@ test.describe("organizations phase A", () => {
     await expect(page.getByTestId("settings-organizations")).toContainText("Switch A");
     await expect(page.getByTestId("settings-organizations")).toContainText("Switch B");
     await expect(page.getByTestId("org-context-personal")).toBeVisible();
-    // Chevron workspace menu lists both orgs and switches context to the detail page.
+    // Chevron workspace menu lists both orgs and switches context in place
+    // (destinationFor: settings is scope-agnostic, so the URL stays while
+    // the workspace context flips to the selected org).
     const wsTrigger = page.getByTestId("workspace-menu-trigger");
     await expect(wsTrigger).toHaveRole("button");
     await expect(wsTrigger).toHaveAttribute("aria-label", /current workspace/i);
@@ -200,7 +202,7 @@ test.describe("organizations phase A", () => {
     await expect.poll(async () => menuOrgs.count(), { timeout: 20000 }).toBeGreaterThanOrEqual(2);
     await expect(menuOrgs.first()).toContainText("· root");
     await menuOrgs.first().click();
-    await expect(page).toHaveURL(/\/organizations\/[0-9a-f-]{36}/, { timeout: 20000 });
+    await expect(page).toHaveURL(/\/settings/, { timeout: 20000 });
     await expect(page.getByTestId("workspace-menu-trigger")).not.toContainText("Personal");
     await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
     await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
@@ -237,10 +239,27 @@ test.describe("organizations phase A", () => {
     await page.getByTestId("sidebar-org-sets").focus();
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("org-section-sets")).toBeVisible();
-    // Settings renders cards, including the danger zone.
+    // Settings renders profile/budgets/logging/danger tabs — no Privacy/Sharing.
     await page.getByTestId("sidebar-org-settings").click();
+    for (const tab of ["profile", "budgets", "logging", "danger"] as const) {
+      await expect(page.getByTestId(`org-settings-tab-${tab}`)).toBeVisible();
+    }
+    await expect(page.getByTestId("org-settings-tab-profile")).toContainText("profile");
+    await expect(page.getByTestId("org-settings-tab-budgets")).toContainText("budgets");
+    await expect(page.getByTestId("org-settings-tab-logging")).toContainText("logging");
+    await expect(page.getByTestId("org-settings-tab-danger")).toContainText("Danger zone");
+    await expect(page.getByTestId("org-sidebar-settings")).not.toContainText("Privacy");
+    await expect(page.getByTestId("org-sidebar-settings")).not.toContainText("Sharing");
+    await expect(page.getByTestId("org-settings")).not.toContainText("Privacy");
+    await expect(page.getByTestId("org-settings")).not.toContainText("Sharing");
+    // Default tab is profile; each tab renders its card.
+    await expect(page.getByTestId("org-settings")).toContainText("Organization profile");
+    await page.getByTestId("org-settings-tab-budgets").click();
+    await expect(page.getByTestId("org-settings")).toContainText("Budgets");
+    await page.getByTestId("org-settings-tab-logging").click();
+    await expect(page.getByTestId("org-settings")).toContainText("Prompt logging");
+    await page.getByTestId("org-settings-tab-danger").click();
     await expect(page.getByTestId("org-settings")).toContainText("Danger Zone");
-    await expect(page.getByTestId("org-settings")).toContainText("Privacy");
     // Operations has only requests + invitations tabs.
     await page.getByTestId("sidebar-org-operations").click();
     await expect(page.getByTestId("org-operations")).toBeVisible();

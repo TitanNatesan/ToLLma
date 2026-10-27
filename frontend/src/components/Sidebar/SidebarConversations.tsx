@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Pencil, Pin, Plus, Trash2 } from "lucide-react";
+import { LoadingState } from "@/components/ui/LoadingState";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { useConversationMutations, useConversations } from "@/hooks/useChat";
+import { useConversationMutations, useConversationsInfinite } from "@/hooks/useChat";
 import { useChatStore } from "@/store/chat";
 import { toastApiError } from "@/lib/errors";
 import { ConfirmDialog } from "@/app/api-keys/components/ConfirmDialog";
@@ -52,7 +53,7 @@ function ConvItem({
           }}
           onKeyDown={(e) => e.key === "Escape" && setRenaming(false)}
           aria-label="Conversation title"
-          className="h-7 w-full rounded border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
+          className="h-7 w-full rounded border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:border-zinc-700 dark:bg-zinc-900"
         />
       </form>
     );
@@ -76,7 +77,7 @@ function ConvItem({
         </span>
       )}
       <button
-        className="flex-1 truncate text-left"
+        className="flex-1 truncate rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60"
         onClick={onSelect}
         title={conv.title}
         data-testid={`conversation-item-${conv.id}`}
@@ -86,7 +87,7 @@ function ConvItem({
       <span className="invisible flex shrink-0 items-center gap-0.5 group-hover:visible group-focus-within:visible">
         <button
           onClick={onPin}
-          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-700"
           title={conv.is_pinned ? "Unpin" : "Pin"}
           aria-label={conv.is_pinned ? "Unpin" : "Pin"}
           data-testid={`pin-button-${conv.id}`}
@@ -100,7 +101,7 @@ function ConvItem({
             setTitle(conv.title);
             setRenaming(true);
           }}
-          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+          className="rounded p-1.5 text-zinc-400 hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-700"
           title="Rename"
           aria-label="Rename"
           data-testid={`rename-button-${conv.id}`}
@@ -110,7 +111,7 @@ function ConvItem({
         <button
           onClick={onDelete}
           disabled={deleteDisabled}
-          className="rounded p-1.5 text-red-500 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/30"
+          className="rounded p-1.5 text-red-500 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-900/30"
           title={deleteDisabled ? "Stop generation before deleting" : "Delete"}
           aria-label={deleteDisabled ? "Stop generation before deleting" : "Delete"}
           data-testid={`delete-button-${conv.id}`}
@@ -127,10 +128,43 @@ export function SidebarConversations() {
   const router = useRouter();
   const { activeConversationId, sidebarSearch, setConversation, setSearch } = useChatStore();
   const streaming = useChatStore((s) => s.streaming);
-  const { data: convs = [] } = useConversations(sidebarSearch);
+  const feed = useConversationsInfinite(sidebarSearch);
   const mutations = useConversationMutations();
   const searchRef = useRef<HTMLInputElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
+
+  // Flatten pages, dedupe by id (search refetch races can overlap).
+  const convs = (() => {
+    const seen = new Set<string>();
+    const out: Conversation[] = [];
+    for (const page of feed.data?.pages ?? []) {
+      for (const c of page.items) {
+        if (seen.has(c.id)) continue;
+        seen.add(c.id);
+        out.push(c);
+      }
+    }
+    return out;
+  })();
+
+  // Near-bottom sentinel loads the next cursor page. Scroll position is
+  // preserved (append-only, stable keys); observer disconnects on unmount.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !feed.hasNextPage) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && !feed.isFetchingNextPage) {
+          void feed.fetchNextPage();
+        }
+      },
+      { rootMargin: "240px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feed.hasNextPage, feed.isFetchingNextPage, feed.data]);
 
   // New chat is a draft: no database row until the first message is sent.
   // The store is cleared synchronously so a send fired immediately after the
@@ -183,7 +217,7 @@ export function SidebarConversations() {
         <button
           onClick={newChat}
           data-testid="new-chat"
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50 hover:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50 hover:border-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         >
           <Plus className="size-3.5" />
           <span>New chat</span>
@@ -265,9 +299,45 @@ export function SidebarConversations() {
           </div>
         )}
 
-        {convs.length === 0 && (
+        {feed.isPending && (
+          <div className="px-2 py-6" data-testid="conversations-loading">
+            <LoadingState message="Loading conversations…" />
+          </div>
+        )}
+        {feed.isError && convs.length === 0 && (
+          <div className="flex flex-col items-center gap-2 px-2 py-6 text-center">
+            <p className="text-xs text-zinc-400">Couldn&apos;t load conversations.</p>
+            <button
+              type="button"
+              onClick={() => void feed.refetch()}
+              data-testid="conversations-retry"
+              className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {!feed.isPending && !feed.isError && convs.length === 0 && (
           <p className="px-2 py-6 text-center text-xs text-zinc-400">
             {sidebarSearch ? "No conversations found" : "No conversations yet"}
+          </p>
+        )}
+        {/* Infinite-scroll sentinel: compact loader, then end-of-list. */}
+        <div ref={sentinelRef} aria-hidden className="h-px" />
+        {feed.isFetchingNextPage && (
+          <p className="px-2 py-2 text-center text-[11px] text-zinc-400" data-testid="conversations-loading-more">
+            Loading more…
+          </p>
+        )}
+        {!feed.isPending && !feed.hasNextPage && convs.length > 0 && (
+          <p className="px-2 py-2 text-center text-[11px] text-zinc-400" data-testid="conversations-end">
+            {feed.isError ? (
+              <button type="button" onClick={() => void feed.fetchNextPage()} className="rounded underline hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60">
+                Retry loading more
+              </button>
+            ) : (
+              "No more conversations"
+            )}
           </p>
         )}
       </div>

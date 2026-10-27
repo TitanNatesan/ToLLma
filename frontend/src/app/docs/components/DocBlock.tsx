@@ -6,16 +6,22 @@ import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { DocsNav } from "./DocsNav";
+import { SidebarPanelPortal } from "@/components/Sidebar/SidebarPanelPortal";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import type { ReactNode } from "react";
 
 export function DocPage({ children, testId }: { children: ReactNode; testId: string }) {
   return (
     <PageContainer testId={testId} maxWidth="max-w-[1080px]">
-      <div className="flex flex-col gap-4 md:flex-row">
-        <DocsNav />
-        <div className="min-w-0 flex-1">{children}</div>
-      </div>
+      <SidebarPanelPortal>
+        <nav aria-label="Documentation" className="flex flex-col gap-2">
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+            Documentation
+          </h2>
+          <DocsNav />
+        </nav>
+      </SidebarPanelPortal>
+      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
     </PageContainer>
   );
 }

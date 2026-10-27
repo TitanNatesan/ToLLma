@@ -24,6 +24,7 @@ import {
 import {
   Badge,
   Button,
+  DetailPanel,
   EmptyState,
   ErrorState,
   LoadingState,
@@ -68,6 +69,7 @@ import type {
   AnalyticsGranularity,
   AnalyticsPreset,
   AnalyticsRangeParams,
+  ConversationAnalyticsRow,
   ModelSort,
 } from "@/types";
 
@@ -198,6 +200,9 @@ function PersonalAnalyticsView() {
   const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null);
   const [dataset, setDataset] = useState<AnalyticsDataset>("summary");
   const [exporting, setExporting] = useState(false);
+  // Summary panel: conversation rows open a detail drawer reusing the row's
+  // data (no extra fetch); navigation is an explicit action inside.
+  const [selectedConv, setSelectedConv] = useState<ConversationAnalyticsRow | null>(null);
 
   const customReady = preset !== "custom" || (!!customStart && !!customEnd);
   const params = useMemo<AnalyticsRangeParams>(
@@ -258,6 +263,7 @@ function PersonalAnalyticsView() {
   }
 
   function openConversation(conversationId: string) {
+    setSelectedConv(null);
     router.push(`/c/${conversationId}`);
   }
 
@@ -587,7 +593,7 @@ function PersonalAnalyticsView() {
                       <tr
                         key={row.id}
                         className="cursor-pointer border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50"
-                        onClick={() => openConversation(row.id)}
+                        onClick={() => setSelectedConv(row)}
                         data-testid={`top-conversation-${row.id}`}
                       >
                         <td className="max-w-64 truncate py-2 pr-3 font-medium text-zinc-800 dark:text-zinc-200">
@@ -850,35 +856,35 @@ function PersonalAnalyticsView() {
                   title="Most active"
                   rows={conversations.data?.most_active ?? []}
                   metric={(row) => `${row.messages} msgs`}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-active"
                 />
                 <ConversationRankList
                   title="Longest"
                   rows={conversations.data?.longest ?? []}
                   metric={(row) => `${row.user_messages} prompts`}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-longest"
                 />
                 <ConversationRankList
                   title="Most expensive"
                   rows={conversations.data?.most_expensive ?? []}
                   metric={(row) => fmtMoney(row.spend)}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-expensive"
                 />
                 <ConversationRankList
                   title="Largest context"
                   rows={conversations.data?.largest_context ?? []}
                   metric={(row) => `${fmtCompactTokens(row.max_context_tokens)} ctx`}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-context"
                 />
                 <ConversationRankList
                   title="Highest tokens"
                   rows={conversations.data?.highest_tokens ?? []}
                   metric={(row) => fmtTokens(row.tokens)}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-tokens"
                 />
                 <div className="rounded-lg border border-dashed border-zinc-200 p-4 dark:border-zinc-800">
@@ -899,6 +905,34 @@ function PersonalAnalyticsView() {
             </p>
           </>
         )}
+
+      <DetailPanel open={selectedConv !== null} onClose={() => setSelectedConv(null)}
+        testId="analytics-conversation-summary"
+        title={selectedConv?.title ?? "Conversation"}
+        subtitle={selectedConv ? `${selectedConv.messages} messages · ${fmtTokens(selectedConv.tokens)}` : undefined}
+        actions={selectedConv ? (
+          <Button size="sm" onClick={() => openConversation(selectedConv.id)} data-testid="analytics-conv-open">
+            Open conversation
+          </Button>
+        ) : undefined}>
+        {selectedConv && (
+          <dl className="space-y-1 text-xs">
+            {[
+              ["Provider", selectedConv.provider_name ?? "—"],
+              ["Model", selectedConv.model_name ?? "—"],
+              ["Cost", fmtMoney(selectedConv.spend)],
+              ["Tokens", fmtTokens(selectedConv.tokens)],
+              ["Prompts", String(selectedConv.user_messages)],
+              ["Context peak", fmtCompactTokens(selectedConv.max_context_tokens)],
+            ].map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-2 rounded border border-zinc-100 px-2 py-1 dark:border-zinc-900">
+                <dt className="text-zinc-500">{k}</dt>
+                <dd className="truncate text-right font-mono text-[11px]">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DetailPanel>
     </PageContainer>
   );
 }

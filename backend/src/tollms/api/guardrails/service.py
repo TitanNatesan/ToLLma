@@ -132,6 +132,78 @@ def validate_policy_fields(data, *, is_create: bool = False) -> None:
             raise ValidationError(f"invalid notify_repeat_minutes: {repeat!r}")
 
 
+def _validate_assignment_refs(db: Session, caller_id: uuid.UUID,
+                              org_id: uuid.UUID | None, assignments) -> bool:
+    """Scope/ref consistency + workspace ownership for policy assignments.
+
+    validate_policy_fields already rejects unknown scope_type values and the
+    buffer+pre combination; this covers the rest: contradictory scope/refs
+    (422), foreign provider/model/key refs — including forged global scope
+    carrying another workspace's refs (404 oracle, no existence leak).
+
+    Returns True when any key-scoped assignment is present, so callers can
+    additionally require Guardrails.Update + key assign authority.
+    """
+    from tollms.models.api_key import ApiKey
+    from tollms.models.provider import Provider
+    from tollms.models.registered_model import AIModel
+
+    items = list(assignments or [])
+    if not items:
+        return False
+    key_scoped = False
+    for item in items:
+        get = (lambda k, d=None: getattr(item, k, d)) if hasattr(item, "scope_type") else item.get
+        scope = (get("scope_type", "global") or "global").lower()
+        provider_id = get("provider_id")
+        model_id = get("model_id")
+        key_id = get("api_key_id")
+        if scope == "global":
+            if provider_id is not None or model_id is not None or key_id is not None:
+                raise ValidationError("global scope must not carry provider/model/key refs")
+        elif scope == "provider":
+            if provider_id is None:
+                raise ValidationError("provider scope requires provider_id")
+            if key_id is not None:
+                raise ValidationError("provider scope must not carry api_key_id")
+        elif scope == "key":
+            if key_id is None:
+                raise ValidationError("key scope requires api_key_id")
+            key_scoped = True
+        if provider_id is not None:
+            provider = db.get(Provider, provider_id)
+            if provider is None or provider.is_deleted:
+                raise NotFoundError("guardrail policy not found")
+            if org_id is None:
+                if provider.org_id is not None or provider.user_id != caller_id:
+                    raise NotFoundError("guardrail policy not found")
+            elif provider.org_id != org_id:
+                raise NotFoundError("guardrail policy not found")
+        if model_id is not None:
+            model = db.get(AIModel, model_id)
+            if model is None or model.is_deleted or model.provider_id is None:
+                raise NotFoundError("guardrail policy not found")
+            provider = db.get(Provider, model.provider_id)
+            if provider is None or provider.is_deleted:
+                raise NotFoundError("guardrail policy not found")
+            if org_id is None:
+                if provider.org_id is not None or provider.user_id != caller_id:
+                    raise NotFoundError("guardrail policy not found")
+            elif provider.org_id != org_id:
+                raise NotFoundError("guardrail policy not found")
+        if key_id is not None:
+            key = db.get(ApiKey, key_id)
+            if key is None or key.is_deleted:
+                raise NotFoundError("guardrail policy not found")
+            if org_id is None:
+                if key.org_id is not None or key.user_id != caller_id:
+                    raise NotFoundError("guardrail policy not found")
+            elif key.org_id != org_id:
+                raise NotFoundError("guardrail policy not found")
+            key_scoped = True
+    return key_scoped
+
+
 def _scope(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
            code: str) -> tuple[str, uuid.UUID | None]:
     if org_id is None:
@@ -276,6 +348,13 @@ def create_policy(db: Session, caller_id: uuid.UUID, data) -> GuardrailPolicy:
             raise ValidationError("is_mandatory is only available on organization policies")
         _scope(db, caller_id, data.org_id, "Guardrails.Update")
     validate_policy_fields(data, is_create=True)
+    if _validate_assignment_refs(db, caller_id, data.org_id, data.assignments or []):
+        # scope_type/key assignment requires Guardrails.Update + key assign
+        # authority on top of the Create gate checked above.
+        _scope(db, caller_id, data.org_id, "Guardrails.Update")
+        if data.org_id is not None:
+            org, mem = _member_org(db, data.org_id, caller_id)
+            _require_perm(db, org, mem, caller_id, "Keys.Assign")
     _check_name(db, caller_id, data.org_id, data.name)
     policy = GuardrailPolicy(
         user_id=None if data.org_id else caller_id, org_id=data.org_id,
@@ -321,6 +400,13 @@ def update_policy(db: Session, caller_id: uuid.UUID, policy_id: uuid.UUID,
                                   else getattr(policy, "notify_repeat_minutes", 60)),
     }
     validate_policy_fields(merged)
+    if data.assignments is not None and _validate_assignment_refs(
+            db, caller_id, org_id, data.assignments or []):
+        # The Update gate above already holds; key-scoped assignments also
+        # need key assign authority (personal: ownership, checked above).
+        if org_id is not None:
+            org, mem = _member_org(db, org_id, caller_id)
+            _require_perm(db, org, mem, caller_id, "Keys.Assign")
     if data.is_enabled is False and policy.is_mandatory:
         raise ValidationError("mandatory policies cannot be disabled")
     if data.is_mandatory is True and policy.org_id is None:

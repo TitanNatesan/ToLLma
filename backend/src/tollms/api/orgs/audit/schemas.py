@@ -16,6 +16,9 @@ class AuditRead(BaseModel):
     # (actor_user_id None), never fabricated.
     actor_email: str | None = None
     actor_name: str | None = None
+    # Human title from the audit event registry (additive; unknown actions
+    # fall back to a humanized title, never "Unknown event").
+    display_title: str | None = None
 
 
 

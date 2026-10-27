@@ -75,6 +75,9 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await expect(page.getByTestId("sidebar-footer")).toBeVisible();
 
   // Peek: hovering the hidden chevron temporarily shows the nav.
+  // (Move away first: the pointer still sits on the chevron from the click,
+  // so a bare hover() would be a no-op without a fresh mouseenter.)
+  await page.getByTestId("app-logo").hover();
   await collapseBtn.hover();
   await expect(personalNav).toBeVisible({ timeout: 10000 });
   await expect(page.getByTestId("logout-btn")).toBeVisible({ timeout: 10000 });
@@ -103,8 +106,10 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await expect(page.getByTestId("logout-btn")).toBeVisible({ timeout: 10000 });
 
   // Keyboard pin: hide again, focus chevron, Enter pins it open.
+  // (Blur first: the click focused the chevron, so a bare focus() would be a no-op.)
   await collapseBtn.click();
   await expect(personalNav).toBeHidden({ timeout: 10000 });
+  await collapseBtn.blur();
   await collapseBtn.focus();
   await expect(personalNav).toBeVisible({ timeout: 10000 });
   await page.keyboard.press("Enter");
@@ -147,7 +152,9 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await expect(page.getByTestId("new-chat")).toBeVisible();
   await expect(page.getByTestId("top-navigation")).toHaveCount(0);
 
-  // Workspace switching via the profile menu: create an org, switch to its detail page.
+  // Workspace switching via the profile menu: create an org, switch context.
+  // (destinationFor: "/" is scope-shared, so the URL stays while the
+  // workspace context flips to the selected org.)
   const orgRes = await page.request.post(`${API}/api/v1/orgs`, {
     data: { name: `Nav Org ${Date.now()}`, description: "e2e nav" },
   });
@@ -159,7 +166,7 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   const menuOrgs = page.locator('[data-testid^="workspace-menu-org-"]');
   await expect.poll(async () => menuOrgs.count(), { timeout: 20000 }).toBeGreaterThanOrEqual(1);
   await menuOrgs.first().click();
-  await expect(page).toHaveURL(/\/organizations\/[0-9a-f-]{36}/, { timeout: 20000 });
+  await expect(page).toHaveURL(/\/$/, { timeout: 20000 });
   await expect(page.getByTestId("workspace-menu-trigger")).toContainText(orgName);
   // Final nav rule: org scope shows ONLY the org nav (personal hidden).
   await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
@@ -195,7 +202,7 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
   await expect(page.getByTestId("sidebar-org-nav")).toBeVisible();
   await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("aria-current", "page");
-  await expect(page).toHaveURL(/^[^?]*\/providers$/);
+  await expect(page).toHaveURL(/\/providers/);
 
   // /api-keys renders org data in org scope.
   await page.goto("/api-keys");
@@ -248,18 +255,18 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await expect(page).toHaveURL(/\/api-keys/, { timeout: 20000 });
 
   // Operations has only requests + invitations tabs (keys moved to /api-keys).
-  // Tab state lives in ?tab= (URL-synced, role=tab + aria-selected + tabpanel).
+  // Section state lives in ?section=operations&tab= (URL-synced sidebar nav + aria-current).
   await page.goto(`/organizations/${orgId}?section=operations`);
   await expect(page.getByTestId("org-operations")).toBeVisible({ timeout: 20000 });
   await expect(page.getByTestId("org-ops-tab-requests")).toBeVisible();
   await expect(page.getByTestId("org-ops-tab-invitations")).toBeVisible();
   await expect(page.getByTestId("org-ops-tab-keys")).toHaveCount(0);
-  await expect(page.getByTestId("org-ops-tab-requests")).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByTestId("org-ops-tab-invitations")).toHaveAttribute("aria-selected", "false");
+  await expect(page.getByTestId("org-ops-tab-requests")).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("org-ops-tab-invitations")).not.toHaveAttribute("aria-current", "page");
   await expect(page).toHaveURL(/section=operations/, { timeout: 20000 });
   await page.getByTestId("org-ops-tab-invitations").click();
   await expect(page).toHaveURL(/tab=invitations/, { timeout: 20000 });
-  await expect(page.getByTestId("org-ops-tab-invitations")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("org-ops-tab-invitations")).toHaveAttribute("aria-current", "page");
 
   // Unknown ?section= values fall back to the overview (shareable, stable testids).
   await page.goto(`/organizations/${orgId}?section=bogus`);
@@ -481,12 +488,11 @@ test("collapsed rail mirrors scope, controls, and shared nav visibility", async 
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("command-palette")).toBeHidden();
 
-  // Notifications route to the settings organizations section; the rail
-  // persists there in the personal scope with Settings active.
+  // Notifications route to the dedicated notifications page; the rail
+  // persists there in the personal scope.
   await notifications.click();
-  await expect(page).toHaveURL(/\/settings#organizations/);
+  await expect(page).toHaveURL(/\/notifications/);
   await expect(page.getByTestId("sidebar-reveal-rail")).toBeVisible();
-  await expect(page.getByTestId("rail-nav-settings")).toHaveAttribute("aria-current", "page");
 
   // Middle: personal icons with the active entry marked (client-side hops
   // keep the collapsed state, so no reload persistence is asserted here).

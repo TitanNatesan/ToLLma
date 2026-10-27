@@ -116,6 +116,24 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
+ * Ownership of one in-flight generation. Captured at submission so every
+ * chunk routes to the originating conversation/generation — never to
+ * whatever conversation is currently selected. `routeAtSend` is the route
+ * the tab showed when the send started; store adoption only happens when the
+ * tab hasn't moved on since.
+ */
+interface StreamOwner {
+  convId: string | null;
+  msgId: string | null;
+  genId: string | null;
+  routeAtSend: string | null;
+}
+
+function ownerFor(target: string | null, routeAtSend: string | null): StreamOwner {
+  return { convId: target, msgId: null, genId: null, routeAtSend };
+}
+
+/**
  * Chat workspace bound to a route conversation. The URL owns identity: the
  * store is synced from `conversationId` (so header/panel/composer hooks stay
  * aligned), and every action that switches conversations navigates to
@@ -279,8 +297,12 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     refreshAll,
   ]);
 
-  /** Callbacks shared by fresh sends and refresh-reattach subscriptions. */
-  const streamCallbacks = useCallback((ctrl: AbortController): StreamCallbacks => ({
+  /** Callbacks shared by fresh sends and refresh-reattach subscriptions.
+   *  Every chunk routes by the captured owner — never by the currently
+   *  selected conversation, so navigating mid-stream can't misroute deltas
+   *  into the wrong chat. Navigating away never aborts: only an explicit
+   *  cancel (stop) drops the subscription. */
+  const streamCallbacks = useCallback((ctrl: AbortController, owner: StreamOwner): StreamCallbacks => ({
     signal: ctrl.signal,
     onMeta: (meta) => {
       // Adopted an already-terminal generation (same-key retry race):
@@ -289,11 +311,17 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         finishGeneration(meta.conversation_id, meta.status);
         return;
       }
+      owner.convId = meta.conversation_id;
+      owner.genId = meta.generation_id ?? owner.genId;
+      owner.msgId = meta.message_id ?? meta.generation_id ?? owner.msgId;
+      // The tab moved on (or a draft send raced a navigation): record the
+      // ids for routing, but don't yank the store back to this conversation.
+      if (routeIdRef.current !== owner.routeAtSend) return;
       setConversation(meta.conversation_id);
       setPendingConversation(meta.conversation_id);
-      const genId = meta.generation_id;
-      const msgId = meta.message_id ?? genId;
-      if (genId && msgId) {
+      const genId = owner.genId;
+      const msgId = owner.msgId;
+      if (genId && msgId && !useChatStore.getState().optimisticMessages.some((m) => m.id === msgId)) {
         setActiveGeneration({ id: genId, messageId: msgId });
         addOptimistic({
           id: msgId,
@@ -306,25 +334,42 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     },
     onSnapshot: (content) => {
       perfSnapshot(content.length);
-      const mid = useChatStore.getState().activeGeneration?.messageId;
+      const mid = owner.msgId ?? useChatStore.getState().activeGeneration?.messageId;
       if (mid) setOptimisticContent(mid, content);
     },
     onDelta: (d) => {
       perfDelta();
-      const mid = useChatStore.getState().activeGeneration?.messageId;
+      const mid = owner.msgId ?? useChatStore.getState().activeGeneration?.messageId;
       if (mid) updateOptimisticStreaming(mid, d);
     },
     onDone: (done) => {
+      // Late/duplicate terminal for a conversation this send doesn't own:
+      // ignore (the owning tab/owner already settled it).
+      const runtimeConv = (done as unknown as { conversation_id?: string }).conversation_id;
+      if (owner.convId && runtimeConv && runtimeConv !== owner.convId) return;
       // Inline attachments land in the live message immediately (no reload);
       // the refetch inside finishGeneration then confirms server truth. The
       // merge and the overlay clear batch in one tick, so the text-only
       // optimistic row can never render over the merged persisted row.
-      const convId = useChatStore.getState().activeConversationId;
+      const convId = runtimeConv ?? owner.convId ?? useChatStore.getState().activeConversationId;
       mergeDoneIntoCache(convId, done);
       finishGeneration(convId, done.status, done.error);
+      // Finished while looking at another conversation: toast with a jump
+      // action. Suppressed when already viewing it (normal flow needs no
+      // noise) — done carries no secret, only the conversation id.
+      // NOTE: compare against the live global store, not routeIdRef: this
+      // closure may belong to an instance unmounted by navigation, whose
+      // ref is frozen at the send-time route and would wrongly suppress.
+      const viewing = useChatStore.getState().activeConversationId;
+      if (convId && viewing !== convId) {
+        toast.success("Response ready", {
+          description: "The generation finished in another conversation.",
+          action: { label: "Open conversation", onClick: () => router.push(`/c/${convId}`) },
+        });
+      }
     },
     onError: (m) => {
-      const convId = useChatStore.getState().activeConversationId;
+      const convId = owner.convId ?? useChatStore.getState().activeConversationId;
       setStreaming(false);
       setActiveGeneration(null);
       clearOptimistic();
@@ -344,6 +389,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     setStreaming,
     clearOptimistic,
     refreshAll,
+    router,
   ]);
 
   /**
@@ -374,7 +420,10 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       created_at: new Date().toISOString(),
     });
     perfSend();
-    const cbs = streamCallbacks(ctrl);
+    const owner = ownerFor(convId, routeIdRef.current);
+    owner.msgId = active.message_id;
+    owner.genId = active.generation_id;
+    const cbs = streamCallbacks(ctrl, owner);
     const prevDone = cbs.onDone;
     const prevError = cbs.onError;
     void streamGeneration(active.generation_id, {
@@ -475,7 +524,8 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         if (tries >= 12) stopDraftProbe();
       }, 700);
     }
-    const cbs = streamCallbacks(ctrl);
+    const owner = ownerFor(target, routeAtSend);
+    const cbs = streamCallbacks(ctrl, owner);
     void streamChat(
       {
         provider_id: providerId,

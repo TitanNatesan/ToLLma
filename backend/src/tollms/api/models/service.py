@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from tollms.api.orgs.common.guards import _escape_like
 from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.models.registered_model import AIModel, normalize_endpoints
 from tollms.models.provider import Provider
@@ -131,9 +132,10 @@ def list_models(
             stmt = stmt.where(AIModel.provider_id.in_(list(visible)))
     if provider_id is not None:
         stmt = stmt.where(AIModel.provider_id == provider_id)
-    if search:
-        like = f"%{search}%"
-        stmt = stmt.where(or_(AIModel.name.ilike(like), AIModel.model_id.ilike(like), AIModel.description.ilike(like)))
+    if search and search.strip():
+        # LIKE wildcards (%, _, \) match literally — user input is escaped.
+        like = f"%{_escape_like(search.strip())}%"
+        stmt = stmt.where(or_(AIModel.name.ilike(like, escape="\\"), AIModel.model_id.ilike(like, escape="\\"), AIModel.description.ilike(like, escape="\\")))
     if capability:
         if capability not in CAPABILITY_FIELDS:
             raise ValidationError(f"unknown capability filter: {capability}")
