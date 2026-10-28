@@ -198,7 +198,7 @@ def test_migration_head_is_guardrails() -> None:
 
     cfg = Config("alembic.ini")
     heads = ScriptDirectory.from_config(cfg).get_heads()
-    assert list(heads) == ["o4p5q6r7s8t9"], heads
+    assert list(heads) == ["p5q6r7s8t9u0"], heads
 
 
 def test_monitor_failure_is_fallback_continued(db: Session, user_factory) -> None:

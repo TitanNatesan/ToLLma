@@ -28,6 +28,21 @@ from tollms.models.guardrail import (
 
 logger = logging.getLogger(__name__)
 
+_MANDATORY_GLOBAL_MSG = "mandatory policies require global coverage while enabled"
+
+
+def _assignment_scope(item) -> str:
+    if hasattr(item, "scope_type"):
+        return str(getattr(item, "scope_type", None) or "global")
+    if isinstance(item, dict):
+        return str(item.get("scope_type", "global") or "global")
+    return "global"
+
+
+def _has_global(items) -> bool:
+    """True when any assignment-like item is global scope (case-insensitive)."""
+    return any((_assignment_scope(i) or "global").lower() == "global" for i in items)
+
 SEVERITIES = {"low", "medium", "high", "critical"}
 ENFORCEMENTS = {"monitor", "warn", "block"}
 STAGES = {"pre", "post", "both"}
@@ -347,6 +362,10 @@ def create_policy(db: Session, caller_id: uuid.UUID, data) -> GuardrailPolicy:
         if data.org_id is None:
             raise ValidationError("is_mandatory is only available on organization policies")
         _scope(db, caller_id, data.org_id, "Guardrails.Update")
+    if bool(getattr(data, "is_mandatory", False)) and bool(data.is_enabled):
+        items = list(data.assignments or [])
+        if items and not _has_global(items):
+            raise ValidationError(_MANDATORY_GLOBAL_MSG)
     validate_policy_fields(data, is_create=True)
     if _validate_assignment_refs(db, caller_id, data.org_id, data.assignments or []):
         # scope_type/key assignment requires Guardrails.Update + key assign
@@ -409,6 +428,17 @@ def update_policy(db: Session, caller_id: uuid.UUID, policy_id: uuid.UUID,
             _require_perm(db, org, mem, caller_id, "Keys.Assign")
     if data.is_enabled is False and policy.is_mandatory:
         raise ValidationError("mandatory policies cannot be disabled")
+    mandatory = data.is_mandatory if data.is_mandatory is not None else policy.is_mandatory
+    enabled = data.is_enabled if data.is_enabled is not None else policy.is_enabled
+    # Mandatory global-coverage guard on the effective row (resolve_key_guardrail_state
+    # Rule A: a mandatory policy must keep workspace-global coverage while enabled).
+    if mandatory and enabled:
+        if data.assignments is not None:
+            effective_assignments = list(data.assignments)
+        else:
+            effective_assignments = [a for a in (policy.assignments or []) if not a.is_deleted]
+        if effective_assignments and not _has_global(effective_assignments):
+            raise ValidationError(_MANDATORY_GLOBAL_MSG)
     if data.is_mandatory is True and policy.org_id is None:
         raise ValidationError("is_mandatory is only available on organization policies")
     if data.name is not None and data.name != policy.name:
@@ -486,6 +516,10 @@ def set_enabled(db: Session, caller_id: uuid.UUID, policy_id: uuid.UUID,
     policy = _get_policy(db, caller_id, policy_id, org_id)
     if policy.is_mandatory and not enabled:
         raise ValidationError("mandatory policies cannot be disabled")
+    if enabled and policy.is_mandatory:
+        live = [a for a in (policy.assignments or []) if not a.is_deleted]
+        if live and not _has_global(live):
+            raise ValidationError(_MANDATORY_GLOBAL_MSG)
     policy.is_enabled, policy.version = enabled, (policy.version or 1) + 1
     db.commit()
     db.refresh(policy)
@@ -890,6 +924,19 @@ def effective(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
     resolved = resolution_engine.resolve_applicable(
         db, user_id=caller_id, org_id=org_id, provider_id=provider_id,
         model_id=model_id, api_key_id=key_id, source=source)
+    global_enforced = resolution_engine.workspace_global_enforced(
+        db, user_id=caller_id, org_id=org_id)
+    logger.debug("guardrail effective global_enforced=%s applied=%d",
+                 global_enforced, len(resolved.applied))
+    if key_id is not None:
+        key_assigned = any(
+            (a.scope_type or "global").lower() == "key" and a.api_key_id == key_id
+            for policy in resolved.applied for a in (policy.assignments or [])
+            if not a.is_deleted)
+        effective_flag, locked = resolution_engine.resolve_key_guardrail_state(
+            global_enabled=global_enforced, key_assigned=key_assigned)
+        logger.debug("guardrail key state effective=%s locked=%s",
+                     effective_flag, locked)
     return ([read_policy(p) for p in resolved.applied],
             resolved.deciding.id if resolved.deciding else None)
 

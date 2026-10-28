@@ -168,6 +168,8 @@ export interface TriggerEvent {
   enforcement: string | null;
   action: string;
   reason: string | null;
+  input_excerpt: string | null;
+  output_excerpt: string | null;
   latency_ms: number | null;
   notified: boolean;
   failure_kind: string | null;
@@ -443,8 +445,7 @@ export function getTrigger(id: string, orgId?: string | null): Promise<TriggerEv
 export async function attachKeyToGuardrails(policyIds: string[], keyId: string, orgId?: string | null): Promise<void> {
   await Promise.all(
     policyIds.map(async (id) => {
-      const current = await getGuardrail(id, orgId).catch(() => null);
-      if (!current) return;
+      const current = await getGuardrail(id, orgId);
       if ((current.assignments ?? []).some((a) => a.scope_type === "key" && a.api_key_id === keyId)) return;
       await updateGuardrail(
         id,
@@ -464,8 +465,7 @@ export async function attachKeyToGuardrails(policyIds: string[], keyId: string, 
 export async function detachKeyFromGuardrails(policyIds: string[], keyId: string, orgId?: string | null): Promise<void> {
   await Promise.all(
     policyIds.map(async (id) => {
-      const current = await getGuardrail(id, orgId).catch(() => null);
-      if (!current) return;
+      const current = await getGuardrail(id, orgId);
       await updateGuardrail(
         id,
         { assignments: current.assignments.filter((a) => !(a.scope_type === "key" && a.api_key_id === keyId)) },

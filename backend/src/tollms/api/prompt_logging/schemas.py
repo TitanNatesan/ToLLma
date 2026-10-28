@@ -38,7 +38,7 @@ class SettingsRead(BaseModel):
     mode: str
     capture_input: bool
     capture_output: bool
-    retention_days: int
+    retention_days: int | None
     version: int
     updated_by: uuid.UUID | None
     team_ids: list[uuid.UUID] = Field(default_factory=list)
@@ -83,7 +83,7 @@ class LogMeta(BaseModel):
     input_truncated: bool = False
     output_truncated: bool = False
     created_at: datetime
-    expires_at: datetime
+    expires_at: datetime | None
     # Derived conveniences (B2): captured-body flags, latency alias, and the
     # wall-clock completion instant (created_at + latency when known).
     fields: list[str] = Field(default_factory=list)
@@ -118,7 +118,7 @@ class PurgeResult(BaseModel):
 
 class RetentionRead(BaseModel):
     default_days: int = 90
-    effective_days: int = 90
+    effective_days: int | None = 90
     next_run: datetime
     # Async capture queue health (WS2): depth gauge + last worker error.
     queue_depth: int = 0

@@ -18,11 +18,31 @@ export interface NotifyOptions {
   description?: ReactNode;
   action?: NotifyAction;
   duration?: number | null;
+  /**
+   * High-visibility styling for notifications the user must not miss
+   * (e.g. background generation completed / failed). Renders a solid
+   * semantic fill with white text and a white action button, identical in
+   * light and dark mode — AA contrast on both themes.
+   */
+  contrast?: boolean;
 }
 
-function toOptions(message: ReactNode, options?: NotifyOptions): SileoOptions {
+/** Solid fills + white text for contrast toasts (AA on both themes). */
+const CONTRAST_FILL = {
+  success: "#055b08", // tollma-600 (repo documents white-on-500+ as AA)
+  error: "#b91c1c", // red-700
+} as const;
+
+function toOptions(message: ReactNode, options?: NotifyOptions, tone?: keyof typeof CONTRAST_FILL): SileoOptions {
   // Plain strings become the toast heading; richer nodes render as the body.
   const body = options?.description ?? (typeof message === "string" ? undefined : message);
+  const contrast = options?.contrast === true && tone !== undefined ? CONTRAST_FILL[tone] : undefined;
+  const contrastButton =
+    options?.contrast === true && tone !== undefined
+      ? tone === "success"
+        ? "bg-white! font-semibold! text-[#055b08]!"
+        : "bg-white! font-semibold! text-[#b91c1c]!"
+      : undefined;
   return {
     title: typeof message === "string" ? message : undefined,
     description: body,
@@ -30,6 +50,17 @@ function toOptions(message: ReactNode, options?: NotifyOptions): SileoOptions {
     button: options?.action
       ? { title: options.action.label, onClick: options.action.onClick }
       : undefined,
+    ...(contrast === undefined
+      ? null
+      : {
+          fill: contrast,
+          styles: {
+            title: "text-white!",
+            description: "text-white!",
+            badge: "text-white!",
+            ...(contrastButton === undefined ? null : { button: contrastButton }),
+          },
+        }),
   };
 }
 
@@ -57,9 +88,9 @@ export interface PromiseToastOptions<T = unknown> {
 
 export const toast = {
   success: (message: ReactNode, options?: NotifyOptions): string =>
-    sileo.success(toOptions(message, options)),
+    sileo.success(toOptions(message, options, "success")),
   error: (message: ReactNode, options?: NotifyOptions): string =>
-    sileo.error(toOptions(message, options)),
+    sileo.error(toOptions(message, options, "error")),
   warning: (message: ReactNode, options?: NotifyOptions): string =>
     sileo.warning(toOptions(message, options)),
   info: (message: ReactNode, options?: NotifyOptions): string =>

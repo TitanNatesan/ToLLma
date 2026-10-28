@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
-import { Button, Checkbox, DetailPanel, Select, Textarea } from "@/components/ui";
+import { useMemo, useState } from "react";
+import { Button, Checkbox, DetailPanel, Input, Select, Textarea } from "@/components/ui";
 import { toast } from "@/lib/notify";
 import { parseApiError } from "@/lib/errors";
 import type { GuardrailPolicy } from "@/services/guardrails";
 import { useGuardrailMutations } from "@/hooks/useGuardrails";
 import { GuardrailFormDialog } from "./GuardrailFormDialog";
 import { evaluatorSummary, scopeSummary } from "./policyLogic";
+
+/** Evaluator types with independently stored API credentials (jev pattern). */
+const CREDENTIAL_EVALUATORS = new Set(["jev", "openai_moderation"]);
 
 /**
  * View + test drawer for a saved policy. Editing reuses the wizard dialog;
@@ -29,6 +32,51 @@ export function GuardrailEditDrawer({
   const [runLlm, setRunLlm] = useState(false);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  // Credential rotation state (per evaluator id): new key + validation status.
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const [newKey, setNewKey] = useState("");
+  const [rotState, setRotState] = useState<"idle" | "busy" | "valid" | "invalid">("idle");
+
+  const credentialEvaluators = useMemo(
+    () => (policy?.evaluators ?? []).filter((e) => CREDENTIAL_EVALUATORS.has((e.evaluator_type || "").toLowerCase())),
+    [policy],
+  );
+
+  async function validateReplacement() {
+    if (!newKey.trim()) {
+      toast.error("Enter a replacement API key first.");
+      return;
+    }
+    setRotState("busy");
+    try {
+      const res = await mut.validateCredentials.mutateAsync({ evaluator_type: "openai_moderation", credentials: { api_key: newKey.trim() } });
+      setRotState(res.valid ? "valid" : "invalid");
+      toast[res.valid ? "success" : "error"](res.valid ? "Replacement key valid." : (res.message ?? "Replacement key rejected."));
+    } catch (e) {
+      setRotState("invalid");
+      toast.error(parseApiError(e).message);
+    }
+  }
+
+  async function saveReplacement(evaluatorId: string) {
+    if (!newKey.trim()) {
+      toast.error("Enter a replacement API key first.");
+      return;
+    }
+    setRotState("busy");
+    try {
+      // Server re-validates live before persisting; an invalid key 422s and
+      // the previously stored credential stays intact.
+      await mut.patchEvaluator.mutateAsync({ evaluatorId, body: { credentials: { api_key: newKey.trim() } } });
+      toast.success("Credential rotated.");
+      setReplacing(null);
+      setNewKey("");
+      setRotState("idle");
+    } catch (e) {
+      setRotState("invalid");
+      toast.error(parseApiError(e).message);
+    }
+  }
 
   async function runTest() {
     if (!policy || !content.trim()) {
@@ -110,6 +158,50 @@ export function GuardrailEditDrawer({
                 {result && <p data-testid="drawer-test-result" className="text-zinc-600 dark:text-zinc-400">{result}</p>}
               </div>
             </div>
+            {credentialEvaluators.length > 0 && (
+              <div className="space-y-2 rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
+                <p className="font-semibold text-zinc-900 dark:text-zinc-100">Evaluator credentials</p>
+                {credentialEvaluators.map((e) => {
+                  const masked = Object.values(e.credentials_masked ?? {})[0] as string | undefined;
+                  const isOpenAI = (e.evaluator_type || "").toLowerCase() === "openai_moderation";
+                  return (
+                    <div key={e.id} className="space-y-1.5 rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
+                      <p className="text-zinc-700 dark:text-zinc-300">
+                        {e.evaluator_type} ·{" "}
+                        {masked ? (
+                          <span data-testid={`drawer-cred-status-${e.id}`}>Configured · {masked}</span>
+                        ) : (
+                          <span className="text-amber-600" data-testid={`drawer-cred-status-${e.id}`}>Not configured</span>
+                        )}
+                      </p>
+                      {isOpenAI && replacing !== e.id && (
+                        <Button size="sm" variant="outline" onClick={() => { setReplacing(e.id); setNewKey(""); setRotState("idle"); }} data-testid={`drawer-cred-replace-${e.id}`}>
+                          Replace API key
+                        </Button>
+                      )}
+                      {isOpenAI && replacing === e.id && (
+                        <div className="space-y-1.5">
+                          <Input type="password" autoComplete="new-password" value={newKey} onChange={(ev) => { setRotState("idle"); setNewKey(ev.target.value); }} placeholder="sk-…" aria-label="Replacement OpenAI API key" data-testid={`drawer-cred-key-${e.id}`} />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button size="sm" variant="outline" onClick={() => void validateReplacement()} disabled={rotState === "busy" || !newKey.trim()} data-testid={`drawer-cred-validate-${e.id}`}>
+                              {rotState === "busy" ? "Validating…" : "Validate"}
+                            </Button>
+                            <Button size="sm" onClick={() => void saveReplacement(e.id)} disabled={rotState === "busy" || !newKey.trim()} data-testid={`drawer-cred-save-${e.id}`}>
+                              Save new key
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => { setReplacing(null); setNewKey(""); setRotState("idle"); }}>
+                              Cancel
+                            </Button>
+                            {rotState === "valid" && <span className="text-green-600">Valid</span>}
+                            {rotState === "invalid" && <span className="text-red-600">Invalid</span>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </DetailPanel>

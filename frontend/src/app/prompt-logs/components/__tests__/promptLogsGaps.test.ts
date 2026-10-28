@@ -1,7 +1,23 @@
+describe("endpointLabel", () => {
+  it("maps known endpoints to friendly labels", () => {
+    expect(endpointLabel("chat")).toBe("Chat page");
+    expect(endpointLabel("chat_completions")).toBe("Chat completions");
+    expect(endpointLabel("messages")).toBe("Messages");
+    expect(endpointLabel("responses")).toBe("Responses");
+  });
+  it("passes unknown raw values through, empties to an em dash", () => {
+    expect(endpointLabel("custom-endpoint")).toBe("custom-endpoint");
+    expect(endpointLabel("")).toBe("—");
+    expect(endpointLabel(null)).toBe("—");
+    expect(endpointLabel(undefined)).toBe("—");
+  });
+});
+
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_LOG_FILTER,
   LOG_FILTER_KEYS,
+  endpointLabel,
   filterFromParams,
   filterToParams,
   formatDurationMs,
@@ -21,7 +37,6 @@ describe("URL filter sync round-trip", () => {
   const full: LogFilter = {
     user_id: "u1",
     key_id: "k1",
-    team_id: "t1",
     provider_id: "p1",
     model_id: "m1",
     status: "completed",
@@ -71,6 +86,15 @@ describe("formatEffectiveSummary", () => {
     expect(
       formatEffectiveSummary({ enabled: true, capture: "input", scope: { teams: 1 }, retention_days: 7 }),
     ).toContain("scope: 1 team");
+  });
+
+  it("renders null retention as off, undefined as absent", () => {
+    expect(
+      formatEffectiveSummary({ enabled: true, capture: "full", scope: "all", retention_days: null }),
+    ).toBe("Logging enabled · full capture · scope: all · retention off");
+    expect(
+      formatEffectiveSummary({ enabled: true, capture: "full", scope: "all" }),
+    ).toBe("Logging enabled · full capture · scope: all");
   });
 
   it("never emits [object Object] for unknown shapes", () => {

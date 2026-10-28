@@ -117,7 +117,7 @@ export interface PromptLogTeam {
 
 export interface RetentionInfo {
   default_days: number;
-  effective_days: number;
+  effective_days: number | null;
   next_run: string | null;
 }
 

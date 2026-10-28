@@ -34,7 +34,9 @@ def _read_trigger(row) -> TriggerRead:
         workspace_type=row.workspace_type, endpoint=row.endpoint, source=row.source,
         stage=row.stage, category=row.category, severity=row.severity,
         confidence=row.confidence, enforcement=row.enforcement, action=row.action,
-        reason=row.reason, latency_ms=row.latency_ms, notified=row.notified,
+        reason=row.reason, input_excerpt=row.input_excerpt,
+        output_excerpt=row.output_excerpt,
+        latency_ms=row.latency_ms, notified=row.notified,
         failure_kind=row.failure_kind, created_at=row.created_at)
 
 

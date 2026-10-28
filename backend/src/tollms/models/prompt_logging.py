@@ -64,7 +64,7 @@ class PromptLoggingSetting(SoftDeleteMixin, TimestampedModel):
     mode: Mapped[str] = mapped_column(String(16), default="global", nullable=False)
     capture_input: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     capture_output: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    retention_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False)
+    retention_days: Mapped[int | None] = mapped_column(Integer, default=90, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
@@ -239,7 +239,7 @@ class PromptLog(TimestampedModel):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     policy_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     content_expired: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     owner: Mapped["User | None"] = relationship(back_populates="prompt_logs")
     organization: Mapped["Organization | None"] = relationship(back_populates="prompt_logs")

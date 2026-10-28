@@ -35,6 +35,7 @@ import {
   canShowBodies,
   filterFromParams,
   filterToParams,
+  endpointLabel,
   formatDurationMs,
   formatLogTime,
   getLogModelDisplay,
@@ -316,7 +317,6 @@ export function PromptLogsPanel({
             [
               ["user_id", "User"],
               ["key_id", "Key"],
-              ["team_id", "Team"],
               ["provider_id", "Provider"],
               ["model_id", "Model"],
             ] as const
@@ -404,11 +404,11 @@ export function PromptLogsPanel({
               { key: "at", header: "Time", render: (r) => <span className="whitespace-nowrap">{formatLogTime(r.created_at)}</span> },
               { key: "user", header: "User", render: (r) => <span className="max-w-24 truncate font-mono" title={r.user_email ?? r.user_id ?? ""}>{getLogUserDisplay(r)}</span> },
               { key: "key", header: "Key", render: (r) => <span className="max-w-24 truncate" title={r.key_name ?? r.key_id ?? r.api_key_id ?? ""}>{getLogKeyDisplay(r)}</span> },
-              { key: "team", header: "Team", render: (r) => (r.team_ids.length > 0 ? r.team_ids.slice(0, 2).join(", ") + (r.team_ids.length > 2 ? ` +${r.team_ids.length - 2}` : "") : "—") },
               { key: "model", header: "Provider / Model", render: (r) => {
                 const parts = [getLogProviderDisplay(r), getLogModelDisplay(r)].filter((v) => v !== "—");
                 return <span className="max-w-40 truncate" title={`${r.provider_name ?? r.provider_id ?? ""} ${r.model_name ?? r.model_id ?? ""}`.trim()}>{parts.join(" / ") || "—"}</span>;
               } },
+              { key: "endpoint", header: "Endpoint", render: (r) => endpointLabel(r.endpoint) },
               { key: "status", header: "Status", render: (r) => <Badge variant={promptLogStatusVariant(r.status)}>{r.status}</Badge> },
               { key: "duration", header: "Duration", align: "right", render: (r) => formatDurationMs(r.duration_ms) },
               { key: "tokens", header: "Tokens", align: "right", render: (r) => (r.prompt_tokens != null || r.completion_tokens != null ? `${r.prompt_tokens ?? 0}+${r.completion_tokens ?? 0}` : "—") },

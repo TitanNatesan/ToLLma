@@ -262,6 +262,8 @@ class GuardrailTrigger(TimestampedModel):
     enforcement: Mapped[str | None] = mapped_column(String(16), nullable=True)
     action: Mapped[str] = mapped_column(String(24), default=Action.ALLOWED.value, nullable=False)
     reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    input_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     failure_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)

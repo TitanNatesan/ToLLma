@@ -58,6 +58,8 @@ export function KeyGuardrailsSection({
     [inherited, policies, assigned],
   );
 
+  const hasLocked = resolved.lockedIds.size > 0;
+
   const dirty = useMemo(() => {
     if (!keyId || selectedIds) return false;
     if (assigned.size !== initialAssigned.size) return true;
@@ -113,6 +115,12 @@ export function KeyGuardrailsSection({
         onToggle={toggle}
         disabled={disabled || saving}
       />
+      {hasLocked && (
+        <p className="flex items-center gap-1 text-[11px] text-zinc-400" data-testid="key-guardrail-lock-note" aria-live="polite" role="status">
+          <ShieldCheck className="size-3" aria-hidden />
+          Key guardrails are required while global guardrails are enabled.
+        </p>
+      )}
       {keyId && !selectedIds && (
         <div className="flex justify-end">
           <Button type="button" size="sm" variant="outline" onClick={() => void save()} disabled={saving || !dirty} data-testid="key-guardrails-save">
@@ -120,7 +128,7 @@ export function KeyGuardrailsSection({
           </Button>
         </div>
       )}
-      {!keyId && (
+      {!keyId && hasLocked && (
         <p className="flex items-center gap-1 text-[11px] text-zinc-400">
           <ShieldCheck className="size-3" aria-hidden />
           Mandatory organization policies apply automatically and cannot be removed.

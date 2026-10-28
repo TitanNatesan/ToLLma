@@ -513,7 +513,13 @@ export function PromptLogsSettings({
       <SettingsSection title="Retention">
         <SettingItem
           label="Retention days"
-          description={retention.data ? `Effective: ${retention.data.effective_days} days (default ${retention.data.default_days}). Next cleanup: ${formatLogTime(retention.data.next_run)}.` : "How long message bodies are kept before expiry."}
+          description={
+            retention.data
+              ? retention.data.effective_days == null
+                ? "No retention — message bodies are kept indefinitely. Next cleanup: —."
+                : `Effective: ${retention.data.effective_days} days (default ${retention.data.default_days}). Next cleanup: ${formatLogTime(retention.data.next_run)}.`
+              : "How long message bodies are kept before expiry."
+          }
         >
           <Input
             type="number"

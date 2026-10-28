@@ -51,7 +51,7 @@ export interface GuardrailDraft {
 
 export type GuardrailStageValue = "pre" | "post" | "both";
 
-export const STEP_COUNT = 8;
+export const STEP_COUNT = 5;
 
 /** Step index (0-based) -> blocking error, or null when the step is valid. */
 export function validateWizardStep(step: number, d: GuardrailDraft): string | null {
@@ -68,33 +68,31 @@ export function validateWizardStep(step: number, d: GuardrailDraft): string | nu
       if (!d.stage) return "Pick a stage.";
       return null;
     case 2: {
-      // Evaluator: jev needs credentials (api_key + base_url); LLM escalation needs provider+model.
+      // Evaluator: jev needs credentials (api_key + base_url); openai_moderation
+      // needs its own api_key; LLM escalation needs provider+model.
       if (d.evaluator === "jev") {
         const missing = ["api_key", "base_url"].filter((k) => !(d.credentials[k] ?? "").trim());
         if (missing.length > 0) return "Jev needs an API key and base URL before continuing.";
       }
+      if (d.evaluator === "openai_moderation" && !(d.credentials.api_key ?? "").trim()) {
+        return "OpenAI Moderation needs an API key before continuing.";
+      }
       if (d.needsLlmEscalation && (!d.escalationProviderId || !d.escalationModelId)) {
         return "LLM escalation needs both a provider and a model.";
       }
-      return null;
-    }
-    case 3:
       // Mirrors backend create-path rule: only buffer_then_inspect withholds
       // output, and only on non-streaming post/both paths.
       if (d.delivery_mode === "buffer_then_inspect" && d.stage !== "post" && d.stage !== "both") {
         return "buffer_then_inspect requires stage post or both — pre-only inspection cannot withhold output.";
       }
       return null;
-    case 4:
+    }
+    case 3:
       if (d.scope !== "global" && d.provider_ids.length === 0 && d.model_ids.length === 0 && d.key_ids.length === 0) {
         return "Scoped policies need at least one provider, model, or key.";
       }
       return null;
-    case 5:
-      return null; // enforcement explanations only, no invalid state
-    case 6:
-      return null; // logging toggles, no invalid state
-    case 7:
+    case 4:
       if (d.threshold !== null && (Number.isNaN(d.threshold) || d.threshold < 0 || d.threshold > 1)) {
         return "Threshold must be between 0 and 1.";
       }
@@ -176,6 +174,18 @@ export function buildEvaluatorConfigs(d: GuardrailDraft): EvaluatorCreateInput[]
       },
     ];
   }
+  if (d.evaluator === "openai_moderation") {
+    // Independent per-policy credential (jev pattern): stored encrypted,
+    // validated live by the backend before persist. Never emitted when empty —
+    // the backend rejects credential-less openai_moderation configs.
+    const apiKey = d.credentials.api_key?.trim();
+    return [
+      {
+        evaluator_type: "openai_moderation",
+        credentials: apiKey ? { api_key: apiKey } : undefined,
+      },
+    ];
+  }
   if (d.evaluator === "llm") {
     if (!d.escalationProviderId) return [];
     return [{ evaluator_type: "llm", provider_id: d.escalationProviderId, model_ref: d.escalationModelId || undefined }];
@@ -233,10 +243,13 @@ export function filterPolicies(policies: GuardrailPolicy[], f: PolicyFilter): Gu
 
 /**
  * A policy row is locked when the backend flags it mandatory OR when it is an
- * org policy with a global assignment (applies to every key in the org).
- * Locked rows show a lock and can never be detached or disabled.
+ * enabled org policy with a global assignment (applies to every key in the org).
+ * Disabled policies never lock (a mandatory-disabled row is unreachable — the
+ * backend rejects disabling a mandatory policy with 422 — so this is defense
+ * in depth). Locked rows show a lock and can never be detached or disabled.
  */
 export function isPolicyLocked(p: GuardrailPolicy): boolean {
+  if (!p.is_enabled) return false;
   if (p.is_mandatory) return true;
   if (p.org_id == null) return false;
   return (p.assignments ?? []).some((a) => (a.scope_type ?? "global").toLowerCase() === "global");

@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 MAX_INPUT_CHARS = 32 * 1024
 
 
+def _excerpt(text: str | None) -> str | None:
+    """Redacted trigger excerpt (never raw text): cap 2000 chars, scrub
+    secret shapes via det.redact_text (caps at 500), None when empty."""
+    from tollms.services.guardrails import deterministic as det_engine
+
+    return det_engine.redact_text((text or "")[:2000]) or None
+
+
 async def check_pre(
     db: Session,
     *,
@@ -64,7 +72,8 @@ async def check_pre(
         _aftermath(db, policy, result, action, stage="pre", user_id=user_id,
                    org_id=org_id, provider_id=provider_id, model_id=model_id,
                    api_key_id=api_key_id, source=source, endpoint=endpoint,
-                   request_id=request_id, generation_id=generation_id)
+                   request_id=request_id, generation_id=generation_id,
+                   input_excerpt=_excerpt(text))
         if action == "blocked":
             blocked.append((policy, result))
         elif action == "warned":
@@ -132,7 +141,8 @@ async def record_post(
         _aftermath(db, policy, result, action, stage="post", user_id=user_id,
                    org_id=org_id, provider_id=provider_id, model_id=model_id,
                    api_key_id=api_key_id, source=source, endpoint=endpoint,
-                   request_id=request_id, generation_id=generation_id)
+                   request_id=request_id, generation_id=generation_id,
+                   output_excerpt=_excerpt(text))
         if _action_rank(action) > _action_rank(worst):
             worst = action
     return worst
@@ -145,7 +155,9 @@ def _may_block_output(policy, allow_block: bool) -> bool:
 def _aftermath(db: Session, policy, result: dict[str, Any], action: str, *,
                stage: str, user_id, org_id, provider_id, model_id, api_key_id,
                source: str, endpoint: str | None, request_id: str | None,
-               generation_id: uuid.UUID | None) -> None:
+               generation_id: uuid.UUID | None,
+               input_excerpt: str | None = None,
+               output_excerpt: str | None = None) -> None:
     from tollms.services.guardrails import deterministic as det_engine
     from tollms.services.observability.events import emit, incr_counter
 
@@ -179,7 +191,9 @@ def _aftermath(db: Session, policy, result: dict[str, Any], action: str, *,
         trigger_row = _write_trigger(db, policy, result, action, stage=stage, user_id=user_id,
                                      org_id=org_id, provider_id=provider_id, model_id=model_id,
                                      api_key_id=api_key_id, source=source, endpoint=endpoint,
-                                     request_id=request_id, generation_id=generation_id)
+                                     request_id=request_id, generation_id=generation_id,
+                                     input_excerpt=input_excerpt,
+                                     output_excerpt=output_excerpt)
     except Exception:
         logger.warning("guardrail trigger write failed", exc_info=True)
     notified = False
@@ -213,7 +227,9 @@ def _aftermath(db: Session, policy, result: dict[str, Any], action: str, *,
 def _write_trigger(db: Session, policy, result: dict[str, Any], action: str, *,
                    stage: str, user_id, org_id, provider_id, model_id, api_key_id,
                    source: str, endpoint: str | None, request_id: str | None,
-                   generation_id: uuid.UUID | None) -> Any:
+                   generation_id: uuid.UUID | None,
+                   input_excerpt: str | None = None,
+                   output_excerpt: str | None = None) -> Any:
     from tollms.models.guardrail import GuardrailTrigger
 
     workspace = "organization" if (org_id is not None or policy.org_id is not None) else "personal"
@@ -238,6 +254,8 @@ def _write_trigger(db: Session, policy, result: dict[str, Any], action: str, *,
         enforcement=policy.enforcement,
         action=action,
         reason=(result.get("reason") or "")[:500] or None,
+        input_excerpt=input_excerpt,
+        output_excerpt=output_excerpt,
         latency_ms=result.get("latency_ms"),
         failure_kind=result.get("failure_kind"),
     )
@@ -374,6 +392,7 @@ def _bridge_fail_closed(db: Session, kw: dict[str, Any]) -> None:
                 api_key_id=kw.get("api_key_id"), source=kw.get("source", "internal"),
                 endpoint=kw.get("endpoint"), request_id=kw.get("request_id"),
                 generation_id=kw.get("generation_id"),
+                input_excerpt=None, output_excerpt=None,
             )
         except Exception:
             logger.warning("guardrail bridge_timeout trigger write failed", exc_info=True)

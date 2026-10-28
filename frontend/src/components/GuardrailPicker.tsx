@@ -32,8 +32,9 @@ export function GuardrailPicker({
     <div className="space-y-3" data-testid="guardrail-picker">
       {inherited.length > 0 && (
         <div className="space-y-1.5">
+          {/* Key context fetches effective without provider/model, so inherited is global-only in practice (provider scope retained backend as targeting refinement). */}
           <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-            Inherited (global / provider)
+            Inherited (global)
           </p>
           <ul className="space-y-1">
             {inherited.map((p) => (

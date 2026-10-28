@@ -19,10 +19,11 @@ import { parseApiError, toastApiError } from "@/lib/errors";
 import type { GuardrailPolicy } from "@/services/guardrails";
 import { useGuardrailMutations, useLayaHealth } from "@/hooks/useGuardrails";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useChatKeys } from "@/hooks/useChatKeys";
+import { useOrgKeys } from "@/hooks/useOrgs";
 import { cn } from "@/lib/utils";
 import {
   GUARDRAIL_CATEGORIES,
-  STEP_COUNT,
   buildEvaluatorConfigs,
   buildPolicyPayload,
   validateWizardStep,
@@ -79,7 +80,82 @@ function fromPolicy(p: GuardrailPolicy): GuardrailDraft {
   return d;
 }
 
-const STEPS = ["Basics", "Protection", "Evaluator", "Execution", "Scope", "Enforcement", "Logging", "Advanced"];
+const STEPS = ["Basics", "Detection", "Evaluator", "Scope & enforcement", "Review"];
+
+/** Searchable checkbox picker for targeted scope rows (providers / models / keys). */
+function TargetPicker({
+  label,
+  items,
+  selected,
+  onToggle,
+  testId,
+  emptyHint,
+}: {
+  label: string;
+  items: { id: string; name: string; sub?: string }[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  testId: string;
+  emptyHint: string;
+}) {
+  const [q, setQ] = useState("");
+  const chosen = useMemo(() => new Set(selected), [selected]);
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const rows = needle
+      ? items.filter(
+          (i) => i.name.toLowerCase().includes(needle) || i.id.toLowerCase().includes(needle),
+        )
+      : items;
+    return rows.slice(0, 100);
+  }, [items, q]);
+  const unknown = useMemo(() => selected.filter((id) => !items.some((i) => i.id === id)), [selected, items]);
+  return (
+    <Field label={`${label} (${selected.length} selected)`}>
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={`Search ${label.toLowerCase()}…`}
+        data-testid={testId}
+      />
+      <div className="mt-1 max-h-44 space-y-1 overflow-y-auto rounded-md border border-zinc-200 p-1.5 dark:border-zinc-800">
+        {unknown.map((id) => (
+          <label
+            key={id}
+            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-500"
+          >
+            <Checkbox checked onChange={() => onToggle(id)} aria-label={`Unknown target ${id}`} />
+            <span className="min-w-0 flex-1 truncate font-mono">Unknown target {id.slice(0, 8)}…</span>
+          </label>
+        ))}
+        {visible.length === 0 && unknown.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-zinc-400">{emptyHint}</p>
+        ) : (
+          visible.map((item) => (
+            <label
+              key={item.id}
+              className={cn(
+                "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+                chosen.has(item.id) && "bg-tollma-50 dark:bg-tollma-950/30",
+              )}
+            >
+              <Checkbox
+                checked={chosen.has(item.id)}
+                onChange={() => onToggle(item.id)}
+                aria-label={item.name}
+                data-testid={`${testId}-option-${item.id}`}
+              />
+              <span className="min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300">
+                {item.name}
+                {item.sub && <span className="text-zinc-400"> · {item.sub}</span>}
+              </span>
+            </label>
+          ))
+        )}
+      </div>
+    </Field>
+  );
+}
 
 export function GuardrailFormDialog({
   open,
@@ -96,6 +172,8 @@ export function GuardrailFormDialog({
   const laya = useLayaHealth(open);
   const providersQuery = useProviders();
   const modelsQuery = useModels();
+  const chatKeysQuery = useChatKeys();
+  const orgKeysQuery = useOrgKeys(orgId ?? "", { enabled: !!orgId });
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<GuardrailDraft>(() => (initial ? fromPolicy(initial) : emptyDraft()));
   const [enabled, setEnabled] = useState(initial?.is_enabled ?? true);
@@ -106,11 +184,46 @@ export function GuardrailFormDialog({
   const [credState, setCredState] = useState<"idle" | "busy" | "valid" | "invalid">("idle");
 
   const set = (patch: Partial<GuardrailDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  const toggleId = (field: "provider_ids" | "model_ids" | "key_ids", id: string) =>
+    setDraft((d) => ({
+      ...d,
+      [field]: d[field].includes(id) ? d[field].filter((x) => x !== id) : [...d[field], id],
+    }));
   const stepError = validateWizardStep(step, draft);
   const isEditing = !!initial;
+  const layaReachable = laya.data?.reachable;
+
+  const keyItems = useMemo(() => {
+    if (orgId) {
+      return ((orgKeysQuery.data as { id: string; name: string }[] | undefined) ?? []).map((k) => ({
+        id: k.id,
+        name: k.name,
+      }));
+    }
+    return (chatKeysQuery.data ?? []).map((k) => ({ id: k.id, name: k.name }));
+  }, [orgId, orgKeysQuery.data, chatKeysQuery.data]);
+
+  const modelItems = useMemo(() => {
+    const byProvider = new Map((providersQuery.data ?? []).map((p) => [p.id, p.name]));
+    return (modelsQuery.data ?? []).map((m) => ({
+      id: m.id,
+      name: m.name,
+      sub: byProvider.get(m.provider_id) ?? undefined,
+    }));
+  }, [modelsQuery.data, providersQuery.data]);
+
+  const providerItems = useMemo(
+    () => (providersQuery.data ?? []).map((p) => ({ id: p.id, name: p.name })),
+    [providersQuery.data],
+  );
+
+  const modelsForProvider = useMemo(
+    () => (modelsQuery.data ?? []).filter((m) => !draft.escalationProviderId || m.provider_id === draft.escalationProviderId),
+    [modelsQuery.data, draft.escalationProviderId],
+  );
 
   async function handleSave() {
-    for (let i = 0; i < STEP_COUNT; i++) {
+    for (let i = 0; i < STEPS.length; i++) {
       const err = validateWizardStep(i, draft);
       if (err) {
         setStep(i);
@@ -144,16 +257,16 @@ export function GuardrailFormDialog({
     }
   }
 
-  async function handleValidateCreds() {
+  async function handleValidateCreds(etype: "jev" | "openai_moderation") {
     setCredState("busy");
     try {
       const credentials = {
         ...(draft.credentials.api_key?.trim() ? { api_key: draft.credentials.api_key.trim() } : {}),
       };
       const res = await mut.validateCredentials.mutateAsync({
-        evaluator_type: "jev",
+        evaluator_type: etype,
         credentials,
-        base_url: draft.credentials.base_url?.trim() || undefined,
+        base_url: etype === "jev" ? draft.credentials.base_url?.trim() || undefined : undefined,
       });
       setCredState(res.valid ? "valid" : "invalid");
       toast[res.valid ? "success" : "error"](res.valid ? "Credentials valid." : (res.message ?? "Credentials rejected."));
@@ -163,11 +276,16 @@ export function GuardrailFormDialog({
     }
   }
 
-  const layaReachable = laya.data?.reachable;
-  const modelsForProvider = useMemo(
-    () => (modelsQuery.data ?? []).filter((m) => !draft.escalationProviderId || m.provider_id === draft.escalationProviderId),
-    [modelsQuery.data, draft.escalationProviderId],
-  );
+  const summary: [string, string][] = [
+    ["Name", draft.name.trim() || "—"],
+    ["Categories", draft.categories.length > 0 ? draft.categories.join(", ") : "—"],
+    ["Severity / stage", `${draft.severity} / ${draft.stage}`],
+    ["Evaluator", draft.evaluator + (draft.needsLlmEscalation ? " + LLM escalation" : "")],
+    ["Delivery", draft.delivery_mode.replace(/_/g, " ")],
+    ["Scope", draft.scope === "global" ? "Global — every request" : `Targeted (${draft.provider_ids.length + draft.model_ids.length + draft.key_ids.length} targets)`],
+    ["Enforcement", draft.enforcement],
+    ["Enabled", enabled ? "On" : "Off"],
+  ];
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -206,9 +324,6 @@ export function GuardrailFormDialog({
                   <Field label="Description">
                     <Textarea value={draft.description} onChange={(e) => set({ description: e.target.value })} placeholder="What this policy protects and why" data-testid="gr-description" />
                   </Field>
-                  <Field label="Template">
-                    <Input value="" placeholder="Optional template key (e.g. pii-strict)" onChange={() => {}} disabled data-testid="gr-template" />
-                  </Field>
                   <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
                     <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enabled" data-testid="gr-enabled" />
                     Enabled on save
@@ -244,7 +359,7 @@ export function GuardrailFormDialog({
               {step === 2 && (
                 <div className="space-y-3">
                   <Field label="Evaluator">
-                    <Select value={draft.evaluator} onChange={(e) => set({ evaluator: e.target.value })} data-testid="gr-evaluator">
+                    <Select value={draft.evaluator} onChange={(e) => { setCredState("idle"); set({ evaluator: e.target.value }); }} data-testid="gr-evaluator">
                       {EVALUATORS.map((v) => <option key={v} value={v}>{v.replace(/_/g, " ")}</option>)}
                     </Select>
                   </Field>
@@ -264,11 +379,38 @@ export function GuardrailFormDialog({
                         <Input value={draft.credentials.base_url ?? ""} onChange={(e) => set({ credentials: { ...draft.credentials, base_url: e.target.value } })} placeholder="https://…" data-testid="gr-jev-url" />
                       </Field>
                       <div className="flex items-center gap-2">
-                        <Button size="sm" variant="outline" onClick={() => void handleValidateCreds()} disabled={credState === "busy"} data-testid="gr-jev-validate">
+                        <Button size="sm" variant="outline" onClick={() => void handleValidateCreds("jev")} disabled={credState === "busy"} data-testid="gr-jev-validate">
                           {credState === "busy" ? "Validating…" : "Validate"}
                         </Button>
                         {credState === "valid" && <span className="text-xs text-green-600">Valid</span>}
                         {credState === "invalid" && <span className="text-xs text-red-600">Invalid</span>}
+                      </div>
+                    </div>
+                  )}
+                  {draft.evaluator === "openai_moderation" && (
+                    <div className="space-y-2 rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
+                      <Field label="OpenAI API key">
+                        <Input type="password" autoComplete="new-password" value={draft.credentials.api_key ?? ""} onChange={(e) => { setCredState("idle"); set({ credentials: { ...draft.credentials, api_key: e.target.value } }); }} placeholder="sk-…" data-testid="gr-openai-key" />
+                      </Field>
+                      <p className="text-[11px] text-zinc-500">
+                        Stored encrypted on this policy only — never shared across workspaces.
+                        Saving validates the key live; an invalid key is rejected.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void handleValidateCreds("openai_moderation")} disabled={credState === "busy" || !(draft.credentials.api_key ?? "").trim()} data-testid="gr-openai-validate">
+                          {credState === "busy" ? "Validating…" : "Validate"}
+                        </Button>
+                        {credState !== "busy" && (
+                          <span className="text-xs" data-testid="gr-openai-status">
+                            {credState === "valid" ? (
+                              <span className="text-green-600">Configured · valid</span>
+                            ) : credState === "invalid" ? (
+                              <span className="text-red-600">Invalid — check the key and retry</span>
+                            ) : (
+                              <span className="text-zinc-500">Not configured — enter a key, then Validate</span>
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
                   )}
@@ -292,10 +434,6 @@ export function GuardrailFormDialog({
                       </Field>
                     </div>
                   )}
-                </div>
-              )}
-              {step === 3 && (
-                <div className="space-y-3">
                   <Field label="Delivery mode">
                     <Select value={draft.delivery_mode} onChange={(e) => set({ delivery_mode: e.target.value })} data-testid="gr-delivery">
                       {DELIVERY.map((d) => (
@@ -305,15 +443,12 @@ export function GuardrailFormDialog({
                       ))}
                     </Select>
                   </Field>
-                  {DELIVERY.map((d) => (
-                    <p key={d.value} className={cn("text-xs", draft.delivery_mode === d.value ? "text-zinc-700 dark:text-zinc-300" : "text-zinc-400")}>
-                      <strong>{d.value.replace(/_/g, " ")}:</strong> {d.hint}
-                    </p>
-                  ))}
-                  {draft.stage === "pre" && <p className="text-xs text-zinc-500">Pre-only policy — only buffer_then_inspect withholds output, and only on non-streaming post paths.</p>}
+                  <p className="text-xs text-zinc-500">
+                    {(DELIVERY.find((d) => d.value === draft.delivery_mode) ?? DELIVERY[2]).hint}
+                  </p>
                 </div>
               )}
-              {step === 4 && (
+              {step === 3 && (
                 <div className="space-y-3">
                   <Field label="Scope">
                     <Select value={draft.scope} onChange={(e) => set({ scope: e.target.value })} data-testid="gr-scope">
@@ -322,36 +457,55 @@ export function GuardrailFormDialog({
                     </Select>
                   </Field>
                   {draft.scope === "targeted" && (
-                    <>
-                      <Field label="Provider IDs (comma-separated)">
-                        <Input value={draft.provider_ids.join(", ")} onChange={(e) => set({ provider_ids: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} data-testid="gr-scope-providers" />
-                      </Field>
-                      <Field label="Model IDs (comma-separated)">
-                        <Input value={draft.model_ids.join(", ")} onChange={(e) => set({ model_ids: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} data-testid="gr-scope-models" />
-                      </Field>
-                      <Field label="Key IDs (comma-separated)">
-                        <Input value={draft.key_ids.join(", ")} onChange={(e) => set({ key_ids: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} data-testid="gr-scope-keys" />
-                      </Field>
-                      <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                        <Checkbox checked disabled aria-label="Internal traffic" /> Internal traffic
-                        <Checkbox checked disabled aria-label="External traffic" /> External traffic
-                      </label>
-                    </>
+                    <div className="space-y-3">
+                      <TargetPicker
+                        label="Providers"
+                        items={providerItems}
+                        selected={draft.provider_ids}
+                        onToggle={(id) => toggleId("provider_ids", id)}
+                        testId="gr-scope-providers"
+                        emptyHint="No providers yet. Register one on the Providers page."
+                      />
+                      <TargetPicker
+                        label="Models"
+                        items={modelItems}
+                        selected={draft.model_ids}
+                        onToggle={(id) => toggleId("model_ids", id)}
+                        testId="gr-scope-models"
+                        emptyHint="No models yet."
+                      />
+                      <TargetPicker
+                        label="API keys"
+                        items={keyItems}
+                        selected={draft.key_ids}
+                        onToggle={(id) => toggleId("key_ids", id)}
+                        testId="gr-scope-keys"
+                        emptyHint="No API keys yet."
+                      />
+                    </div>
                   )}
+                  <Field label="Enforcement">
+                    <div className="space-y-2">
+                      {ENFORCEMENTS.map((e) => (
+                        <label key={e.value} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-2.5", draft.enforcement === e.value ? "border-tollma-500" : "border-zinc-200 dark:border-zinc-800")}>
+                          <input type="radio" name="enforcement" value={e.value} checked={draft.enforcement === e.value} onChange={() => set({ enforcement: e.value })} data-testid={`gr-enf-${e.value}`} className="mt-0.5" />
+                          <span className="text-xs"><strong className="capitalize">{e.value}.</strong> {e.hint}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
                 </div>
               )}
-              {step === 5 && (
-                <div className="space-y-2">
-                  {ENFORCEMENTS.map((e) => (
-                    <label key={e.value} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-2.5", draft.enforcement === e.value ? "border-tollma-500" : "border-zinc-200 dark:border-zinc-800")}>
-                      <input type="radio" name="enforcement" value={e.value} checked={draft.enforcement === e.value} onChange={() => set({ enforcement: e.value })} data-testid={`gr-enf-${e.value}`} className="mt-0.5" />
-                      <span className="text-xs"><strong className="capitalize">{e.value}.</strong> {e.hint}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              {step === 6 && (
+              {step === 4 && (
                 <div className="space-y-3">
+                  <dl className="grid grid-cols-2 gap-2">
+                    {summary.map(([k, v]) => (
+                      <div key={k} className="rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+                        <dt className="text-[10px] uppercase tracking-wider text-zinc-400">{k}</dt>
+                        <dd className="mt-0.5 text-xs font-medium text-zinc-900 dark:text-zinc-100">{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
                   <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
                     <Switch checked={logTriggers} onCheckedChange={setLogTriggers} data-testid="gr-log" /> Log trigger events
                   </label>
@@ -363,10 +517,6 @@ export function GuardrailFormDialog({
                       <Input value={draft.notifyRecipients} onChange={(e) => set({ notifyRecipients: e.target.value })} placeholder="sec@example.com" data-testid="gr-recipients" />
                     </Field>
                   )}
-                </div>
-              )}
-              {step === 7 && (
-                <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Confidence threshold (0–1)">
                       <Input type="number" min={0} max={1} step={0.05} value={draft.threshold ?? ""} onChange={(e) => set({ threshold: e.target.value === "" ? null : Number(e.target.value) })} data-testid="gr-threshold" />
@@ -381,10 +531,6 @@ export function GuardrailFormDialog({
                       <option value="block">block — fail closed</option>
                     </Select>
                   </Field>
-                  <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                    <Switch checked={draft.needsLlmEscalation} onCheckedChange={(v) => set({ needsLlmEscalation: v })} data-testid="gr-llm-escalation-2" />
-                    Escalate to LLM judge on low confidence
-                  </label>
                   {!isEditing && (
                     <p className="rounded-lg bg-zinc-50 p-2.5 text-xs text-zinc-500 dark:bg-zinc-900" data-testid="test-hint">
                       Save the policy first, then use Test on the row to dry-run content before enabling enforcement.
@@ -402,7 +548,7 @@ export function GuardrailFormDialog({
               <Button variant="ghost" size="sm" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} data-testid="wizard-back">Back</Button>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-                {step < STEP_COUNT - 1 ? (
+                {step < STEPS.length - 1 ? (
                   <Button size="sm" onClick={() => stepError ? toast.error(stepError) : setStep((s) => s + 1)} data-testid="wizard-next">Next</Button>
                 ) : (
                   <Button size="sm" onClick={() => void handleSave()} disabled={saving} data-testid="wizard-save">

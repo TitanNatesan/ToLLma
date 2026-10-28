@@ -28,7 +28,6 @@ describe("acceptance gaps", () => {
       ...EMPTY_LOG_FILTER,
       user_id: " u1 ",
       key_id: "k1",
-      team_id: "t1",
       provider_id: "p1",
       model_id: "m1",
       status: "completed",
@@ -39,7 +38,6 @@ describe("acceptance gaps", () => {
     expect(q).toEqual({
       user_id: "u1",
       key_id: "k1",
-      team_id: "t1",
       provider_id: "p1",
       model_id: "m1",
       status: "completed",

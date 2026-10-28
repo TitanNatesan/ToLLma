@@ -47,7 +47,6 @@ export function resolvePromptLogPerms(input: {
 export interface LogFilter {
   user_id: string;
   key_id: string;
-  team_id: string;
   provider_id: string;
   model_id: string;
   status: string;
@@ -60,7 +59,6 @@ export interface LogFilter {
 export const EMPTY_LOG_FILTER: LogFilter = {
   user_id: "",
   key_id: "",
-  team_id: "",
   provider_id: "",
   model_id: "",
   status: "",
@@ -82,7 +80,6 @@ export function isFilterEmpty(f: LogFilter): boolean {
 export function buildLogQuery(f: LogFilter): {
   user_id?: string;
   key_id?: string;
-  team_id?: string;
   provider_id?: string;
   model_id?: string;
   status?: string;
@@ -97,7 +94,6 @@ export function buildLogQuery(f: LogFilter): {
   };
   set("user_id", f.user_id);
   set("key_id", f.key_id);
-  set("team_id", f.team_id);
   set("provider_id", f.provider_id);
   set("model_id", f.model_id);
   set("status", f.status);
@@ -305,6 +301,7 @@ export function formatEffectiveSummary(summary: unknown): string {
     if (typeof teams === "number") parts.push(`scope: ${teams} team${teams === 1 ? "" : "s"}`);
   }
   if (typeof s.retention_days === "number") parts.push(`retention ${s.retention_days}d`);
+  else if (s.retention_days === null) parts.push("retention off");
   if (parts.length > 0) return parts.join(" · ");
   try {
     const flat = Object.entries(s).map(([k, v]) =>
@@ -360,6 +357,25 @@ export function getLogModelDisplay(row: {
   return row.model_name || shortId(row.model_id);
 }
 
+/** Endpoint label: known gateway endpoints get friendly names, unknown raw
+ *  values pass through, empty renders an em dash. */
+export function endpointLabel(endpoint: string | null | undefined): string {
+  switch ((endpoint ?? "").trim()) {
+    case "":
+      return "—";
+    case "chat":
+      return "Chat page";
+    case "chat_completions":
+      return "Chat completions";
+    case "messages":
+      return "Messages";
+    case "responses":
+      return "Responses";
+    default:
+      return endpoint as string;
+  }
+}
+
 /**
  * Human duration: sub-second stays whole milliseconds ("723ms"), >=1s
  * renders one-decimal seconds ("4.8s"). Nullish/non-finite -> em dash.
@@ -381,7 +397,6 @@ export function tabFromParam(value: string | null): PromptLogTab {
 export const LOG_FILTER_KEYS = [
   "user_id",
   "key_id",
-  "team_id",
   "provider_id",
   "model_id",
   "status",
@@ -397,7 +412,6 @@ export function filterFromParams(get: (key: string) => string | null): LogFilter
   return {
     user_id: pick("user_id"),
     key_id: pick("key_id"),
-    team_id: pick("team_id"),
     provider_id: pick("provider_id"),
     model_id: pick("model_id"),
     status: (PROMPT_LOG_STATUSES as readonly string[]).includes(status) ? status : "",

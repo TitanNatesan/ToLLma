@@ -48,6 +48,18 @@ function TriggerInspector({ id, orgId, onClose }: { id: string | null; orgId?: s
               <dd className="mt-0.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">{t.reason}</dd>
             </div>
           )}
+          {t.input_excerpt && (
+            <div className="col-span-2 rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+              <dt className="text-[10px] uppercase tracking-wider text-zinc-400">Input excerpt</dt>
+              <dd className="mt-0.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">{t.input_excerpt}</dd>
+            </div>
+          )}
+          {t.output_excerpt && (
+            <div className="col-span-2 rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+              <dt className="text-[10px] uppercase tracking-wider text-zinc-400">Output excerpt</dt>
+              <dd className="mt-0.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">{t.output_excerpt}</dd>
+            </div>
+          )}
         </dl>
       )}
     </DetailPanel>
@@ -96,7 +108,7 @@ export function TriggerHistoryPanel({
   const pages = feed.data?.pages ?? [];
   const items = pages.flatMap((p) => p.items);
   const shown = q.trim()
-    ? items.filter((t: TriggerEvent) => `${t.category ?? ""} ${t.action} ${t.reason ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
+    ? items.filter((t: TriggerEvent) => `${t.category ?? ""} ${t.action} ${t.reason ?? ""} ${t.input_excerpt ?? ""} ${t.output_excerpt ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
     : items;
 
   return (

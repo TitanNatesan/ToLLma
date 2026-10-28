@@ -29,6 +29,7 @@ def expire_due_logs(db: Session, *, now: datetime | None = None) -> int:
         result = db.execute(
             update(PromptLog)
             .where(
+                PromptLog.expires_at.is_not(None),
                 PromptLog.expires_at < moment,
                 PromptLog.content_expired.is_(False),
             )
@@ -54,7 +55,7 @@ def due_count(db: Session, *, now: datetime | None = None) -> int:
         return int(db.scalar(
             select(func.count())
             .select_from(PromptLog)
-            .where(PromptLog.expires_at < moment, PromptLog.content_expired.is_(False))
+            .where(PromptLog.expires_at.is_not(None), PromptLog.expires_at < moment, PromptLog.content_expired.is_(False))
         ) or 0)
     except Exception:
         logger.warning("promptlog due-count failed", exc_info=True)

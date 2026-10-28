@@ -109,7 +109,8 @@ def build_row_kwargs(
             error_code=(error_code or "")[:64] or None,
             policy_version=setting.version or 1,
             content_expired=False,
-            expires_at=now + timedelta(days=max(1, setting.retention_days or 90)),
+            expires_at=(None if setting.retention_days is None
+                          else now + timedelta(days=max(1, setting.retention_days))),
         )
     except Exception:
         # Resolution/encryption failure — never content in app logs.

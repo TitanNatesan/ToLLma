@@ -76,9 +76,9 @@ describe("validateWizardStep", () => {
     expect(validateWizardStep(1, draft({ categories: ["pii", "prompt_injection"] }))).toBeNull();
   });
   it("rejects buffer_then_inspect on pre-only, allows audit modes on pre", () => {
-    expect(validateWizardStep(3, draft({ stage: "pre", delivery_mode: "buffer_then_inspect" }))).toMatch(/post/i);
-    expect(validateWizardStep(3, draft({ stage: "pre", delivery_mode: "audit_after_delivery" }))).toBeNull();
-    expect(validateWizardStep(3, draft({ stage: "both", delivery_mode: "buffer_then_inspect" }))).toBeNull();
+    expect(validateWizardStep(2, draft({ stage: "pre", delivery_mode: "buffer_then_inspect" }))).toMatch(/post/i);
+    expect(validateWizardStep(2, draft({ stage: "pre", delivery_mode: "audit_after_delivery" }))).toBeNull();
+    expect(validateWizardStep(2, draft({ stage: "both", delivery_mode: "buffer_then_inspect" }))).toBeNull();
   });
   it("requires jev api key + base_url and escalation targets", () => {
     expect(validateWizardStep(2, draft({ evaluator: "jev", credentials: {} }))).toMatch(/jev/i);
@@ -86,14 +86,19 @@ describe("validateWizardStep", () => {
     expect(validateWizardStep(2, draft({ evaluator: "jev", credentials: { api_key: "k", base_url: "u" } }))).toBeNull();
     expect(validateWizardStep(2, draft({ needsLlmEscalation: true }))).toMatch(/escalation/i);
   });
+  it("requires an api key for openai_moderation before continuing", () => {
+    expect(validateWizardStep(2, draft({ evaluator: "openai_moderation", credentials: {} }))).toMatch(/api key/i);
+    expect(validateWizardStep(2, draft({ evaluator: "openai_moderation", credentials: { api_key: "  " } }))).toMatch(/api key/i);
+    expect(validateWizardStep(2, draft({ evaluator: "openai_moderation", credentials: { api_key: "sk-test" } }))).toBeNull();
+  });
   it("requires targets for scoped policies", () => {
-    expect(validateWizardStep(4, draft({ scope: "targeted" }))).toMatch(/provider|model|key/i);
-    expect(validateWizardStep(4, draft({ scope: "targeted", provider_ids: ["x"] }))).toBeNull();
+    expect(validateWizardStep(3, draft({ scope: "targeted" }))).toMatch(/provider|model|key/i);
+    expect(validateWizardStep(3, draft({ scope: "targeted", provider_ids: ["x"] }))).toBeNull();
   });
   it("bounds threshold and timeout", () => {
-    expect(validateWizardStep(7, draft({ threshold: 2 }))).toMatch(/threshold/i);
-    expect(validateWizardStep(7, draft({ timeout_ms: -1 }))).toMatch(/timeout/i);
-    expect(validateWizardStep(7, draft())).toBeNull();
+    expect(validateWizardStep(4, draft({ threshold: 2 }))).toMatch(/threshold/i);
+    expect(validateWizardStep(4, draft({ timeout_ms: -1 }))).toMatch(/timeout/i);
+    expect(validateWizardStep(4, draft())).toBeNull();
   });
 });
 
@@ -133,6 +138,14 @@ describe("buildEvaluatorConfigs", () => {
     expect(out).toEqual([{ evaluator_type: "jev", credentials: { api_key: "k", base_url: "https://jev" } }]);
     expect(out[0]).not.toHaveProperty("kind");
     expect(out[0]).not.toHaveProperty("api_url");
+  });
+  it("emits trimmed api_key for openai_moderation, omits credentials when empty", () => {
+    expect(
+      buildEvaluatorConfigs(draft({ evaluator: "openai_moderation", credentials: { api_key: "  sk-test  " } })),
+    ).toEqual([{ evaluator_type: "openai_moderation", credentials: { api_key: "sk-test" } }]);
+    expect(
+      buildEvaluatorConfigs(draft({ evaluator: "openai_moderation", credentials: {} })),
+    ).toEqual([{ evaluator_type: "openai_moderation", credentials: undefined }]);
   });
 });
 
@@ -183,6 +196,13 @@ describe("key assignment logic", () => {
     // Personal global policies are not locked.
     expect(isPolicyLocked(policy())).toBe(false);
   });
+  it("never locks disabled policies", () => {
+    // Disabled org-global policies do not lock.
+    expect(isPolicyLocked({ ...globalOrg, is_enabled: false })).toBe(false);
+    // Mandatory-disabled is unreachable (backend 422s disabling mandatory),
+    // but must not lock as defense in depth.
+    expect(isPolicyLocked({ ...mandatory, is_enabled: false })).toBe(false);
+  });
   it("merges inherited + locked + assigned, never duplicating", () => {
     const r = resolveKeyAssignments({ inherited: [assignable], assignable: [assignable], assignedIds: ["a"] });
     expect(r.effective.map((p) => p.id).sort()).toEqual(["a"]);
@@ -195,5 +215,14 @@ describe("key assignment logic", () => {
     expect(toggleAssignment(new Set(["m"]), locked, "m").has("m")).toBe(true);
     expect(toggleAssignment(new Set(), locked, "a").has("a")).toBe(true);
     expect(toggleAssignment(new Set(["a"]), locked, "a").has("a")).toBe(false);
+  });
+  it("requires key guardrails while global guardrails are enabled", () => {
+    // An org-global policy inherited by the key stays locked: it lands in
+    // lockedIds + effective and can never be toggled off.
+    const r = resolveKeyAssignments({ inherited: [globalOrg], assignable: [globalOrg, assignable], assignedIds: [] });
+    expect(r.lockedIds.has("g")).toBe(true);
+    expect(r.effective.map((p) => p.id)).toContain("g");
+    expect(toggleAssignment(new Set(), r.lockedIds, "g").has("g")).toBe(false);
+    expect(toggleAssignment(new Set(["g"]), r.lockedIds, "g").has("g")).toBe(true);
   });
 });

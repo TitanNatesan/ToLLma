@@ -43,6 +43,58 @@ def _active_org_ids(db: Session, user_id: uuid.UUID) -> set[uuid.UUID]:
         return set()
 
 
+def workspace_global_enforced(
+    db: Session, *, user_id: uuid.UUID, org_id: uuid.UUID | None = None
+) -> bool:
+    """True when the workspace carries an enabled global-coverage policy.
+
+    Rule A: an enabled, live, non-template policy in this workspace with
+    zero live assignments (workspace-global) or any live global-scope
+    assignment enforces every call. Rule B: without one, key-scoped
+    policies apply only to their own key.
+
+    Personal scope is `org_id=None` (the caller's own rows); otherwise the
+    org must be one of the caller's ACTIVE orgs. DB errors log and return
+    False — callers decide fail-open vs fail-closed.
+    """
+    try:
+        if org_id is not None and org_id not in _active_org_ids(db, user_id):
+            return False
+        stmt = select(GuardrailPolicy).where(
+            GuardrailPolicy.is_deleted.is_(False),
+            GuardrailPolicy.is_enabled.is_(True),
+            GuardrailPolicy.is_template.is_(False),
+        )
+        if org_id is None:
+            stmt = stmt.where(GuardrailPolicy.org_id.is_(None),
+                              GuardrailPolicy.user_id == user_id)
+        else:
+            stmt = stmt.where(GuardrailPolicy.org_id == org_id)
+        stmt = stmt.options(selectinload(GuardrailPolicy.assignments))
+        for policy in db.scalars(stmt):
+            live = [a for a in (policy.assignments or []) if not a.is_deleted]
+            if not live or any((a.scope_type or "global").lower() == "global"
+                               for a in live):
+                return True
+        return False
+    except Exception:
+        logger.warning("guardrail global-enforced lookup failed", exc_info=True)
+        return False
+
+
+def resolve_key_guardrail_state(
+    *, global_enabled: bool, key_assigned: bool
+) -> tuple[bool, bool]:
+    """Collapse workspace + key scope into (effective, locked).
+
+    Rule A (global wins): workspace-global coverage enforces every call —
+    effective regardless of key detachment, and the key UI must render it
+    locked. Rule B (key independent): with no global coverage the key's
+    own assignments decide, unlocked.
+    """
+    return (True if global_enabled else key_assigned, global_enabled)
+
+
 def _applies(assignment: GuardrailAssignment, *, provider_id, model_id, api_key_id, source: str) -> bool:
     if source == "internal" and not assignment.applies_internal:
         return False

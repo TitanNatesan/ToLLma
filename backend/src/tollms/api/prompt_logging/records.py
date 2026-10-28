@@ -387,7 +387,7 @@ def retention_info(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None):
     else:
         _scope_org(db, caller_id, org_id, "PromptLogs.Read")
         setting = _live_setting(db, caller_id, org_id)
-    effective = setting.retention_days if setting else DEFAULT_RETENTION_DAYS
+    effective = setting.retention_days if setting is not None else DEFAULT_RETENTION_DAYS
     now = datetime.now(timezone.utc)
     next_run = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     queue_stats = promptlog_queue.stats()

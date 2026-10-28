@@ -221,6 +221,8 @@ class TriggerRead(BaseModel):
     enforcement: str | None
     action: str
     reason: str | None
+    input_excerpt: str | None = None
+    output_excerpt: str | None = None
     latency_ms: float | None
     notified: bool
     failure_kind: str | None

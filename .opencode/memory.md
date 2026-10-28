@@ -4371,3 +4371,82 @@ Root causes fixed:
 Verification: backend FULL 1041 passed (incl. new LIKE/offset/org-rename/head-pin tests; 4 midnight-boundary flakes re-ran green after 02:00 UTC); frontend tsc clean, eslint clean, vitest 34/271, build ok; browser (agent-browser): sidebars on all 12 org pages + unified pages, palette→member/team drawers, guardrail create/view/test/edit/clone/delete×2 with confirm, stream ownership + toast click + correct-conversation persistence, 20+20 pagination zero-overlap, prompt-log filter reset/empty, audit human titles + Inspect, masked creds, 390px no-overflow, zero console errors. e2e: organizations scenario 10 + org-sidebar-key-models fully green (9 passed); navigation.spec partially green (peek/aria-current/destination/notifications fixed; rail profile-menu + workspace-trigger clicks blocked by Next.js dev-overlay shadow-DOM intercept in bottom-left — dev-only, absent in production builds; personal-nav org-switch expectation updated to documented stay-put behavior; navigation.spec line 260+ still fails on legacy ?section redirects where redirect works live — flaky env).
 Files: backend main.py CORS, conversations pagination, guards PREREQUISITES+escape+clamp, audit_registry, search groups, overview rename, guardrail scope validation, catalog/models/repository/search/request-logs escape+clamps + migration o4p5q6r7s8t9; frontend SidebarPanelPortal (new), OrgContextSidebar bare mode, DocsNav portal, page migrations (org dashboard, guardrails, prompt-logs, api-keys, docs), CommandPalette/types fixes, CommandPalette search rewrite, team/set deep links, sidebar collapse/scroll, focus rings, review fixes. Tests: test_workspace_overhaul.py (LIKE decoys, offset caps, removal negatives, CORS), api.test.ts terminal-with-content.
 Architecture notes: cursor header cross-cutting (conversations/prompt-logs/triggers); search groups metadata-only + permission-gated; toast client-side, ledger server-side; settings nav URL-synced (?settingsTab=); portal unmounts with page (no stale panels).
+
+## 2026-10-27 - Guardrails global+key-only refactor (no team code existed)
+
+Requirement: global + API-key-only guardrails; remove team-specific behavior; Rule A global-wins/locked, Rule B key-independent; shared resolver; no duplicate truth; report at reports/guardrails-global-and-key-scope-refactor.md.
+
+Root causes: no explicit global-wins helper (implicit in _applies); create/enable/update edge paths allowed mandatory-but-non-global rows via direct API; isPolicyLocked ignored is_enabled; attach/detach swallowed 404/403; effective cached 30s; lock copy missing required sentence. Team-specific guardrails verified absent (audits A/D/C: zero team_id/params/handlers/jobs/caches/fixtures) — no deletions, no migration.
+
+Implemented (backend): resolution.workspace_global_enforced + pure resolve_key_guardrail_state (effective=global or key, locked=global); service._has_global guard in create_policy/update_policy(effective-state incl. live rows)/set_enabled(True) → 422 mandatory-requires-global; effective() debug-wires both helpers (contract unchanged). Provider scope retained as model-targeting refinement.
+
+Implemented (frontend): KeyGuardrailsSection lock note exact sentence both modes (aria-live/role=status, gated create note); GuardrailPicker heading Inherited (global); isPolicyLocked respects is_enabled; attach/detach fail-loud; useEffectiveGuardrails staleTime 0 + refocus.
+
+Verification: backend 64 passed (global_key_scope + policies + engines + notify_repeat + llm_model_ref + workspace_overhaul); adjacent caching/member-analytics/prompt-hooks 43 passed; frontend tsc clean, vitest guardrails+notify 26 passed; OpenAPI 202 paths no dupes; alembic check clean; team-guardrail grep only 4 nav/search co-mentions. E2E skipped (host memory + dev-overlay flakes); ruff unavailable.
+
+Files: backend resolution.py, api/guardrails/service.py, tests/test_guardrails_global_key_scope.py (new 13); frontend KeyGuardrailsSection, GuardrailPicker, policyLogic, services/guardrails.ts, hooks/useGuardrails.ts, guardrails.test.ts; reports/guardrails-global-and-key-scope-refactor.md.
+
+## 2026-10-27 - Guardrail dialog Select: portal listbox + search
+
+Requirement: dropdown items clipped inside guardrail edit dialog; dropdowns should be searchable.
+
+Root cause: shared `Select` (frontend/src/components/ui/select.tsx) rendered its listbox `absolute` inside a `relative` wrapper nested in the wizard's `overflow-y-auto` step body — clipped by the scroll container. No search affordance existed (type-ahead only).
+
+Implemented (frontend only): listbox renders in a `document.body` portal with `fixed` positioning tracked from the trigger rect (scroll/resize listeners, flip-above when short of space, z-100 over the Radix dialog); search box filters options by label/value (pure `filterSelectOptions` helper); outside-click/blur guards account for the portal node; focus moves to search on open (ArrowDown drops into options, Escape closes). Added `src/components/ui/__tests__/select.test.ts` (5 tests: filter empty/label/value/no-match, parse flatten).
+
+Verification: tsc clean, eslint clean, full vitest 35 files / 280 passed. Live browser proof on /guardrails Edit "Block Credentials" step 3: listbox is a direct child of body (not dialog), all 5 evaluator options visible unclipped with search box; typing "lay" filters to "laya" only; screenshot /tmp/opencode/select_portal3.png. Scope targeted comma-separated ID inputs left as-is (pre-existing, separate enhancement).
+
+## 2026-10-27 - Guardrail creation sweep as tru@g.c (TitanDev@123), all configs verified
+
+Logged in via browser as tru@g.c; account had 1 pre-existing policy ("Block Credentials"). Created via UI wizard:
+1. "Deterministic PII Warn" (PII, medium, warn, deterministic, global, audit_after_delivery) — created OK, toast OK.
+2. "BerDock Secret Block" (secret_leakage, high, block, pre, deterministic + LLM escalation BerDock/Haiku 4.5, targeted provider scope) — searchable Selects for escalation provider/model worked; created OK.
+3. "Jev Probe Policy": jev with dummy key + unreachable URL → Validate correctly reports Invalid (graceful); switched evaluator to laya → health "reachable"; created as laya/monitor/global OK.
+Also verified: dry-run Test on PII policy warns "pii. email address detected; phone number detected" (100%); duplicate name → 409 CONFLICT clean; buffer_then_inspect+pre → 422 explanatory; forged provider ref → 404 oracle; disable toggle toast + aria-checked false; delete confirm dialog + 204. No product issues found — no code changes. Cleaned up all 3 test policies; account restored to original single policy. (Earlier search-box fill miss was a harness artifact — React controlled input needs native value-setter event, not a component bug.)
+
+## 2026-10-28 - Guardrail Select real-click fix: dialog-portal + pointer-events + FocusScope
+
+User report: dropdown items unselectable in guardrail dialog (synthetic eval-clicks had masked it).
+
+Root causes (verified live, tru@g.c session):
+1. Portal listbox (body child) inherited Radix modal's `body{pointer-events:none}` → computed `pointer-events:none`, clicks fell through to overlay ("covered by div.fixed.inset-0", option value never committed). Fix: explicit `pointerEvents:auto`.
+2. Body portal sits outside Radix FocusScope → search input could never hold focus (focus snapped back to trigger; real typing went nowhere). Fix: portal into host `[role=dialog]` when present (fixed positioning still escapes the wizard's overflow step body), body fallback otherwise.
+3. Defense kept: pointerdown stopPropagation on listbox (document-level DismissableLayer dismissal).
+
+Verification (all with REAL CDP clicks, opencode browser, tru@g.c): severity high, stage pre, evaluator laya→deterministic commits; search box holds focus; real typing "jev" filters to [jev]; full 8-step "Click Test Policy" created end-to-end (API confirms high/warn/pre), then deleted — account restored to ["Block Credentials"]. Screenshot /tmp/opencode/select_indialog.png shows unclipped listbox. tsc/eslint clean, full vitest 35 files / 280 passed.
+
+## 2026-10-28 - Guardrail wizard rebuilt (5 steps, was 8)
+
+Requirement: delete existing wizard UI, redo completely. Old pain (user screenshots): clipped/shifted dialog, detached dropdowns, raw UUID typing for scope targets.
+
+New GuardrailFormDialog (frontend only, same props + same backend contract): 1 Basics (name/desc/enabled), 2 Detection (category chips, severity, stage), 3 Evaluator (evaluator select, jev creds+validate, laya health, LLM escalation provider/model selects, delivery mode + hint), 4 Scope & enforcement (global/targeted, searchable checkbox TargetPickers for providers/models/keys by NAME with unknown-ID fallback rows, enforcement radios), 5 Review (summary grid, logging/recipients, threshold/timeout/failure, error, save). Deleted: Template disabled placeholder, comma-separated UUID inputs, per-delivery-mode hint list, duplicate LLM-escalation toggle, 8-step tabs. policyLogic: STEP_COUNT 8→5, validation remapped (delivery check into step 2, scope→3, bounds→4); tests updated.
+
+Verified live (tru@g.c, real clicks): new 5-tab wizard; severity high via dropdown; targeted scope pickers list BerDock/4 models/Primary key; search filters; BerDock checked (1 selected); block enforcement; review summary exact; create → API confirms provider-scoped assignment; edit Block Credentials → Global; edit targeted policy → Targeted + BerDock pre-checked; severity→critical saved via update (API confirms). Test policy deleted; account restored to ["Block Credentials"]. tsc/eslint clean, vitest 35/280 green.
+
+## 2026-10-28 - OpenAI Moderation credentials for Guardrails (complete)
+
+Requirement: configure OpenAI creds, wizard integration, real execution, enforcement, tests.
+
+Discovery: backend execution fully existed (openai_moderation engine: GET /models validate + POST /moderations omni-moderation-latest; evaluation decrypts per-evaluator creds; failure_action fail-open/closed; enforcement pipeline; masked display; 422-without-creds on create; rotation re-validates). Gap was frontend-only: wizard had no OpenAI credential UI (save 422'd). Decision: independent per-policy evaluator credentials (jev pattern), not shared provider creds — scoped to workspace, no cross-org leak, no billing-identity coupling.
+
+Implemented (frontend): wizard Evaluator step OpenAI section (password input, Validate, Not configured/Valid/Invalid status, save blocked without key); buildEvaluatorConfigs emits trimmed api_key; step-2 validation requires key; drawer "Evaluator credentials" section (masked Configured · ****tail, Replace flow with validate + save, 422 preserves old). Backend: no prod changes (paths verified sufficient). Tests: backend/tests/test_guardrails_openai_moderation.py (12: validate empty/401/200, create-422-without-creds, masked-no-leak, rotation bad-preserves + good-replaces, cross-org 404, flagged→blocked, allowed→allowed, revoked-key fail-closed block, missing-creds failure_kind fallback); frontend policyLogic cases (builder emits/omits, validation).
+
+Verification: backend 76 passed (openai12 + policies/engines/notify/llmref/globalscope/workspace), frontend 282/35 files, tsc/eslint clean, OpenAPI 202 paths, alembic clean. Live tru@g.c: wizard shows Not configured → Next blocked ("needs an API key") → dummy key Validate → Invalid (real api.openai.com 401); drawer shows Configured · ****9999, replace-validate Invalid, save rejected, old preserved; API list shows masked only, zero raw-secret occurrences. No OPENAI_API_KEY in env → real upstream success path NOT verified (mocked only); account restored (test policies deleted).
+
+## 2026-10-28 - Benchmarks drawer invisible: DetailPanel body portal
+
+Symptom: flask "View benchmarks" opened a drawer present in DOM but invisible (user screenshot showed only header text, no panel).
+
+Root cause (measured live): BenchmarksDrawer mounts inside ChatHeader's <header>, which carries backdrop-blur (backdrop-filter). Per CSS spec that makes the header the containing block for fixed descendants: drawer computed left:-280px (=640px header-box minus 920px width), collapsed to a 47px strip; backdrop likewise (260,0,640,47). Fix at shared level (20 consumers): DetailPanel now createPortals its backdrop+panel to document.body (focus trap/escape/dismiss are DOM-query based, unaffected). No per-drawer changes, no modal redesign.
+
+Verified live (tru, 1280x577): drawer [360,0,920,577] parent BODY, backdrop fullscreen, h-overflow 0; Escape/X/backdrop all close; focus returns to trigger; guardrail drawer regression [900,0,380,577] OK; empty state renders. vitest 35/282 green, tsc/eslint clean. Not run: 390px Playwright (memory pressure; width min(920px,100vw) by construction), nested run-detail with data (no runs exist), full e2e.
+
+## 2026-10-28 - Guardrail trigger excerpts + retention None + logs table (team out, endpoint in)
+
+Four requests, one migration (p5q6r7s8t9u0):
+1. Trigger input/output: GuardrailTrigger += input_excerpt/output_excerpt (redacted via det.redact_text, 500 cap); threaded from check_pre (input) / record_post (output); None on bridge fallback; exposed in TriggerRead + inspector blocks + search. Legacy rows show nothing (correct).
+2. Retention None: settings.retention_days + prompt_logs.expires_at nullable; explicit null (model_fields_set) = forever, omitted = 90/keep; capture sets NULL expiry; retention job skips NULL; UI shows "No retention — kept indefinitely". SQLAlchemy default-on-None gotcha handled (re-NULL post-flush on create).
+3. Removed Team column + filter from prompt-logs Logs table (detail drawer Teams row kept as provenance; backend team query param kept; team-mode behavior untouched — display-only removal).
+4. Endpoint column after Provider/Model with labels (Chat page, Chat completions, Messages, Responses). endpoint already captured (chat internal; unified.* external).
+
+Verified live (tru): blocked AWS-key probe wrote redacted input excerpt ("[redacted-secret]"), inspector shows it; retention cleared→"No retention"→API null→restored 90; table headers Time|User|Key|Provider/Model|Endpoint|... with Chat completions + Chat page labels. Tests: backend 9 new + 121 prompt-logging + guardrail suites green; frontend 35/285 green; tsc/eslint/openapi/alembic clean. Artifacts removed (temp keys, probe log row, test policies); account as found.

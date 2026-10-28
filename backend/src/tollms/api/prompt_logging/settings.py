@@ -265,9 +265,14 @@ def upsert_settings(db: Session, caller_id: uuid.UUID, data) :
     if mode not in MODES:
         # Truncated: the value is attacker-controlled (request body).
         raise ValidationError(f"invalid mode: {str(data.mode)[:32]!r}")
-    retention = data.retention_days if data.retention_days is not None else DEFAULT_RETENTION_DAYS
-    if not 1 <= retention <= 3650:
-        raise ValidationError(f"invalid retention_days: {retention!r}")
+    setting = _live_setting(db, caller_id, org_id)
+    if "retention_days" in data.model_fields_set:
+        # Explicit null = keep forever; absent = create: 90 / update: keep.
+        retention = data.retention_days
+        if retention is not None and not 1 <= retention <= 3650:
+            raise ValidationError(f"invalid retention_days: {retention!r}")
+    else:
+        retention = setting.retention_days if setting is not None else DEFAULT_RETENTION_DAYS
     team_ids = list(data.team_ids or [])
     key_inputs = list(data.key_ids or [])
     if org_id is not None:
@@ -285,15 +290,20 @@ def upsert_settings(db: Session, caller_id: uuid.UUID, data) :
         team_ids, key_ids = [], []
         team_states, key_states = {}, {}
 
-    setting = _live_setting(db, caller_id, org_id)
     if setting is None:
         setting = PromptLoggingSetting(
             user_id=None if org_id else caller_id, org_id=org_id,
             enabled=bool(data.enabled), mode=mode,
             capture_input=bool(data.capture_input), capture_output=bool(data.capture_output),
-            retention_days=retention, version=1, updated_by=caller_id)
+            retention_days=(retention if retention is not None
+                            else DEFAULT_RETENTION_DAYS),
+            version=1, updated_by=caller_id)
         db.add(setting)
         db.flush()
+        if retention is None:
+            # Column default=90 fires on None at INSERT; NULL it back so an
+            # explicit null (keep forever) persists on new rows.
+            setting.retention_days = None
     else:
         setting.enabled = bool(data.enabled)
         setting.mode = mode

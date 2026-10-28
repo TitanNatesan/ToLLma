@@ -53,6 +53,37 @@ describe("notify adapter", () => {
     );
   });
 
+  it("renders contrast toasts with solid fills and white text", () => {
+    toast.success("Ready", {
+      description: "done elsewhere",
+      action: { label: "Open", onClick: () => {} },
+      contrast: true,
+    });
+    expect(sileo.success).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Ready",
+        fill: "#055b08",
+        styles: expect.objectContaining({
+          title: "text-white!",
+          description: "text-white!",
+        }),
+      }),
+    );
+    const btn = (sileo.success as ReturnType<typeof vi.fn>).mock.calls[0][0].button;
+    expect(btn.title).toBe("Open");
+    toast.error("Broke", { contrast: true });
+    expect(sileo.error).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Broke", fill: "#b91c1c" }),
+    );
+  });
+
+  it("leaves non-contrast toasts on theme defaults", () => {
+    toast.success("Plain");
+    expect(sileo.success).toHaveBeenCalledWith(
+      expect.not.objectContaining({ fill: expect.anything() }),
+    );
+  });
+
   it("fires exactly one underlying toast per call (no duplicates)", () => {
     toast.success("Once");
     const total =

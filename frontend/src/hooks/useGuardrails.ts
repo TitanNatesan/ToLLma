@@ -147,7 +147,8 @@ export function useEffectiveGuardrails(
     queryKey: GUARDRAILS_KEYS.effective(key),
     queryFn: () => getEffectiveGuardrails(params),
     enabled,
-    staleTime: 30_000,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 }
 

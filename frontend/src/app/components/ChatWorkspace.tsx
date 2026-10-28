@@ -288,7 +288,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     refreshAll(convId);
     perfDone(status);
     if (status === "failed") {
-      toast.error("Generation failed", { description: error ?? undefined });
+      toast.error("Generation failed", { description: error ?? undefined, contrast: true });
     }
   }, [
     setStreaming,
@@ -365,6 +365,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         toast.success("Response ready", {
           description: "The generation finished in another conversation.",
           action: { label: "Open conversation", onClick: () => router.push(`/c/${convId}`) },
+          contrast: true,
         });
       }
     },
@@ -375,7 +376,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       clearOptimistic();
       clearPendingSend();
       perfDone("error");
-      toast.error("Chat failed", { description: m });
+      toast.error("Chat failed", { description: m, contrast: true });
       refreshAll(convId);
     },
   }), [
