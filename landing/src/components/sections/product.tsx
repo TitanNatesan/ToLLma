@@ -533,6 +533,36 @@ export default function Product() {
     };
   }, [displayed, reduced, seen]);
 
+  // App frame — perspective tilt that levels out as it scrolls in.
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!window.matchMedia("(min-width: 768px)").matches) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      const p = Math.min(1, Math.max(0, (vh - r.top) / (vh * 0.85)));
+      const rx = (1 - p) * 6;
+      el.style.transform = `perspective(1600px) rotateX(${rx.toFixed(2)}deg)`;
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      el.style.transform = "";
+    };
+  }, []);
+
   return (
     <Section id="product" tone="surface">
       <Container width="wide">
@@ -593,8 +623,9 @@ export default function Product() {
               className="pointer-events-none absolute -inset-x-4 -top-12 h-40 bg-grid opacity-70"
             />
             <div
+              ref={frameRef}
               data-boot="frame"
-              className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-lg"
+              className="relative origin-top overflow-hidden rounded-2xl border border-line bg-surface shadow-lg"
             >
               {/* Mock title bar */}
               <div
