@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import {
   animate,
   animatePackets,
@@ -49,6 +49,7 @@ const RETURN_D = "M532 65 C486 65 470 260 420 260";
 
 export default function HeroGateway() {
   const [viewRef, seen] = useInViewOnce<HTMLDivElement>(0.25);
+  const [hot, setHot] = useState<string | null>(null);
   const reduced = useReducedMotion();
   const tiltRef = usePointerTilt<HTMLDivElement>(5);
   const bgRef = useParallax<HTMLDivElement>(0.08);
@@ -206,7 +207,7 @@ export default function HeroGateway() {
         {/* aspect-ratio keeps layout stable with or without JS */}
         <div className="relative aspect-[680/520]">
           {/* far layer: dot grid + faint network lines */}
-          <div ref={bgRef} className="absolute inset-0" aria-hidden="true">
+          <div ref={bgRef} className="pointer-events-none absolute inset-0" aria-hidden="true">
             <svg viewBox="0 0 680 520" className="block h-full w-full">
               <defs>
                 <pattern id="gw-dotgrid" width="26" height="26" patternUnits="userSpaceOnUse">
@@ -268,7 +269,8 @@ export default function HeroGateway() {
                     className="gw-path"
                     d={p.d}
                     stroke="var(--color-teal)"
-                    strokeOpacity="0.65"
+                    strokeOpacity={hot === p.label ? 1 : 0.65}
+                    strokeWidth={hot === p.label ? 3 : 2}
                   />
                 ))}
                 <path id="gw-return" d={RETURN_D} stroke="none" />
@@ -312,7 +314,12 @@ export default function HeroGateway() {
 
               {/* provider nodes with status dots */}
               {PROVIDERS.map((p) => (
-                <g key={p.label} className="gw-provider">
+                <g
+                  key={p.label}
+                  className="gw-provider"
+                  onMouseEnter={() => setHot(p.label)}
+                  onMouseLeave={() => setHot((h) => (h === p.label ? null : h))}
+                >
                   <rect
                     x="532"
                     y={p.y - 21}
@@ -380,7 +387,7 @@ export default function HeroGateway() {
           </div>
 
           {/* near layer: gateway core halo, hexagon, chips */}
-          <div ref={fgRef} className="absolute inset-0" aria-hidden="true">
+          <div ref={fgRef} className="pointer-events-none absolute inset-0" aria-hidden="true">
             <svg viewBox="0 0 680 520" className="block h-full w-full">
               <defs>
                 <linearGradient
