@@ -178,6 +178,7 @@ export function drawSvgPaths(
   const drawables = paths.flatMap((p) => svg.createDrawable(p));
   const tl = createTimeline();
   tl.add(drawables, {
+    draw: ["0 0", "0 1"],
     duration,
     delay: stagger(staggerMs, { start: delay }),
     ease: "inOutQuad",

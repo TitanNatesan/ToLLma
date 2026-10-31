@@ -5,7 +5,7 @@ import "./globals.css";
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
-  display: "swap",
+  display: "optional",
 });
 
 // Code/mono face for API examples (kept local via CSS stack to avoid an

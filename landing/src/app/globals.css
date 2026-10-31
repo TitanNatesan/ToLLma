@@ -81,7 +81,7 @@
      Desktop compositions may reach 1440–1600px. */
   --gutter: clamp(1.25rem, 4.5vw, 4.5rem); /* 20px → 72px */
   --container: 84rem; /* standard sections: 1344px box / ~1200px content */
-  --container-wide: 104rem; /* hero + major sections: 1664px box / ~1520px content */
+  --container-wide: 86rem; /* major sections: 1376px box / ~1230px content */
   --container-xwide: 109rem; /* full compositions: 1744px box / ~1600px content */
 
   /* Section rhythm */
@@ -177,6 +177,86 @@ body {
   background-size: 22px 22px;
 }
 
+/* Primary CTA shine: a single sweep on hover/focus. CSS-only, no JS. */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  transform: translateX(-130%) skewX(-16deg);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.38),
+    transparent
+  );
+  transition: transform 0.7s var(--ease-out-expo);
+}
+.btn-shine:hover::after,
+.btn-shine:focus-visible::after {
+  transform: translateX(130%) skewX(-16deg);
+}
+
+/* Accent phrase for display headings (hero / CTA). Large type only. */
+.text-gradient-brand {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-brand-strong) 0%,
+    var(--color-teal-ink) 38%,
+    var(--color-violet) 62%,
+    var(--color-brand-strong) 100%
+  );
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradient-pan 7s linear infinite;
+}
+
+@keyframes gradient-pan {
+  to {
+    background-position: 220% center;
+  }
+}
+
+/* Hero words: CSS-only entrance so the H1 paints immediately (LCP). */
+.hero-word {
+  animation: hero-word-in 0.65s var(--ease-out-expo) both;
+  animation-delay: calc(var(--wi, 0) * 45ms);
+}
+
+@keyframes hero-word-in {
+  from {
+    transform: translateY(14px);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Hero scroll cue: a single calm dot drifting downward. */
+.hero-cue > span {
+  animation: cue-drift 1.8s var(--ease-out-expo) infinite;
+}
+
+@keyframes cue-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.9;
+  }
+  50% {
+    transform: translateY(14px);
+    opacity: 0.5;
+  }
+}
+
 /* Reveal primitives: content is visible by default; JS adds .is-hidden
    only when motion is allowed, so reduced-motion + no-JS both show all. */
 [data-reveal] {
@@ -186,6 +266,16 @@ body {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  /* The pinned stepper is a motion-linked experience: never reserve the
+     tall scroll wrapper or pin it for reduced-motion users (also covers
+     no-JS users whose markup was rendered before the preference applied). */
+  .hiw-pin {
+    height: auto !important;
+  }
+  .hiw-sticky {
+    position: static !important;
+    min-height: 0 !important;
   }
   *,
   *::before,

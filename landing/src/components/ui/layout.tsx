@@ -70,13 +70,13 @@ export function SectionHeading({
     >
       {eyebrow && <p className="eyebrow">{eyebrow}</p>}
       <h2
-        className="font-semibold tracking-tight text-ink"
+        className="font-semibold tracking-tight text-balance text-ink"
         style={{ fontSize: "var(--t-h2)", lineHeight: 1.12 }}
       >
         {title}
       </h2>
       {lead && (
-        <p className="text-muted" style={{ fontSize: "var(--t-lead)", lineHeight: 1.6, maxWidth: "60ch" }}>
+        <p className="text-pretty text-muted" style={{ fontSize: "var(--t-lead)", lineHeight: 1.6, maxWidth: "60ch" }}>
           {lead}
         </p>
       )}

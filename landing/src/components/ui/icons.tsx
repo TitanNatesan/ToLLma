@@ -155,6 +155,16 @@ export function IconCube({ className, size = 24 }: P) {
   );
 }
 
+// Copy — used by code/snippet copy controls.
+export function IconCopy({ className, size = 18 }: P) {
+  return (
+    <svg {...svg(size)} className={className} aria-hidden>
+      <rect x="9" y="9" width="11" height="11" rx="2.5" />
+      <path d="M15 9V6.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15H9" />
+    </svg>
+  );
+}
+
 // GitHub mark (filled, brand-agnostic) — used in nav/CTA/footer.
 export function IconGitHub({ className, size = 20 }: P) {
   return (

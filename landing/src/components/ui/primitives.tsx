@@ -13,7 +13,7 @@ const base =
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-brand text-white shadow-[0_8px_24px_-8px_rgba(31,94,255,0.55)] " +
+    "btn-shine bg-brand text-white shadow-[0_8px_24px_-8px_rgba(31,94,255,0.55)] " +
     "hover:bg-brand-strong hover:shadow-[0_12px_28px_-8px_rgba(31,94,255,0.6)] active:translate-y-px",
   secondary:
     "bg-surface text-ink border border-line-strong " +
