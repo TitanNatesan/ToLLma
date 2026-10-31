@@ -20,6 +20,49 @@ from tollms.services.gateway.adapters.base import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_anthropic_tools(tools: list[dict] | None) -> list[dict]:
+    """Tool definitions -> Anthropic custom-tool shape ({name, description,
+    input_schema}), accepting OpenAI chat ({type: function, function.*})
+    and Responses ({type: function, parameters}) shapes. Unknown entries
+    are dropped, never forwarded malformed."""
+    out: list[dict] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name"):
+            name, description, schema = (function.get("name"), function.get("description"),
+                                         function.get("parameters"))
+        elif tool.get("type") == "function" and isinstance(tool.get("parameters"), dict):
+            name, description, schema = (tool.get("name"), tool.get("description"),
+                                         tool.get("parameters"))
+        elif tool.get("name"):
+            name, description, schema = (tool.get("name"), tool.get("description"),
+                                         tool.get("input_schema"))
+        else:
+            continue
+        out.append({"name": name, "description": description or "",
+                    "input_schema": schema if isinstance(schema, dict) else {}})
+    return out
+
+
+def _normalize_anthropic_tool_choice(choice):
+    """Anthropic tool_choice, accepting OpenAI conventions.
+
+    required -> {"type": "any"}; auto/none pass through; {"type":
+    "function", ...} -> {"type": "tool", "name"}; dicts otherwise unchanged.
+    """
+    if isinstance(choice, str):
+        low = choice.strip().lower()
+        return {"type": "any"} if low == "required" else choice
+    if not isinstance(choice, dict):
+        return choice
+    if choice.get("type") == "function":
+        name = (choice.get("function") or {}).get("name") or choice.get("name")
+        return {"type": "tool", "name": name} if name else {"type": "auto"}
+    return choice
+
+
 class AnthropicAdapter(BaseProviderAdapter):
     endpoint_type = "messages"
     supports_vision = True
@@ -120,9 +163,9 @@ class AnthropicAdapter(BaseProviderAdapter):
         rest = anthropic_messages(self.prompt_cache, rest)
         body: dict = {"model": self.model_id, "messages": rest, "stream": True, "max_tokens": 4096}
         if tools is not None:
-            body["tools"] = tools
+            body["tools"] = _normalize_anthropic_tools(tools)
         if tool_choice is not None:
-            body["tool_choice"] = tool_choice
+            body["tool_choice"] = _normalize_anthropic_tool_choice(tool_choice)
         if system:
             body["system"] = anthropic_system(self.prompt_cache, system)
         params = thinking_params(self.reasoning_level, self.max_output_tokens)

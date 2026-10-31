@@ -867,8 +867,12 @@ def _tool_kwargs(method: Any, unified: UnifiedRequest) -> dict[str, Any]:
 async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
     started = prepared.started
     try:
+        # Inspect chat_stream (not chat): base.chat() always declares tools
+        # kwargs but forwards them only when chat_stream supports them, so
+        # checking chat would let tool-less adapters (Gemini/Vertex) slip
+        # through to a silent text-only success.
         result = await prepared.adapter.chat(
-            prepared.messages, **_tool_kwargs(prepared.adapter.chat, prepared.unified)
+            prepared.messages, **_tool_kwargs(prepared.adapter.chat_stream, prepared.unified)
         )
         latency_ms = (time.monotonic() - started) * 1000
         tokens, total, breakdown, estimated = _finalize_usage(

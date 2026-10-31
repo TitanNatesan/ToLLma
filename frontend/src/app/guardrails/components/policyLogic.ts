@@ -47,7 +47,6 @@ export interface GuardrailDraft {
   needsLlmEscalation: boolean;
   escalationProviderId: string;
   escalationModelId: string;
-  notifyRecipients: string;
 }
 
 export type GuardrailStageValue = "pre" | "post" | "both";
@@ -62,7 +61,6 @@ export function emptyGuardrailDraft(): GuardrailDraft {
     categories: [], scope: "global", provider_ids: [], model_ids: [], key_ids: [],
     credentials: {}, threshold: 0.8, timeout_ms: 2000,
     needsLlmEscalation: false, escalationProviderId: "", escalationModelId: "",
-    notifyRecipients: "",
   };
 }
 
@@ -181,39 +179,51 @@ export function buildPolicyPayload(
   };
 }
 
-/** Evaluator configs to create right after the policy (deterministic = none). */
+/**
+ * Evaluator configs to create right after the policy (deterministic = none).
+ *
+ * A checked LLM-escalation toggle appends a second `llm` row beside the
+ * primary. The backend runs it as a second-stage judge
+ * (`evaluation._needs_escalation`); `operation: "escalate"` is set so the
+ * row fires on any positive signal even when no confidence threshold is
+ * configured (threshold-only escalation would never fire then). A primary
+ * `llm` evaluator is already a single llm row, so it is never duplicated.
+ */
 export function buildEvaluatorConfigs(d: GuardrailDraft): EvaluatorCreateInput[] {
+  const out: EvaluatorCreateInput[] = [];
   if (d.evaluator === "jev") {
     const credentials: Record<string, unknown> = {};
     if (d.credentials.api_key?.trim()) credentials.api_key = d.credentials.api_key.trim();
     if (d.credentials.base_url?.trim()) credentials.base_url = d.credentials.base_url.trim();
-    return [
-      {
-        evaluator_type: "jev",
-        credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
-      },
-    ];
-  }
-  if (d.evaluator === "openai_moderation") {
+    out.push({
+      evaluator_type: "jev",
+      credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
+    });
+  } else if (d.evaluator === "openai_moderation") {
     // Independent per-policy credential (jev pattern): stored encrypted,
     // validated live by the backend before persist. Never emitted when empty —
     // the backend rejects credential-less openai_moderation configs.
     const apiKey = d.credentials.api_key?.trim();
-    return [
-      {
-        evaluator_type: "openai_moderation",
-        credentials: apiKey ? { api_key: apiKey } : undefined,
-      },
-    ];
+    out.push({
+      evaluator_type: "openai_moderation",
+      credentials: apiKey ? { api_key: apiKey } : undefined,
+    });
+  } else if (d.evaluator === "llm") {
+    if (d.escalationProviderId) {
+      out.push({ evaluator_type: "llm", provider_id: d.escalationProviderId, model_ref: d.escalationModelId || undefined });
+    }
+  } else if (d.evaluator === "laya") {
+    out.push({ evaluator_type: "laya" });
   }
-  if (d.evaluator === "llm") {
-    if (!d.escalationProviderId) return [];
-    return [{ evaluator_type: "llm", provider_id: d.escalationProviderId, model_ref: d.escalationModelId || undefined }];
+  if (d.needsLlmEscalation && d.evaluator !== "llm" && d.escalationProviderId) {
+    out.push({
+      evaluator_type: "llm",
+      provider_id: d.escalationProviderId,
+      model_ref: d.escalationModelId || undefined,
+      operation: "escalate",
+    });
   }
-  if (d.evaluator === "laya" || d.evaluator === "openai_moderation") {
-    return [{ evaluator_type: d.evaluator }];
-  }
-  return [];
+  return out;
 }
 
 /**

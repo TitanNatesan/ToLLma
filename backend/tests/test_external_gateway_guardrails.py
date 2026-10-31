@@ -159,6 +159,46 @@ class _FakeNoToolsAdapter:
         raise NotImplementedError
 
 
+class _FakeBaseChatNoStreamToolsAdapter:
+    """Real-world Gemini shape: inherits base.chat (declares tools kwargs)
+    but chat_stream is text-only. Non-streaming must still 403, not silently
+    succeed — base.chat forwards tools only when chat_stream supports them."""
+
+    async def chat(self, messages, tools=None, tool_choice=None):
+        if tools:
+            raise AssertionError("tools must be rejected before reaching the adapter")
+        return ChatResult(text="sunny", prompt_tokens=9, completion_tokens=3, total_tokens=12)
+
+    async def chat_stream(self, messages):  # pragma: no cover
+        raise NotImplementedError
+
+
+def test_tools_rejected_when_only_chat_stream_lacks_tools_param(
+    client: TestClient, provider_factory, model_factory, monkeypatch
+) -> None:
+    """Regression (live Gemini): base.chat declares tools but the adapter's
+    chat_stream is text-only. Non-streaming must 403 model_not_allowed."""
+    provider = provider_factory("BaseChatProv")
+    model_factory(provider["id"], model_id="base-chat-model", supports_tool_calling=True)
+    monkeypatch.setattr(
+        gateway_service, "build_adapter", lambda *a, **k: _FakeBaseChatNoStreamToolsAdapter()
+    )
+    raw = _make_key(client)
+
+    denied = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "BaseChatProv/base-chat-model",
+            "tools": TOOLS,
+            "tool_choice": "auto",
+            "messages": [{"role": "user", "content": "weather in SF?"}],
+        },
+        headers=_auth(raw),
+    )
+    assert denied.status_code == 403, denied.text
+    assert "model_not_allowed" in denied.text
+
+
 def test_tools_rejected_when_adapter_lacks_tools_param(
     client: TestClient, provider_factory, model_factory, monkeypatch
 ) -> None:

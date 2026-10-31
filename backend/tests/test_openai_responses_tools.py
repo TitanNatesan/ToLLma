@@ -105,7 +105,7 @@ def test_adapter_sends_tools_and_parses_function_calls() -> None:
         adapter.chat(unified.as_chat_messages(), tools=unified.tools, tool_choice=unified.tool_choice)
     )
     assert len(captured) == 1
-    assert captured[0]["tools"] == TOOLS
+    assert captured[0]["tools"] == [{"type": "function", "name": "get_weather", "description": "", "parameters": TOOLS[0]["parameters"]}]
     assert captured[0]["tool_choice"] == "auto"
     assert result.tool_calls == [
         {"id": "call_1", "name": "get_weather", "arguments": '{"city":"SF"}'}

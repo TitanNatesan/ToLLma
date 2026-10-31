@@ -234,3 +234,23 @@ def test_no_tools_request_omits_tool_body(
     assert response.status_code == 200, response.text
     assert calls and calls[0]["tools"] is None
     assert calls[0]["tool_choice"] is None
+
+
+def test_normalize_cross_shape_tools() -> None:
+    from tollms.services.gateway.adapters.anthropic import (
+        _normalize_anthropic_tool_choice,
+        _normalize_anthropic_tools,
+    )
+
+    chat = [{"type": "function", "function": {"name": "w", "description": "d",
+                                             "parameters": {"type": "object"}}}]
+    responses = [{"type": "function", "name": "w", "description": "d",
+                  "parameters": {"type": "object"}}]
+    for shape in (chat, responses):
+        assert _normalize_anthropic_tools(shape) == [
+            {"name": "w", "description": "d",
+             "input_schema": {"type": "object"}}], shape
+    assert _normalize_anthropic_tools([{"nope": 1}]) == []
+    assert _normalize_anthropic_tool_choice("required") == {"type": "any"}
+    assert _normalize_anthropic_tool_choice(
+        {"type": "function", "function": {"name": "w"}}) == {"type": "tool", "name": "w"}

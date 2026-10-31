@@ -502,9 +502,9 @@ export function GuardrailFormDialog({
                     <Switch checked={notify} onCheckedChange={setNotify} data-testid="gr-notify" /> Notify on trigger
                   </label>
                   {notify && (
-                    <Field label="Recipients (comma-separated emails/webhooks)">
-                      <Input value={draft.notifyRecipients} onChange={(e) => set({ notifyRecipients: e.target.value })} placeholder="sec@example.com" data-testid="gr-recipients" />
-                    </Field>
+                    <p className="text-[11px] text-zinc-500" data-testid="gr-recipients-note">
+                      Sends to the policy owner (personal) or workspace roots (organization).
+                    </p>
                   )}
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Confidence threshold (0–1)">

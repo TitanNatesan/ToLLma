@@ -39,7 +39,6 @@ const draft = (patch: Partial<GuardrailDraft> = {}): GuardrailDraft => ({
   needsLlmEscalation: false,
   escalationProviderId: "",
   escalationModelId: "",
-  notifyRecipients: "",
   ...patch,
 });
 
@@ -153,6 +152,34 @@ describe("buildEvaluatorConfigs", () => {
     expect(
       buildEvaluatorConfigs(draft({ evaluator: "openai_moderation", credentials: {} })),
     ).toEqual([{ evaluator_type: "openai_moderation", credentials: undefined }]);
+  });
+  it("persists the llm escalation toggle beside a deterministic primary (no data loss)", () => {
+    expect(
+      buildEvaluatorConfigs(
+        draft({ evaluator: "deterministic", needsLlmEscalation: true, escalationProviderId: "pr", escalationModelId: "m" }),
+      ),
+    ).toEqual([{ evaluator_type: "llm", provider_id: "pr", model_ref: "m", operation: "escalate" }]);
+  });
+  it("keeps the primary and appends escalation (laya + llm)", () => {
+    expect(
+      buildEvaluatorConfigs(
+        draft({ evaluator: "laya", needsLlmEscalation: true, escalationProviderId: "pr", escalationModelId: "m" }),
+      ),
+    ).toEqual([
+      { evaluator_type: "laya" },
+      { evaluator_type: "llm", provider_id: "pr", model_ref: "m", operation: "escalate" },
+    ]);
+  });
+  it("drops escalation without a provider (step validation gates it)", () => {
+    expect(buildEvaluatorConfigs(draft({ needsLlmEscalation: true }))).toEqual([]);
+    expect(buildEvaluatorConfigs(draft())).toEqual([]);
+  });
+  it("never duplicates the llm row when llm is the primary", () => {
+    expect(
+      buildEvaluatorConfigs(
+        draft({ evaluator: "llm", needsLlmEscalation: true, escalationProviderId: "pr", escalationModelId: "m" }),
+      ),
+    ).toEqual([{ evaluator_type: "llm", provider_id: "pr", model_ref: "m" }]);
   });
 });
 

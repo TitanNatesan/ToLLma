@@ -35,7 +35,6 @@ const draft = (patch: Partial<GuardrailDraft> = {}): GuardrailDraft => ({
   needsLlmEscalation: false,
   escalationProviderId: "",
   escalationModelId: "",
-  notifyRecipients: "",
   ...patch,
 });
 

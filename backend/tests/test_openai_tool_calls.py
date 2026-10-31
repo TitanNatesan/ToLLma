@@ -118,7 +118,7 @@ def test_adapter_sends_and_parses_tool_calls() -> None:
         adapter.chat(unified.as_chat_messages(), tools=unified.tools, tool_choice=unified.tool_choice)
     )
     assert len(captured) == 1
-    assert captured[0]["tools"] == TOOLS
+    assert captured[0]["tools"] == [{"type": "function", "function": {"name": "get_weather", "description": "", "parameters": {"type": "object"}}}]
     assert captured[0]["tool_choice"] == "auto"
     assert result.finish_reason == "tool_calls"
     assert result.tool_calls == [
@@ -224,3 +224,34 @@ def test_chat_completions_tool_stream_chunks(
     assert '"tool_calls"' in text
     assert '"finish_reason": "tool_calls"' in text or '"finish_reason":"tool_calls"' in text
     assert "data: [DONE]" in text
+
+
+def test_normalize_cross_shape_tools() -> None:
+    from tollms.services.gateway.adapters.openai import (
+        _normalize_chat_tool_choice,
+        _normalize_chat_tools,
+        _normalize_responses_tool_choice,
+        _normalize_responses_tools,
+    )
+
+    anthropic = [{"name": "w", "description": "d",
+                  "input_schema": {"type": "object", "properties": {}}}]
+    responses = [{"type": "function", "name": "w", "description": "d",
+                  "parameters": {"type": "object"}}]
+    chat = [{"type": "function", "function": {"name": "w", "description": "d",
+                                             "parameters": {"type": "object"}}}]
+    for shape, schema in ((anthropic, {"type": "object", "properties": {}}),
+                          (responses, {"type": "object"}),
+                          (chat, {"type": "object"})):
+        norm = _normalize_chat_tools(shape)
+        assert norm == [{"type": "function", "function": {
+            "name": "w", "description": "d", "parameters": schema}}], shape
+        rnorm = _normalize_responses_tools(shape)
+        assert rnorm == [{"type": "function", "name": "w", "description": "d",
+                          "parameters": schema}], shape
+    assert _normalize_chat_tool_choice({"type": "any"}) == "required"
+    assert _normalize_chat_tool_choice("any") == "required"
+    assert _normalize_chat_tool_choice({"type": "tool", "name": "w"}) == {
+        "type": "function", "function": {"name": "w"}}
+    assert _normalize_responses_tool_choice("any") == "required"
+    assert _normalize_responses_tool_choice({"type": "any"}) == {"type": "required"}

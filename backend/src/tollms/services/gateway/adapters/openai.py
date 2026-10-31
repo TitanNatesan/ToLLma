@@ -32,6 +32,77 @@ from tollms.services.gateway.adapters.base import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_chat_tools(tools: list[dict] | None) -> list[dict]:
+    """Tool definitions -> OpenAI chat shape, accepting Anthropic custom
+    tools ({name, description, input_schema}) and OpenAI Responses function
+    tools ({type: function, parameters} at top level). Unknown entries are
+    dropped (never forwarded malformed); empty input returns []."""
+    out: list[dict] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name"):
+            name, description, schema = (function.get("name"), function.get("description"),
+                                         function.get("parameters"))
+        elif tool.get("type") == "function" and isinstance(tool.get("parameters"), dict):
+            name, description, schema = (tool.get("name"), tool.get("description"),
+                                         tool.get("parameters"))
+        elif tool.get("name"):
+            name, description, schema = (tool.get("name"), tool.get("description"),
+                                         tool.get("input_schema"))
+        else:
+            continue
+        out.append({"type": "function", "function": {
+            "name": name, "description": description or "",
+            "parameters": schema if isinstance(schema, dict) else {}}})
+    return out
+
+
+def _normalize_chat_tool_choice(choice) -> dict | str:
+    """OpenAI chat tool_choice, accepting Anthropic conventions.
+
+    any -> required (closest OpenAI equivalent: force a call);
+    {type: tool, name} -> {type: function, function: {name}};
+    {type: function, ...} passes through; strings pass through."""
+    if isinstance(choice, str):
+        return "required" if choice.strip().lower() == "any" else choice
+    if not isinstance(choice, dict):
+        return choice
+    kind = choice.get("type")
+    if kind == "any":
+        return "required"
+    if kind == "tool":
+        name = choice.get("name")
+        return {"type": "function", "function": {"name": name}} if name else "auto"
+    if kind == "function":
+        return choice
+    return choice
+
+
+def _normalize_responses_tools(tools: list[dict] | None) -> list[dict]:
+    """Tool definitions -> OpenAI Responses shape ({type: function, name,
+    description, parameters}), accepting chat shapes (nested function.*)."""
+    out: list[dict] = []
+    for tool in _normalize_chat_tools(tools):
+        function = tool["function"]
+        out.append({"type": "function", "name": function["name"],
+                    "description": function.get("description") or "",
+                    "parameters": function.get("parameters") or {}})
+    return out
+
+
+def _normalize_responses_tool_choice(choice):
+    """Responses tool_choice: strings pass through (any -> required);
+    dicts: any -> required; tool/function forced names degrade to required
+    (Responses forced-tool needs an allowed_tools wrapper — not emulated)."""
+    if isinstance(choice, str):
+        return "required" if choice.strip().lower() == "any" else choice
+    if isinstance(choice, dict) and choice.get("type") in ("any", "tool", "function"):
+        return {"type": "required"}
+    return choice
+
+
 def _reasoning_text(delta: dict) -> str:
     """Reasoning text across OpenAI-compatible surfaces.
 
@@ -263,8 +334,8 @@ class OpenAIChatAdapter(OpenAIBaseAdapter):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-        if tools is not None:body["tools"] = tools
-        if tool_choice is not None:body["tool_choice"] = tool_choice
+        if tools is not None:body["tools"] = _normalize_chat_tools(tools)
+        if tool_choice is not None:body["tool_choice"] = _normalize_chat_tool_choice(tool_choice)
         body.update(openai_params(self.prompt_cache))
         effort = reasoning_effort(self.reasoning_level)
         if effort:body["reasoning_effort"] = effort
@@ -372,9 +443,9 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
             "stream": True,
         }
         if tools is not None:
-            body["tools"] = tools
+            body["tools"] = _normalize_responses_tools(tools)
         if tool_choice is not None:
-            body["tool_choice"] = tool_choice
+            body["tool_choice"] = _normalize_responses_tool_choice(tool_choice)
         body.update(openai_params(self.prompt_cache))
         effort = reasoning_effort(self.reasoning_level)
         if effort:
