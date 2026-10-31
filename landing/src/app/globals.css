@@ -225,22 +225,175 @@ body {
   }
 }
 
-/* Hero words: CSS-only entrance so the H1 paints immediately (LCP). */
+/* Hero accent: blue → indigo → violet. Hero-only; the CTA keeps the
+   shared .text-gradient-brand treatment. */
+.hero-gradient {
+  background-image: linear-gradient(103deg, #1d4ed8 0%, #4f46e5 46%, #7c3aed 100%);
+  background-size: 180% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: hero-gradient-pan 9s ease-in-out infinite alternate;
+}
+
+@keyframes hero-gradient-pan {
+  from {
+    background-position: 0% center;
+  }
+  to {
+    background-position: 100% center;
+  }
+}
+
+/* Hero entrance — CSS-only so it starts before hydration and replays on
+   reload. Total sequence lands under 1.6s. */
 .hero-word {
-  animation: hero-word-in 0.65s var(--ease-out-expo) both;
-  animation-delay: calc(var(--wi, 0) * 45ms);
+  display: inline-block;
+  will-change: transform, opacity;
+  animation: hero-word-in 0.58s var(--ease-out-expo) both;
+  animation-delay: calc(var(--wi, 0) * 60ms);
 }
 
 @keyframes hero-word-in {
   from {
-    transform: translateY(14px);
+    opacity: 0;
+    transform: translateY(18px);
   }
   to {
+    opacity: 1;
     transform: none;
   }
 }
 
-/* Hero scroll cue: a single calm dot drifting downward. */
+.hero-badge {
+  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.08s both;
+}
+.hero-sub {
+  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.42s both;
+}
+.hero-cta {
+  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.56s both;
+}
+.hero-points {
+  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.68s both;
+}
+.hero-scene {
+  transform-origin: 50% 55%;
+  animation: hero-scene-in 0.82s var(--ease-out-expo) 0.55s backwards;
+}
+.hero-cue-wrap {
+  animation: hero-fade-in 0.5s var(--ease-out-expo) 0.9s backwards;
+}
+
+@keyframes hero-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hero-scene-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hero-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Provider/client labels projected over the WebGL canvas. */
+.hero-node-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--color-ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: var(--shadow-xs);
+  backdrop-filter: blur(8px);
+  will-change: transform;
+  opacity: 0;
+}
+
+.hero-node-label--client {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-ink-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.hero-node-label--provider {
+  font-size: 12px;
+}
+
+.hero-node-label--provider {
+  pointer-events: auto;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.hero-node-label--provider:hover,
+.hero-node-label--provider:focus-visible,
+.hero-node-label.is-hot {
+  color: var(--color-ink);
+  border-color: color-mix(in srgb, var(--color-brand) 42%, var(--color-line));
+  background: #ffffff;
+  box-shadow: var(--shadow-sm);
+}
+
+.hero-node-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+}
+
+@media (max-width: 899px) {
+  .hero-node-label {
+    font-size: 10px;
+    padding: 3px 6px;
+    gap: 5px;
+  }
+  .hero-node-dot {
+    width: 5px;
+    height: 5px;
+  }
+}
+
+/* Scroll cue: one calm dot drifting downward. */
 .hero-cue > span {
   animation: cue-drift 1.8s var(--ease-out-expo) infinite;
 }
@@ -252,7 +405,7 @@ body {
     opacity: 0.9;
   }
   50% {
-    transform: translateY(14px);
+    transform: translateY(10px);
     opacity: 0.5;
   }
 }
