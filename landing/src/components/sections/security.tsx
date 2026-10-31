@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Container, Section, SectionHeading } from "@/components/ui/layout";
 import { Badge } from "@/components/ui/primitives";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/icons";
 import {
   animate,
+  createTimeline,
   drawSvgPaths,
   fadeIn,
   fadeUp,
@@ -24,7 +25,7 @@ import {
   useRevealOnScroll,
   utils,
 } from "@/lib/animations";
-import { ENFORCEMENT, GUARDRAIL_CATEGORIES, POLICY_SCOPE } from "@/lib/site";
+import { GUARDRAIL_CATEGORIES } from "@/lib/site";
 
 // ============================================================
 // Security & governance — a request crossing security checkpoints.
@@ -83,6 +84,56 @@ function xAt(t: number) {
 }
 
 const EXIT_DUR = 620; // fork beat: packet rides the ok branch to the provider
+
+// Plain-language descriptions for the interactive category chips.
+const CATEGORY_DESC: Record<string, string> = {
+  harmful_content: "Violent, hateful, or explicit material.",
+  prompt_injection: "Attempts to override system or developer instructions.",
+  secret_leakage: "API keys, tokens, or credentials in the content.",
+  pii: "Personally identifiable information.",
+  unsafe_output: "Responses that violate the configured policy.",
+  data_disclosure: "Exposure of protected or internal data.",
+  untrusted_instruction: "Instructions arriving from untrusted sources.",
+  invalid_structure: "Malformed or unexpected request or response shape.",
+  domain_violation: "Content outside approved domains or topics.",
+  tool_action: "Risky or disallowed tool calls.",
+};
+
+// Compact segmented control used for scope/enforcement and request type.
+function Segmented({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-faint">
+        {label}
+      </span>
+      <div role="group" aria-label={label} className="inline-flex rounded-full border border-line bg-surface-cool p-0.5">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={value === o.value}
+            onClick={() => onChange(o.value)}
+            className={`rounded-full px-2.5 py-1 text-[0.72rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+              value === o.value ? "bg-surface text-ink shadow-xs" : "text-muted hover:text-ink"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function chevronD(x: number) {
   return `M ${x - 5} ${CY - 6} L ${x + 1} ${CY} L ${x - 5} ${CY + 6}`;
@@ -151,6 +202,15 @@ export default function Security() {
     };
   }, [seen, forced, reduced, diagramRef]);
   const visible = seen || forced;
+  const manualRef = useRef(false);
+  const [scope, setScope] = useState<"global" | "api_key">("global");
+  const [enforcement, setEnforcement] = useState<"monitor" | "block">("block");
+  const [requestKind, setRequestKind] = useState<"safe" | "attack">("safe");
+  const [simResult, setSimResult] = useState<"passed" | "blocked" | null>(null);
+  const [run, setRun] = useState<{ kind: "safe" | "attack"; enforcement: "monitor" | "block"; n: number } | null>(
+    null
+  );
+  const [category, setCategory] = useState<string | null>(null);
 
   // Pre-hide animated targets only when JS is alive and motion is allowed,
   // so reduced-motion and no-JS keep the complete static diagram.
@@ -318,6 +378,7 @@ export default function Security() {
 
     const apply = () => {
       raf = 0;
+      if (manualRef.current) return; // user simulation takes over the diagram
       if (!mq.matches || forked) return; // svg hidden below xl — skip the work
       const rect = wrap.getBoundingClientRect();
       const vh = window.innerHeight || 1;
@@ -352,6 +413,108 @@ export default function Security() {
     };
   }, [visible, reduced, diagramRef]);
 
+  // Manual simulation: drives the same packet through the gates and lands
+  // the chosen outcome. Once used, it owns the diagram (the scroll effect
+  // stops writing) so the two never fight over the packet.
+  useEffect(() => {
+    if (!run) return;
+    const root = diagramRef.current;
+    if (!root) return;
+    manualRef.current = true;
+
+    const packet = root.querySelector<SVGGElement>(".sec-packet");
+    const lits = Array.from(root.querySelectorAll<SVGElement>(".sec-lit"));
+    const okGroup = root.querySelector<SVGGElement>(".sec-out-ok");
+    const badGroup = root.querySelector<SVGGElement>(".sec-out-bad");
+    const blocked = root.querySelector<SVGGElement>(".sec-blocked");
+    const result: "passed" | "blocked" =
+      run.kind === "attack" && run.enforcement === "block" ? "blocked" : "passed";
+
+    if (packet) {
+      utils.set(packet, { clear: "all" });
+      utils.set(packet, { opacity: 1 });
+      packet.setAttribute("transform", `translate(${PACKET_X[0]} ${CY})`);
+    }
+    for (const lit of lits) lit.style.opacity = "0";
+    if (blocked) utils.set(blocked, { opacity: 0, clear: "all" });
+    const groups = [okGroup, badGroup].filter((g): g is SVGGElement => !!g);
+    if (groups.length) {
+      utils.set(groups, { clear: "all" });
+      utils.set(groups, { opacity: 1 });
+    }
+
+    const finish = () => {
+      setSimResult(result);
+      if (okGroup) utils.set(okGroup, { opacity: result === "passed" ? 1 : 0.3 });
+      if (badGroup) utils.set(badGroup, { opacity: result === "blocked" ? 1 : 0.3 });
+    };
+
+    if (reduced) {
+      for (const lit of lits) lit.style.opacity = "1";
+      if (packet) packet.setAttribute("transform", `translate(${SPLIT_X} ${CY})`);
+      if (result === "blocked" && blocked) utils.set(blocked, { opacity: 1, clear: "all" });
+      finish();
+      return;
+    }
+
+    const anims: Array<{ revert: () => void }> = [];
+    const proxy = { t: 0 };
+    const tl = createTimeline({ defaults: { ease: "inOutQuad" } });
+    tl.add(proxy, {
+      t: 1,
+      duration: 1250,
+      onUpdate: () => {
+        const px = xAt(proxy.t);
+        if (packet) packet.setAttribute("transform", `translate(${px.toFixed(1)} ${CY})`);
+        for (let i = 0; i < lits.length; i++) {
+          if (px >= GATE_X[i] - 4) lits[i].style.opacity = "1";
+        }
+      },
+    });
+
+    const timer = window.setTimeout(() => {
+      finish();
+      if (result === "blocked") {
+        if (packet) {
+          anims.push(animate(packet, { opacity: [1, 0], duration: 260, ease: "outQuad" }));
+        }
+        if (blocked) {
+          anims.push(
+            animate(blocked, {
+              opacity: [0, 1],
+              y: [160, 178],
+              duration: 420,
+              ease: "outExpo",
+            })
+          );
+        }
+      } else {
+        const okPath = root.querySelector<SVGPathElement>(".sec-ok-branch");
+        if (okPath && packet) {
+          const total = okPath.getTotalLength();
+          const ride = { p: 0 };
+          anims.push(
+            animate(ride, {
+              p: 1,
+              duration: 620,
+              ease: "inOutQuad",
+              onUpdate: () => {
+                const pt = okPath.getPointAtLength(ride.p * total);
+                packet.setAttribute("transform", `translate(${pt.x.toFixed(1)} ${pt.y.toFixed(1)})`);
+              },
+            })
+          );
+        }
+      }
+    }, 1280);
+
+    return () => {
+      window.clearTimeout(timer);
+      anims.forEach((a) => a.revert());
+      tl.revert();
+    };
+  }, [run, reduced]);
+
   const desc =
     "A request passes four security checkpoints: the API key is authenticated, " +
     "the policy scope is resolved as global or per API key, the configured " +
@@ -371,9 +534,9 @@ export default function Security() {
 
           <div
             ref={diagramRef}
-            className="mt-12 grid gap-10 xl:grid-cols-[minmax(0,1fr)_21rem] xl:items-start"
+            className="mt-12 grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-stretch"
           >
-            <div>
+            <div className="flex min-w-0 flex-col gap-6">
               {/* --- horizontal pipeline (xl+), depth card with parallax grid --- */}
               <div className="hidden xl:block">
                 <div className="relative overflow-hidden rounded-xl border border-line bg-surface shadow-sm transition-shadow duration-[var(--dur-base)] ease-[var(--ease-out-expo)] hover:shadow-md">
@@ -479,6 +642,17 @@ export default function Security() {
                         const gx = GATE_X[i];
                         return (
                           <g key={cp.full} className="group" aria-hidden="true">
+                            <text
+                              x={gx}
+                              y={CY - 58}
+                              textAnchor="middle"
+                              fontSize="11"
+                              fontWeight="700"
+                              letterSpacing="0.08em"
+                              fill="var(--color-faint)"
+                            >
+                              {`0${i + 1}`}
+                            </text>
                             <g className="sec-gate">
                               <rect
                                 x={gx - 7}
@@ -531,7 +705,7 @@ export default function Security() {
                       })}
 
                       {/* exits: passed (ok) and blocked (danger) */}
-                      <g aria-hidden="true">
+                      <g className="sec-out-ok" aria-hidden="true">
                         <text
                           x={OK.x}
                           y="38"
@@ -565,7 +739,7 @@ export default function Security() {
                           opacity="1"
                         />
                       </g>
-                      <g aria-hidden="true">
+                      <g className="sec-out-bad" aria-hidden="true">
                         <circle
                           cx={BAD.x}
                           cy={BAD.y}
@@ -642,14 +816,132 @@ export default function Security() {
                   <Badge tone="neutral" className="max-w-full break-words text-left">Monitor enforcement: request passes, event recorded</Badge>
                 </li>
               </ol>
+
+              {/* --- simulation controls --- */}
+              <div className="rounded-2xl border border-line bg-surface p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="eyebrow">Preview the pipeline</p>
+                  <span className="rounded-full border border-line bg-surface-cool px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.08em] text-faint">
+                    simulated
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2.5">
+                  <Segmented
+                    label="Scope"
+                    options={[
+                      { value: "global", label: "Global" },
+                      { value: "api_key", label: "API key" },
+                    ]}
+                    value={scope}
+                    onChange={(v) => setScope(v === "api_key" ? "api_key" : "global")}
+                  />
+                  <Segmented
+                    label="Enforcement"
+                    options={[
+                      { value: "monitor", label: "Monitor" },
+                      { value: "block", label: "Block" },
+                    ]}
+                    value={enforcement}
+                    onChange={(v) => setEnforcement(v === "monitor" ? "monitor" : "block")}
+                  />
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+                  <Segmented
+                    label="Request"
+                    options={[
+                      { value: "safe", label: "Safe request" },
+                      { value: "attack", label: "Prompt injection" },
+                    ]}
+                    value={requestKind}
+                    onChange={(v) => setRequestKind(v === "attack" ? "attack" : "safe")}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRun({ kind: requestKind, enforcement, n: Date.now() })
+                    }
+                    className="inline-flex h-9 items-center rounded-full bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                  >
+                    Run simulation
+                  </button>
+                </div>
+                <p
+                  aria-live="polite"
+                  className="mt-3 min-h-[2.5rem] text-sm leading-5 text-muted"
+                >
+                  {simResult === "blocked" ? (
+                    <span>
+                      <span className="font-medium text-danger-ink">Blocked at the gateway</span> — the
+                      violating request never reaches the provider.
+                    </span>
+                  ) : simResult === "passed" ? (
+                    run?.kind === "attack" ? (
+                      <span>
+                        <span className="font-medium text-ok-ink">Passed with the event recorded</span> —
+                        monitor enforcement does not stop the request.
+                      </span>
+                    ) : (
+                      <span>
+                        <span className="font-medium text-ok-ink">Passed to the provider</span> — usage and
+                        the prompt log are recorded.
+                      </span>
+                    )
+                  ) : (
+                    "Choose a request and run it to see the decision."
+                  )}
+                </p>
+                <p className="mt-1 text-xs text-faint">
+                  Policy scope:{" "}
+                  {scope === "global"
+                    ? "every key in the workspace"
+                    : "this API key only"}
+                  {" · "}Enforcement: {enforcement}.
+                </p>
+              </div>
+
+              {/* --- protection categories (interactive reference) --- */}
+              <div className="sec-legend rounded-2xl border border-line bg-surface p-5 shadow-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="eyebrow">Protection categories</p>
+                  <p className="text-xs text-faint">The exact set a policy can check</p>
+                </div>
+                <ul className="mt-3 flex flex-wrap gap-1.5">
+                  {GUARDRAIL_CATEGORIES.map((c) => (
+                    <li key={c} translate="no">
+                      <button
+                        type="button"
+                        aria-pressed={category === c}
+                        onMouseEnter={() => setCategory(c)}
+                        onFocus={() => setCategory(c)}
+                        onClick={() => setCategory(c)}
+                        className={`sec-chip rounded-md border px-2 py-1 font-mono text-[0.7rem] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+                          category === c
+                            ? "border-brand bg-brand-soft text-brand-strong"
+                            : "border-line bg-surface-cool text-ink-soft hover:border-brand/40 hover:text-ink"
+                        }`}
+                      >
+                        {c}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p aria-live="polite" className="mt-3 min-h-[2.5rem] text-sm leading-5 text-muted">
+                  {category
+                    ? CATEGORY_DESC[category]
+                    : "Hover, focus, or tap a category to see what it checks."}
+                </p>
+                <p className="mt-2 text-[0.75rem] text-faint">
+                  Policies are opt-in — you choose the categories and enforcement per policy.
+                </p>
+              </div>
             </div>
 
             {/* --- governance checklist rail (waves in after the pipeline starts) --- */}
-            <div className="rounded-2xl border border-line bg-surface p-6 shadow-sm">
+            <div className="flex h-full flex-col rounded-2xl border border-line bg-surface p-6 shadow-sm">
               <p className="eyebrow">Governance controls</p>
-              <ul className="mt-4 divide-y divide-line">
+              <ul className="mt-4 flex flex-1 flex-col justify-between divide-y divide-line">
                 {RAIL.map(({ icon: Icon, title, body }) => (
-                  <li key={title} className="sec-row flex gap-3 py-3.5 first:pt-0 last:pb-0">
+                  <li key={title} className="sec-row -mx-2 flex gap-3 rounded-lg px-2 py-3.5 transition-colors hover:bg-surface-cool first:pt-0 last:pb-0">
                     <Icon className="mt-0.5 shrink-0 text-brand" size={20} />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-ink">{title}</p>
@@ -659,33 +951,10 @@ export default function Security() {
                 ))}
               </ul>
 
-              {/* category legend — the exact set a policy can check */}
-              <div className="sec-legend mt-4 border-t border-line pt-4">
-                <p className="text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-faint">
-                  Protection categories
-                </p>
-                <ul className="mt-2 flex flex-wrap gap-1.5">
-                  {GUARDRAIL_CATEGORIES.map((c) => (
-                    <li
-                      key={c}
-                      translate="no"
-                      className="sec-chip rounded-md border border-line bg-surface-cool px-2 py-0.5 font-mono text-[0.7rem] text-ink-soft"
-                    >
-                      {c}
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-3 text-[0.78rem] leading-5 text-muted">
-                  Scope:{" "}
-                  <span translate="no" className="font-mono text-[0.75rem] text-ink-soft">
-                    {POLICY_SCOPE.join(" | ")}
-                  </span>
-                  {" · "}Enforcement:{" "}
-                  <span translate="no" className="font-mono text-[0.75rem] text-ink-soft">
-                    {ENFORCEMENT.join(" | ")}
-                  </span>
-                </p>
-              </div>
+              <p className="mt-auto border-t border-line pt-4 text-[0.78rem] leading-5 text-faint">
+                Guardrails are opt-in: a policy checks the categories you choose and
+                applies the enforcement you set.
+              </p>
             </div>
           </div>
         </div>
