@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/icons";
 import {
   animate,
+  animatePackets,
   createTimeline,
   fadeUp,
   scaleReveal,
@@ -57,17 +58,16 @@ const SOLUTION = [
   { title: "One policy layer", note: "Guardrails enforced on every request" },
 ] as const;
 
-// Diagram geometry: six nodes settle into a tidy column (x 40..168),
-// converge into a funnel at (600,162), flow through process chevrons
-// into the ToLLma gateway panel (x 712..920). Scattered start offsets
-// (data-dx/dy) are applied in JS only when motion is allowed.
+// Diagram geometry: six concerns converge into the gateway card. The
+// scattered start offsets (data-dx/dy) are applied in JS only when motion
+// is allowed, then settle back to the tidy column.
 const NODES = [
-  { label: "APIs", cy: 44, dx: -16, dy: -28 },
-  { label: "Keys", cy: 91, dx: 26, dy: 20 },
-  { label: "Usage", cy: 138, dx: -30, dy: 14 },
-  { label: "Cost", cy: 186, dx: 18, dy: -22 },
-  { label: "Guardrails", cy: 233, dx: -12, dy: 28 },
-  { label: "Visibility", cy: 280, dx: 30, dy: -16 },
+  { label: "APIs", cy: 40, dx: -16, dy: -24 },
+  { label: "Keys", cy: 96, dx: 24, dy: 18 },
+  { label: "Usage", cy: 152, dx: -26, dy: 12 },
+  { label: "Cost", cy: 208, dx: 16, dy: -20 },
+  { label: "Guardrails", cy: 264, dx: -12, dy: 24 },
+  { label: "Visibility", cy: 320, dx: 26, dy: -14 },
 ] as const;
 
 export default function Problem() {
@@ -128,6 +128,8 @@ export default function Problem() {
     const nodes = Array.from(root.querySelectorAll<SVGElement>(".pf-node"));
     const lines = Array.from(root.querySelectorAll<SVGPathElement>(".pf-line"));
     const gate = root.querySelectorAll<SVGElement>(".pf-gate");
+    const ring = root.querySelector<SVGCircleElement>(".pf-ring");
+    const packets = Array.from(root.querySelectorAll<SVGCircleElement>(".pf-pkt"));
 
     const drawables = lines.flatMap((p) => svg.createDrawable(p));
     const tl = createTimeline({ defaults: { ease: "outExpo" } });
@@ -147,7 +149,7 @@ export default function Problem() {
     // (c) converging lines draw
     tl.add(
       drawables,
-      { duration: 750, delay: stagger(60, { start: 250 }), ease: "inOutQuad" },
+      { draw: ["0 0", "0 1"], duration: 750, delay: stagger(60, { start: 250 }), ease: "inOutQuad" },
       1050
     );
     // nodes fade in scattered (overlapping the drawing)
@@ -160,9 +162,30 @@ export default function Problem() {
     );
     // (e) gateway emphasis, then the fragmented -> unified caption
     tl.add(gate, { ...scaleReveal(0.94, 600) }, 2800);
+    if (ring) {
+      tl.add(
+        ring,
+        { opacity: [0, 0.55, 0], scale: [0.85, 1.18], duration: 900, ease: "outQuad", svgOrigin: "624 186" },
+        2600
+      );
+    }
     if (caption) tl.add(caption, { ...fadeUp(12, 600) }, 3000);
 
+    // Data pulses ride each path into the gateway once the lines are drawn.
+    const flows: ReturnType<typeof animatePackets>[] = [];
+    const flowTimer = window.setTimeout(() => {
+      const paths = lines.filter((p) => p.dataset.index !== undefined);
+      packets.forEach((pkt, i) => {
+        const path = paths[i % paths.length];
+        if (!path) return;
+        utils.set(pkt, { opacity: 1 });
+        flows.push(animatePackets(path, [pkt], { duration: 1500, staggerMs: 0, loop: false }));
+      });
+    }, 1500);
+
     return () => {
+      window.clearTimeout(flowTimer);
+      flows.forEach((f) => f.revert());
       tl.revert();
       highlightRef.current?.();
       if (heading) utils.set(heading, { clear: "all" });
@@ -170,6 +193,7 @@ export default function Problem() {
       if (panel) utils.set(panel, { clear: "all" });
       if (caption) utils.set(caption, { clear: "all" });
       nodes.forEach((el) => utils.set(el, { clear: "all" }));
+      packets.forEach((el) => utils.set(el, { opacity: 0, clear: "all" }));
       highlightRef.current = null;
     };
   }, [rootRef, seen, reduced]);
@@ -252,21 +276,21 @@ export default function Problem() {
             />
           </div>
 
-          {/* Asymmetric split: scattered slips vs. one unified panel */}
-          <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,6fr)_minmax(0,5fr)] lg:gap-14 xl:gap-20">
+          {/* Side-by-side before/after: a dashed "mess" card vs one clean card */}
+          <div className="grid items-stretch gap-10 lg:grid-cols-[minmax(0,6fr)_minmax(0,5fr)] lg:gap-14 xl:gap-20">
             {/* Side A - fragmented */}
-            <div className="flex min-w-0 flex-col gap-5">
+            <div className="flex min-w-0 flex-col gap-4 rounded-2xl border border-dashed border-line-strong bg-surface/50 p-5 sm:p-6">
               <p className="text-xs font-semibold tracking-[0.14em] text-faint uppercase">
                 Without a gateway
               </p>
-              <ul className="flex flex-col gap-3">
+              <ul className="flex flex-1 flex-col justify-between gap-3">
                 {PAINS.map(({ icon: Icon, title, note, nudge }, i) => (
                   <li
                     key={title}
                     data-pf-slip
                     onMouseEnter={() => highlight(i)}
                     onMouseLeave={() => highlight(null)}
-                    className={`flex max-w-md cursor-default items-start gap-3.5 rounded-xl border border-dashed border-line-strong bg-surface/70 px-4 py-3.5 shadow-xs transition-shadow duration-[var(--dur-fast)] ease-[var(--ease-out-expo)] hover:shadow-sm ${nudge}`}
+                    className={`flex max-w-md cursor-default items-start gap-3.5 rounded-xl border border-line bg-surface px-4 py-3.5 shadow-xs transition-shadow duration-[var(--dur-fast)] ease-[var(--ease-out-expo)] hover:shadow-sm ${nudge}`}
                   >
                     <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-surface-cool text-faint">
                       <Icon size={17} />
@@ -283,7 +307,7 @@ export default function Problem() {
             {/* Side B - unified */}
             <div
               data-pf-panel
-              className="relative flex min-w-0 flex-col gap-6 rounded-2xl border border-line bg-surface p-6 shadow-md ring-1 ring-brand/15 lg:sticky lg:top-24"
+              className="relative flex h-full min-w-0 flex-col gap-6 rounded-2xl border border-line bg-surface p-6 shadow-md ring-1 ring-brand/15"
             >
               <div className="absolute inset-x-8 -top-px h-px bg-gradient-to-r from-transparent via-brand to-transparent" />
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -315,118 +339,166 @@ export default function Problem() {
                 ))}
               </ul>
 
-              <p className="block max-w-full overflow-x-auto rounded-lg bg-surface-cool px-3.5 py-2.5 font-mono text-xs whitespace-nowrap text-ink-soft">
+              <p className="mt-auto block max-w-full overflow-x-auto rounded-lg bg-surface-cool px-3.5 py-2.5 font-mono text-xs whitespace-nowrap text-ink-soft">
                 <code translate="no">POST {GATEWAY_BASE}/chat/completions</code>
               </p>
             </div>
           </div>
 
-          {/* Animated convergence: scattered -> funnel -> gateway */}
-          <div className="relative min-w-0">
-            <svg
-              viewBox="0 0 960 340"
-              className="block h-auto w-full max-w-full"
-              role="img"
-              aria-label="Scattered provider concerns converging through the ToLLma gateway into one unified system"
-            >
-              {/* Converging lines + process chevrons + arrow (drawn on scroll) */}
-              {NODES.map((n, i) => (
+          {/* Convergence: six concerns through one gateway */}
+          <div className="relative min-w-0 rounded-2xl border border-line bg-surface p-4 shadow-sm sm:p-8">
+            {/* desktop / tablet: animated SVG */}
+            <div className="mx-auto hidden max-w-4xl sm:block">
+              <svg
+                viewBox="0 0 760 372"
+                className="block h-auto w-full"
+                role="img"
+                aria-label="APIs, keys, usage, cost, guardrails, and visibility converge through the ToLLma gateway"
+              >
+                {/* converging lines */}
+                {NODES.map((n, i) => (
+                  <path
+                    key={`l-${n.label}`}
+                    className="pf-line stroke-line-strong"
+                    data-index={i}
+                    d={`M 190 ${n.cy} C 330 ${n.cy} 420 186 512 186`}
+                    fill="none"
+                    strokeWidth={1.6}
+                    strokeLinecap="round"
+                  />
+                ))}
+                {/* merge chevrons + entry arrow */}
+                {[430, 452, 474].map((x) => (
+                  <path
+                    key={`c-${x}`}
+                    className="pf-line stroke-brand/60"
+                    d={`M${x} 172 l10 14 -10 14`}
+                    fill="none"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
                 <path
-                  key={`l-${n.label}`}
-                  className="pf-line stroke-line-strong"
-                  data-index={i}
-                  d={`M168 ${n.cy} C 320 ${n.cy} 420 162 600 162`}
-                  fill="none"
-                  strokeWidth={1.6}
-                  strokeLinecap="round"
-                />
-              ))}
-              {[616, 636, 656].map((x) => (
-                <path
-                  key={`c-${x}`}
-                  className="pf-line stroke-brand/60"
-                  d={`M${x} 148 l10 14 -10 14`}
+                  className="pf-line stroke-brand"
+                  d="M 490 186 h 12 M 498 178 l 8 8 -8 8"
                   fill="none"
                   strokeWidth={2}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
-              ))}
-              <path
-                className="pf-line stroke-brand"
-                d="M678 162 h26 M698 155 l8 7 -8 7"
-                fill="none"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
 
-              {/* Scattered -> settled nodes */}
-              {NODES.map((n, i) => (
-                <g key={n.label} className="pf-node" data-index={i} data-dx={n.dx} data-dy={n.dy}>
-                  <rect
-                    x={40}
-                    y={n.cy - 16}
-                    width={128}
-                    height={32}
-                    rx={9}
-                    className="fill-surface stroke-line-strong"
-                    strokeWidth={1.4}
-                  />
-                  <circle cx={58} cy={n.cy} r={3.5} className="fill-faint" />
-                  <text
-                    x={72}
-                    y={n.cy}
-                    dominantBaseline="middle"
-                    className="text-[11px] font-medium fill-muted"
+                {/* concern pills */}
+                {NODES.map((n, i) => (
+                  <g
+                    key={n.label}
+                    className="pf-node cursor-default"
+                    data-index={i}
+                    data-dx={n.dx}
+                    data-dy={n.dy}
+                    onMouseEnter={() => highlight(i)}
+                    onMouseLeave={() => highlight(null)}
                   >
-                    {n.label}
-                  </text>
-                </g>
-              ))}
+                    <rect
+                      x={28}
+                      y={n.cy - 17}
+                      width={156}
+                      height={34}
+                      rx={10}
+                      className="fill-surface stroke-line-strong"
+                      strokeWidth={1.4}
+                    />
+                    <circle cx={46} cy={n.cy} r={3.5} className="fill-faint" />
+                    <text
+                      x={62}
+                      y={n.cy}
+                      dominantBaseline="middle"
+                      className="fill-ink-soft text-[11.5px] font-medium"
+                    >
+                      {n.label}
+                    </text>
+                  </g>
+                ))}
 
-              {/* ToLLma gateway */}
-              <g className="pf-gate [transform-box:fill-box] [transform-origin:center]">
-                <rect
-                  x={712}
-                  y={104}
-                  width={208}
-                  height={116}
-                  rx={18}
-                  className="fill-brand-soft stroke-brand"
-                  strokeWidth={1.6}
-                />
-                <rect
-                  x={734}
-                  y={138}
-                  width={48}
-                  height={48}
-                  rx={14}
-                  className="fill-surface stroke-brand"
-                  strokeWidth={1.6}
-                />
-                <path
-                  d="M746 162h24M758 150v24"
-                  className="stroke-brand"
-                  fill="none"
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                />
-                <text x={798} y={158} className="text-[15px] font-semibold fill-ink">
-                  ToLLma Gateway
-                </text>
-                <text x={798} y={178} className="text-[11px] fill-muted">
-                  one endpoint · one policy
-                </text>
-              </g>
-            </svg>
+                {/* gateway card — sized so both text lines stay inside */}
+                <g className="pf-gate [transform-box:fill-box] [transform-origin:center]">
+                  <rect
+                    x={512}
+                    y={126}
+                    width={224}
+                    height={120}
+                    rx={18}
+                    className="fill-brand-soft stroke-brand"
+                    strokeWidth={1.6}
+                  />
+                  <rect
+                    x={536}
+                    y={150}
+                    width={44}
+                    height={44}
+                    rx={13}
+                    className="fill-surface stroke-brand"
+                    strokeWidth={1.5}
+                  />
+                  <g fill="none" stroke="var(--color-brand)" strokeWidth="1.6" strokeLinecap="round">
+                    <circle cx="551" cy="172" r="2.4" fill="var(--color-brand)" stroke="none" />
+                    <path d="M553 172h5M558 172c3 0 3-6 6-6M558 172h6M558 172c3 0 3 6 6 6" />
+                  </g>
+                  <text x={592} y={170} className="fill-ink text-[14px] font-semibold">
+                    ToLLma Gateway
+                  </text>
+                  <text x={592} y={190} className="fill-muted text-[10.5px]">
+                    one endpoint · one policy
+                  </text>
+                  <circle
+                    className="pf-ring"
+                    cx={624}
+                    cy={186}
+                    r={72}
+                    fill="none"
+                    stroke="var(--color-brand)"
+                    strokeWidth={1.5}
+                    opacity={0}
+                  />
+                </g>
+
+                {/* data pulses (animated in view) */}
+                {NODES.map((n) => (
+                  <circle key={`p-${n.label}`} className="pf-pkt" r={3.2} fill="var(--color-brand)" opacity={0} />
+                ))}
+              </svg>
+            </div>
+
+            {/* phone: vertical flow */}
+            <div className="sm:hidden">
+              <ol className="relative mx-auto flex max-w-md flex-col gap-2.5">
+                <span className="absolute bottom-4 left-[7px] top-4 w-px bg-line-strong" aria-hidden="true" />
+                {NODES.map((n) => (
+                  <li key={n.label} className="relative pl-6">
+                    <span className="absolute left-0 top-1/2 size-3.5 -translate-y-1/2 rounded-full border-2 border-surface bg-brand" />
+                    <span className="block rounded-lg border border-line bg-surface px-3.5 py-2 text-sm font-medium text-ink-soft">
+                      {n.label}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <div className="mx-auto mt-3 flex max-w-md items-center gap-3 rounded-xl border border-brand bg-brand-soft px-4 py-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface text-brand">
+                  <IconGateway size={18} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-ink">ToLLma Gateway</span>
+                  <span className="block text-[0.72rem] text-ink-soft">one endpoint · one policy</span>
+                </span>
+              </div>
+            </div>
 
             <div
               data-pf-caption
-              className="mx-auto mt-5 flex max-w-2xl flex-wrap items-center justify-center gap-x-6 gap-y-2 text-center text-sm text-balance text-muted"
+              className="mx-auto mt-6 flex max-w-2xl flex-wrap items-center justify-center gap-x-3 gap-y-2 text-center text-sm text-balance text-muted"
             >
-              <span>6 integrations, 6 dashboards, 6 security models.</span>
-              <IconArrowRight size={16} className="hidden shrink-0 text-brand sm:block" />
+              <span>6 integrations, 6 dashboards, 6 security models</span>
+              <IconArrowRight size={16} className="shrink-0 text-brand" />
               <span className="font-medium text-ink">One of each.</span>
             </div>
           </div>
