@@ -180,6 +180,7 @@ function KeyCard() {
   const reduced = useReducedMotion();
   const tiltRef = usePointerTilt<HTMLDivElement>(3);
   const barRef = useRef<HTMLDivElement | null>(null);
+  const [revealed, setRevealed] = useState(false);
 
   useEffect(() => {
     const bar = barRef.current;
@@ -194,13 +195,25 @@ function KeyCard() {
 
   return (
     <div ref={tiltRef} className="h-full">
-      <div ref={ref} className="flex h-full flex-col gap-3">
+      <div ref={ref} className="flex h-full flex-col justify-center gap-3">
         <div className="rounded-xl border border-line bg-surface-cool p-4">
           <div className="flex items-center justify-between gap-3">
             <span className="truncate text-xs font-medium text-ink-soft">production-agent</span>
             <Badge tone="ok">active</Badge>
           </div>
-          <p className="mt-2 truncate font-mono text-[0.8rem] text-muted">sk-tollma-••••••••••4f2a</p>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <p className="min-w-0 truncate font-mono text-[0.8rem] text-muted">
+              {revealed ? "sk-tollma-demo-4f2a" : "sk-tollma-••••••••••4f2a"}
+            </p>
+            <button
+              type="button"
+              aria-pressed={revealed}
+              onClick={() => setRevealed((v) => !v)}
+              className="shrink-0 rounded-md px-1.5 py-0.5 text-[0.68rem] font-medium text-brand transition-colors hover:text-brand-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+            >
+              {revealed ? "Hide" : "Reveal"}
+            </button>
+          </div>
         </div>
         <div className="rounded-xl border border-line p-4">
           <div className="flex items-center justify-between gap-2 text-xs">
@@ -436,12 +449,11 @@ function UsageChart() {
   }, [seen, reduced]);
 
   return (
-    <div ref={ref} className="flex h-full flex-col justify-between gap-4">
+    <div ref={ref} className="flex h-full min-h-0 flex-col gap-4">
       <div
         role="img"
         aria-label="Illustrative chart comparing token and cost series"
-        className="flex items-end gap-2 sm:gap-3"
-        style={{ height: 150 }}
+        className="flex min-h-[170px] flex-1 items-end gap-2 border-b border-line pb-1 sm:gap-3"
       >
         {BARS.map((bar, i) => (
           <div
@@ -634,7 +646,7 @@ function ObservabilityFeed() {
   }, [ref, seen, reduced]);
 
   return (
-    <div ref={ref} className="flex h-full flex-col gap-3">
+    <div ref={ref} className="flex h-full flex-col justify-center gap-3">
       <ul className="flex flex-col gap-2">
         {OBS_ROWS.map((row) => (
           <li
