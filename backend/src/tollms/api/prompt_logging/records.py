@@ -17,7 +17,7 @@ from tollms.core.exceptions import (
     ValidationError,
 )
 from tollms.models.api_key import ApiKey
-from tollms.models.organization import Membership, MembershipState, Team
+from tollms.models.organization import Membership, MembershipState
 from tollms.models.prompt_logging import STATUSES, PromptLog
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
@@ -62,12 +62,6 @@ def _resolve_key(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None,
         if key.user_id != caller_id or key.org_id is not None:
             raise NotFoundError("prompt log not found")
     elif key.org_id != org_id:
-        raise NotFoundError("prompt log not found")
-
-
-def _resolve_team(db: Session, org_id: uuid.UUID, team_id: uuid.UUID) -> None:
-    team = db.get(Team, team_id)
-    if team is None or team.is_deleted or team.org_id != org_id:
         raise NotFoundError("prompt log not found")
 
 
@@ -173,7 +167,7 @@ def _meta(row: PromptLog, key_name: str | None = None,
     return LogMeta(
         id=row.id, workspace_type=row.workspace_type, user_id=row.user_id,
         org_id=row.org_id, api_key_id=row.api_key_id,
-        key_provenance=row.key_provenance, team_ids=list(row.team_ids or []),
+        key_provenance=row.key_provenance,
         match_source=row.match_source,
         conversation_id=row.conversation_id, provider_id=row.provider_id,
         model_id=row.model_id, endpoint=row.endpoint or "", source=row.source,
@@ -194,7 +188,6 @@ def list_logs(db: Session, caller_id: uuid.UUID, *,
               org_id: uuid.UUID | None = None,
               user_id: uuid.UUID | None = None,
               key_id: uuid.UUID | None = None,
-              team_id: uuid.UUID | None = None,
               provider_id: uuid.UUID | None = None,
               model_id: uuid.UUID | None = None,
               status: str | None = None,
@@ -214,11 +207,6 @@ def list_logs(db: Session, caller_id: uuid.UUID, *,
     if key_id is not None:
         _resolve_key(db, caller_id, org_id, key_id)
         stmt = stmt.where(PromptLog.api_key_id == key_id)
-    if team_id is not None:
-        if org_id is None:
-            raise NotFoundError("prompt log not found")
-        _resolve_team(db, org_id, team_id)
-        stmt = stmt.where(PromptLog.team_ids.contains([str(team_id)]))
     if provider_id is not None:
         _resolve_provider(db, caller_id, org_id, provider_id)
         stmt = stmt.where(PromptLog.provider_id == provider_id)

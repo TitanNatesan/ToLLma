@@ -181,6 +181,8 @@ class GeminiAdapter(BaseProviderAdapter):
             logger.exception("gemini discovery failed")
             return []
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
+        # Text-only by design: Gemini function calling (tools/functionCall
+        # parts) is not mapped yet, so the gateway never forwards tools here.
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_id}"
             f":streamGenerateContent?alt=sse&key={self.credentials['api_key']}"
@@ -320,6 +322,7 @@ class VertexAdapter(BaseProviderAdapter):
         return creds.token
 
     async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
+        # Text-only by design, same as GeminiAdapter above: tools are not forwarded.
         project = self.credentials["project_id"]
         location = self.credentials.get("location", "us-central1")
         url = (

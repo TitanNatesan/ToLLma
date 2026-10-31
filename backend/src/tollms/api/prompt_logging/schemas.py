@@ -1,4 +1,4 @@
-"""Prompt logging DTOs. No ORM imports — enums mirror models/prompt_logging.py."""
+"""Prompt logging DTOs. No ORM imports - enums mirror models/prompt_logging.py."""
 
 import uuid
 from datetime import datetime
@@ -10,19 +10,13 @@ class SettingsUpdate(BaseModel):
     org_id: uuid.UUID | None = None
     enabled: bool = False
     mode: str = "global"
-    team_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     key_ids: list[str] | None = Field(default=None, max_length=100)
-    # Hierarchical enablement: per-team force on/off and per-key on/off/
-    # inherit (null). Absent entries default to True for listed ids.
-    team_states: dict[str, bool] | None = None
+    # Hierarchical enablement: per-key on/off/inherit (null). Absent
+    # entries default to True for listed ids.
     key_states: dict[str, bool | None] | None = None
     capture_input: bool = False
     capture_output: bool = False
     retention_days: int | None = Field(default=None, ge=1, le=3650)
-
-
-class TeamStateUpdate(BaseModel):
-    enabled: bool
 
 
 class KeyStateUpdate(BaseModel):
@@ -41,18 +35,11 @@ class SettingsRead(BaseModel):
     retention_days: int | None
     version: int
     updated_by: uuid.UUID | None
-    team_ids: list[uuid.UUID] = Field(default_factory=list)
     key_ids: list[str] = Field(default_factory=list)
-    team_states: dict[str, bool] = Field(default_factory=dict)
     key_states: dict[str, bool | None] = Field(default_factory=dict)
     effective_summary: dict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
-
-
-class TeamRef(BaseModel):
-    id: uuid.UUID
-    name: str
 
 
 class LogMeta(BaseModel):
@@ -62,7 +49,6 @@ class LogMeta(BaseModel):
     org_id: uuid.UUID | None
     api_key_id: uuid.UUID | None
     key_provenance: str
-    team_ids: list[str] = Field(default_factory=list)
     match_source: str | None = None
     conversation_id: uuid.UUID | None
     provider_id: uuid.UUID | None

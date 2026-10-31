@@ -13,10 +13,8 @@ from tollms.api.prompt_logging.records import (
 )
 from tollms.api.prompt_logging.settings import (
     get_settings,
-    list_teams,
     read_setting,
     set_key_state,
-    set_team_state,
     upsert_settings,
 )
 
@@ -25,11 +23,9 @@ __all__ = [
     "get_log_detail",
     "get_settings",
     "list_logs",
-    "list_teams",
     "purge_logs",
     "read_setting",
     "retention_info",
     "set_key_state",
-    "set_team_state",
     "upsert_settings",
 ]

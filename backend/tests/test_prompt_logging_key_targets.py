@@ -1,6 +1,6 @@
 """Key-specific prompt log targets + reviewer-fix coverage.
 
-Matrix: global vs teams(team-hit/key-hit) vs disabled; cross-workspace key
+Matrix: global vs keys(key-hit) vs disabled; cross-workspace key
 404s; stale targets cleared on mode switch; dead-key inertness;
 unknown-provenance no-capture; match_source values; audit-in-transaction.
 """
@@ -20,7 +20,6 @@ from tollms.models.prompt_logging import (
     PromptLog,
     PromptLoggingKeyTarget,
     PromptLoggingSetting,
-    PromptLoggingTeamTarget,
 )
 from tollms.services.prompt_logging import capture as capture_engine
 from tollms.services.prompt_logging import resolution as resolution_engine
@@ -28,16 +27,13 @@ from tests.test_prompt_logging import (
     _assign,
     _enable_personal,
     _invite,
-    _join_team,
     _me,
     _mk_key,
     _mk_org_rows,
-    _mk_team,
     _org,
     _other,
     _seed_org_setting,
     _set,
-    _team,
     PL,
 )
 
@@ -57,61 +53,50 @@ def _cap(db: Session, **kw) -> PromptLog | None:
 
 
 def _org_setup(client: TestClient, db: Session, user_factory):
-    """Root org with one member + team; returns (root, member, oid, tid)."""
+    """Root org with one member; returns (root, member_client, member, oid)."""
     root = user_factory()
     member_client = _other(f"kt-{uuid.uuid4().hex[:8]}@tollma.ai")
     member = _me(member_client)
     oid = _org(client)["id"]
     _invite(client, member_client, db, oid)
-    tid = _team(client, oid)["id"]
-    return root, member_client, member, oid, tid
+    return root, member_client, member, oid
 
 
 # --- precedence matrix -----------------------------------------------------
 
 
 def test_org_precedence_matrix(client: TestClient, db: Session, user_factory) -> None:
-    root, member_client, member, oid, tid = _org_setup(client, db, user_factory)
+    root, member_client, member, oid = _org_setup(client, db, user_factory)
     root_id, mem_id = _uid(root), uuid.UUID(member["id"])
-    _join_team(client, oid, tid, member["id"])
     org_key = _mk_key(db, mem_id, uuid.UUID(oid))
     other_key = _mk_key(db, mem_id, uuid.UUID(oid))
     db.commit()
 
-    # teams mode with both legs targeted
+    # keys mode with one key targeted
     r = client.put(f"{PL}/settings", json={
-        "org_id": oid, "enabled": True, "mode": "teams",
-        "team_ids": [tid], "key_ids": [str(org_key.id)]})
+        "org_id": oid, "enabled": True, "mode": "keys",
+        "key_ids": [str(org_key.id)]})
     assert r.status_code == 200, r.text
 
     def resolve(**kw):
         return resolution_engine.resolve_setting(
             db, user_id=mem_id, org_id=uuid.UUID(oid), **kw)
 
-    # team hit (target key not used)
-    res = resolve(api_key_id=other_key.id, key_provenance="organization")
-    assert res.match_source == "team" and res.setting is not None
-
-    # key hit (caller leaves the team)
-    from tollms.models.organization import Membership as _M, TeamMembership as _TM
-    mem_row = db.scalar(select(_M).where(_M.org_id == uuid.UUID(oid), _M.user_id == mem_id))
-    db.execute(_TM.__table__.delete().where(_TM.membership_id == mem_row.id))
-    db.commit()
+    # listed key hit
     res = resolve(api_key_id=org_key.id, key_provenance="organization")
-    assert res.match_source == "key" and res.team_ids == []
-    # neither leg hits
+    assert res.match_source == "key" and res.setting is not None
+    # unlisted key misses
     assert resolve(api_key_id=other_key.id, key_provenance="organization").setting is None
 
     # disabled beats everything
-    client.put(f"{PL}/settings", json={"org_id": oid, "enabled": False, "mode": "teams",
-                                        "team_ids": [tid], "key_ids": [str(org_key.id)]})
+    client.put(f"{PL}/settings", json={"org_id": oid, "enabled": False, "mode": "keys",
+                                        "key_ids": [str(org_key.id)]})
     assert resolve(api_key_id=org_key.id, key_provenance="organization").setting is None
 
     # global matches with a source tag even with targets stored on disk
     client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True, "mode": "global"})
     sid = db.scalar(select(PromptLoggingSetting.id).where(
         PromptLoggingSetting.org_id == uuid.UUID(oid)))
-    db.add(PromptLoggingTeamTarget(setting_id=sid, team_id=uuid.UUID(tid)))
     db.add(PromptLoggingKeyTarget(setting_id=sid, api_key_id=other_key.id))
     db.commit()
     res = resolve(api_key_id=other_key.id, key_provenance="organization")
@@ -129,7 +114,7 @@ def test_personal_key_matrix(client: TestClient, db: Session, user_factory) -> N
     stranger_key = _mk_key(db, uid)
     db.commit()
 
-    r = client.put(f"{PL}/settings", json={"enabled": True, "mode": "teams",
+    r = client.put(f"{PL}/settings", json={"enabled": True, "mode": "keys",
                                             "key_ids": [str(key.id)]})
     assert r.status_code == 200, r.text
     assert r.json()["key_ids"] == [str(key.id)]
@@ -157,12 +142,12 @@ def test_key_workspace_404_oracle(client: TestClient, db: Session, user_factory)
     # org settings reject personal keys and unknown ids with the same 404
     for bad in (str(personal_key.id), str(uuid.uuid4()), "not-a-uuid"):
         r = client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True,
-                                                "mode": "teams", "key_ids": [bad]})
+                                                "mode": "keys", "key_ids": [bad]})
         assert r.status_code == 404, (bad, r.text)
         assert r.json()["error"]["message"] == "prompt log not found"
 
     # personal settings reject org keys
-    r = client.put(f"{PL}/settings", json={"enabled": True, "mode": "teams",
+    r = client.put(f"{PL}/settings", json={"enabled": True, "mode": "keys",
                                             "key_ids": [str(org_key.id)]})
     assert r.status_code == 404
     assert r.json()["error"]["message"] == "prompt log not found"
@@ -173,15 +158,13 @@ def test_key_workspace_404_oracle(client: TestClient, db: Session, user_factory)
     skey = _mk_key(db, _uid(_me(stranger)), uuid.UUID(soid))
     db.commit()
     r = client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True,
-                                            "mode": "teams", "key_ids": [str(skey.id)]})
+                                            "mode": "keys", "key_ids": [str(skey.id)]})
     assert r.status_code == 404
 
     # caps are 422
     many = [str(uuid.uuid4()) for _ in range(101)]
-    assert client.put(f"{PL}/settings", json={"org_id": oid, "mode": "teams",
+    assert client.put(f"{PL}/settings", json={"org_id": oid, "mode": "keys",
                                                "key_ids": many}).status_code == 422
-    assert client.put(f"{PL}/settings", json={"org_id": oid, "mode": "teams",
-                                               "team_ids": many}).status_code == 422
 
 
 # --- stale targets cleared on mode switch ----------------------------------
@@ -193,12 +176,12 @@ def test_mode_switch_clears_targets(client: TestClient, db: Session, user_factor
     key = _mk_key(db, uid)
     db.commit()
 
-    r = client.put(f"{PL}/settings", json={"enabled": True, "mode": "teams",
+    r = client.put(f"{PL}/settings", json={"enabled": True, "mode": "keys",
                                             "key_ids": [str(key.id)]})
     assert r.json()["key_ids"] == [str(key.id)]
     r = client.put(f"{PL}/settings", json={"enabled": True, "mode": "global"})
     assert r.status_code == 200, r.text
-    assert r.json()["team_ids"] == [] and r.json()["key_ids"] == []
+    assert r.json()["key_ids"] == []
     setting_id = uuid.UUID(r.json()["id"])
     assert db.scalars(select(PromptLoggingKeyTarget).where(
         PromptLoggingKeyTarget.setting_id == setting_id)).all() == []
@@ -215,7 +198,7 @@ def test_dead_key_target_inert(client: TestClient, db: Session, user_factory) ->
     off.enabled = False  # disabled (not deleted): auth would fail upstream,
     db.commit()          # but the ledger checks deletion only -> still live.
 
-    client.put(f"{PL}/settings", json={"enabled": True, "mode": "teams",
+    client.put(f"{PL}/settings", json={"enabled": True, "mode": "keys",
                                         "key_ids": [str(dead.id), str(off.id)]})
     dead.is_deleted = True
     db.commit()
@@ -268,7 +251,7 @@ def test_match_source_values_and_legacy_null(client: TestClient, db: Session,
     assert row is not None and row.match_source == "global"
 
     legacy = PromptLog(workspace_type="personal", user_id=uid, org_id=None,
-                       key_provenance="personal", team_ids=[], endpoint="chat",
+                       key_provenance="personal", endpoint="chat",
                        source="internal", status="completed",
                        expires_at=datetime.now(timezone.utc) + timedelta(days=90))
     db.add(legacy)
@@ -362,7 +345,7 @@ def test_org_delete_and_purge_audit_committed(client: TestClient, db: Session,
 
 def test_suspended_member_filter_404(client: TestClient, db: Session,
                                      user_factory) -> None:
-    root, member_client, member, oid, tid = _org_setup(client, db, user_factory)
+    root, member_client, member, oid = _org_setup(client, db, user_factory)
     from tests.test_prompt_logging import _org_seed
 
     _org_seed(client, db, root, oid)

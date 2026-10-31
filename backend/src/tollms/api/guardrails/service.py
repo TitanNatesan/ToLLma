@@ -130,6 +130,18 @@ def validate_policy_fields(data, *, is_create: bool = False) -> None:
                 "buffer_then_inspect requires stage post or both; "
                 "pre-only inspection cannot withhold output. " + _STREAMING_NOTE
             )
+    # Block enforcement without categories would match everything (see
+    # evaluation._selected_categories: None means unfiltered match-all).
+    # Four cases: (1) block + explicit rules = valid; (2) block + empty
+    # rules = 422 here (explicit empty selection, never silent match-all);
+    # (3) warn/monitor without rules = allowed (log-only, never over-blocks);
+    # (4) legacy rule-less rows pre-dating this check keep evaluator
+    # match-all untouched (no backfill, no evaluator change). Malformed
+    # categories still 422 in the loop below. PATCH callers pass the
+    # effective row (update_policy merges live rules), so empty here means
+    # explicitly cleared, not merely omitted.
+    if get("enforcement", None) == "block" and not (get("rules", None) or []):
+        raise ValidationError("block enforcement requires at least one rule")
     for rule in get("rules", None) or []:
         cat = rule.category if hasattr(rule, "category") else rule.get("category")
         sev = rule.severity if hasattr(rule, "severity") else rule.get("severity", "medium")
@@ -417,6 +429,11 @@ def update_policy(db: Session, caller_id: uuid.UUID, policy_id: uuid.UUID,
         "notify_repeat_minutes": (data.notify_repeat_minutes
                                   if data.notify_repeat_minutes is not None
                                   else getattr(policy, "notify_repeat_minutes", 60)),
+        # Effective allow-list: explicit PATCH rules win, otherwise the live
+        # rows — flipping enforcement to block on a rule-less policy 422s
+        # while touching unrelated fields on a ruled policy stays 200.
+        "rules": (data.rules if data.rules is not None
+                  else [r for r in (policy.rules or []) if not r.is_deleted]),
     }
     validate_policy_fields(merged)
     if data.assignments is not None and _validate_assignment_refs(

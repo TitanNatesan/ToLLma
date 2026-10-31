@@ -1,11 +1,11 @@
-"""Workspace prompt logging: per-workspace capture settings, team targets, immutable log ledger."""
+"""Workspace prompt logging: per-workspace capture settings, key targets, immutable log ledger."""
 
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
@@ -13,16 +13,16 @@ from tollms.db.base import SoftDeleteMixin, TimestampedModel
 if TYPE_CHECKING:
     from tollms.models.api_key import ApiKey
     from tollms.models.conversation import Conversation
-    from tollms.models.organization import Organization, Team
+    from tollms.models.organization import Organization
     from tollms.models.provider import Provider
     from tollms.models.registered_model import AIModel
     from tollms.models.user import User
 
-MODES = ("global", "teams")
+MODES = ("global", "keys")
 STATUSES = ("completed", "cancelled", "failed", "partial")
 SOURCES = ("internal", "external")
 PROVENANCES = ("personal", "organization")
-MATCH_SOURCES = ("global", "team", "key")
+MATCH_SOURCES = ("global", "key")
 
 # Bodies are bounded before encryption (chars, not bytes — JSON text).
 MAX_BODY_CHARS = 512 * 1024
@@ -70,9 +70,6 @@ class PromptLoggingSetting(SoftDeleteMixin, TimestampedModel):
 
     owner: Mapped["User | None"] = relationship(back_populates="prompt_logging_settings")
     organization: Mapped["Organization | None"] = relationship(back_populates="prompt_logging_settings")
-    targets: Mapped[list["PromptLoggingTeamTarget"]] = relationship(
-        back_populates="setting", cascade="all, delete-orphan"
-    )
     key_targets: Mapped[list["PromptLoggingKeyTarget"]] = relationship(
         back_populates="setting", cascade="all, delete-orphan"
     )
@@ -81,40 +78,11 @@ class PromptLoggingSetting(SoftDeleteMixin, TimestampedModel):
     )
 
 
-class PromptLoggingTeamTarget(TimestampedModel):
-    """Teams mode allow-list: only members of these teams are captured.
-
-    No soft-delete (link table, like team_memberships): an empty target list
-    in teams mode logs nothing, never falls back to global.
-
-    Per-team enablement: ``enabled=False`` removes the team from the match
-    set without deleting the row (hierarchical enablement).
-    """
-
-    __tablename__ = "prompt_logging_team_targets"
-    __table_args__ = (
-        Index("uq_prompt_logging_team_targets", "setting_id", "team_id", unique=True),
-        Index("ix_prompt_logging_team_targets_setting", "setting_id"),
-        Index("ix_prompt_logging_team_targets_team", "team_id"),
-    )
-
-    setting_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("prompt_logging_settings.id", ondelete="CASCADE"), nullable=False
-    )
-    team_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
-    )
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-    setting: Mapped["PromptLoggingSetting"] = relationship(back_populates="targets")
-    team: Mapped["Team"] = relationship(back_populates="prompt_logging_targets")
-
-
 class PromptLoggingKeyTarget(TimestampedModel):
-    """Teams mode allow-list, key leg: only these API keys are captured.
+    """Keys mode allow-list: only these API keys are captured.
 
-    No soft-delete (link table, like team targets): an empty target list
-    in teams mode logs nothing, never falls back to global.
+    No soft-delete (link table): an empty target list in keys mode logs
+    nothing, never falls back to global.
     """
 
     __tablename__ = "prompt_logging_key_targets"
@@ -140,10 +108,9 @@ class PromptLoggingKeyOverride(TimestampedModel):
 
     The key allow-list (``PromptLoggingKeyTarget``) stays the eligibility
     set: a listed key with no override row defaults to True (inherit). An
-    explicit row forces the leg on (True, captures even without a team hit)
-    or off (False, vetoes capture even when a team hits). ``enabled=None``
-    (NULL) is inherit — equivalent to no row; the API deletes NULL rows.
-    No soft-delete (link table).
+    explicit row forces the leg on (True) or off (False, vetoes capture).
+    ``enabled=None`` (NULL) is inherit — equivalent to no row; the API
+    deletes NULL rows. No soft-delete (link table).
     """
 
     __tablename__ = "prompt_logging_key_overrides"
@@ -207,10 +174,10 @@ class PromptLog(TimestampedModel):
         UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
     )
     key_provenance: Mapped[str] = mapped_column(String(16), default="personal", nullable=False)
-    team_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    # Which allow-list leg matched: global|team|key. NULL only for rows
-    # written before key targets existed (legacy rows). Explicit key
-    # overrides surface as key (force-on); team hits stay team.
+    # Which allow-list leg matched: global|key. NULL only for rows
+    # written before key targets existed (legacy rows); rows written before
+    # team targets were dropped may carry the legacy value "team".
+    # Explicit key overrides surface as key (force-on).
     match_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True

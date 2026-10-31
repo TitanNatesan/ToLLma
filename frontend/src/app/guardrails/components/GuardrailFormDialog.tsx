@@ -23,9 +23,17 @@ import { useChatKeys } from "@/hooks/useChatKeys";
 import { useOrgKeys } from "@/hooks/useOrgs";
 import { cn } from "@/lib/utils";
 import {
+  DETECTION_STEP_COPY,
   GUARDRAIL_CATEGORIES,
+  SCOPE_STEP_COPY,
+  WIZARD_SCOPE_OPTIONS,
   buildEvaluatorConfigs,
   buildPolicyPayload,
+  buildReviewSummary,
+  draftFromPolicy,
+  emptyGuardrailDraft,
+  mapPolicySaveError,
+  unknownScopeKeys,
   validateWizardStep,
   type GuardrailDraft,
 } from "./policyLogic";
@@ -46,43 +54,11 @@ const DELIVERY = [
   { value: "audit_then_delivery", hint: "Audit-only. Audits a copy, then delivers the original." },
 ];
 
-function emptyDraft(): GuardrailDraft {
-  return {
-    name: "", description: "", severity: "medium", enforcement: "monitor",
-    stage: "both", evaluator: "deterministic", delivery_mode: "audit_after_delivery",
-    categories: [], scope: "global", provider_ids: [], model_ids: [], key_ids: [],
-    credentials: {}, threshold: 0.8, timeout_ms: 2000,
-    needsLlmEscalation: false, escalationProviderId: "", escalationModelId: "",
-    notifyRecipients: "",
-  };
-}
-
-function fromPolicy(p: GuardrailPolicy): GuardrailDraft {
-  const d = emptyDraft();
-  d.name = p.name;
-  d.description = p.description ?? "";
-  d.severity = p.severity;
-  d.enforcement = p.enforcement;
-  d.stage = (p.stage as GuardrailDraft["stage"]) ?? "both";
-  d.delivery_mode = p.delivery_mode ?? "audit_after_delivery";
-  d.categories = (p.rules ?? []).map((r) => r.category);
-  d.threshold = p.confidence_threshold;
-  d.timeout_ms = p.evaluator_timeout_ms;
-  const rows = p.assignments ?? [];
-  const targeted = rows.filter((a) => (a.scope_type ?? "global").toLowerCase() !== "global");
-  if (targeted.length > 0) {
-    d.scope = "targeted";
-    d.provider_ids = targeted.map((a) => a.provider_id).filter((v): v is string => !!v);
-    d.model_ids = targeted.map((a) => a.model_id).filter((v): v is string => !!v);
-    d.key_ids = targeted.map((a) => a.api_key_id).filter((v): v is string => !!v);
-  }
-  d.evaluator = p.evaluators?.[0]?.evaluator_type ?? "deterministic";
-  return d;
-}
+// Draft baseline + edit preload live in policyLogic (covered by vitest).
 
 const STEPS = ["Basics", "Detection", "Evaluator", "Scope & enforcement", "Review"];
 
-/** Searchable checkbox picker for targeted scope rows (providers / models / keys). */
+/** Searchable checkbox picker for key-scoped rows. */
 function TargetPicker({
   label,
   items,
@@ -175,7 +151,8 @@ export function GuardrailFormDialog({
   const chatKeysQuery = useChatKeys();
   const orgKeysQuery = useOrgKeys(orgId ?? "", { enabled: !!orgId });
   const [step, setStep] = useState(0);
-  const [draft, setDraft] = useState<GuardrailDraft>(() => (initial ? fromPolicy(initial) : emptyDraft()));
+  const [draft, setDraft] = useState<GuardrailDraft>(() => (initial ? draftFromPolicy(initial) : emptyGuardrailDraft()));
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(initial?.is_enabled ?? true);
   const [logTriggers, setLogTriggers] = useState(initial?.log_triggers ?? true);
   const [notify, setNotify] = useState(initial?.notify_on_trigger ?? false);
@@ -183,14 +160,24 @@ export function GuardrailFormDialog({
   const [saving, setSaving] = useState(false);
   const [credState, setCredState] = useState<"idle" | "busy" | "valid" | "invalid">("idle");
 
-  const set = (patch: Partial<GuardrailDraft>) => setDraft((d) => ({ ...d, ...patch }));
-  const toggleId = (field: "provider_ids" | "model_ids" | "key_ids", id: string) =>
-    setDraft((d) => ({
-      ...d,
-      [field]: d[field].includes(id) ? d[field].filter((x) => x !== id) : [...d[field], id],
+  const set = (patch: Partial<GuardrailDraft>) => {
+    setSaveError(null);
+    setDraft((d) => ({ ...d, ...patch }));
+  };
+  const toggleKey = (id: string) => {
+    setSaveError(null);
+    setDraft((prev) => ({
+      ...prev,
+      key_ids: prev.key_ids.includes(id) ? prev.key_ids.filter((x) => x !== id) : [...prev.key_ids, id],
     }));
-  const stepError = validateWizardStep(step, draft);
+  };
   const isEditing = !!initial;
+  // Stored credentials never round-trip: edit mode never demands re-entry.
+  const stepError = validateWizardStep(step, draft, { isEditing });
+  const goStep = (i: number) => {
+    setSaveError(null);
+    setStep(i);
+  };
   const layaReachable = laya.data?.reachable;
 
   const keyItems = useMemo(() => {
@@ -203,33 +190,25 @@ export function GuardrailFormDialog({
     return (chatKeysQuery.data ?? []).map((k) => ({ id: k.id, name: k.name }));
   }, [orgId, orgKeysQuery.data, chatKeysQuery.data]);
 
-  const modelItems = useMemo(() => {
-    const byProvider = new Map((providersQuery.data ?? []).map((p) => [p.id, p.name]));
-    return (modelsQuery.data ?? []).map((m) => ({
-      id: m.id,
-      name: m.name,
-      sub: byProvider.get(m.provider_id) ?? undefined,
-    }));
-  }, [modelsQuery.data, providersQuery.data]);
-
-  const providerItems = useMemo(
-    () => (providersQuery.data ?? []).map((p) => ({ id: p.id, name: p.name })),
-    [providersQuery.data],
-  );
-
   const modelsForProvider = useMemo(
     () => (modelsQuery.data ?? []).filter((m) => !draft.escalationProviderId || m.provider_id === draft.escalationProviderId),
     [modelsQuery.data, draft.escalationProviderId],
   );
 
   async function handleSave() {
+    setSaveError(null);
     for (let i = 0; i < STEPS.length; i++) {
-      const err = validateWizardStep(i, draft);
+      const err = validateWizardStep(i, draft, { isEditing });
       if (err) {
-        setStep(i);
+        goStep(i);
         toast.error(err);
         return;
       }
+    }
+    if (unknownScopeKeys(draft, keyItems.map((k) => k.id)).length > 0) {
+      setStep(3);
+      toast.error("Selected keys must belong to this workspace.");
+      return;
     }
     setSaving(true);
     try {
@@ -251,7 +230,16 @@ export function GuardrailFormDialog({
       }
       onClose();
     } catch (e) {
-      toastApiError(e, { title: isEditing ? "Update failed" : "Create failed" });
+      // Backend 422s (empty-rules+block, unknown scope keys, ...) land on the
+      // owning step with the server's own words — never a silent toast.
+      const mapped = mapPolicySaveError(e);
+      if (mapped) {
+        setStep(mapped.step);
+        setSaveError(mapped.message);
+        toast.error(mapped.message);
+      } else {
+        toastApiError(e, { title: isEditing ? "Update failed" : "Create failed" });
+      }
     } finally {
       setSaving(false);
     }
@@ -276,16 +264,10 @@ export function GuardrailFormDialog({
     }
   }
 
-  const summary: [string, string][] = [
-    ["Name", draft.name.trim() || "—"],
-    ["Categories", draft.categories.length > 0 ? draft.categories.join(", ") : "—"],
-    ["Severity / stage", `${draft.severity} / ${draft.stage}`],
-    ["Evaluator", draft.evaluator + (draft.needsLlmEscalation ? " + LLM escalation" : "")],
-    ["Delivery", draft.delivery_mode.replace(/_/g, " ")],
-    ["Scope", draft.scope === "global" ? "Global — every request" : `Targeted (${draft.provider_ids.length + draft.model_ids.length + draft.key_ids.length} targets)`],
-    ["Enforcement", draft.enforcement],
-    ["Enabled", enabled ? "On" : "Off"],
-  ];
+  const keyNames = useMemo(() => new Map(keyItems.map((k) => [k.id, k.name])), [keyItems]);
+  const unknownKeys = step === 3 ? unknownScopeKeys(draft, keyItems.map((k) => k.id)) : [];
+  const scopeError = unknownKeys.length > 0 ? "Selected keys must belong to this workspace." : null;
+  const summary: [string, string][] = buildReviewSummary(draft, { keyNames, enabled });
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -302,7 +284,13 @@ export function GuardrailFormDialog({
                   type="button"
                   role="tab"
                   aria-selected={i === step}
-                  onClick={() => setStep(i)}
+                  onClick={() => {
+                    if (i > step && stepError) {
+                      toast.error(stepError);
+                      return;
+                    }
+                    goStep(i);
+                  }}
                   data-testid={`wizard-step-tab-${i}`}
                   className={cn(
                     "rounded-full px-2 py-0.5 text-[11px]",
@@ -333,6 +321,7 @@ export function GuardrailFormDialog({
               {step === 1 && (
                 <div className="space-y-3">
                   <Field label="Protection categories">
+                    <p className="mb-1.5 text-xs text-zinc-500" data-testid="detection-copy">{DETECTION_STEP_COPY}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {CATEGORIES.map((c) => (
                         <label key={c} className={cn("flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", draft.categories.includes(c) ? "border-tollma-500 bg-tollma-50 text-tollma-800 dark:bg-tollma-950/30 dark:text-tollma-300" : "border-zinc-200 dark:border-zinc-800")}>
@@ -451,40 +440,39 @@ export function GuardrailFormDialog({
               {step === 3 && (
                 <div className="space-y-3">
                   <Field label="Scope">
+                    <p className="mb-1.5 text-xs text-zinc-500" data-testid="scope-copy">{SCOPE_STEP_COPY}</p>
                     <Select value={draft.scope} onChange={(e) => set({ scope: e.target.value })} data-testid="gr-scope">
-                      <option value="global">Global — every request</option>
-                      <option value="targeted">Targeted — specific providers / models / keys</option>
+                      {WIZARD_SCOPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </Select>
                   </Field>
-                  {draft.scope === "targeted" && (
-                    <div className="space-y-3">
-                      <TargetPicker
-                        label="Providers"
-                        items={providerItems}
-                        selected={draft.provider_ids}
-                        onToggle={(id) => toggleId("provider_ids", id)}
-                        testId="gr-scope-providers"
-                        emptyHint="No providers yet. Register one on the Providers page."
-                      />
-                      <TargetPicker
-                        label="Models"
-                        items={modelItems}
-                        selected={draft.model_ids}
-                        onToggle={(id) => toggleId("model_ids", id)}
-                        testId="gr-scope-models"
-                        emptyHint="No models yet."
-                      />
+                  {draft.scope === "keys" && (
+                    <div className="space-y-1">
                       <TargetPicker
                         label="API keys"
                         items={keyItems}
                         selected={draft.key_ids}
-                        onToggle={(id) => toggleId("key_ids", id)}
+                        onToggle={(id) => toggleKey(id)}
                         testId="gr-scope-keys"
                         emptyHint="No API keys yet."
                       />
+                      <p className="text-xs text-zinc-500" data-testid="scope-keys-summary">
+                        {draft.key_ids.length === 0
+                          ? "No keys selected yet."
+                          : `${draft.key_ids.length} key${draft.key_ids.length === 1 ? "" : "s"} selected. Assignments may only reference keys in this workspace.`}
+                      </p>
+                      {scopeError && (
+                        <p className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300" data-testid="scope-keys-error">
+                          {scopeError}
+                        </p>
+                      )}
                     </div>
                   )}
                   <Field label="Enforcement">
+                    <p className="mb-1.5 text-xs text-zinc-500" data-testid="enforcement-copy">
+                      Monitor logs without stopping traffic — start here to measure noise. Block stops the turn: highest protection, highest false-positive cost.
+                    </p>
                     <div className="space-y-2">
                       {ENFORCEMENTS.map((e) => (
                         <label key={e.value} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-2.5", draft.enforcement === e.value ? "border-tollma-500" : "border-zinc-200 dark:border-zinc-800")}>
@@ -498,6 +486,7 @@ export function GuardrailFormDialog({
               )}
               {step === 4 && (
                 <div className="space-y-3">
+                  <p className="text-xs text-zinc-500" data-testid="review-detection-copy">{DETECTION_STEP_COPY}</p>
                   <dl className="grid grid-cols-2 gap-2">
                     {summary.map(([k, v]) => (
                       <div key={k} className="rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
@@ -543,13 +532,18 @@ export function GuardrailFormDialog({
                   {stepError}
                 </p>
               )}
+              {saveError && (
+                <p className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300" data-testid="wizard-save-error">
+                  {saveError}
+                </p>
+              )}
             </div>
             <div className="mt-3 flex items-center justify-between">
-              <Button variant="ghost" size="sm" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} data-testid="wizard-back">Back</Button>
+              <Button variant="ghost" size="sm" onClick={() => goStep(Math.max(0, step - 1))} disabled={step === 0} data-testid="wizard-back">Back</Button>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
                 {step < STEPS.length - 1 ? (
-                  <Button size="sm" onClick={() => stepError ? toast.error(stepError) : setStep((s) => s + 1)} data-testid="wizard-next">Next</Button>
+                  <Button size="sm" onClick={() => stepError ? toast.error(stepError) : goStep(step + 1)} data-testid="wizard-next">Next</Button>
                 ) : (
                   <Button size="sm" onClick={() => void handleSave()} disabled={saving} data-testid="wizard-save">
                     {saving ? "Saving…" : isEditing ? "Save changes" : "Create policy"}

@@ -296,7 +296,6 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
   const loggingValue = loggingTouched.touched ? loggingTouched.value : serverLogging;
   const loggingDirty =
     !loggingSettings.isError && !!loggingSettings.data && loggingTouched.touched && loggingTouched.value !== serverLogging;
-  const keyTeamIds = orgKey.team_id ? [orgKey.team_id] : [];
   const [saving, setSaving] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [rotateArmed, setRotateArmed] = useState(false);
@@ -693,7 +692,6 @@ const OrgKeyEditContent = memo(function OrgKeyEditContent({
               <KeyLoggingField
                 orgId={orgId}
                 keyId={orgKey.id}
-                keyTeamIds={keyTeamIds}
                 value={loggingValue}
                 onChange={(v) => setLoggingTouched({ touched: true, value: v })}
                 disabled={saving || rotating}

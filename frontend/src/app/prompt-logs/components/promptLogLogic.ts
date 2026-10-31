@@ -185,9 +185,9 @@ export const MAX_KEY_TARGETS = 100;
 
 export interface SettingsDraft {
   enabled: boolean;
+  /** "global" logs everything; any other value targets selected keys only. */
   mode: string;
-  team_ids: string[];
-  /** Key targets, OR-ed with team targets when enabled and not global. */
+  /** Key targets, logged when enabled and not global. */
   key_ids: string[];
   capture_input: boolean;
   capture_output: boolean;
@@ -195,14 +195,13 @@ export interface SettingsDraft {
 }
 
 /**
- * Validate before PUT. Teams-mode with no teams AND no keys logs nothing —
- * block the save so recording never silently stops. Key targets are capped
- * at MAX_KEY_TARGETS. The same rule covers personal workspaces (their teams
- * list is always empty, so key-only targeting validates the same way).
+ * Validate before PUT. Key-targeting with no keys logs nothing — block the
+ * save so recording never silently stops. Key targets are capped at
+ * MAX_KEY_TARGETS. Personal workspaces validate the same way.
  */
 export function validateSettingsDraft(d: SettingsDraft): string | null {
-  if (d.enabled && d.mode !== "global" && d.team_ids.length === 0 && (d.key_ids ?? []).length === 0) {
-    return "Team mode with no teams or keys selected logs nothing. Select at least one team or key, or switch to global mode.";
+  if (d.enabled && d.mode !== "global" && (d.key_ids ?? []).length === 0) {
+    return "Selected-keys mode with no keys selected logs nothing. Select at least one key, or switch to global mode.";
   }
   if ((d.key_ids ?? []).length > MAX_KEY_TARGETS) {
     return `Too many keys selected (max ${MAX_KEY_TARGETS}). Remove some to save.`;
@@ -215,51 +214,40 @@ export function validateSettingsDraft(d: SettingsDraft): string | null {
 }
 
 /**
- * Draft -> backend-shaped PUT body. Personal scope keeps key targets in
- * teams mode (team_ids stay empty — no teams exist there). Non-teams modes
- * clear targets server-side, so the payload sends empty arrays there.
+ * Draft -> backend-shaped PUT body. Key targeting rides key_ids whenever
+ * the scope is not global (never team legs — the scope model is Global +
+ * API keys only). Global clears targets server-side, so the payload sends
+ * empty arrays there.
  */
 export function buildSettingsPayload(
   d: SettingsDraft,
   orgId?: string | null,
 ): PromptLoggingUpdateInput {
   const retention = d.retention_days.trim() ? Number(d.retention_days) : null;
-  const teamsMode = d.mode === "teams";
-  if (orgId) {
-    return {
-      org_id: orgId,
-      enabled: d.enabled,
-      mode: d.mode,
-      team_ids: teamsMode ? d.team_ids : [],
-      key_ids: teamsMode ? (d.key_ids ?? []).slice(0, MAX_KEY_TARGETS) : [],
-      capture_input: d.capture_input,
-      capture_output: d.capture_output,
-      retention_days: retention,
-    };
-  }
-  return {
+  const keyTargeting = d.mode !== "global";
+  const body = {
     enabled: d.enabled,
     mode: d.mode,
-    team_ids: [],
-    key_ids: teamsMode ? (d.key_ids ?? []).slice(0, MAX_KEY_TARGETS) : [],
+    key_ids: keyTargeting ? (d.key_ids ?? []).slice(0, MAX_KEY_TARGETS) : [],
     capture_input: d.capture_input,
     capture_output: d.capture_output,
     retention_days: retention,
   };
+  return orgId ? { org_id: orgId, ...body } : body;
 }
 
 /**
  * Scope precedence explainer for the settings UI. Global overrides every
- * target; team and key targets OR-combine; disabled logs nothing; enabling
+ * target; only listed keys log otherwise; disabled logs nothing; enabling
  * global clears stored targets server-side.
  */
 export const LOGGING_PRECEDENCE_COPY =
-  "Global logs every request and ignores team and key targets. In team mode, team and key targets combine (a request matching either is logged); personal workspaces match personal keys. When logging is off, nothing is recorded. Switching to global clears stored targets.";
+  "Global logs every request and ignores key targets. Otherwise only requests matching the selected keys are logged; personal workspaces match personal keys. When logging is off, nothing is recorded. Switching to global clears stored targets.";
 
 export function loggingPrecedenceCopy(d: Pick<SettingsDraft, "enabled" | "mode">): string {
   if (!d.enabled) return "Logging is off — no requests are recorded, regardless of scope or targets.";
   if (d.mode === "global") return `Logging is on for the whole workspace. ${LOGGING_PRECEDENCE_COPY}`;
-  return `Logging is on for selected teams and keys only (either match logs the request). ${LOGGING_PRECEDENCE_COPY}`;
+  return `Logging is on for selected keys only. ${LOGGING_PRECEDENCE_COPY}`;
 }
 
 /** Badge variant per backend-validated status (unknown statuses stay neutral). */
@@ -297,8 +285,8 @@ export function formatEffectiveSummary(summary: unknown): string {
   if (typeof scope === "string") {
     parts.push(scope === "all" ? "scope: all" : `scope: ${scope}`);
   } else if (scope !== null && typeof scope === "object" && !Array.isArray(scope)) {
-    const teams = (scope as Record<string, unknown>).teams;
-    if (typeof teams === "number") parts.push(`scope: ${teams} team${teams === 1 ? "" : "s"}`);
+    const keys = (scope as Record<string, unknown>).keys;
+    if (typeof keys === "number") parts.push(`scope: ${keys} key${keys === 1 ? "" : "s"}`);
   }
   if (typeof s.retention_days === "number") parts.push(`retention ${s.retention_days}d`);
   else if (s.retention_days === null) parts.push("retention off");
@@ -432,88 +420,51 @@ export function filterToParams(f: LogFilter): Record<string, string> {
 }
 
 /**
- * Hierarchical logging overrides (parallel backend; every accessor tolerates
- * older backends where team_states/key_states are absent).
+ * Hierarchical logging overrides. Global + API keys only: every accessor
+ * tolerates older backends where key_states is absent, and legacy reads
+ * whose mode is still `"teams"` (treated as key targeting — any non-global
+ * mode targets keys). Team legs are gone: no team_ids, no team_states.
  */
 
 import type { PromptLoggingSettings } from "@/services/promptLogs";
 
-/** Global ON locks every scope: per-team/per-key controls render disabled. */
+/** Global ON locks every scope: per-key controls render disabled. */
 export function isGlobalLoggingLocked(s: Pick<PromptLoggingSettings, "enabled" | "mode">): boolean {
   return s.enabled === true && s.mode === "global";
 }
 
-/** Workspace default for a team with no explicit override: the legacy
- *  targeting rule (teams mode logs only listed teams; any other enabled
- *  mode logs everything). */
-export function defaultTeamLoggingEnabled(
-  s: Pick<PromptLoggingSettings, "enabled" | "mode" | "team_ids">,
-  teamId: string,
-): boolean {
-  if (!s.enabled) return false;
-  if (s.mode === "global") return true;
-  if (s.mode !== "teams") return true;
-  return (s.team_ids ?? []).includes(teamId);
-}
-
 /**
- * Workspace default for a key with no explicit override and no team
- * override: legacy OR rule (a key matches directly or through its teams).
+ * Workspace default for a key with no explicit override: the key leg only —
+ * a listed key captures, anything else does not.
  */
 export function defaultKeyLoggingEnabled(
-  s: Pick<PromptLoggingSettings, "enabled" | "mode" | "team_ids" | "key_ids">,
+  s: Pick<PromptLoggingSettings, "enabled" | "mode" | "key_ids">,
   keyId: string,
-  keyTeamIds: string[] = [],
 ): boolean {
   if (!s.enabled) return false;
   if (s.mode === "global") return true;
-  if (s.mode !== "teams") return true;
-  if ((s.key_ids ?? []).includes(keyId)) return true;
-  const targeted = new Set(s.team_ids ?? []);
-  return keyTeamIds.some((t) => targeted.has(t));
+  return (s.key_ids ?? []).includes(keyId);
 }
 
 export interface ScopeLoggingView {
-  /** Explicit override; null = inherit the workspace/team default. */
+  /** Explicit override; null = inherit the workspace default. */
   explicit: boolean | null;
   /** Resolved outcome after the global lock and inheritance chain. */
   effective: boolean;
   /** True when global ON forces logging regardless of overrides. */
   locked: boolean;
-  /** One-line provenance for the UI ("Global policy", "Team override", …). */
+  /** One-line provenance for the UI ("Global policy", "Key override", …). */
   source: string;
 }
 
-/** Resolve one team's logging state. Missing entries inherit the default. */
-export function resolveTeamLogging(
-  s: Pick<PromptLoggingSettings, "enabled" | "mode" | "team_ids" | "team_states">,
-  teamId: string,
-): ScopeLoggingView {
-  const locked = isGlobalLoggingLocked(s);
-  if (locked) return { explicit: null, effective: true, locked, source: "Global policy" };
-  const raw = (s.team_states ?? {})[teamId];
-  const explicit = typeof raw === "boolean" ? raw : null;
-  if (explicit !== null) {
-    return { explicit, effective: explicit, locked: false, source: "Team override" };
-  }
-  return {
-    explicit: null,
-    effective: defaultTeamLoggingEnabled(s, teamId),
-    locked: false,
-    source: "Workspace default",
-  };
-}
-
-/** Resolve one key's logging state: explicit key state wins, then the
- *  strongest team signal (any explicit team ON beats inheritance), then the
- *  workspace default. */
+/** Resolve one key's logging state: explicit key state wins, otherwise the
+ *  workspace default (listed keys log, unlisted keys do not). */
 export function resolveKeyLogging(
   s: Pick<
     PromptLoggingSettings,
-    "enabled" | "mode" | "team_ids" | "key_ids" | "team_states" | "key_states"
+    "enabled" | "mode" | "key_ids" | "key_states"
   >,
   keyId: string,
-  keyTeamIds: string[] = [],
 ): ScopeLoggingView {
   const locked = isGlobalLoggingLocked(s);
   if (locked) return { explicit: null, effective: true, locked, source: "Global policy" };
@@ -525,31 +476,9 @@ export function resolveKeyLogging(
   if (explicit === false) {
     return { explicit, effective: false, locked: false, source: "Key override" };
   }
-  // Backend precedence (resolution.py): explicit key override wins; otherwise a
-  // listed-live key target captures (match_source="key") even when every team
-  // signal is off; then any enabled-team hit captures; else no capture.
-  if ((s.key_ids ?? []).includes(keyId)) {
-    if (!s.enabled) {
-      return { explicit: null, effective: false, locked: false, source: "Workspace default" };
-    }
-    return { explicit: null, effective: true, locked: false, source: "Workspace default" };
-  }
-  const states = s.team_states ?? {};
-  const teamExplicit = keyTeamIds
-    .map((t) => states[t])
-    .filter((v): v is boolean => typeof v === "boolean");
-  if (teamExplicit.length > 0) {
-    // Any explicit team ON logs the key (OR semantics); explicit OFFs alone
-    // mean no team hit — the key inherits nothing further here because the
-    // listed-key leg above already missed.
-    if (teamExplicit.some((v) => v)) {
-      return { explicit: null, effective: true, locked: false, source: "Team override" };
-    }
-    return { explicit: null, effective: false, locked: false, source: "Team override" };
-  }
   return {
     explicit: null,
-    effective: defaultKeyLoggingEnabled(s, keyId, keyTeamIds),
+    effective: defaultKeyLoggingEnabled(s, keyId),
     locked: false,
     source: "Workspace default",
   };
@@ -557,20 +486,15 @@ export function resolveKeyLogging(
 
 /**
  * Reject a save that the backend answers 422 to: global ON with any explicit
- * disable. Immediate per-scope controls are locked instead, so this guards
+ * key disable. Immediate per-key controls are locked instead, so this guards
  * the bulk PUT path (and races where global flipped on mid-edit).
  */
 export function validateHierarchicalStates(input: {
   enabled: boolean;
   mode: string;
-  team_states?: Record<string, boolean>;
   key_states?: Record<string, boolean | null>;
 }): string | null {
   if (!(input.enabled && input.mode === "global")) return null;
-  const disabledTeam = Object.entries(input.team_states ?? {}).find(([, v]) => v === false);
-  if (disabledTeam) {
-    return "Global logging is on: every team is logged and per-team disables are rejected. Remove the team override instead.";
-  }
   const disabledKey = Object.entries(input.key_states ?? {}).find(([, v]) => v === false);
   if (disabledKey) {
     return "Global logging is on: every key is logged and per-key disables are rejected. Reset the key to inherit instead.";
@@ -578,25 +502,21 @@ export function validateHierarchicalStates(input: {
   return null;
 }
 
-/** Bodies for the granular endpoints (single source of truth for tests). */
-export function buildTeamLoggingPayload(enabled: boolean): { enabled: boolean } {
-  return { enabled };
-}
-
+/** Body for the granular key endpoint (single source of truth for tests). */
 export function buildKeyLoggingPayload(enabled: boolean | null): { enabled: boolean | null } {
   return { enabled };
 }
 
 /**
  * Mandatory-global explainer shown wherever global scope can be enabled:
- * it captures every request and locks per-scope overrides on.
+ * it captures every request and locks per-key overrides on.
  */
 export const GLOBAL_MANDATORY_COPY =
-  "Global logging is mandatory for the whole workspace: every team and every key is logged, and per-team / per-key controls lock on. Narrower targeting is lost.";
+  "Global logging is mandatory for the whole workspace: every key is logged, and per-key controls lock on. Narrower targeting is lost.";
 
 /**
  * Effective-state line for one scope: "On"/"Off" plus provenance, with the
- * lock called out. Used by team/key forms and the settings override lists.
+ * lock called out. Used by the key form and the settings override list.
  */
 export function scopeEffectiveLine(view: ScopeLoggingView): string {
   const state = view.effective ? "On" : "Off";
@@ -617,14 +537,12 @@ export function scopeBadgeLabel(view: ScopeLoggingView): "ON" | "OFF" {
  */
 export function formatEffectiveSummaryWithStates(
   summary: unknown,
-  s?: Pick<PromptLoggingSettings, "enabled" | "mode" | "team_states" | "key_states">,
+  s?: Pick<PromptLoggingSettings, "enabled" | "mode" | "key_states">,
 ): string {
   const base = formatEffectiveSummary(summary);
   if (!s) return base;
   const parts = [base];
-  const teamOverrides = Object.keys(s.team_states ?? {}).length;
   const keyOverrides = Object.keys(s.key_states ?? {}).length;
-  if (teamOverrides > 0) parts.push(`${teamOverrides} team override${teamOverrides === 1 ? "" : "s"}`);
   if (keyOverrides > 0) parts.push(`${keyOverrides} key override${keyOverrides === 1 ? "" : "s"}`);
   if (isGlobalLoggingLocked(s)) parts.push("locked by global");
   return parts.filter(Boolean).join(" · ");

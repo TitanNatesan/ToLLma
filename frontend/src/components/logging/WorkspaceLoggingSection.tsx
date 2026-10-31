@@ -10,6 +10,7 @@ import {
   usePromptLoggingSettings,
   useUpdatePromptLoggingSettings,
 } from "@/hooks/usePromptLogs";
+import { KEY_TARGET_MODE } from "@/services/promptLogs";
 import {
   GLOBAL_MANDATORY_COPY,
   buildSettingsPayload,
@@ -51,8 +52,8 @@ export function WorkspaceLoggingSection({ orgId, canManage }: {
   function draftFor(global: boolean): SettingsDraft {
     return {
       enabled: global,
-      mode: global ? "global" : s.mode,
-      team_ids: [...(s.team_ids ?? [])],
+      // Any non-global scope edits as selected keys (legacy "teams" included).
+      mode: global ? "global" : KEY_TARGET_MODE,
       key_ids: [...(s.key_ids ?? [])],
       capture_input: s.capture_input,
       capture_output: s.capture_output,
@@ -66,7 +67,6 @@ export function WorkspaceLoggingSection({ orgId, canManage }: {
       const err = validateHierarchicalStates({
         enabled: true,
         mode: "global",
-        team_states: s.team_states,
         key_states: s.key_states,
       });
       if (err) {

@@ -57,7 +57,6 @@ from tollms.models.prompt_logging import (  # noqa: F401
     PromptLoggingKeyOverride,
     PromptLoggingKeyTarget,
     PromptLoggingSetting,
-    PromptLoggingTeamTarget,
 )
 from tollms.models.request_log import ExportEvent, RequestLog, RequestStatus  # noqa: F401
 from tollms.models.search_index import ConversationSearchEntry  # noqa: F401

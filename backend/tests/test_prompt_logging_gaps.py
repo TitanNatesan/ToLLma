@@ -114,9 +114,10 @@ def _make_key(client: TestClient) -> tuple[str, str]:
 # --- forged filter oracles: cross-org team, non-member user --------------------
 
 
-def test_gap_cross_org_team_filter_404(client: TestClient, db: Session, user_factory) -> None:
-    """A team_id from org B filtered under org A is a 404 oracle (never leaks)."""
+def test_gap_cross_org_key_filter_404(client: TestClient, db: Session, user_factory) -> None:
+    """A key_id from org B filtered under org A is a 404 oracle (never leaks)."""
     user = user_factory()
+    uid = uuid.UUID(user["id"])
     oid_a = client.post(ORG, json={"name": "Gap Forge A"}).json()["id"]
     oid_b = client.post(ORG, json={"name": "Gap Forge B"}).json()["id"]
     for oid in (oid_a, oid_b):
@@ -124,13 +125,14 @@ def test_gap_cross_org_team_filter_404(client: TestClient, db: Session, user_fac
                                                "mode": "global", "capture_input": True,
                                                "capture_output": True})
         assert r.status_code == 200, r.text
-    team_b = client.post(f"{ORG}/{oid_b}/teams", json={"name": "Bee"}).json()
-    # Valid team under its own org: 200 (empty list, no leak either way).
+    key_b = _mk_key(db, uid, uuid.UUID(oid_b))
+    db.commit()
+    # Valid key under its own org: 200 (empty list, no leak either way).
     assert client.get(f"{PL}/logs", params={"org_id": oid_b,
-                                            "team_id": team_b["id"]}).status_code == 200
-    # Same team id under org A: 404.
+                                            "key_id": str(key_b.id)}).status_code == 200
+    # Same key id under org A: 404.
     assert client.get(f"{PL}/logs", params={"org_id": oid_a,
-                                            "team_id": team_b["id"]}).status_code == 404
+                                            "key_id": str(key_b.id)}).status_code == 404
 
 
 def test_gap_nonmember_user_filter_404(client: TestClient, db: Session, user_factory) -> None:

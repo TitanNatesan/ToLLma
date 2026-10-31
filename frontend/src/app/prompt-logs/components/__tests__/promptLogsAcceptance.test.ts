@@ -65,12 +65,12 @@ describe("acceptance gaps", () => {
   it("accepts blank retention and nulls it in the payload", () => {
     expect(
       validateSettingsDraft(
-        { enabled: true, mode: "global", team_ids: [], key_ids: [], capture_input: true, capture_output: true, retention_days: "" },
+        { enabled: true, mode: "global", key_ids: [], capture_input: true, capture_output: true, retention_days: "" },
       ),
     ).toBeNull();
     expect(
       buildSettingsPayload(
-        { enabled: true, mode: "global", team_ids: [], key_ids: [], capture_input: true, capture_output: true, retention_days: "" },
+        { enabled: true, mode: "global", key_ids: [], capture_input: true, capture_output: true, retention_days: "" },
         "org1",
       ).retention_days,
     ).toBeNull();

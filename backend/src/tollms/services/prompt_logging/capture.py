@@ -85,8 +85,7 @@ def build_row_kwargs(
             key_provenance=(
                 "organization" if setting.org_id is not None else "personal"
             ),
-            team_ids=list(resolved.team_ids or []),
-            # Which allow-list leg matched (global|team|key). Only rows
+            # Which allow-list leg matched (global|key). Only rows
             # written before key targets existed carry NULL.
             match_source=resolved.match_source,
             conversation_id=conversation_id,

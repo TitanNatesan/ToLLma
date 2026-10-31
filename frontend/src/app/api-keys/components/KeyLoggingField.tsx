@@ -14,8 +14,6 @@ export interface KeyLoggingFieldProps {
   orgId?: string;
   /** Null in create mode (no stored override yet). */
   keyId?: string | null;
-  /** Owning team ids for team-override inheritance (org keys). */
-  keyTeamIds?: string[];
   /** Explicit override; null = inherit. Controlled by the parent form. */
   value: boolean | null;
   onChange: (value: boolean | null) => void;
@@ -32,7 +30,6 @@ export interface KeyLoggingFieldProps {
 export function KeyLoggingField({
   orgId,
   keyId,
-  keyTeamIds = [],
   value,
   onChange,
   disabled = false,
@@ -54,7 +51,7 @@ export function KeyLoggingField({
     : value !== null
       ? { explicit: value, effective: value, locked, source: "Key override" }
       : keyId
-        ? resolveKeyLogging(st, keyId, keyTeamIds)
+        ? resolveKeyLogging(st, keyId)
         : { explicit: null, effective: defaultForNewKey(st), locked, source: "Workspace default" };
   const selected = value === null ? "inherit" : value ? "on" : "off";
 
@@ -104,7 +101,7 @@ export function KeyLoggingField({
   );
 }
 
-/** Workspace default for a key that does not exist yet (no id/teams). */
+/** Workspace default for a key that does not exist yet (unlisted keys do not log). */
 function defaultForNewKey(s: {
   enabled: boolean;
   mode: string;
@@ -112,6 +109,5 @@ function defaultForNewKey(s: {
 }): boolean {
   if (!s.enabled) return false;
   if (s.mode === "global") return true;
-  if (s.mode !== "teams") return true;
   return false;
 }

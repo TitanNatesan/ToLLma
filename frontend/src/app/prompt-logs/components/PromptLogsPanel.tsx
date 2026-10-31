@@ -126,7 +126,6 @@ function LogDetailDrawer({
                 ["Workspace", d.workspace_type],
                 ["User", getLogUserDisplay(d)],
                 ["Key", getLogKeyDisplay(d)],
-                ["Teams", d.team_ids.length > 0 ? d.team_ids.join(", ") : "—"],
                 ["Provider", getLogProviderDisplay(d)],
                 ["Model", getLogModelDisplay(d)],
                 ["Endpoint", d.endpoint ?? "—"],

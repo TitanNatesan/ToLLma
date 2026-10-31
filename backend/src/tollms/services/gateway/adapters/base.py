@@ -1,9 +1,10 @@
 """Adapter contracts. All adapters stream normalized chunks; chat() collects."""
 
+import inspect
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import httpx
 
@@ -27,6 +28,12 @@ class ChatMessage:
     role: str
     content: str
     media: list[MediaPart] = field(default_factory=list)
+    # Provider-agnostic tool envelope. Translators stash wire tool payloads
+    # here (OpenAI `tool_calls`/`function_call`/`tool_call_id`, Anthropic
+    # `tool_use`/`tool_result` blocks, Responses function-call items) so text
+    # extraction, guardrail scans, and usage estimates keep working on
+    # `content` while adapters forward the raw blocks untouched.
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -39,6 +46,11 @@ class StreamChunk:
     cache_write_tokens: int | None = None
     reasoning_tokens: int | None = None
     images: list = field(default_factory=list)
+    # One tool-call fragment: {"index", "id", "name", "arguments_delta"}.
+    # `arguments_delta` appends to that call's JSON arguments string.
+    tool_call_delta: dict[str, Any] | None = None
+    # Provider-native stop reason ("tool_calls", "tool_use", ...).
+    finish_reason: str | None = None
 
 
 @dataclass
@@ -51,6 +63,11 @@ class ChatResult:
     cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     images: list = field(default_factory=list)
+    # Normalized tool calls in first-seen order:
+    # [{"id", "name", "arguments"}] where arguments is a JSON string.
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    # Provider-native stop reason ("tool_calls", "tool_use", ...).
+    finish_reason: str | None = None
 
 
 # Reasoning normalization contract (provider-agnostic rendering).
@@ -176,7 +193,9 @@ class BaseProviderAdapter:
     def _client(self, **kwargs) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self.transport, timeout=self.timeout, **kwargs)
 
-    async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
+    async def chat_stream(
+        self, messages: list[ChatMessage], tools: list[dict] | None = None, tool_choice: Any = None
+    ) -> AsyncIterator[StreamChunk]:
         raise NotImplementedError
         yield  # make it an async generator for type checkers
 
@@ -188,11 +207,17 @@ class BaseProviderAdapter:
         """List models available to these credentials. Never raises."""
         raise NotImplementedError
 
-    async def chat(self, messages: list[ChatMessage]) -> ChatResult:
+    async def chat(
+        self, messages: list[ChatMessage], tools: list[dict] | None = None, tool_choice: Any = None
+    ) -> ChatResult:
         """Non-streaming convenience built on chat_stream. No duplicate logic."""
         parts: list[str] = []
         usage = ChatResult(text="")
-        async for chunk in self.chat_stream(messages):
+        if "tools" in inspect.signature(self.chat_stream).parameters:
+            stream = self.chat_stream(messages, tools=tools, tool_choice=tool_choice)
+        else:  # pragma: no cover - legacy adapters without tool passthrough
+            stream = self.chat_stream(messages)
+        async for chunk in stream:
             parts.append(chunk.delta)
             if chunk.prompt_tokens is not None:
                 usage.prompt_tokens = chunk.prompt_tokens
@@ -208,8 +233,37 @@ class BaseProviderAdapter:
                 usage.reasoning_tokens = chunk.reasoning_tokens
             if getattr(chunk, "images", None):
                 usage.images.extend(chunk.images)
+            if chunk.finish_reason is not None:
+                usage.finish_reason = chunk.finish_reason
+            if chunk.tool_call_delta:
+                _accumulate_tool_call(usage.tool_calls, chunk.tool_call_delta)
+        for call in usage.tool_calls:
+            call.pop("index", None)  # internal fragment-matching key only
         usage.text = "".join(parts)
         return usage
+
+
+def _accumulate_tool_call(calls: list[dict[str, Any]], delta: dict[str, Any]) -> None:
+    """Append one tool-call fragment to the normalized call list, in order."""
+    call_id = delta.get("id")
+    index = delta.get("index")
+    entry = None
+    for candidate in calls:
+        if call_id and candidate.get("id") == call_id:
+            entry = candidate
+            break
+        if not call_id and index is not None and candidate.get("index") == index:
+            entry = candidate
+            break
+    if entry is None:
+        entry = {"id": call_id or "", "name": delta.get("name") or "", "arguments": "", "index": index}
+        calls.append(entry)
+    if delta.get("id"):
+        entry["id"] = delta["id"]
+    if delta.get("name"):
+        entry["name"] = delta["name"]
+    entry["arguments"] += delta.get("arguments_delta") or ""
+
 
     # --- Non-chat endpoints (embeddings, images, audio) ---------------------
     # Adapters implement only what their endpoint supports; the gateway

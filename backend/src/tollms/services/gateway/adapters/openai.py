@@ -57,18 +57,32 @@ def _reasoning_text(delta: dict) -> str:
     return "".join(out)
 
 
-def _parse_chat_sse(payload: str) -> tuple[str, str, dict]:
-    """(answer text, reasoning text, usage). Empty strings when absent."""
+def _parse_chat_sse(payload: str) -> tuple[str, str, dict, list, str | None]:
+    """(answer text, reasoning text, usage, tool deltas, finish reason)."""
     data = json.loads(payload)
     text = ""
     reasoning = ""
+    tool_deltas: list = []
+    finish_reason: str | None = None
     try:
-        delta = data["choices"][0].get("delta", {})
+        choice = data["choices"][0]
+        delta = choice.get("delta", {})
         text = delta.get("content") or ""
         reasoning = _reasoning_text(delta)
+        for call in delta.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") or {}
+            tool_deltas.append({
+                "index": call.get("index"),
+                "id": call.get("id") or "",
+                "name": function.get("name") or "",
+                "arguments_delta": function.get("arguments") or "",
+            })
+        finish_reason = choice.get("finish_reason")
     except (KeyError, IndexError, TypeError):
         pass
-    return text, reasoning, data.get("usage") or {}
+    return text, reasoning, data.get("usage") or {}, tool_deltas, finish_reason
 
 
 async def _with_transport_retries(call, *, attempts: int = 3, base_delay: float = 1.5):
@@ -230,20 +244,30 @@ class OpenAIChatAdapter(OpenAIBaseAdapter):
                 parts.append({"type": "input_audio", "input_audio": {"data": part.data_b64, "format": fmt}})
         return parts or m.content
 
-    async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
+    def _message(self, m: ChatMessage) -> dict:
+        """Wire message with tool envelopes preserved (calls, results, legacy)."""
+        message: dict = {"role": m.role, "content": self._content(m)}
+        extra = m.extra or {}
+        if extra.get("tool_calls") is not None:message["tool_calls"] = extra["tool_calls"]
+        if extra.get("function_call") is not None:message["function_call"] = extra["function_call"]
+        if extra.get("tool_call_id") is not None:message["tool_call_id"] = extra["tool_call_id"]
+        if extra.get("name") is not None and m.role in ("tool", "function", "assistant"):message["name"] = extra["name"]
+        return message
+
+    async def chat_stream(
+        self, messages: list[ChatMessage], tools: list[dict] | None = None, tool_choice: dict | str | None = None
+    ) -> AsyncIterator[StreamChunk]:
         body = {
             "model": self.model_id,
-            "messages": [{"role": m.role, "content": self._content(m)} for m in messages],
+            "messages": [self._message(m) for m in messages],
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if tools is not None:body["tools"] = tools
+        if tool_choice is not None:body["tool_choice"] = tool_choice
         body.update(openai_params(self.prompt_cache))
         effort = reasoning_effort(self.reasoning_level)
-        if effort:
-            # Reasoning-capable models on OpenAI-compatible surfaces
-            # (native, LiteLLM, OpenRouter, vLLM) enable thinking here;
-            # always-on reasoners ignore it.
-            body["reasoning_effort"] = effort
+        if effort:body["reasoning_effort"] = effort
         headers = self._headers()
         in_reasoning = False
         try:
@@ -257,9 +281,12 @@ class OpenAIChatAdapter(OpenAIBaseAdapter):
                 async for line in resp.aiter_lines():
                     for payload in sse_data_lines(line):
                         try:
-                            text, reasoning, usage = _parse_chat_sse(payload)
+                            text, reasoning, usage, tool_deltas, finish_reason = _parse_chat_sse(payload)
                         except json.JSONDecodeError:
                             continue
+                        for tool_delta in tool_deltas:
+                            yield StreamChunk(tool_call_delta=tool_delta)
+                        if finish_reason:yield StreamChunk(finish_reason=finish_reason)
                         if reasoning:
                             if not in_reasoning:
                                 yield StreamChunk(delta=THINK_OPEN)
@@ -282,8 +309,7 @@ class OpenAIChatAdapter(OpenAIBaseAdapter):
                                 cache_write_tokens=extras["cache_write_tokens"],
                                 reasoning_tokens=extras["reasoning_tokens"],
                             )
-                if in_reasoning:
-                    yield StreamChunk(delta=THINK_CLOSE)
+                if in_reasoning:yield StreamChunk(delta=THINK_CLOSE)
         except RuntimeError:
             raise
         except Exception as e:
@@ -311,12 +337,44 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
                 })
         return parts or m.content
 
-    async def chat_stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
+    def _input_items(self, messages: list[ChatMessage]) -> list[dict]:
+        """Responses input with function-call history preserved verbatim."""
+        items: list[dict] = []
+        for m in messages:
+            extra = m.extra or {}
+            if extra.get("response_item") is not None:
+                items.append(extra["response_item"])
+                continue
+            if m.role == "tool":
+                items.append({
+                    "type": "function_call_output",
+                    "call_id": extra.get("tool_call_id") or extra.get("call_id") or "",
+                    "output": m.content,
+                })
+                continue
+            items.append({"role": m.role, "content": self._content(m)})
+            for call in extra.get("tool_calls") or []:
+                function = call.get("function") or {}
+                items.append({
+                    "type": "function_call",
+                    "call_id": call.get("id") or "",
+                    "name": function.get("name") or "",
+                    "arguments": function.get("arguments") or "",
+                })
+        return items
+
+    async def chat_stream(
+        self, messages: list[ChatMessage], tools: list[dict] | None = None, tool_choice: dict | str | None = None
+    ) -> AsyncIterator[StreamChunk]:
         body = {
             "model": self.model_id,
-            "input": [{"role": m.role, "content": self._content(m)} for m in messages],
+            "input": self._input_items(messages),
             "stream": True,
         }
+        if tools is not None:
+            body["tools"] = tools
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
         body.update(openai_params(self.prompt_cache))
         effort = reasoning_effort(self.reasoning_level)
         if effort:
@@ -344,7 +402,25 @@ class OpenAIResponsesAdapter(OpenAIChatAdapter):
                     except json.JSONDecodeError:
                         continue
                     etype = event.get("type", "")
-                    if etype in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+                    if etype == "response.output_item.added":
+                        item = event.get("item") or {}
+                        if item.get("type") == "function_call":
+                            yield StreamChunk(tool_call_delta={
+                                "index": event.get("output_index"),
+                                "id": item.get("call_id") or item.get("id") or "",
+                                "name": item.get("name") or "",
+                                "arguments_delta": "",
+                            })
+                    elif etype == "response.function_call_arguments.delta":
+                        yield StreamChunk(tool_call_delta={
+                            "index": None,
+                            "id": event.get("item_id") or "",
+                            "arguments_delta": event.get("delta") or "",
+                        })
+                    elif etype == "response.function_call_arguments.done":
+                        if event.get("item_id"):
+                            yield StreamChunk(finish_reason="tool_calls")
+                    elif etype in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
                         # Encrypted reasoning internals never stream as text;
                         # summaries do. Unknown future reasoning event types
                         # carrying text fall through to the prefix check below.

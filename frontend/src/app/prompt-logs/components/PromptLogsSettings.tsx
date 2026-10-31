@@ -22,14 +22,13 @@ import { parseApiError, toastApiError } from "@/lib/errors";
 import { ApiError } from "@/services/api";
 import {
   usePromptLogRetention,
-  usePromptLogTeams,
   usePromptLoggingSettings,
   useUpdateKeyLoggingState,
   useUpdatePromptLoggingSettings,
-  useUpdateTeamLoggingState,
 } from "@/hooks/usePromptLogs";
 import { useChatKeys } from "@/hooks/useChatKeys";
 import { useOrgKeys } from "@/hooks/useOrgs";
+import { KEY_TARGET_MODE, type LegacyPromptLoggingMode } from "@/services/promptLogs";
 import {
   GLOBAL_MANDATORY_COPY,
   buildSettingsPayload,
@@ -38,7 +37,6 @@ import {
   isGlobalLoggingLocked,
   loggingPrecedenceCopy,
   resolveKeyLogging,
-  resolveTeamLogging,
   scopeBadgeLabel,
   scopeEffectiveLine,
   validateSettingsDraft,
@@ -66,7 +64,6 @@ export function PromptLogsSettings({
   canManage: boolean;
 }) {
   const settings = usePromptLoggingSettings(orgId);
-  const teams = usePromptLogTeams(orgId, isOrg);
   const retention = usePromptLogRetention(orgId, true);
   const update = useUpdatePromptLoggingSettings(orgId);
   // Personal key targets: the user's eligible chat keys (never secrets).
@@ -81,20 +78,7 @@ export function PromptLogsSettings({
   const [draft, setDraft] = useState<SettingsDraft | null>(null);
   const [keySearch, setKeySearch] = useState("");
   const [confirmGlobal, setConfirmGlobal] = useState(false);
-  const [pendingTeam, setPendingTeam] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
-  /** Key → owning team ids, so team overrides can resolve key inheritance. */
-  const keyTeamIds = useMemo(() => {
-    const map = new Map<string, string[]>();
-    if (isOrg) {
-      for (const k of orgKeys.data ?? []) {
-        const teamId = (k as { team_id?: unknown }).team_id;
-        if (typeof teamId === "string" && teamId) map.set(k.id, [teamId]);
-      }
-    }
-    return map;
-  }, [isOrg, orgKeys.data]);
-  const updateTeam = useUpdateTeamLoggingState(orgId);
   const updateKey = useUpdateKeyLoggingState(orgId);
   const s = settings.data;
 
@@ -142,10 +126,12 @@ export function PromptLogsSettings({
     );
   }
   const readonly = !canManage;
+  // Legacy reads may still report mode "teams": the scope model is now
+  // Global + selected keys only, so any non-global mode edits as keys.
+  const serverMode = s.mode as LegacyPromptLoggingMode;
   const serverDraft: SettingsDraft = {
     enabled: s.enabled,
-    mode: s.mode,
-    team_ids: [...(s.team_ids ?? [])],
+    mode: serverMode === "global" ? "global" : KEY_TARGET_MODE,
     key_ids: [...(s.key_ids ?? [])],
     capture_input: s.capture_input,
     capture_output: s.capture_output,
@@ -174,21 +160,8 @@ export function PromptLogsSettings({
   // the global lock follows the server state — not the unsaved draft.
   const globalLocked = isGlobalLoggingLocked(s);
   const explicitKeyCount = keyOptions.filter(
-    (k) => resolveKeyLogging(s, k.id, keyTeamIds.get(k.id) ?? []).explicit !== null,
+    (k) => resolveKeyLogging(s, k.id).explicit !== null,
   ).length;
-
-  async function persistTeamState(teamId: string, enabled: boolean) {
-    if (readonly || globalLocked) return;
-    setPendingTeam(teamId);
-    try {
-      await updateTeam.mutateAsync({ teamId, enabled });
-      toast.success(`Team logging ${enabled ? "enabled" : "disabled"}.`);
-    } catch (e) {
-      toastApiError(e, { title: "Could not update team logging" });
-    } finally {
-      setPendingTeam(null);
-    }
-  }
 
   async function persistKeyState(keyId: string, enabled: boolean | null) {
     if (readonly || globalLocked) return;
@@ -207,7 +180,7 @@ export function PromptLogsSettings({
 
   async function persist(current: SettingsDraft) {
     try {
-      // One shape for the PUT body (personal scope keeps key targets; teams stay empty).
+      // One shape for the PUT body (personal scope keeps key targets).
       await update.mutateAsync(buildSettingsPayload(current, orgId));
       // Drop the overlay: the hook invalidates + refetches the persisted
       // policy, which the form now follows.
@@ -226,7 +199,7 @@ export function PromptLogsSettings({
       return;
     }
     // Enabling global, or switching scope to global, broadens capture to
-    // every request and clears stored team/key targets — confirm first.
+    // every request and clears stored key targets — confirm first.
     const broadens =
       current.enabled && current.mode === "global" && !serverIsEnabledGlobal;
     if (broadens) {
@@ -254,7 +227,7 @@ export function PromptLogsSettings({
             data-testid="prompt-settings-enabled"
           />
         </SettingItem>
-        <SettingItem label="Scope" description={isOrg ? "Global logs every org request; team mode logs only requests matching the selected teams or keys. Team mode with no teams and no keys logs nothing." : "Global logs every personal request; selected-keys mode logs only requests matching the chosen keys. With no keys selected, nothing is logged."}>
+        <SettingItem label="Scope" description={isOrg ? "Global logs every org request; selected-keys mode logs only requests matching the chosen keys. With no keys selected, nothing is logged." : "Global logs every personal request; selected-keys mode logs only requests matching the chosen keys. With no keys selected, nothing is logged."}>
           <Select
             value={form.mode}
             onChange={(e) => !readonly && edit({ mode: e.target.value })}
@@ -263,48 +236,9 @@ export function PromptLogsSettings({
             data-testid="prompt-settings-mode"
           >
             <option value="global">Global (whole workspace)</option>
-            {isOrg ? (
-              <option value="teams">Selected teams and keys</option>
-            ) : (
-              <option value="teams">Selected keys</option>
-            )}
+            <option value={KEY_TARGET_MODE}>Selected keys</option>
           </Select>
         </SettingItem>
-        {isOrg && form.mode === "teams" && (
-          <div className="py-2" data-testid="prompt-settings-teams">
-            {teams.isPending ? (
-              <LoadingState message="Loading teams…" />
-            ) : teams.error || !teams.data ? (
-              <ErrorState
-                title="Could not load teams"
-                message={teams.error ? parseApiError(teams.error).message : "Not found"}
-                onRetry={() => void teams.refetch()}
-              />
-            ) : teams.data.length === 0 ? (
-              <p className="text-xs text-zinc-500">No teams in this organization yet.</p>
-            ) : (
-              <div className="flex flex-wrap gap-3">
-                {teams.data.map((t) => (
-                  <Checkbox
-                    key={t.id}
-                    label={t.name}
-                    checked={form.team_ids.includes(t.id)}
-                    disabled={readonly}
-                    onChange={() =>
-                      !readonly &&
-                      edit({
-                        team_ids: form.team_ids.includes(t.id)
-                          ? form.team_ids.filter((id) => id !== t.id)
-                          : [...form.team_ids, t.id],
-                      })
-                    }
-                    data-testid={`prompt-settings-team-${t.id}`}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
         {form.mode !== "global" && (
           <div className="py-2" data-testid="prompt-settings-keys">
             <p className="mb-1 text-xs font-medium text-zinc-800 dark:text-zinc-200">
@@ -394,55 +328,13 @@ export function PromptLogsSettings({
 
       {(isOrg || keyOptions.length > 0) && (
         <SettingsSection
-          title="Per-scope overrides"
+          title="Per-key overrides"
           description={
             globalLocked
-              ? "Global logging is on: every team and key is logged, so these controls are locked."
-              : "Immediate per-team and per-key overrides. Key overrides win over team overrides; either beats the workspace default."
+              ? "Global logging is on: every key is logged, so these controls are locked."
+              : "Immediate per-key overrides. An explicit override beats the workspace default."
           }
         >
-          {isOrg && (
-            <div className="py-2" data-testid="prompt-settings-team-states">
-              <p className="mb-1.5 text-xs font-medium text-zinc-800 dark:text-zinc-200">
-                Teams
-              </p>
-              {teams.isPending ? (
-                <LoadingState message="Loading teams…" />
-              ) : teams.error || !teams.data ? (
-                <ErrorState
-                  title="Could not load teams"
-                  message={teams.error ? parseApiError(teams.error).message : "Not found"}
-                  onRetry={() => void teams.refetch()}
-                />
-              ) : teams.data.length === 0 ? (
-                <p className="text-xs text-zinc-500">No teams in this organization yet.</p>
-              ) : (
-                <ul className="flex flex-col gap-1.5">
-                  {teams.data.map((t) => {
-                    const view = resolveTeamLogging(s, t.id);
-                    return (
-                      <li
-                        key={t.id}
-                        className="flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1.5 dark:border-zinc-800"
-                        data-testid={`prompt-settings-teamstate-${t.id}`}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium">{t.name}</span>
-                        <Badge variant={view.effective ? "success" : "outline"}>{scopeBadgeLabel(view)}</Badge>
-                        {view.locked && <Badge variant="secondary">locked</Badge>}
-                        <Switch
-                          checked={view.effective}
-                          disabled={readonly || view.locked || pendingTeam !== null}
-                          onCheckedChange={(v) => void persistTeamState(t.id, v)}
-                          aria-label={`Logging for team ${t.name}`}
-                          data-testid={`prompt-settings-teamstate-toggle-${t.id}`}
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          )}
           <div className="py-2" data-testid="prompt-settings-key-states">
             <p className="mb-1.5 text-xs font-medium text-zinc-800 dark:text-zinc-200">
               Keys {explicitKeyCount > 0 && <span className="font-normal text-zinc-500">({explicitKeyCount} override{explicitKeyCount === 1 ? "" : "s"})</span>}
@@ -456,7 +348,7 @@ export function PromptLogsSettings({
             ) : (
               <ul className="flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1">
                 {visibleKeys.map((k) => {
-                  const view = resolveKeyLogging(s, k.id, keyTeamIds.get(k.id) ?? []);
+                  const view = resolveKeyLogging(s, k.id);
                   return (
                     <li
                       key={k.id}
@@ -564,7 +456,7 @@ export function PromptLogsSettings({
         open={confirmGlobal}
         destructive
         title="Log every request in this workspace?"
-        description={isOrg ? "Global scope records all organization requests and clears any stored team and key targets. Narrower targeting is lost." : "Global scope records all personal requests and clears any stored key targets. Narrower targeting is lost."}
+        description={isOrg ? "Global scope records all organization requests and clears any stored key targets. Narrower targeting is lost." : "Global scope records all personal requests and clears any stored key targets. Narrower targeting is lost."}
         confirmLabel="Enable global logging"
         onClose={() => setConfirmGlobal(false)}
         onConfirm={() => {

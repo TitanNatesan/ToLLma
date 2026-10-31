@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { KEY_TARGET_MODE } from "@/services/promptLogs";
 import {
   EMPTY_LOG_FILTER,
   buildLogQuery,
@@ -22,7 +23,6 @@ const row = (id: string) => ({
   workspace_type: "org",
   user_id: "u1",
   key_id: "k1",
-  team_ids: [],
   provider_id: "p1",
   model_id: "m1",
   endpoint: "/v1/chat",
@@ -103,21 +103,20 @@ describe("settings validation", () => {
   const draft = {
     enabled: true,
     mode: "global",
-    team_ids: [] as string[],
     key_ids: [] as string[],
     capture_input: true,
     capture_output: true,
     retention_days: "",
   };
-  it("blocks teams-mode with no teams (logs nothing)", () => {
-    expect(validateSettingsDraft({ ...draft, mode: "teams" })).toMatch(/logs nothing/i);
-    expect(validateSettingsDraft({ ...draft, mode: "teams", team_ids: ["t1"] })).toBeNull();
+  it("blocks selected-keys mode with no keys (logs nothing)", () => {
+    expect(validateSettingsDraft({ ...draft, mode: KEY_TARGET_MODE })).toMatch(/logs nothing/i);
+    expect(validateSettingsDraft({ ...draft, mode: KEY_TARGET_MODE, key_ids: ["k1"] })).toBeNull();
   });
   it("supports personal key-only targeting", () => {
-    expect(validateSettingsDraft({ ...draft, mode: "teams" })).toMatch(/logs nothing/i);
-    expect(validateSettingsDraft({ ...draft, mode: "teams", key_ids: ["k1"] })).toBeNull();
-    const body = buildSettingsPayload({ ...draft, mode: "teams", key_ids: ["k1"] }, undefined);
-    expect(body.mode).toBe("teams");
+    expect(validateSettingsDraft({ ...draft, mode: KEY_TARGET_MODE })).toMatch(/logs nothing/i);
+    expect(validateSettingsDraft({ ...draft, mode: KEY_TARGET_MODE, key_ids: ["k1"] })).toBeNull();
+    const body = buildSettingsPayload({ ...draft, mode: KEY_TARGET_MODE, key_ids: ["k1"] }, undefined);
+    expect(body.mode).toBe(KEY_TARGET_MODE);
     expect(body.key_ids).toEqual(["k1"]);
   });
   it("rejects non-positive retention days", () => {
@@ -125,9 +124,11 @@ describe("settings validation", () => {
     expect(validateSettingsDraft({ ...draft, retention_days: "1.5" })).toMatch(/retention/i);
     expect(validateSettingsDraft({ ...draft, retention_days: "30" })).toBeNull();
   });
-  it("keeps org team targeting in the payload", () => {
-    const body = buildSettingsPayload({ ...draft, mode: "teams", team_ids: ["t1"] }, "org1");
-    expect(body).toMatchObject({ org_id: "org1", mode: "teams", team_ids: ["t1"] });
+  it("keeps org key targeting in the payload (no team legs)", () => {
+    const body = buildSettingsPayload({ ...draft, mode: KEY_TARGET_MODE, key_ids: ["k1"] }, "org1");
+    expect(body).toMatchObject({ org_id: "org1", mode: KEY_TARGET_MODE, key_ids: ["k1"] });
+    expect(body).not.toHaveProperty("team_ids");
+    expect(body).not.toHaveProperty("team_states");
   });
 });
 

@@ -26,19 +26,24 @@ export const PROMPT_LOG_STATUSES = ["completed", "cancelled", "failed", "partial
 export type PromptLogStatus = (typeof PROMPT_LOG_STATUSES)[number];
 export type PromptLogField = "input" | "output";
 
-export type PromptLoggingMode = "global" | "teams";
+/** Wire mode: backend MODES is ("global", "keys"). The UI only ever sends
+ *  these two values — key targeting rides `mode: "keys"`. */
+export type PromptLoggingMode = "global" | "keys";
+
+/** Legacy server-read mode: older backends still report `"teams"`. Used ONLY
+ *  when normalizing server reads — never sent to the backend. */
+export type LegacyPromptLoggingMode = PromptLoggingMode | "teams";
+
+/** Non-global targeting mode sent by the UI: keys only, no teams. */
+export const KEY_TARGET_MODE = "keys";
 
 export interface PromptLoggingSettings {
   workspace_type: string;
   enabled: boolean;
   mode: PromptLoggingMode | string;
-  team_ids: string[];
-  /** Key targets (OR alongside team targets when enabled and not global).
+  /** Key targets (logged when enabled and not global).
    *  Absent on older backends — always normalized to an array. */
   key_ids: string[];
-  /** Hierarchical overrides (parallel backend): explicit per-team on/off.
-   *  Absent on older backends — normalized to {}. */
-  team_states: Record<string, boolean>;
   /** Hierarchical overrides: explicit per-key on/off, null = inherit.
    *  Absent on older backends — normalized to {}. */
   key_states: Record<string, boolean | null>;
@@ -56,11 +61,9 @@ export interface PromptLoggingUpdateInput {
   org_id?: string | null;
   enabled: boolean;
   mode: PromptLoggingMode | string;
-  team_ids?: string[];
-  /** Key targets, max 100 (UUIDs). Only meaningful in teams mode; global clears. */
+  /** Key targets, max 100 (UUIDs). Only meaningful when not global; global clears. */
   key_ids?: string[];
   /** Hierarchical overrides: global ON + any explicit disable is a 422. */
-  team_states?: Record<string, boolean>;
   key_states?: Record<string, boolean | null>;
   capture_input: boolean;
   capture_output: boolean;
@@ -79,7 +82,6 @@ export interface PromptLogRow {
   key_id: string | null;
   api_key_id?: string | null;
   key_name?: string | null;
-  team_ids: string[];
   provider_id: string | null;
   provider_name?: string | null;
   model_id: string | null;
@@ -110,11 +112,6 @@ export interface PromptLogDetail extends PromptLogRow {
   usage: Record<string, unknown>;
 }
 
-export interface PromptLogTeam {
-  id: string;
-  name: string;
-}
-
 export interface RetentionInfo {
   default_days: number;
   effective_days: number | null;
@@ -129,7 +126,6 @@ export interface PromptLogFilters {
   org_id?: string | null;
   user_id?: string;
   key_id?: string;
-  team_id?: string;
   provider_id?: string;
   model_id?: string;
   status?: string;
@@ -156,15 +152,6 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : {};
-}
-
-/** `{uuid: boolean}` override map; non-boolean values are dropped. Never throws. */
-function asBoolRecord(v: unknown): Record<string, boolean> {
-  const out: Record<string, boolean> = {};
-  for (const [k, val] of Object.entries(asRecord(v))) {
-    if (typeof val === "boolean") out[k] = val;
-  }
-  return out;
 }
 
 /** `{uuid: boolean|null}` override map; anything else is dropped. Never throws. */
@@ -204,7 +191,6 @@ export function normalizeLogRow(raw: unknown): PromptLogRow {
     key_id: keyId,
     api_key_id: asString(r.api_key_id) ?? asString(r.key_id),
     key_name: asString(r.key_name),
-    team_ids: asStringArray(r.team_ids),
     provider_id: asString(r.provider_id),
     provider_name: asString(r.provider_name),
     model_id: asString(r.model_id),
@@ -281,18 +267,16 @@ export function isPromptLogStatus(error: unknown, status: number): boolean {
 }
 
 /** Normalize one settings read: canonical fields win, legacy variance
- *  (missing key_ids/team_ids, string mode) degrades to safe defaults.
+ *  (missing key_ids, string mode, dropped team legs) degrades to safe defaults.
  *  Never throws. */
 export function normalizeLoggingSettings(raw: unknown): PromptLoggingSettings {
   const r = asRecord(raw);
-  const mode = asString(r.mode) ?? "global";
+  const mode: LegacyPromptLoggingMode | string = asString(r.mode) ?? "global";
   return {
     workspace_type: asString(r.workspace_type) ?? "",
     enabled: r.enabled === true,
     mode,
-    team_ids: asStringArray(r.team_ids),
     key_ids: asStringArray(r.key_ids),
-    team_states: asBoolRecord(r.team_states),
     key_states: asTristateRecord(r.key_states),
     capture_input: r.capture_input !== false,
     capture_output: r.capture_output !== false,
@@ -324,22 +308,6 @@ export async function updatePromptLoggingSettings(
 }
 
 /**
- * Per-team override. Org scoping rides `?org_id=` (personal scope omits it).
- * Resolves to the workspace default when the backend has no team row yet.
- */
-export async function updateTeamLoggingState(
-  orgId: string | null | undefined,
-  teamId: string,
-  enabled: boolean,
-): Promise<PromptLoggingSettings> {
-  const raw = await apiRequest<unknown>(
-    `${PROMPT_LOGS_BASE}/settings/teams/${encodeURIComponent(teamId)}${orgQs(orgId ?? undefined)}`,
-    { method: "PUT", body: JSON.stringify({ enabled }) },
-  );
-  return normalizeLoggingSettings(raw);
-}
-
-/**
  * Per-key override; `null` resets to inherit. Org scoping rides `?org_id=`.
  */
 export async function updateKeyLoggingState(
@@ -352,10 +320,6 @@ export async function updateKeyLoggingState(
     { method: "PUT", body: JSON.stringify({ enabled }) },
   );
   return normalizeLoggingSettings(raw);
-}
-
-export function listPromptLogTeams(orgId?: string | null): Promise<PromptLogTeam[]> {
-  return apiRequest<PromptLogTeam[]>(`${PROMPT_LOGS_BASE}/teams${orgQs(orgId)}`);
 }
 
 export function getPromptLogRetention(orgId?: string | null): Promise<RetentionInfo> {

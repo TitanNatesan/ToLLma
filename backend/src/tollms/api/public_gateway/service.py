@@ -49,7 +49,12 @@ from tollms.services.cost_estimator import (
     media_rate_card,
 )
 from tollms.services.gateway import dispatch
-from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatResult, StreamChunk
+from tollms.services.gateway.adapters.base import (
+    BaseProviderAdapter,
+    ChatResult,
+    StreamChunk,
+    _accumulate_tool_call,
+)
 from tollms.services.gateway.api_logs import ApiLogEntry, log_request
 from tollms.services.gateway.costing import (
     CostBreakdown,
@@ -122,6 +127,9 @@ class ChatOutcome:
     breakdown: CostBreakdown
     latency_ms: float
     estimated: bool
+    # Normalized tool calls [{"id", "name", "arguments"}] + provider stop reason.
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    finish_reason: str | None = None
 
 
 @dataclass
@@ -483,6 +491,11 @@ def _require_chat_capabilities(model, unified: UnifiedRequest) -> None:
         raise ForbiddenError(
             f"model_not_allowed: {model.model_id} lacks supports_text for {unified.endpoint}"
         )
+    # Tools gate: explicit 403, never a silent strip. Fail-open was considered
+    # and rejected: an incapable model must surface model_not_allowed here
+    # instead of a downstream provider 400. Models that serve tools declare
+    # supports_tool_calling (flipping the flag re-allows them, locked by the
+    # tool-gate hardening test); the provider always decides the final shape.
     if unified.tools and not getattr(model, "supports_tool_calling", False):
         raise ForbiddenError(
             f"model_not_allowed: {model.model_id} lacks supports_tool_calling for {unified.endpoint}"
@@ -605,6 +618,95 @@ def _prepare(
 
 
 
+def _guardrail_invocation_parts(unified: UnifiedRequest) -> list[str]:
+    """Invocation names/inputs from message extras (all roles).
+
+    Shared by the full scan text and the tool-action corpus: tool_calls
+    names/arguments, tool_use names/inputs, response function_call
+    names/arguments. Tool DEFINITIONS are never included here.
+    """
+    parts: list[str] = []
+    for message in unified.messages:
+        extra = message.extra or {}
+        for call in extra.get("tool_calls") or []:
+            function = call.get("function") or {}
+            if function.get("name"):
+                parts.append(f"tool_call:{function['name']}")
+            if function.get("arguments"):
+                parts.append(str(function["arguments"])[:2000])
+        for block in extra.get("blocks") or []:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            if block.get("name"):
+                parts.append(f"tool_call:{block['name']}")
+            if block.get("input") is not None:
+                parts.append(json.dumps(block["input"], sort_keys=True, default=str)[:2000])
+        item = extra.get("response_item")
+        if isinstance(item, dict) and item.get("type") == "function_call":
+            if item.get("name"):
+                parts.append(f"tool_call:{item['name']}")
+            if item.get("arguments"):
+                parts.append(str(item["arguments"])[:2000])
+    return parts
+
+
+def _guardrail_action_text(unified: UnifiedRequest) -> str:
+    """Tool-action corpus: user content + invocation names/inputs only.
+
+    Tool Action governs attempted ACTIONS, never static capability
+    declarations: tool definitions/descriptions/schemas, system prompts and
+    assistant text are excluded. The gateway never executes tools (execution
+    is client-side); a risky chain is killed when the user requests it (pre)
+    or the model emits/instructs it (post). Definitions/summaries never match.
+    """
+    parts = [message.content for message in unified.messages
+             if (message.role or "").lower() == "user" and message.content]
+    parts.extend(_guardrail_invocation_parts(unified))
+    return "\n".join(part for part in parts if part)
+
+
+def _guardrail_post_action_text(text: str, tool_calls: list[dict] | None) -> str:
+    """Post-stage action corpus: assistant output text + emitted tool_use.
+
+    An emitted tool_use IS an invocation attempt, so its name/inputs join
+    the corpus. Tool definitions never exist post-side.
+    """
+    parts = [text] if (text or "").strip() else []
+    for call in tool_calls or []:
+        if not isinstance(call, dict):
+            continue
+        if call.get("name"):
+            parts.append(f"tool_call:{call['name']}")
+        if call.get("arguments"):
+            parts.append(str(call["arguments"])[:2000])
+    return "\n".join(part for part in parts if part)
+
+
+def _guardrail_text(unified: UnifiedRequest) -> str:
+    """Scannable pre-check text: message content plus tool names and inputs.
+
+    Tool definitions and tool_use/tool_calls arguments ride along as plain
+    text so injection and policy scans see them. The forwarded request itself
+    is untouched: tools are never stripped here.
+    """
+    parts = [message.content for message in unified.as_chat_messages() if message.content]
+    for tool in unified.tools or []:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+        name = tool.get("name") or function.get("name")
+        if name:
+            parts.append(f"tool:{name}")
+        description = tool.get("description") or function.get("description")
+        if description:
+            parts.append(str(description)[:2000])
+        schema = tool.get("input_schema") or function.get("parameters")
+        if schema is not None:
+            parts.append(json.dumps(schema, sort_keys=True, default=str)[:2000])
+    parts.extend(_guardrail_invocation_parts(unified))
+    return "\n".join(part for part in parts if part)
+
+
 def _guardrail_pre(db: Session, ctx: KeyContext, unified: UnifiedRequest,
                    provider: Provider, model: AIModel, meta: ClientMeta) -> None:
     """Public-plane pre hook. Lazy import: guardrail engines never import api."""
@@ -612,7 +714,8 @@ def _guardrail_pre(db: Session, ctx: KeyContext, unified: UnifiedRequest,
         from tollms.services.guardrails import enforcement as guardrail_enforcement
 
         guardrail_enforcement.check_pre_sync(
-            db, text="\n".join(m.content for m in unified.as_chat_messages()),
+            db, text=_guardrail_text(unified),
+            action_text=_guardrail_action_text(unified),
             user_id=ctx.user_id, org_id=getattr(ctx, "org_id", None),
             provider_id=provider.id, model_id=model.id, api_key_id=ctx.key_id,
             source="external", endpoint=unified.endpoint,
@@ -624,7 +727,8 @@ def _guardrail_pre(db: Session, ctx: KeyContext, unified: UnifiedRequest,
 
 
 def _guardrail_post(db: Session, prepared: "_Prepared", text: str, *,
-                    allow_block: bool) -> str:
+                    allow_block: bool,
+                    tool_calls: list[dict[str, Any]] | None = None) -> str:
     """Public-plane post hook: audit-first, never raises, never touches Valkey
     usage counters. Streaming callers pass allow_block=False (delivery already
     happened — a blocked verdict is still recorded as blocked, never
@@ -633,7 +737,9 @@ def _guardrail_post(db: Session, prepared: "_Prepared", text: str, *,
         from tollms.services.guardrails import enforcement as guardrail_enforcement
 
         return guardrail_enforcement.record_post_sync(
-            db, text=text or "", user_id=prepared.ctx.user_id,
+            db, text=text or "",
+            action_text=_guardrail_post_action_text(text or "", tool_calls),
+            user_id=prepared.ctx.user_id,
             org_id=getattr(prepared.ctx, "org_id", None),
             provider_id=prepared.provider.id, model_id=prepared.model.id,
             api_key_id=prepared.ctx.key_id, source="external",
@@ -725,16 +831,45 @@ async def execute_unified(
             )
         raise
     if unified.stream and unified.endpoint in CHAT_ENDPOINTS:
+        # Eager tool-shape check: _stream_chat recomputes the same kwargs
+        # lazily on first iteration (status already 200 there), so validate
+        # here to keep the 403 model_not_allowed shape identical to the
+        # non-streaming path.
+        _tool_kwargs(prepared.adapter.chat_stream, prepared.unified)
         return StreamResult(iterator=_stream_chat(prepared, db))
     if unified.endpoint in CHAT_ENDPOINTS:
         return await _execute_chat(db, prepared)
     return await _execute_media(db, prepared)
 
 
+def _tool_kwargs(method: Any, unified: UnifiedRequest) -> dict[str, Any]:
+    """Tool passthrough for adapters that declare it; older doubles keep working.
+
+    Explicit 403, never a silent strip: tools requested of an adapter with
+    no tools param (Bedrock/Gemini/Vertex chat_stream) raise the same
+    model_not_allowed ForbiddenError as the capability gate instead of
+    returning text-only success with the tools dropped.
+    """
+    try:
+        params = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "tools" not in params:
+        if unified.tools:
+            raise ForbiddenError(
+                f"model_not_allowed: {unified.model_identifier} adapter lacks "
+                f"tools support for {unified.endpoint}"
+            )
+        return {}
+    return {"tools": unified.tools, "tool_choice": unified.tool_choice}
+
+
 async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
     started = prepared.started
     try:
-        result = await prepared.adapter.chat(prepared.messages)
+        result = await prepared.adapter.chat(
+            prepared.messages, **_tool_kwargs(prepared.adapter.chat, prepared.unified)
+        )
         latency_ms = (time.monotonic() - started) * 1000
         tokens, total, breakdown, estimated = _finalize_usage(
             db, prepared.provider, prepared.model, prepared.history_text, result.text, result
@@ -764,7 +899,8 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
         # blocked buffer_then_inspect verdict, so the ledger stores the same
         # marker — never the blocked text (verdict threaded through, not
         # re-evaluated). Streaming paths capture delivered bytes instead.
-        guard_action = _guardrail_post(db, prepared, result.text, allow_block=True)
+        guard_action = _guardrail_post(db, prepared, result.text, allow_block=True,
+                                       tool_calls=result.tool_calls)
         text = "[withheld by guardrail policy]" if guard_action == "blocked" else result.text
         await _promptlog_capture(db, prepared, input_text=prepared.history_text,
                            output_text=text, status="completed",
@@ -779,6 +915,8 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             breakdown=breakdown,
             latency_ms=latency_ms,
             estimated=estimated,
+            tool_calls=result.tool_calls,
+            finish_reason=result.finish_reason,
         )
     except Exception as exc:
         latency_ms = (time.monotonic() - started) * 1000
@@ -970,6 +1108,10 @@ def _sse(payload: dict, event: str | None = None) -> str:
 
 
 def _absorb(target: ChatResult, chunk: StreamChunk) -> None:
+    if chunk.finish_reason is not None:
+        target.finish_reason = chunk.finish_reason
+    if chunk.tool_call_delta:
+        _accumulate_tool_call(target.tool_calls, chunk.tool_call_delta)
     if chunk.prompt_tokens is not None:
         target.prompt_tokens = chunk.prompt_tokens
     if chunk.completion_tokens is not None:
@@ -1104,6 +1246,17 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             return [_sse(payload, "response.created")]
         return []
 
+    def _tool_calls() -> list[dict[str, Any]]:
+        calls = []
+        for pos, entry in enumerate(result.tool_calls):
+            call_id = entry.get("id") or (tool_blocks[pos]["id"] if pos < len(tool_blocks) else "") or f"call_{pos}"
+            calls.append({
+                "id": call_id,
+                "name": entry.get("name") or (tool_blocks[pos]["name"] if pos < len(tool_blocks) else ""),
+                "arguments": entry.get("arguments") or "",
+            })
+        return calls
+
     def _close(tokens: UsageTokens, total: int) -> list[str]:
         nonlocal sequence
         if fmt == "anthropic":
@@ -1115,19 +1268,38 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 anthropic_usage["cache_creation_input_tokens"] = tokens.cache_write
             if tokens.cache_read:
                 anthropic_usage["cache_read_input_tokens"] = tokens.cache_read
-            return [
-                _sse({"type": "content_block_stop", "index": 0}, "content_block_stop"),
+            frames = []
+            if text_open:
+                frames.append(_sse({"type": "content_block_stop", "index": 0}, "content_block_stop"))
+            for pos in range(len(tool_blocks)):
+                frames.append(_sse({"type": "content_block_stop", "index": 1 + pos}, "content_block_stop"))
+            frames.extend([
                 _sse(
                     {
                         "type": "message_delta",
-                        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                        "delta": {
+                            "stop_reason": "tool_use" if tool_blocks else "end_turn",
+                            "stop_sequence": None,
+                        },
                         "usage": anthropic_usage,
                     },
                     "message_delta",
                 ),
                 _sse({"type": "message_stop"}, "message_stop"),
-            ]
+            ])
+            return frames
         if fmt == "responses":
+            frames = []
+            for pos, call in enumerate(_tool_calls()):
+                done = {
+                    "type": "response.function_call_arguments.done",
+                    "sequence_number": sequence,
+                    "item_id": call["id"],
+                    "output_index": pos,
+                    "arguments": call["arguments"],
+                }
+                sequence += 1
+                frames.append(_sse(done, "response.function_call_arguments.done"))
             payload = {
                 "type": "response.completed",
                 "sequence_number": sequence,
@@ -1144,14 +1316,39 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                             "status": "completed",
                             "role": "assistant",
                             "content": [{"type": "output_text", "text": result.text, "annotations": []}],
-                        }
+                        },
+                        *[
+                            {
+                                "type": "function_call",
+                                "id": call["id"],
+                                "call_id": call["id"],
+                                "name": call["name"],
+                                "arguments": call["arguments"],
+                            }
+                            for call in _tool_calls()
+                        ],
                     ],
                     "usage": _responses_usage_details(tokens, total),
                 },
             }
             sequence += 1
-            return [_sse(payload, "response.completed")]
-        return [
+            frames.append(_sse(payload, "response.completed"))
+            return frames
+        frames = []
+        if tool_blocks:
+            reason = result.finish_reason or "tool_calls"
+            if reason == "tool_use":
+                reason = "tool_calls"
+            frames.append(_sse(
+                {
+                    "id": stream_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": reason}],
+                }
+            ))
+        frames.extend([
             _sse(
                 {
                     "id": stream_id,
@@ -1163,7 +1360,8 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 }
             ),
             "data: [DONE]\n\n",
-        ]
+        ])
+        return frames
 
     def _error(classified: ApplicationException) -> list[str]:
         if fmt == "anthropic":
@@ -1184,12 +1382,120 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         }
         return [_sse(payload), "data: [DONE]\n\n"]
 
+    def _tool_key(delta: dict[str, Any]) -> str:
+        if delta.get("id"):
+            return str(delta["id"])
+        index = delta.get("index")
+        return f"index:{index if index is not None else len(tool_blocks)}"
+
+    def _tool_frame(delta: dict[str, Any]) -> list[str]:
+        nonlocal sequence, text_open
+        key = _tool_key(delta)
+        is_new = key not in tool_index
+        if is_new:
+            tool_index[key] = len(tool_blocks)
+            tool_blocks.append({"id": delta.get("id") or "", "name": delta.get("name") or ""})
+        pos = tool_index[key]
+        if delta.get("id"):
+            tool_blocks[pos]["id"] = delta["id"]
+        if delta.get("name") and not tool_blocks[pos]["name"]:
+            tool_blocks[pos]["name"] = delta["name"]
+        args = delta.get("arguments_delta") or ""
+        if fmt == "anthropic":
+            frames = []
+            if is_new:
+                if text_open:
+                    frames.append(_sse({"type": "content_block_stop", "index": 0}, "content_block_stop"))
+                    text_open = False
+                frames.append(_sse(
+                    {
+                        "type": "content_block_start",
+                        "index": 1 + pos,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": tool_blocks[pos]["id"],
+                            "name": tool_blocks[pos]["name"],
+                        },
+                    },
+                    "content_block_start",
+                ))
+            if args:
+                frames.append(_sse(
+                    {
+                        "type": "content_block_delta",
+                        "index": 1 + pos,
+                        "delta": {"type": "input_json_delta", "partial_json": args},
+                    },
+                    "content_block_delta",
+                ))
+            return frames
+        if fmt == "responses":
+            frames = []
+            call_id = tool_blocks[pos]["id"] or f"call_{pos}"
+            if is_new:
+                added = {
+                    "type": "response.output_item.added",
+                    "sequence_number": sequence,
+                    "output_index": pos,
+                    "item": {
+                        "type": "function_call",
+                        "id": call_id,
+                        "call_id": call_id,
+                        "name": tool_blocks[pos]["name"],
+                        "arguments": "",
+                    },
+                }
+                sequence += 1
+                frames.append(_sse(added, "response.output_item.added"))
+            if args:
+                frames.append(_sse(
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "sequence_number": sequence,
+                        "item_id": call_id,
+                        "output_index": pos,
+                        "delta": args,
+                    },
+                    "response.function_call_arguments.delta",
+                ))
+                sequence += 1
+            return frames
+        entry: dict[str, Any] = {"index": pos}
+        if delta.get("id"):
+            entry["id"] = delta["id"]
+        function: dict[str, Any] = {}
+        if delta.get("name"):
+            function["name"] = delta["name"]
+        if args:
+            function["arguments"] = args
+        if function:
+            entry["function"] = function
+        delta_payload: dict[str, Any] = {"tool_calls": [entry]}
+        if is_new:
+            delta_payload["role"] = "assistant"
+        return [_sse(
+            {
+                "id": stream_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta_payload, "finish_reason": None}],
+            }
+        )]
+
     model = prepared.unified.model_identifier
+    tool_kwargs = _tool_kwargs(prepared.adapter.chat_stream, prepared.unified)
+    tool_blocks: list[dict[str, Any]] = []
+    tool_index: dict[str, int] = {}
+    text_open = True
     for frame in _open():
         yield frame
     try:
-        async for chunk in prepared.adapter.chat_stream(prepared.messages):
+        async for chunk in prepared.adapter.chat_stream(prepared.messages, **tool_kwargs):
             _absorb(result, chunk)
+            if chunk.tool_call_delta:
+                for frame in _tool_frame(chunk.tool_call_delta):
+                    yield frame
             if chunk.delta:
                 result.text += chunk.delta
                 for frame in _delta(chunk.delta):
@@ -1225,7 +1531,8 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                            output_text=result.text, status="completed",
                            latency_ms=latency_ms, tokens=tokens)
         # Guardrail post on streams is audit-only (delivery already happened).
-        _guardrail_post(db, prepared, result.text, allow_block=False)
+        _guardrail_post(db, prepared, result.text, allow_block=False,
+                            tool_calls=result.tool_calls)
         for frame in _close(tokens, total):
             yield frame
     except asyncio.CancelledError:
@@ -1236,7 +1543,8 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 output_text=result.text,
                 status="partial" if (result.text or "").strip() else "cancelled",
                 latency_ms=(time.monotonic() - prepared.started) * 1000)
-            _guardrail_post(db, prepared, result.text, allow_block=False)
+            _guardrail_post(db, prepared, result.text, allow_block=False,
+                                tool_calls=result.tool_calls)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="cancelled",
@@ -1256,7 +1564,8 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 output_text=result.text,
                 status="partial" if (result.text or "").strip() else "cancelled",
                 latency_ms=(time.monotonic() - prepared.started) * 1000)
-            _guardrail_post(db, prepared, result.text, allow_block=False)
+            _guardrail_post(db, prepared, result.text, allow_block=False,
+                                tool_calls=result.tool_calls)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="cancelled",

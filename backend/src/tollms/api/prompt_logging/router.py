@@ -15,8 +15,6 @@ from tollms.api.prompt_logging.schemas import (
     RetentionRead,
     SettingsRead,
     SettingsUpdate,
-    TeamRef,
-    TeamStateUpdate,
 )
 from tollms.core.deps import get_db
 from tollms.core.security import require_active_user
@@ -39,14 +37,6 @@ def write_settings(data: SettingsUpdate,
     return service.upsert_settings(db, user.id, data)
 
 
-@router.put("/settings/teams/{team_id}", response_model=SettingsRead)
-def write_team_state(team_id: uuid.UUID, data: TeamStateUpdate,
-                     org_id: uuid.UUID | None = None,
-                     db: Session = Depends(get_db),
-                     user: User = Depends(require_active_user)) -> SettingsRead:
-    return service.set_team_state(db, user.id, org_id, team_id, data.enabled)
-
-
 @router.put("/settings/keys/{key_id}", response_model=SettingsRead)
 def write_key_state(key_id: uuid.UUID, data: KeyStateUpdate,
                     org_id: uuid.UUID | None = None,
@@ -55,20 +45,12 @@ def write_key_state(key_id: uuid.UUID, data: KeyStateUpdate,
     return service.set_key_state(db, user.id, org_id, key_id, data.enabled)
 
 
-@router.get("/teams", response_model=list[TeamRef])
-def team_list(org_id: uuid.UUID | None = None,
-              db: Session = Depends(get_db),
-              user: User = Depends(require_active_user)) -> list[TeamRef]:
-    return service.list_teams(db, user.id, org_id)
-
-
 @router.get("/logs", response_model=LogList)
 def list_prompt_logs(
     response: Response,
     org_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
     key_id: uuid.UUID | None = Query(default=None, alias="key_id"),
-    team_id: uuid.UUID | None = None,
     provider_id: uuid.UUID | None = None,
     model_id: uuid.UUID | None = None,
     status: str | None = Query(default=None, max_length=32),
@@ -82,7 +64,7 @@ def list_prompt_logs(
 ) -> LogList:
     rows, next_cursor = service.list_logs(
         db, user.id, org_id=org_id, user_id=user_id, key_id=key_id,
-        team_id=team_id, provider_id=provider_id, model_id=model_id,
+        provider_id=provider_id, model_id=model_id,
         status=status, date_from=date_from, date_to=date_to, q=q,
         limit=limit, cursor=cursor)
     if next_cursor is not None:

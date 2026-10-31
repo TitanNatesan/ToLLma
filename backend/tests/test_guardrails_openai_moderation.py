@@ -26,7 +26,8 @@ G = "/api/v1/guardrails"
 
 def _policy(name: str = "Mod", **kw) -> dict:
     return {"name": name, "severity": "high", "enforcement": "block",
-            "stage": "both", "is_enabled": True, "failure_action": "allow", **kw}
+            "stage": "both", "is_enabled": True, "failure_action": "allow",
+            "rules": [{"category": "harmful_content"}], **kw}
 
 
 def _transport(handler) -> httpx.MockTransport:

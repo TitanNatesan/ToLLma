@@ -127,7 +127,8 @@ def test_effective_and_org_isolation(client: TestClient, user_factory) -> None:
     other = _verified_client("stranger@tollma.ai")
     assert other.get(f"{G}/effective", params={"org_id": oid}).status_code == 404
     # Owner creates an org policy with the perm.
-    r = client.post(G, json=_policy("OrgP", org_id=oid, enforcement="block"))
+    r = client.post(G, json=_policy("OrgP", org_id=oid, enforcement="block",
+                              rules=[{"category": "pii"}]))
     assert r.status_code == 201, r.text
     assert r.json()["org_id"] == oid
 
@@ -136,3 +137,25 @@ def test_triggers_filters(client: TestClient, user_factory) -> None:
     user_factory()
     assert client.get(f"{G}/triggers").json() == []
     assert client.get(f"{G}/triggers/{uuid.uuid4()}").status_code == 404
+
+
+def test_block_enforcement_requires_rules(client: TestClient, user_factory) -> None:
+    """Block + empty rules is 422 (never silent match-all); warn stays legal."""
+    user_factory()
+    # Create: block without rules rejected, with a rule accepted.
+    r = client.post(G, json=_policy("NoRules", enforcement="block"))
+    assert r.status_code == 422, r.text
+    r = client.post(G, json=_policy("WarnEmpty", enforcement="warn"))
+    assert r.status_code == 201, r.text
+    pid = client.post(G, json=_policy("HasRules", enforcement="block",
+                                      rules=[{"category": "pii"}])).json()["id"]
+    # Update: clearing rules on a block policy 422s.
+    r = client.patch(f"{G}/{pid}", json={"rules": []})
+    assert r.status_code == 422, r.text
+    # Update: flipping a rule-less warn policy to block 422s.
+    wid = client.post(G, json=_policy("WarnFlip", enforcement="warn")).json()["id"]
+    r = client.patch(f"{G}/{wid}", json={"enforcement": "block"})
+    assert r.status_code == 422, r.text
+    # Update: unrelated field touch on a ruled block policy stays 200.
+    r = client.patch(f"{G}/{pid}", json={"description": "keeps rules"})
+    assert r.status_code == 200, r.text

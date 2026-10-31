@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from tollms.models.api_key import ApiKey
     from tollms.models.guardrail import GuardrailPolicy, GuardrailTrigger
     from tollms.models.benchmark import BenchmarkRun
-    from tollms.models.prompt_logging import PromptLog, PromptLoggingSetting, PromptLoggingTeamTarget
+    from tollms.models.prompt_logging import PromptLog, PromptLoggingSetting
     from tollms.models.provider import Provider
 
 
@@ -165,7 +165,6 @@ class Team(SoftDeleteMixin, TimestampedModel):
     organization: Mapped[Organization] = relationship(back_populates="teams")
     team_memberships: Mapped[list["TeamMembership"]] = relationship(back_populates="team")
     team_sets: Mapped[list["TeamPermissionSet"]] = relationship(back_populates="team")
-    prompt_logging_targets: Mapped[list["PromptLoggingTeamTarget"]] = relationship(back_populates="team")
 
 
 class TeamMembership(TimestampedModel):

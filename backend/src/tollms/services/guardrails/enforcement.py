@@ -52,6 +52,7 @@ async def check_pre(
     request_id: str | None = None,
     generation_id: uuid.UUID | None = None,
     ctx: dict[str, Any] | None = None,
+    action_text: str | None = None,
 ) -> str | None:
     """Returns a warning notice when any applicable policy warns, else None.
     Raises ForbiddenError on the highest-severity blocking verdict (org
@@ -65,9 +66,11 @@ async def check_pre(
     for policy in resolved.applied:
         if not evaluation_engine.policy_allows_pre(policy):
             continue
+        action_scoped = (action_text[:MAX_INPUT_CHARS]
+                         if action_text is not None else None)
         result = await evaluation_engine.evaluate_policy(
             db, policy, (text or "")[:MAX_INPUT_CHARS], stage="pre", ctx=ctx,
-            llm_user_id=user_id)
+            llm_user_id=user_id, action_text=action_scoped)
         action = evaluation_engine.effective_action(policy, result)
         _aftermath(db, policy, result, action, stage="pre", user_id=user_id,
                    org_id=org_id, provider_id=provider_id, model_id=model_id,
@@ -109,10 +112,13 @@ async def record_post(
     generation_id: uuid.UUID | None = None,
     allow_block: bool = False,
     ctx: dict[str, Any] | None = None,
+    action_text: str | None = None,
 ) -> str:
     """Audit one output. Never raises. Returns the worst action so a
     non-streaming buffer_then_inspect caller can withhold delivery."""
-    if not (text or "").strip():
+    if not (text or "").strip() and not (action_text or "").strip():
+        # An emitted tool_use with no surrounding text is still an invocation
+        # attempt, so an action-only post corpus must still be scanned.
         return "allowed"
     resolved = resolution_engine.resolve_applicable(
         db, user_id=user_id, org_id=org_id, provider_id=provider_id,
@@ -123,9 +129,11 @@ async def record_post(
         if not evaluation_engine.policy_allows_post(policy):
             continue
         try:
+            action_scoped = (action_text[:MAX_INPUT_CHARS]
+                             if action_text is not None else None)
             result = await evaluation_engine.evaluate_policy(
                 db, policy, (text or "")[:MAX_INPUT_CHARS], stage="post", ctx=ctx,
-            llm_user_id=user_id)
+            llm_user_id=user_id, action_text=action_scoped)
         except Exception:
             logger.warning("guardrail post evaluation failed", exc_info=True)
             continue

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  DETECTION_STEP_COPY,
   EMPTY_FILTER,
+  SCOPE_STEP_COPY,
+  WIZARD_SCOPE_OPTIONS,
   buildEvaluatorConfigs,
   buildPolicyPayload,
+  buildReviewSummary,
   evaluatorSummary,
   filterPolicies,
   isPolicyLocked,
@@ -10,6 +14,7 @@ import {
   resolveKeyAssignments,
   scopeSummary,
   toggleAssignment,
+  unknownScopeKeys,
   validateWizardStep,
   type GuardrailDraft,
 } from "../components/policyLogic";
@@ -91,9 +96,11 @@ describe("validateWizardStep", () => {
     expect(validateWizardStep(2, draft({ evaluator: "openai_moderation", credentials: { api_key: "  " } }))).toMatch(/api key/i);
     expect(validateWizardStep(2, draft({ evaluator: "openai_moderation", credentials: { api_key: "sk-test" } }))).toBeNull();
   });
-  it("requires targets for scoped policies", () => {
-    expect(validateWizardStep(3, draft({ scope: "targeted" }))).toMatch(/provider|model|key/i);
-    expect(validateWizardStep(3, draft({ scope: "targeted", provider_ids: ["x"] }))).toBeNull();
+  it("requires keys for key-scoped policies (global + keys only)", () => {
+    expect(validateWizardStep(3, draft({ scope: "keys" }))).toMatch(/key/i);
+    expect(validateWizardStep(3, draft({ scope: "keys", key_ids: ["k1"] }))).toBeNull();
+    expect(validateWizardStep(3, draft({ scope: "global" }))).toBeNull();
+    expect(validateWizardStep(3, draft({ scope: "targeted" }))).toMatch(/global or specific API keys/i);
   });
   it("bounds threshold and timeout", () => {
     expect(validateWizardStep(4, draft({ threshold: 2 }))).toMatch(/threshold/i);
@@ -119,13 +126,13 @@ describe("buildPolicyPayload", () => {
     expect(body).not.toHaveProperty("evaluator");
     expect(body).not.toHaveProperty("categories");
   });
-  it("maps targeted ids to provider/key assignments", () => {
+  it("maps key ids to key assignments only (global + keys scope model)", () => {
     const body = buildPolicyPayload(
-      draft({ scope: "targeted", provider_ids: ["pr"], key_ids: ["k1"] }),
+      draft({ scope: "keys", key_ids: ["k1"] }),
       EXTRAS,
     );
-    expect(body.assignments).toContainEqual({ scope_type: "provider", provider_id: "pr", applies_internal: true, applies_external: true });
-    expect(body.assignments).toContainEqual({ scope_type: "key", api_key_id: "k1", applies_internal: true, applies_external: true });
+    expect(body.assignments).toEqual([{ scope_type: "key", api_key_id: "k1", applies_internal: true, applies_external: true }]);
+    expect(body.assignments?.some((a) => a.scope_type === "provider")).toBe(false);
   });
 });
 

@@ -602,6 +602,18 @@ def _chat_estimate(db: Session, provider: Provider, model: AIModel, text: str) -
     return tokens, cost
 
 
+def _guardrail_action_text(history: list[ChatMessage]) -> str:
+    """Tool-action corpus for the internal plane: user-role content only.
+
+    In-app chat sends no tool definitions and history carries no invocation
+    envelopes (ChatMessages are built with content only), so user content IS
+    the action corpus. System prompts and assistant text are excluded —
+    same attempted-ACTIONS semantics as the public plane.
+    """
+    return "\n".join(m.content for m in history
+                      if (m.role or "").lower() == "user" and m.content)
+
+
 def _enforce_chat_key(
     db: Session,
     api_key: ApiKey | None,
@@ -614,6 +626,7 @@ def _enforce_chat_key(
     client_ip: str | None,
     pre_text: str | None = None,
     pre_user_id: uuid.UUID | None = None,
+    pre_action_text: str | None = None,
 ) -> tuple[key_engine.KeyContext | None, Decimal | None]:
     """Shared in-app key-policy gate. No-op on the legacy keyless path.
 
@@ -634,6 +647,7 @@ def _enforce_chat_key(
                 api_key_id=api_key.id if api_key is not None else None,
                 source="internal",
                 endpoint="chat", request_id=request_id,
+                action_text=pre_action_text,
             )
         except (ForbiddenError, NotFoundError, ValidationError):
             raise
@@ -661,6 +675,7 @@ def _guardrail_post(
     generation_id: uuid.UUID | None = None,
     request_id: str | None = None,
     allow_block: bool = False,
+    action_text: str | None = None,
 ) -> str:
     """Guardrail post hook: audit-first, never raises, never touches Valkey
     usage counters. Returns the worst action; non-streaming callers withhold
@@ -673,7 +688,8 @@ def _guardrail_post(
             org_id=org_attribution(db, provider, user_id),
             provider_id=provider.id, model_id=model.id, api_key_id=api_key_id,
             source="internal", endpoint="chat", request_id=request_id,
-            generation_id=generation_id, allow_block=allow_block)
+            generation_id=generation_id, allow_block=allow_block,
+            action_text=action_text)
     except Exception:
         logger.warning("guardrail post hook failed", exc_info=True)
         return "allowed"
@@ -1133,6 +1149,7 @@ async def run_chat(
             estimated_tokens=est_tokens, estimated_cost=est_cost,
             request_id=request_id, client_ip=client_ip,
             pre_text=history_text, pre_user_id=user_id,
+            pre_action_text=_guardrail_action_text(history),
         )
         if data.conversation_id is None:
             title = data.message[:60] or (f"Attachment: {rows[0].filename}"[:60] if rows else "New conversation")
@@ -1186,6 +1203,7 @@ async def run_chat(
             db, text=result.text, user_id=user_id, provider=provider,
             model=model, api_key_id=api_key_id, generation_id=assistant.id,
             request_id=request_id, allow_block=True,
+            action_text=result.text,
         )
         content = "[withheld by guardrail policy]" if guard_action == "blocked" else result.text
         if guard_action == "blocked" and assistant.content != content:
@@ -1524,6 +1542,7 @@ async def _setup_generation(
         estimated_tokens=est_tokens, estimated_cost=est_cost,
         request_id=request_id, client_ip=client_ip,
         pre_text=history_text, pre_user_id=user_id,
+        pre_action_text=_guardrail_action_text(history),
     )
     if data.conversation_id is None:
         title = data.message[:60] or (f"Attachment: {rows[0].filename}"[:60] if rows else "New conversation")
@@ -2102,6 +2121,7 @@ async def start_regeneration(
         estimated_tokens=est_tokens, estimated_cost=est_cost,
         request_id=request_id, client_ip=client_ip,
         pre_text=history_text, pre_user_id=user_id,
+        pre_action_text=_guardrail_action_text(history),
     )
 
     started_at = datetime.now(timezone.utc)

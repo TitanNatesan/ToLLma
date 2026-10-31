@@ -17,7 +17,6 @@ from tollms.models.organization import (
     Membership,
     MembershipState,
     Team,
-    TeamMembership,
 )
 from tollms.models.prompt_logging import PromptLog, PromptLoggingSetting
 from tollms.services.prompt_logging import capture as capture_engine
@@ -96,7 +95,7 @@ def _enable_personal(client: TestClient, **kw) -> dict:
 def test_personal_settings_default_and_upsert(client: TestClient, user_factory) -> None:
     user_factory()
     body = client.get(f"{PL}/settings").json()
-    assert body["enabled"] is False and body["team_ids"] == []
+    assert body["enabled"] is False and body["key_ids"] == []
     assert body["effective_summary"]["capture"] == "none"
 
     first = _enable_personal(client)
@@ -114,8 +113,8 @@ def test_settings_validation(client: TestClient, user_factory) -> None:
     assert client.put(f"{PL}/settings", json={"retention_days": 0}).status_code == 422
     assert client.put(f"{PL}/settings", json={"retention_days": 3651}).status_code == 422
     r = client.put(f"{PL}/settings",
-                   json={"enabled": True, "team_ids": [str(uuid.uuid4())]})
-    assert r.status_code == 422, r.text  # teams need an org workspace
+                   json={"enabled": True, "mode": "teams"})
+    assert r.status_code == 422, r.text  # team scope removed: global + keys only
 
 
 def test_org_settings_perm_gates(client: TestClient, db: Session, user_factory) -> None:
@@ -143,22 +142,27 @@ def test_org_settings_perm_gates(client: TestClient, db: Session, user_factory) 
         AuditLog.action == "prompt_logs.settings.update")) is not None
 
 
-def test_org_team_target_validation(client: TestClient, db: Session, user_factory) -> None:
-    user_factory()
+def test_org_key_target_validation(client: TestClient, db: Session, user_factory) -> None:
+    user = user_factory()
+    uid = uuid.UUID(user["id"])
     oid = _org(client)["id"]
-    team = _team(client, oid)
     stranger_client = _other("pl-t@tollma.ai")
-    stranger_team = _team(stranger_client, _org(stranger_client, "Other Org")["id"])
+    stranger_oid = _org(stranger_client, "Other Org")["id"]
+    stranger_key = _mk_key(db, _user_row(db, _me(stranger_client)["email"]),
+                           uuid.UUID(stranger_oid))
 
     r = client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True,
-                                           "mode": "teams", "team_ids": [stranger_team["id"]]})
-    assert r.status_code == 404, r.text  # cross-org team is a 404 oracle
+                                           "mode": "keys",
+                                           "key_ids": [str(stranger_key.id)]})
+    assert r.status_code == 404, r.text  # cross-org key is a 404 oracle
 
+    own_key = _mk_key(db, uid, uuid.UUID(oid))
     r = client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True,
-                                           "mode": "teams", "team_ids": [team["id"]]})
+                                           "mode": "keys",
+                                           "key_ids": [str(own_key.id)]})
     assert r.status_code == 200, r.text
-    assert r.json()["team_ids"] == [team["id"]]
-    assert r.json()["effective_summary"]["scope"] == {"teams": 1}
+    assert r.json()["key_ids"] == [str(own_key.id)]
+    assert r.json()["effective_summary"]["scope"] == {"keys": 1}
 
 
 def test_personal_upsert_skips_audit(client: TestClient, db: Session, user_factory) -> None:
@@ -251,36 +255,34 @@ def test_resolution_org_key_global(client: TestClient, db: Session, user_factory
         db, user_id=uid, org_id=org.id, api_key_id=org_key.id,
         key_provenance="organization")
     assert resolved.setting is not None and resolved.setting.id == setting.id
-    assert resolved.team_ids is None
+    assert resolved.match_source == "global"
 
 
-def test_resolution_teams_mode(client: TestClient, db: Session, user_factory) -> None:
+def test_resolution_keys_mode(client: TestClient, db: Session, user_factory) -> None:
     user = user_factory()
     uid = uuid.UUID(user["id"])
     org, mem = _mk_org_rows(db, uid)
-    setting = _seed_org_setting(db, org.id, mode="teams", capture_output=False)
-    team = _mk_team(db, org.id)
+    setting = _seed_org_setting(db, org.id, mode="keys", capture_output=False)
     org_key = _mk_key(db, uid, org.id)
+    other_key = _mk_key(db, uid, org.id)
 
-    def resolve():
+    def resolve(key):
         return resolution_engine.resolve_setting(
-            db, user_id=uid, org_id=org.id, api_key_id=org_key.id,
+            db, user_id=uid, org_id=org.id, api_key_id=key.id,
             key_provenance="organization")
 
     # Empty target list logs nothing (never falls back to global).
-    assert resolve().setting is None
+    assert resolve(org_key).setting is None
 
-    from tollms.models.prompt_logging import PromptLoggingTeamTarget
-    db.add(PromptLoggingTeamTarget(setting_id=setting.id, team_id=team.id))
+    from tollms.models.prompt_logging import PromptLoggingKeyTarget
+    db.add(PromptLoggingKeyTarget(setting_id=setting.id, api_key_id=org_key.id))
     db.commit()
-    # Target exists but caller not in the team: still nothing.
-    assert resolve().setting is None
+    # Unlisted key: still nothing.
+    assert resolve(other_key).setting is None
 
-    db.add(TeamMembership(team_id=team.id, membership_id=mem.id))
-    db.commit()
-    resolved = resolve()
+    resolved = resolve(org_key)
     assert resolved.setting is not None and resolved.setting.id == setting.id
-    assert resolved.team_ids == [str(team.id)]
+    assert resolved.match_source == "key"
 
 
 def test_resolution_multi_org_and_wrong_key(client: TestClient, db: Session, user_factory) -> None:
@@ -371,11 +373,11 @@ def test_capture_truncation(client: TestClient, db: Session, user_factory) -> No
     assert row.output_truncated is False
 
 
-def test_teams_empty_logs_nothing_end_to_end(client: TestClient, db: Session, user_factory) -> None:
+def test_keys_empty_logs_nothing_end_to_end(client: TestClient, db: Session, user_factory) -> None:
     user = user_factory()
     oid = _org(client)["id"]
     r = client.put(f"{PL}/settings", json={"org_id": oid, "enabled": True,
-                                           "mode": "teams",
+                                           "mode": "keys",
                                            "capture_input": True,
                                            "capture_output": True})
     assert r.status_code == 200, r.text
@@ -450,8 +452,6 @@ def test_forged_filter_ids_oracle(client: TestClient, db: Session, user_factory,
     assert client.get(f"{PL}/logs",
                       params={"provider_id": str(uuid.uuid4())}).status_code == 404
     assert client.get(f"{PL}/logs", params={"model_id": m["id"]}).status_code == 200
-    assert client.get(f"{PL}/logs",
-                      params={"team_id": str(uuid.uuid4())}).status_code == 404
 
 
 def test_cross_workspace_detail_oracle(client: TestClient, db: Session, user_factory) -> None:
@@ -594,20 +594,18 @@ def test_org_manage_delete_gates(client: TestClient, db: Session, user_factory) 
         AuditLog.action == "prompt_logs.purge")) is not None
 
 
-def test_org_teams_and_retention_gates(client: TestClient, db: Session, user_factory) -> None:
+def test_org_retention_gates(client: TestClient, db: Session, user_factory) -> None:
     user_factory()
     stranger = _other("pl-g@tollma.ai")
     oid = _org(client)["id"]
+    # Team surface removed: no /teams endpoint in any workspace.
     assert stranger.get(f"{PL}/teams", params={"org_id": oid}).status_code == 404
+    assert client.get(f"{PL}/teams").status_code == 404
     assert stranger.get(f"{PL}/retention", params={"org_id": oid}).status_code == 404
     assert stranger.get(f"{PL}/logs", params={"org_id": oid}).status_code == 404
 
     member, moid = _roster(client, db, ["PromptLogs.Read"])
-    teams = member.get(f"{PL}/teams", params={"org_id": moid}).json()
-    assert teams == []
     assert member.get(f"{PL}/retention", params={"org_id": moid}).json()["effective_days"] == 90
-    # Personal teams query is empty (personal workspaces have no teams).
-    assert client.get(f"{PL}/teams").json() == []
 
 
 def test_list_meta_derived_fields(client: TestClient, db: Session, user_factory) -> None:

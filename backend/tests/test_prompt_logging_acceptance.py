@@ -20,8 +20,6 @@ from tollms.models.organization import (
     Invitation,
     Membership,
     MembershipState,
-    Team,
-    TeamMembership,
 )
 from tollms.models.prompt_logging import PromptLog, PromptLoggingSetting
 from tollms.services import generation as generation_engine
@@ -81,13 +79,6 @@ def _mk_key(db: Session, owner_id: uuid.UUID, org_id=None) -> ApiKey:
     db.add(key)
     db.flush()
     return key
-
-
-def _mk_team(db: Session, org_id, name: str = "T") -> Team:
-    team = Team(org_id=org_id, name=f"{name}-{uuid.uuid4().hex[:6]}")
-    db.add(team)
-    db.flush()
-    return team
 
 
 def _rows(db: Session) -> list:
@@ -185,44 +176,40 @@ def test_accept_org_global_disabled_writes_no_row(client: TestClient, db: Sessio
 
 # --- team-targeting matrix -----------------------------------------------------
 
-def test_accept_team_targeting_matrix(client: TestClient, db: Session, user_factory) -> None:
+def test_accept_key_targeting_matrix(client: TestClient, db: Session, user_factory) -> None:
     user = user_factory()
     uid = uuid.UUID(user["id"])
-    org, owner_mem = _mk_org_rows(db, uid, "TM")
-    team = _mk_team(db, org.id)
+    org, _ = _mk_org_rows(db, uid, "TM")
     mate = user_factory("pl-mate@tollma.ai")
     mate_uid = uuid.UUID(mate["id"])
-    mate_mem = Membership(org_id=org.id, user_id=mate_uid, is_root=False,
-                          state=MembershipState.ACTIVE.value)
-    db.add(mate_mem)
+    db.add(Membership(org_id=org.id, user_id=mate_uid, is_root=False,
+                      state=MembershipState.ACTIVE.value))
     db.flush()
     setting = PromptLoggingSetting(org_id=org.id, user_id=None, enabled=True,
-                                   mode="teams", capture_input=True,
+                                   mode="keys", capture_input=True,
                                    capture_output=True)
     db.add(setting)
     db.flush()
-    from tollms.models.prompt_logging import PromptLoggingTeamTarget
-    db.add(PromptLoggingTeamTarget(setting_id=setting.id, team_id=team.id))
+    from tollms.models.prompt_logging import PromptLoggingKeyTarget
+    mate_key = _mk_key(db, mate_uid, org.id)
+    db.add(PromptLoggingKeyTarget(setting_id=setting.id, api_key_id=mate_key.id))
     db.commit()
     owner_key = _mk_key(db, uid, org.id)
-    mate_key = _mk_key(db, mate_uid, org.id)
 
-    # Non-selected-team member (owner not in team): NOT logged.
+    # Unlisted key (owner): NOT logged.
     assert capture_engine.capture_post(
         db, input_text="in", output_text="out", user_id=uid, org_id=org.id,
         api_key_id=owner_key.id, key_provenance="organization",
         endpoint="chat", source="external", request_id="acc-t0",
         status="completed") is None
 
-    # Selected-team member with ORG key: logged with team tag.
-    db.add(TeamMembership(team_id=team.id, membership_id=mate_mem.id))
-    db.commit()
+    # Listed key: logged with key match source.
     row = capture_engine.capture_post(
         db, input_text="in", output_text="out", user_id=mate_uid, org_id=org.id,
         api_key_id=mate_key.id, key_provenance="organization",
         endpoint="chat", source="external", request_id="acc-t1", status="completed")
     assert row is not None and row.org_id == org.id
-    assert str(team.id) in (row.team_ids or [])
+    assert row.match_source == "key"
 
     # Same member with PERSONAL key, personal logging off: NOT org-logged, no row.
     personal_key = _mk_key(db, mate_uid)
@@ -310,11 +297,11 @@ def test_accept_forged_workspace_and_filter_ids(client: TestClient, db: Session,
     # Forged workspace: random org the caller never joined.
     assert client.get(f"{PL}/logs",
                       params={"org_id": str(uuid.uuid4())}).status_code == 404
-    # Personal scope has no teams: any team_id is a 404 oracle.
+    # Unknown list filters are ignored: a stray team_id no longer filters.
     client.put(f"{PL}/settings", json={"enabled": True, "capture_input": True,
                                        "capture_output": True})
     assert client.get(f"{PL}/logs",
-                      params={"team_id": str(uuid.uuid4())}).status_code == 404
+                      params={"team_id": str(uuid.uuid4())}).status_code == 200
     # Org scope, forged non-member user and foreign (personal) key.
     assert client.get(f"{PL}/logs", params={"org_id": oid,
                                              "user_id": str(uuid.uuid4())}).status_code == 404

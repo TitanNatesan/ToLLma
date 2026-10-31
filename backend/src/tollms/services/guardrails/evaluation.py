@@ -31,6 +31,7 @@ async def evaluate_policy(
     stage: str,
     ctx: dict[str, Any] | None = None,
     llm_user_id=None,
+    action_text: str | None = None,
 ) -> dict[str, Any]:
     """One policy over one text blob. Never raises — failures degrade per
     failure_action (allow|block) with failure_kind recorded."""
@@ -38,7 +39,21 @@ async def evaluate_policy(
     if ctx.get("skip_guardrails"):
         return _verdict("allow", 1.0, [], "recursion guard", "deterministic", None, 0.0)
     started = time.monotonic()
-    findings = det.scan_text(text or "")
+    selected = _selected_categories(policy)
+    if action_text is None:
+        findings = [f for f in det.scan_text(text or "")
+                    if selected is None or f.get("category") in selected]
+    else:
+        # Tool Action governs attempted ACTIONS, never static capability
+        # declarations: the tool_action finding comes from the action corpus
+        # only (user content + invocation names/inputs). Every other category
+        # keeps the full-text findings (definitions still count for
+        # injection/secret/PII). action_text=None preserves legacy behavior.
+        findings = [f for f in det.scan_text(text or "")
+                    if f.get("category") != "tool_action"
+                    and (selected is None or f.get("category") in selected)]
+        if selected is None or "tool_action" in selected:
+            findings += det.scan_tool_action(action_text or "")
     findings += _structure_findings(policy, text or "")
     timeout_ms = policy.evaluator_timeout_ms or 5000
     worst = "allow"
@@ -60,13 +75,17 @@ async def evaluate_policy(
             continue  # escalation round only
         try:
             result = await _run_evaluator(etype, config, text or "", timeout_ms)
-            if result["verdict"] in ("warn", "block"):
+            # Category isolation: out-of-scope engine signals never fire.
+            # Rule-less policies (selected None) keep match-all behavior.
+            matched = _in_scope_categories(result.get("matched_categories"), selected)
+            in_scope = selected is None or bool(matched)
+            if result["verdict"] in ("warn", "block") and in_scope:
                 positive = True
-            if _LEVEL_RANK[result["verdict"]] > _LEVEL_RANK[worst]:
+            if in_scope and _LEVEL_RANK[result["verdict"]] > _LEVEL_RANK[worst]:
                 worst = result["verdict"]
                 evaluator_type = etype
             confidence = min(confidence, float(result.get("confidence", 0.5)))
-            categories.extend(result.get("matched_categories", []) or [])
+            categories.extend(matched)
             if result.get("reason"):
                 reasons.append(det.redact_text(str(result["reason"]))[:200])
         except Exception as exc:
@@ -91,13 +110,15 @@ async def evaluate_policy(
                 user_id=llm_user_id,
                 scope_org_id=policy.org_id,
             )
-            if result["verdict"] in ("warn", "block"):
+            matched = _in_scope_categories(result.get("matched_categories"), selected)
+            in_scope = selected is None or bool(matched)
+            if result["verdict"] in ("warn", "block") and in_scope:
                 positive = True
-            if _LEVEL_RANK[result["verdict"]] > _LEVEL_RANK[worst]:
+            if in_scope and _LEVEL_RANK[result["verdict"]] > _LEVEL_RANK[worst]:
                 worst = result["verdict"]
                 evaluator_type = "llm"
             confidence = min(confidence, float(result.get("confidence", 0.5)))
-            categories.extend(result.get("matched_categories", []) or [])
+            categories.extend(matched)
             if result.get("reason"):
                 reasons.append(det.redact_text(str(result["reason"]))[:200])
         except Exception as exc:
@@ -142,6 +163,34 @@ async def _run_evaluator(etype: str, config, text: str, timeout_ms: int) -> dict
         return await jev_engine.evaluate(text, creds, _wanted_categories(config),
                                          timeout_ms=timeout_ms)
     raise ValueError(f"unknown evaluator type: {etype}")
+
+
+def _selected_categories(policy: GuardrailPolicy) -> set[str] | None:
+    """Live rule categories as an allow-list for deterministic findings.
+
+    None when the policy configures no live rules (legacy rule-less
+    policies keep unfiltered match-all behavior). Otherwise only findings
+    in the set contribute to positive/blocked — unselected categories
+    (e.g. tool_action on a secret-leakage-only policy) never fire.
+    _structure_findings needs no filtering here: it only emits for
+    invalid_structure rules the policy selected.
+    """
+    try:
+        cats = {str(r.category) for r in (policy.rules or [])
+                if not getattr(r, "is_deleted", False) and getattr(r, "category", None)}
+    except Exception:
+        return None
+    return cats or None
+
+
+def _in_scope_categories(matched: Any, selected: set[str] | None) -> list[str]:
+    """Intersect engine result categories with the policy allow-list.
+
+    selected None (rule-less legacy policy) keeps match-all behavior.
+    """
+    if selected is None:
+        return list(matched or [])
+    return [c for c in (matched or []) if c in selected]
 
 
 def _wanted_categories(config) -> list[str]:

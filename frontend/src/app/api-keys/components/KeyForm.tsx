@@ -431,7 +431,7 @@ export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAss
               <Section
                 icon={ShieldCheck}
                 title="Prompt logging"
-                description="Override workspace logging for this key. Inherited follows the workspace and team policy."
+                description="Override workspace logging for this key. Inherited follows the workspace logging policy (global or selected keys)."
               >
                 <KeyLoggingField
                   orgId={isOrg && context.type === "org" ? context.orgId : undefined}

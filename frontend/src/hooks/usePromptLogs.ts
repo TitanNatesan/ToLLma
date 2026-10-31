@@ -7,12 +7,10 @@ import {
   getPromptLogRetention,
   getPromptLoggingSettings,
   isPromptLogStatus,
-  listPromptLogTeams,
   listPromptLogs,
   purgePromptLogs,
   updateKeyLoggingState,
   updatePromptLoggingSettings,
-  updateTeamLoggingState,
   type PromptLogFilters,
   type PromptLoggingUpdateInput,
 } from "@/services/promptLogs";
@@ -23,7 +21,6 @@ export const PROMPT_LOGS_KEYS = {
   list: (filters: PromptLogFilters) => ["prompt-logs", "list", filters] as const,
   detail: (id: string, orgId?: string | null) =>
     ["prompt-logs", "detail", id, orgId ?? "personal"] as const,
-  teams: (orgId?: string | null) => ["prompt-logs", "teams", orgId ?? "personal"] as const,
   retention: (orgId?: string | null) => ["prompt-logs", "retention", orgId ?? "personal"] as const,
 };
 
@@ -50,20 +47,6 @@ export function useUpdatePromptLoggingSettings(orgId?: string | null) {
       updatePromptLoggingSettings(scope ? { ...body, org_id: scope } : body),
     onSuccess: async () => {
       // No optimistic state: invalidate, then refetch the persisted policy.
-      await qc.invalidateQueries({ queryKey: PROMPT_LOGS_KEYS.all });
-      await qc.refetchQueries({ queryKey: PROMPT_LOGS_KEYS.settings(scope) });
-    },
-  });
-}
-
-/** Per-team override (immediate); invalidates the persisted policy on success. */
-export function useUpdateTeamLoggingState(orgId?: string | null) {
-  const qc = useQueryClient();
-  const scope = orgId ?? undefined;
-  return useMutation({
-    mutationFn: (p: { teamId: string; enabled: boolean }) =>
-      updateTeamLoggingState(scope, p.teamId, p.enabled),
-    onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: PROMPT_LOGS_KEYS.all });
       await qc.refetchQueries({ queryKey: PROMPT_LOGS_KEYS.settings(scope) });
     },
@@ -105,16 +88,6 @@ export function usePromptLogDetail(id: string | null, orgId?: string | null, ena
     queryKey: PROMPT_LOGS_KEYS.detail(id ?? "", orgId ?? undefined),
     queryFn: () => getPromptLog(id!, orgId ?? undefined),
     enabled: !!id && enabled,
-    retry: noRetryOn404,
-  });
-}
-
-export function usePromptLogTeams(orgId?: string | null, enabled = true) {
-  return useQuery({
-    queryKey: PROMPT_LOGS_KEYS.teams(orgId ?? undefined),
-    queryFn: () => listPromptLogTeams(orgId ?? undefined),
-    enabled,
-    staleTime: 60_000,
     retry: noRetryOn404,
   });
 }

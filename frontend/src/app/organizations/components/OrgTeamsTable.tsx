@@ -7,20 +7,13 @@ import { toast } from "@/lib/notify";
 import {
   Badge, Button, Card, CardContent, Checkbox, DataTable, type DataTableColumn,
   DetailPanel, Dialog, DialogContent, DialogDescription, DialogTitle,
-  EmptyState, ErrorState, Field, Input, LoadingState, SearchInput, Select, Switch,
+  EmptyState, ErrorState, Field, Input, LoadingState, SearchInput, Select,
 } from "@/components/ui";
 import { ConfirmDialog } from "./Dialogs";
 import { PermissionSetPicker, PickerReview } from "./PermissionSetPicker";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { isForbiddenError, useOrgAudit, useOrgMutations, usePermissionCatalog, useTeam, useTeamMutations, useTeams } from "@/hooks/useOrgs";
 import { parseApiError } from "@/lib/errors";
-import { usePromptLoggingSettings, useUpdateTeamLoggingState } from "@/hooks/usePromptLogs";
-import {
-  defaultTeamLoggingEnabled,
-  isGlobalLoggingLocked,
-  resolveTeamLogging,
-  scopeEffectiveLine,
-} from "@/app/prompt-logs/components/promptLogLogic";
 import { ApiError } from "@/services/api";
 import { PERMISSION_GROUPS, type Member, type PermissionSet, type Team } from "@/types/orgs";
 
@@ -136,7 +129,7 @@ export function OrgTeamsFilters({ value, onChange, layout = "horizontal" }: {
   );
 }
 
-export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissions, canReadAudit, canManageLogging, filters, onFilters, hideFilters, createOpen, onCreateOpen }: {
+export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissions, canReadAudit, filters, onFilters, hideFilters, createOpen, onCreateOpen }: {
   orgId: string;
   members: Member[];
   sets: PermissionSet[];
@@ -144,8 +137,8 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
   isRoot: boolean;
   myPermissions: string[];
   canReadAudit: boolean;
-  /** PromptLogs.Manage (or root): gates the team logging toggle. */
-  canManageLogging: boolean;
+  /** Accepted for API compatibility; team-level logging no longer exists. */
+  canManageLogging?: boolean;
   /** Controlled filter state (section sidebar). Defaults to internal state. */
   filters?: TeamFilters;
   onFilters?: (f: TeamFilters) => void;
@@ -292,60 +285,42 @@ export function OrgTeamsTable({ orgId, members, sets, perms, isRoot, myPermissio
 
       {createOpenValue && (
         <TeamCreateDialog orgId={orgId} sets={sets} canAssignSets={perms.canAssignSets}
-          isRoot={isRoot} myPermissions={myPermissions} canManageLogging={canManageLogging}
+          isRoot={isRoot} myPermissions={myPermissions}
           onClose={() => setCreateOpen(false)} />
       )}
 
       <TeamDetailDrawer orgId={orgId} teamId={managing} members={members} sets={sets}
         perms={perms} labels={labels} isRoot={isRoot} myPermissions={myPermissions}
-        canReadAudit={canReadAudit} canManageLogging={canManageLogging} onClose={() => setManaging(null)} />
+        canReadAudit={canReadAudit} onClose={() => setManaging(null)} />
     </div>
   );
 }
 
-function TeamCreateDialog({ orgId, sets, canAssignSets, isRoot, myPermissions, canManageLogging, onClose }: {
+function TeamCreateDialog({ orgId, sets, canAssignSets, isRoot, myPermissions, onClose }: {
   orgId: string;
   sets: PermissionSet[];
   canAssignSets: boolean;
   isRoot: boolean;
   myPermissions: string[];
-  canManageLogging: boolean;
   onClose: () => void;
 }) {
   const mut = useTeamMutations(orgId);
-  const loggingPolicy = usePromptLoggingSettings(orgId);
-  const updateTeamState = useUpdateTeamLoggingState(orgId);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
-  // Logging override (null = untouched → inherit the workspace policy).
-  const [loggingTouched, setLoggingTouched] = useState<boolean | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const policyOk = !loggingPolicy.isError && !!loggingPolicy.data;
-  const loggingLocked = policyOk && isGlobalLoggingLocked(loggingPolicy.data);
-  const loggingDefault = policyOk ? defaultTeamLoggingEnabled(loggingPolicy.data, "") : false;
-  const loggingValue = loggingLocked ? true : (loggingTouched ?? loggingDefault);
 
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      const team = await mut.createTeam.mutateAsync({
+      await mut.createTeam.mutateAsync({
         name: name.trim(),
         description: description.trim() || undefined,
         setIds: canAssignSets && picked.length > 0 ? picked : undefined,
       });
-      // Only an explicit user choice touches logging; inherit sends nothing.
-      if (canManageLogging && !loggingLocked && loggingTouched !== null) {
-        try {
-          await updateTeamState.mutateAsync({ teamId: team.id, enabled: loggingTouched });
-        } catch (e) {
-          toast.error(parseApiError(e).message);
-        }
-      }
       toast.success(`Team "${name.trim()}" created.`);
       onClose();
     } catch (e) {
@@ -373,34 +348,6 @@ function TeamCreateDialog({ orgId, sets, canAssignSets, isRoot, myPermissions, c
                   placeholder="e.g. Handles weekend incidents…" maxLength={300} data-testid="org-team-description"
                   name="team-description" autoComplete="off" />
               </Field>
-              {policyOk && (
-                <Field label="Prompt logging">
-                  <div className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800">
-                    <div>
-                      <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                        Log this team&apos;s requests{loggingLocked ? " (locked on)" : ""}
-                      </p>
-                      <p className="text-[11px] text-zinc-400" data-testid="org-team-logging-effective">
-                        {loggingLocked
-                          ? "Locked on by the global workspace policy."
-                          : loggingTouched === null
-                            ? `Inherits the workspace policy (${loggingDefault ? "on" : "off"}).`
-                            : `Override: ${loggingTouched ? "on" : "off"}.`}
-                      </p>
-                    </div>
-                    <Switch
-                      checked={loggingValue}
-                      disabled={busy || !canManageLogging || loggingLocked || loggingPolicy.isPending}
-                      onCheckedChange={(v) => setLoggingTouched(v)}
-                      aria-label="Log this team's requests"
-                      data-testid="org-team-logging-toggle"
-                    />
-                  </div>
-                  {!canManageLogging && (
-                    <p className="mt-1 text-[11px] text-zinc-400">You need logging-manage permission to change this.</p>
-                  )}
-                </Field>
-              )}
               {canAssignSets && (
                 <Field label="Permission sets">
                   <PermissionSetPicker orgId={orgId} sets={sets} selected={picked}
@@ -450,7 +397,7 @@ function TeamCreateDialog({ orgId, sets, canAssignSets, isRoot, myPermissions, c
   );
 }
 
-function TeamDetailDrawer({ orgId, teamId, members, sets, perms, labels, isRoot, myPermissions, canReadAudit, canManageLogging, onClose }: {
+function TeamDetailDrawer({ orgId, teamId, members, sets, perms, labels, isRoot, myPermissions, canReadAudit, onClose }: {
   orgId: string;
   teamId: string | null;
   members: Member[];
@@ -460,14 +407,12 @@ function TeamDetailDrawer({ orgId, teamId, members, sets, perms, labels, isRoot,
   isRoot: boolean;
   myPermissions: string[];
   canReadAudit: boolean;
-  canManageLogging: boolean;
   onClose: () => void;
 }) {
   const open = teamId !== null;
   const detail = useTeam(orgId, teamId ?? "", { enabled: open });
   // Fired with the team read (neither needs team data), not after it renders.
   const audit = useOrgAudit(orgId, { limit: 100 }, { enabled: open && canReadAudit });
-  const loggingPolicy = usePromptLoggingSettings(orgId, open);
 
   return (
     <DetailPanel open={open} onClose={onClose} testId="org-team-detail" width={440}
@@ -492,13 +437,13 @@ function TeamDetailDrawer({ orgId, teamId, members, sets, perms, labels, isRoot,
         <TeamDetailBody key={detail.data.id} orgId={orgId} team={detail.data}
           members={members} sets={sets} perms={perms} labels={labels}
           isRoot={isRoot} myPermissions={myPermissions} canReadAudit={canReadAudit}
-          canManageLogging={canManageLogging} audit={audit} loggingPolicy={loggingPolicy} />
+          audit={audit} />
       )}
     </DetailPanel>
   );
 }
 
-function TeamDetailBody({ orgId, team, members, sets, perms, labels, isRoot, myPermissions, canReadAudit, canManageLogging, audit, loggingPolicy }: {
+function TeamDetailBody({ orgId, team, members, sets, perms, labels, isRoot, myPermissions, canReadAudit, audit }: {
   orgId: string;
   team: Team;
   members: Member[];
@@ -508,27 +453,9 @@ function TeamDetailBody({ orgId, team, members, sets, perms, labels, isRoot, myP
   isRoot: boolean;
   myPermissions: string[];
   canReadAudit: boolean;
-  canManageLogging: boolean;
   audit: ReturnType<typeof useOrgAudit>;
-  loggingPolicy: ReturnType<typeof usePromptLoggingSettings>;
 }) {
   const mut = useTeamMutations(orgId);
-  const updateTeamState = useUpdateTeamLoggingState(orgId);
-  const [loggingBusy, setLoggingBusy] = useState(false);
-  const loggingView = loggingPolicy.data ? resolveTeamLogging(loggingPolicy.data, team.id) : null;
-
-  async function toggleLogging(enabled: boolean) {
-    if (!canManageLogging || loggingView?.locked) return;
-    setLoggingBusy(true);
-    try {
-      await updateTeamState.mutateAsync({ teamId: team.id, enabled });
-      toast.success(`Team logging ${enabled ? "enabled" : "disabled"}.`);
-    } catch (e) {
-      toast.error(parseApiError(e).message);
-    } finally {
-      setLoggingBusy(false);
-    }
-  }
   const teamMembers = team.members ?? [];
   const assignedIds = useMemo(() => new Set((team.sets ?? []).map((s) => s.id)), [team.sets]);
 
@@ -630,30 +557,6 @@ function TeamDetailBody({ orgId, team, members, sets, perms, labels, isRoot, myP
           </>
         )}
       </section>
-
-      {!loggingPolicy.isError && loggingView && (
-        <section>
-          <h3 className="mb-1.5 text-xs font-bold">Prompt logging</h3>
-          <div className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-            <div className="min-w-0">
-              <p className="font-medium" data-testid="org-team-logging-effective">
-                {scopeEffectiveLine(loggingView)}
-              </p>
-              {loggingView.locked && <Badge variant="secondary">locked</Badge>}
-              {!canManageLogging && (
-                <p className="mt-0.5 text-[11px] text-zinc-400">You need logging-manage permission to change this.</p>
-              )}
-            </div>
-            <Switch
-              checked={loggingView.effective}
-              disabled={!canManageLogging || loggingView.locked || loggingBusy || loggingPolicy.isPending}
-              onCheckedChange={(v) => void toggleLogging(v)}
-              aria-label={`Prompt logging for team ${team.name}`}
-              data-testid="org-team-logging-toggle"
-            />
-          </div>
-        </section>
-      )}
 
       <section>
         <h3 className="mb-1.5 text-xs font-bold">Members ({teamMembers.length})</h3>

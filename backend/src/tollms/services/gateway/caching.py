@@ -154,6 +154,14 @@ def bedrock_messages(plan_: CachingPlan | None, messages: list[dict]) -> list[di
     last = messages[-1]
     content = last.get("content")
     if isinstance(content, list) and content:
+        # Converse rejects checkpoints on tool-carrying messages (a toolUse
+        # block must be immediately followed by its toolResult counterpart);
+        # skip the checkpoint there — caching resumes on text-only turns.
+        if any(
+            isinstance(b, dict) and ("toolUse" in b or "toolResult" in b)
+            for b in content
+        ):
+            return messages
         last["content"] = [*content, {"cachePoint": {"type": "default"}}]
     return messages
 

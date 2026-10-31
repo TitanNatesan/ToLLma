@@ -79,13 +79,13 @@ describe("formatEffectiveSummary", () => {
     ).toBe("Logging disabled · none capture · scope: all · retention 30d");
   });
 
-  it("renders team-scope counts with singular/plural", () => {
+  it("renders key-scope counts with singular/plural", () => {
     expect(
-      formatEffectiveSummary({ enabled: true, capture: "input", scope: { teams: 2 }, retention_days: 7 }),
-    ).toContain("scope: 2 teams");
+      formatEffectiveSummary({ enabled: true, capture: "input", scope: { keys: 2 }, retention_days: 7 }),
+    ).toContain("scope: 2 keys");
     expect(
-      formatEffectiveSummary({ enabled: true, capture: "input", scope: { teams: 1 }, retention_days: 7 }),
-    ).toContain("scope: 1 team");
+      formatEffectiveSummary({ enabled: true, capture: "input", scope: { keys: 1 }, retention_days: 7 }),
+    ).toContain("scope: 1 key");
   });
 
   it("renders null retention as off, undefined as absent", () => {

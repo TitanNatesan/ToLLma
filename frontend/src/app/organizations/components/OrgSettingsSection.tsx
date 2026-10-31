@@ -211,7 +211,7 @@ function LoggingTab({ orgId, canManage }: { orgId: string; canManage: boolean })
       <CardContent className="p-4">
         <h3 className="text-xs font-bold">Prompt logging</h3>
         <p className="mt-0.5 text-xs text-zinc-500">
-          Scope: workspace-wide capture defaults for this org. Impact: per-team and per-key overrides live under Prompt Logs; global ON locks every scope.
+          Scope: workspace-wide capture defaults for this org. Impact: per-key overrides live under Prompt Logs; global ON locks every scope.
         </p>
         <div className="mt-2">
           <WorkspaceLoggingSection orgId={orgId} canManage={canManage} />
