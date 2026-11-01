@@ -171,7 +171,7 @@ function OverviewBody() {
         ))}
       </div>
       <p className="mt-4 text-sm font-semibold text-coal">Throughput · requests per hour</p>
-      <div className="mt-1.5 flex h-14 items-end gap-[3px]" role="img" aria-label={`Hourly requests, peak ${max}`}>
+      <div className="mt-1.5 flex h-16 items-end gap-[3px]" role="img" aria-label={`Hourly requests, peak ${max}`}>
         {hours.map((h, i) => (
           <span
             key={i}
@@ -209,6 +209,9 @@ function OverviewBody() {
           </ul>
         </div>
       </div>
+      <p className="mt-3 border-t border-cream-line/70 pt-2 font-mono text-xs text-coal/45">
+        {KPIS.requestsToday} requests today · {(KPIS.allowedRate * 100).toFixed(1)}% allowed · {money(KPIS.spendToday)} spend
+      </p>
     </div>
   );
 }
@@ -239,7 +242,7 @@ function ProvidersBody() {
                 <td className="px-2 py-1.5 font-medium text-coal md:px-4">{p.name}</td>
                 <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal/70 md:table-cell md:px-4">{p.api}<span className="block text-[0.7rem] text-coal/45">{p.note}</span></td>
                 <td className="px-2 py-1.5 md:px-4">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.status === "Operational" ? "bg-mint/60 text-coal" : "bg-warm text-coal"}`}>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.status === "Operational" ? "bg-mint/60 text-coal" : "bg-butter text-coal"}`}>
                     <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
                     {s.status}
                   </span>
@@ -252,6 +255,7 @@ function ProvidersBody() {
           })}
         </tbody>
       </table>
+      <p className="px-4 pb-3 pt-1 font-mono text-xs text-coal/45">6 adapters · one OpenAI-compatible endpoint</p>
     </div>
   );
 }
@@ -324,6 +328,7 @@ function GuardrailsBody() {
           ))}
         </tbody>
       </table>
+      <p className="px-4 pb-3 pt-1 font-mono text-xs text-coal/45">10 categories · monitor / warn / block enforcement</p>
     </div>
   );
 }
@@ -354,11 +359,11 @@ function LogsBody() {
         <tbody>
           {rows.map((l) => (
             <tr key={l.id} className="dash-row border-t border-cream-line/70">
-              <td className="px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 md:px-4">{l.time}</td>
-              <td className="break-all px-2 py-[7px] font-mono text-[0.8rem] text-coal md:px-4">{l.keyId}</td>
-              <td className="truncate px-2 py-[7px] font-mono text-[0.8rem] text-coal md:px-4">{l.model}</td>
+              <td className="px-2 py-1 font-mono text-[0.8rem] text-coal/70 md:px-4 md:py-[7px]">{l.time}</td>
+              <td className="max-w-[92px] truncate px-2 py-1 font-mono text-[0.8rem] text-coal md:max-w-none md:px-4 md:py-[7px]">{l.keyId}</td>
+              <td className="max-w-[110px] truncate px-2 py-1 font-mono text-[0.8rem] text-coal md:max-w-none md:px-4 md:py-[7px]">{l.model}</td>
               <td className="hidden truncate px-2 py-[7px] text-[0.8rem] font-medium text-coal/70 md:table-cell md:px-4">{PROVIDER_ROWS.find((p) => p.id === l.provider)?.name}</td>
-              <td className="px-2 py-[7px] md:px-4"><StatusPill status={l.status} retryAfterS={l.retryAfterS} /></td>
+              <td className="px-2 py-1 md:px-4 md:py-[7px]"><StatusPill status={l.status} retryAfterS={l.retryAfterS} /></td>
               <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-4">{l.latencyMs === 0 ? "—" : `${l.latencyMs} ms`}</td>
               <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-4">{l.tokens === 0 ? "—" : l.tokens.toLocaleString("en-US")}</td>
             </tr>
@@ -540,10 +545,10 @@ export default function DashboardStack() {
       ref={regionRef}
       id="activity"
       data-active-page={PAGES[active]}
-      className="relative scroll-mt-24"
+      className="relative -mt-8 scroll-mt-24"
       style={{ height: `${REGION_VH}vh` }}
     >
-      <div className="sticky top-0 flex h-screen items-center justify-center px-6 py-12">
+      <div className="sticky top-0 flex h-screen items-start justify-center px-6 pb-12 pt-20 md:pt-24">
         {PAGES.map((p, i) => {
           const Body = BODIES[p];
           return (

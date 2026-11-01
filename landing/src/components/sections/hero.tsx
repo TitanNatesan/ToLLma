@@ -49,7 +49,7 @@ const PILLS: Pill[] = [
   { label: "Guardrails", bg: "#f5e6a3", pos: "left-[7%] top-[32%]", dur: "6s", delay: "-1s", speed: 0.25, tip: `Guardrails: ${GUARDRAIL_CATEGORIES.length} categories active` },
   { label: "API keys", bg: "#a9bdf4", pos: "right-[7%] top-[30%]", dur: "8s", delay: "-3.5s", speed: -0.15, tip: `Keys carry ${SCOPES} scope` },
   { label: "Request logs", bg: "#dde8d0", pos: "left-[5%] top-[52%]", dur: "7s", delay: "-4s", speed: 0.4, tip: "Every request leaves a trail" },
-  { label: "Streaming", bg: "#72ddb1", pos: "right-[10%] bottom-[16%]", dur: "6.8s", delay: "-1.8s", speed: 0.25, tip: `Streaming on ${STREAMING_COUNT}/${PROVIDERS.length} adapters` },
+  { label: "Streaming", bg: "#72ddb1", pos: "right-[3%] top-[42%]", dur: "6.8s", delay: "-1.8s", speed: 0.25, tip: `Streaming on ${STREAMING_COUNT}/${PROVIDERS.length} adapters` },
 ];
 
 /* Blurred ghosts: same hues, out of focus, offset from the sharp pills. */
@@ -214,7 +214,7 @@ export default function Hero() {
     <section className="relative overflow-x-clip bg-cream">
       <HeroBackdrop />
       <HeroPills />
-      <Container width="wide" className="relative pb-20 pt-16 md:pt-24">
+      <Container width="wide" className="relative pb-10 pt-16 md:pt-24">
         <div ref={driftRef} className="flex w-full flex-col items-center text-center">
           <p className="mx-auto inline-flex w-fit items-center justify-center gap-2.5 rounded-full border border-cream-line bg-white px-4 py-1.5 text-center text-sm font-medium text-coal">
             <span className="font-bold" aria-hidden="true">
