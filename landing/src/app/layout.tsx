@@ -1,10 +1,18 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Newsreader } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+  display: "optional",
+});
+
+// Serif display face for Nominal-style headlines (Georgia fallback covers
+// offline/static-export builds where the webfont fetch fails).
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-newsreader",
   display: "optional",
 });
 
@@ -46,7 +54,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#fbfcfe",
+  themeColor: "#f6f6ec",
   width: "device-width",
   initialScale: 1,
 };
@@ -57,7 +65,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${mono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable}`}>
       <body className="antialiased">{children}</body>
     </html>
   );

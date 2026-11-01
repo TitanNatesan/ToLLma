@@ -229,8 +229,37 @@ Default to built-in tools. Load a skill or query an MCP server only when the tas
 | React perf: waterfalls, bundle size, re-renders, memoization | vercel-react-best-practices |
 | Boolean-prop sprawl, compound components, reusable component APIs | vercel-composition-patterns |
 | New UI or visual direction | frontend-design |
+| Anti-slop art direction, landing-page redesign/polish | design-taste-frontend |
+| Design taste, critique, "make it premium/awwwards-level" | taste-skill (taste-skill) |
 | UI audit: accessibility, spacing, typography, UX compliance | web-design-guidelines |
+| Visual design review of a live site + fix | web-design-reviewer |
 | Generate a design system from a brief before coding | ui-ux-pro-max |
+| Full-stack design AI (wireframes → tokens → audits) | design-studio |
+| Extract design tokens/system from a live site or screenshot | extract-design-system, design-dna |
+| Apple-style motion/materials/typography on web | apple-design |
+| Emil Kowalski-style UI polish and animation decisions | emil-design-eng |
+| Fast UI cleanup pass (spacing, hierarchy, type) | baseline-ui |
+| Read-only UI audit producing implementation plans | improve-ui |
+| Micro-interactions, hover states, "feels off" details | make-interfaces-feel-better, interaction-design |
+| Find where motion is missing (read-only proposals) | find-animation-opportunities |
+| Build/sequence web animation from scratch | animate |
+| GSAP core/timelines/scroll/animation in React/Vue/vanilla | gsap-core, gsap-timeline, gsap-scrolltrigger, gsap-react, gsap-frameworks, gsap-plugins, gsap-utils, gsap-performance (+ MengTo gsap) |
+| Anime.js v4 timelines, SVG/scroll/stagger | animejs |
+| High-conversion landing or SaaS pricing page | landing-page, pricing-page, product-proof-saas |
+| Scroll storytelling, pinned/sticky narratives, reveals | cinematic-scroll-storytelling, scroll-world-storytelling, gsap-scrolltrigger-storytelling, scroll-scrubbed-word-reveal, scroll-scrubbed-visual-sequence, scroll-progress-timeline, animation-on-scroll, staggered-word-reveal, masked-reveal |
+| Cinematic GSAP+Lenis motion system | cinematic-gsap-lenis-motion-system |
+| Three.js scenes, R3F, shaders, WebGL effects | threejs, threejs-animation + threejs-* family |
+| WebGL backgrounds (Vanta, particles, grids, globes) | vantajs, background-grid-webgl, globe-particles, globe-gl, cobejs, ambient-section-particles, webgl-3d-object, webgl-landing-steering, webgl-laser |
+| 2D physics interactions on canvas | matterjs |
+| Glassmorphism, gradient borders, shadows, masking | glass-dark-ui, css-border-gradient, beautiful-shadows, css-alpha-masking, progressive-blur |
+| Geometric details (chamfers, grids, containers) | corner-diagonals, framed-grid-layout, container-lines, gooey-blob-system |
+| Ready-made visual systems (dark/light/brutalist/editorial/SaaS) | tech-green-dark-mode-modern, clean-minimal-beige-light-mode, dither-laser-dark-mode, dark-blue-contrasting-clean, blue-cloudy-clean-modern, documentary-brutalist-agency, editorial-portfolio-chapters, editorial-service-booking, agency-grid-layout-minimal, nested-container-clean-agency, framed-tech-dark-border-gradient, funky-purple-container-tech, split-layout-technical, light-mode-paper-technical, technical-wireframe-info-layout, high-contrast-skeuomorphic-clean, mesh-gradient-dark-blue-clean, bright-green-tech-system-webgl, orange-clean-paper-saas, book-serif-index, image-first-grid-layout, skeuomorphic-ui, glass-dark-mode-clock |
+| Tailwind CSS v4 systems, tokens, responsive | tailwind-design-system, tailwindcss, responsive-design |
+| Mobile PWA feel, touch, viewport/notch issues | mobile-native |
+| Stock imagery for mockups | aura-asset-images, unsplash-asset-images |
+| Unicorn Studio embeds | unicorn-studio |
+| Switchable design-token categories | modular-design-system |
+| Complex Claude artifacts with shadcn/state/routing | artifacts-builder |
 | Cache Components adoption or instant-navigation performance | next-cache-components-adoption, next-cache-components-optimizer |
 | shadcn component usage or customization | shadcn |
 | AI SDK: generateText, streamText, useChat, tool calling | ai-sdk |

@@ -152,31 +152,6 @@ body {
   color: var(--color-brand);
 }
 
-/* Subtle grid/dot background treatments (reused across sections) */
-.bg-grid {
-  background-image: linear-gradient(
-      to right,
-      color-mix(in srgb, var(--color-line) 65%, transparent) 1px,
-      transparent 1px
-    ),
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--color-line) 65%, transparent) 1px,
-      transparent 1px
-    );
-  background-size: 56px 56px;
-  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 40%, transparent 100%);
-}
-
-.bg-dots {
-  background-image: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--color-faint) 40%, transparent) 1px,
-    transparent 1px
-  );
-  background-size: 22px 22px;
-}
-
 /* Primary CTA shine: a single sweep on hover/focus. CSS-only, no JS. */
 .btn-shine {
   position: relative;
@@ -203,213 +178,6 @@ body {
   transform: translateX(130%) skewX(-16deg);
 }
 
-/* Accent phrase for display headings (hero / CTA). Large type only. */
-.text-gradient-brand {
-  background-image: linear-gradient(
-    100deg,
-    var(--color-brand-strong) 0%,
-    var(--color-teal-ink) 38%,
-    var(--color-violet) 62%,
-    var(--color-brand-strong) 100%
-  );
-  background-size: 220% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: gradient-pan 7s linear infinite;
-}
-
-@keyframes gradient-pan {
-  to {
-    background-position: 220% center;
-  }
-}
-
-/* Hero accent: blue → indigo → violet. Hero-only; the CTA keeps the
-   shared .text-gradient-brand treatment. */
-.hero-gradient {
-  background-image: linear-gradient(103deg, #1d4ed8 0%, #4f46e5 46%, #7c3aed 100%);
-  background-size: 180% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: hero-gradient-pan 9s ease-in-out infinite alternate;
-}
-
-@keyframes hero-gradient-pan {
-  from {
-    background-position: 0% center;
-  }
-  to {
-    background-position: 100% center;
-  }
-}
-
-/* Hero entrance — CSS-only so it starts before hydration and replays on
-   reload. Total sequence lands under 1.6s. */
-.hero-word {
-  display: inline-block;
-  will-change: transform, opacity;
-  animation: hero-word-in 0.58s var(--ease-out-expo) both;
-  animation-delay: calc(var(--wi, 0) * 60ms);
-}
-
-@keyframes hero-word-in {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.hero-badge {
-  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.08s both;
-}
-.hero-sub {
-  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.42s both;
-}
-.hero-cta {
-  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.56s both;
-}
-.hero-points {
-  animation: hero-fade-up 0.55s var(--ease-out-expo) 0.68s both;
-}
-.hero-scene {
-  transform-origin: 50% 55%;
-  animation: hero-scene-in 0.82s var(--ease-out-expo) 0.55s backwards;
-}
-.hero-cue-wrap {
-  animation: hero-fade-in 0.5s var(--ease-out-expo) 0.9s backwards;
-}
-
-@keyframes hero-fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes hero-scene-in {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.965);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes hero-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-/* Provider/client labels projected over the WebGL canvas. */
-.hero-node-label {
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
-  color: var(--color-ink-soft);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  box-shadow: var(--shadow-xs);
-  backdrop-filter: blur(8px);
-  will-change: transform;
-  opacity: 0;
-}
-
-.hero-node-label--client {
-  padding: 0;
-  border-color: transparent;
-  background: transparent;
-  color: var(--color-ink-soft);
-  font-size: 12.5px;
-  font-weight: 600;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-.hero-node-label--provider {
-  font-size: 12px;
-}
-
-.hero-node-label--provider {
-  pointer-events: auto;
-  transition:
-    border-color 0.18s ease,
-    color 0.18s ease,
-    background-color 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-.hero-node-label--provider:hover,
-.hero-node-label--provider:focus-visible,
-.hero-node-label.is-hot {
-  color: var(--color-ink);
-  border-color: color-mix(in srgb, var(--color-brand) 42%, var(--color-line));
-  background: #ffffff;
-  box-shadow: var(--shadow-sm);
-}
-
-.hero-node-dot {
-  display: block;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  flex: none;
-}
-
-@media (max-width: 899px) {
-  .hero-node-label {
-    font-size: 10px;
-    padding: 3px 6px;
-    gap: 5px;
-  }
-  .hero-node-dot {
-    width: 5px;
-    height: 5px;
-  }
-}
-
-/* Scroll cue: one calm dot drifting downward. */
-.hero-cue > span {
-  animation: cue-drift 1.8s var(--ease-out-expo) infinite;
-}
-
-@keyframes cue-drift {
-  0%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.9;
-  }
-  50% {
-    transform: translateY(10px);
-    opacity: 0.5;
-  }
-}
-
 /* Reveal primitives: content is visible by default; JS adds .is-hidden
    only when motion is allowed, so reduced-motion + no-JS both show all. */
 [data-reveal] {
@@ -420,16 +188,6 @@ body {
   html {
     scroll-behavior: auto;
   }
-  /* The pinned stepper is a motion-linked experience: never reserve the
-     tall scroll wrapper or pin it for reduced-motion users (also covers
-     no-JS users whose markup was rendered before the preference applied). */
-  .hiw-pin {
-    height: auto !important;
-  }
-  .hiw-sticky {
-    position: static !important;
-    min-height: 0 !important;
-  }
   *,
   *::before,
   *::after {
@@ -437,4 +195,369 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ===== Nominal editorial theme (cream + serif + square black CTAs) ===== */
+/* Spec palette: cream #F7F7EE, secondary #EEF1E6, dark #10130F, ink #171914,
+   muted #74776D, dark-text #F5F4EA, mint #72DDB1, periwinkle #A9BDF4,
+   warm #E8B1A2, border #DCDDD1. Legacy section names (coal, night, cream-line,
+   parchment, peri, blush) are kept as stable aliases of the spec values so
+   sections don't churn; prefer the spec names in new code. */
+@theme {
+  /* Surfaces */
+  --color-cream: #f7f7ee;
+  --color-secondary: #eef1e6;
+  --color-parchment: #eef1e6;
+  --color-border: #dcddd1;
+  --color-cream-line: #dcddd1;
+
+  /* Ink */
+  --color-ink: #171914;
+  --color-coal: #171914;
+  --color-muted: #74776d;
+  --color-dark: #10130f;
+  --color-night: #10130f;
+  --color-night-line: #3a3f3a;
+  --color-dark-text: #f5f4ea;
+
+  /* Accents */
+  --color-mint: #72ddb1;
+  --color-periwinkle: #a9bdf4;
+  --color-peri: #a9bdf4;
+  --color-warm: #e8b1a2;
+  --color-blush: #e8b1a2;
+  --color-butter: #f5e6a3;
+  --color-sage: #dde8d0;
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-coal);
+}
+
+/* Floating hero pills: transform lives on the INNER pill so the outer
+   wrapper is free for scroll-parallax transforms. */
+@keyframes pill-float {
+  0%,
+  100% {
+    transform: translateY(-6px);
+  }
+  50% {
+    transform: translateY(6px);
+  }
+}
+.pill-float {
+  animation: pill-float 7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill-float {
+    animation: none;
+  }
+}
+
+/* Guide card hover: restrained lift + arrow shift (transform-only). */
+.guide-card {
+  transition: transform 300ms var(--ease-out-expo), border-color 300ms;
+}
+.guide-card:hover,
+.guide-card:focus-within {
+  transform: translateY(-4px);
+}
+.guide-card .guide-arrow {
+  transition: transform 300ms var(--ease-out-expo);
+}
+.guide-card:hover .guide-arrow,
+.guide-card:focus-within .guide-arrow {
+  transform: translateX(4px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-card,
+  .guide-card .guide-arrow {
+    transition: none;
+  }
+}
+
+/* ===== Nominal-recording mechanics (2D/CSS only) ===== */
+
+/* Logo marquee: infinite auto-scroll, independent of page scroll. */
+@keyframes marquee-x {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee-track {
+  animation: marquee-x 36s linear infinite;
+  will-change: transform;
+}
+.marquee:hover .marquee-track,
+.marquee:focus-within .marquee-track {
+  animation-play-state: paused;
+}
+
+/* Outcomes carousel: stat wipe (clip-path) then quote crossfade. */
+.stat-wipe-enter {
+  animation: stat-wipe-in 380ms var(--ease-out-expo) both;
+}
+@keyframes stat-wipe-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+    transform: translateY(14px);
+    opacity: 0.4;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.stat-wipe-out {
+  animation: stat-wipe-out 200ms ease-in both;
+}
+@keyframes stat-wipe-out {
+  from {
+    clip-path: inset(0 0 0 0);
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+}
+.quote-fade-enter {
+  animation: quote-fade-in 320ms ease-out both;
+}
+@keyframes quote-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scroll-linked status pill flip (dashboard): 3D faces, JS sets rotateX. */
+.flip-pill {
+  perspective: 400px;
+}
+.flip-inner {
+  position: relative;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.flip-face {
+  display: inline-flex;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(180deg);
+}
+
+/* How-it-works smooth step switch (~350ms expo-out): the incoming diagram
+   rises first, the card follows 70ms later. */
+@keyframes step-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.step-rise-delay {
+  animation: step-rise 350ms var(--ease-out-expo) 70ms both;
+}
+
+/* Provider grid target-lock corners: 8–10px L-brackets that scale in from
+   their own corners over the existing hover. */
+.target-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  opacity: 0;
+  transform: scale(0.6);
+  pointer-events: none;
+  transition:
+    opacity 200ms var(--ease-out-expo),
+    transform 200ms var(--ease-out-expo);
+}
+.target-tl {
+  left: 8px;
+  top: 8px;
+  border-left: 2px solid #0e7490;
+  border-top: 2px solid #0e7490;
+  transform-origin: top left;
+}
+.target-tr {
+  right: 8px;
+  top: 8px;
+  border-right: 2px solid #0e7490;
+  border-top: 2px solid #0e7490;
+  transform-origin: top right;
+}
+.target-bl {
+  left: 8px;
+  bottom: 8px;
+  border-left: 2px solid #0e7490;
+  border-bottom: 2px solid #0e7490;
+  transform-origin: bottom left;
+}
+.target-br {
+  right: 8px;
+  bottom: 8px;
+  border-right: 2px solid #0e7490;
+  border-bottom: 2px solid #0e7490;
+  transform-origin: bottom right;
+}
+.group:hover .target-corner,
+.group:focus-within .target-corner,
+.group:focus-visible .target-corner {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Dark dolly stage: transforms live on these (rAF-driven, transform/opacity only). */
+.dolly-scene {
+  will-change: transform;
+}
+.dolly-fade {
+  will-change: opacity;
+}
+
+/* Pixel block wipe columns scale from the band edge (transform-only). */
+.wipe-col {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track,
+  .stat-wipe-enter,
+  .stat-wipe-out,
+  .quote-fade-enter,
+  .step-rise-delay,
+  .panel-enter,
+  .panel-exit,
+  .end-fade {
+    animation: none;
+  }
+}
+
+/* How-it-works cinematic scene: node/packet emphasis is JS-driven
+   (opacity only); bars grow from their base (transform only). The
+   allow/block packet groups share the govern stage gate; the preview
+   toggle picks which one is visible (no layout impact). */
+.arch-node,
+.arch-pkts {
+  transition: opacity 0.4s ease;
+}
+.arch-bar {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+[data-allow="allow"] [data-pkts="blockP"],
+[data-allow="block"] [data-pkts="allowP"] {
+  visibility: hidden;
+}
+
+/* How-it-works cinematic scene: node/packet emphasis crossfades in place
+   (~400ms, inside the 300-500ms window) while the camera holds steady —
+   no hard cuts, no per-tile stagger. */
+.panel-enter {
+  animation: panel-in 400ms var(--ease-out-expo) both;
+}
+.panel-exit {
+  animation: panel-out 400ms ease-in both;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+.end-fade {
+  animation: end-in 450ms var(--ease-out-expo) both;
+}
+@keyframes end-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Platform → Solutions handoff: the wipe directly after #platform renders as
+   ONE uniform cream sheet (no staggered teeth, no sliver gaps) driven by
+   scroll (fully reversible), then lifts fully off-screen and hides on
+   complete. Cream fill matches the Solutions band exactly, so Providers
+   holds below the fold until the wipe passes, then enters intact. */
+#platform + div {
+  background: var(--color-cream);
+}
+#platform + div > div {
+  gap: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  #platform + div > div {
+    animation: platform-exit-lift linear both;
+    animation-timeline: view();
+    animation-range: cover 82% cover 100%;
+  }
+  #platform + div .wipe-col {
+    transform-origin: bottom;
+    animation: platform-exit-cover linear both;
+    animation-timeline: view();
+    animation-range: cover 0% cover 82%;
+  }
+}
+@keyframes platform-exit-cover {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+@keyframes platform-exit-lift {
+  from {
+    transform: translateY(0);
+    visibility: visible;
+  }
+  to {
+    transform: translateY(-101%);
+    visibility: hidden;
+  }
+}
+
+/* Night stage scope: dark form controls + balanced headings. */
+#platform {
+  color-scheme: dark;
+}
+#platform h2 {
+  text-wrap: balance;
 }

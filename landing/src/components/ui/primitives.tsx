@@ -8,7 +8,7 @@ type Variant = "primary" | "secondary" | "ghost";
 
 const base =
   "inline-flex items-center justify-center gap-2 rounded-full font-medium " +
-  "transition-all duration-200 whitespace-nowrap select-none " +
+  "transition-[background-color,border-color,box-shadow,color,transform] duration-200 whitespace-nowrap select-none " +
   "focus-visible:outline-2 focus-visible:outline-brand focus-visible:outline-offset-2";
 
 const variants: Record<Variant, string> = {
@@ -88,5 +88,73 @@ export function Badge({
     >
       {children}
     </span>
+  );
+}
+
+// Black square CTA — the Nominal-style primary action used by nav, hero,
+// and closing. Square corners, cream text, no shadow, no scale — hover only
+// deepens the fill, press settles 1px (transform-only).
+export function BlackButton({
+  href,
+  children,
+  className = "",
+  ariaLabel,
+}: {
+  href: string;
+  children: React.ReactNode;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const external = href.startsWith("http");
+  return (
+    <Link
+      href={href}
+      aria-label={ariaLabel}
+      className={
+        `inline-flex items-center justify-center gap-2 bg-coal px-7 py-3.5 ` +
+        `text-[0.95rem] font-medium text-cream transition-[background-color,transform] ` +
+        `duration-200 hover:bg-black focus-visible:outline-2 focus-visible:outline-offset-2 ` +
+        `focus-visible:outline-coal active:translate-y-px ${className}`
+      }
+      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+    >
+      {children}
+    </Link>
+  );
+}
+
+// Secondary CTA — pairs with BlackButton in hero + closing. Cream/white fill,
+// hairline border, same metrics; hover firms the border, press settles 1px.
+export function SecondaryButton({
+  href,
+  children,
+  className = "",
+  ariaLabel,
+  dark = false,
+}: {
+  href: string;
+  children: React.ReactNode;
+  className?: string;
+  ariaLabel?: string;
+  dark?: boolean;
+}) {
+  const external = href.startsWith("http");
+  const tones = dark
+    ? "border-cream/30 text-cream hover:border-cream hover:bg-white/10"
+    : "border-coal/25 bg-white/60 text-coal hover:border-coal hover:bg-white";
+  return (
+    <Link
+      href={href}
+      aria-label={ariaLabel}
+      className={
+        `inline-flex items-center justify-center gap-2 border px-7 py-3.5 ` +
+        `text-[0.95rem] font-medium transition-[border-color,background-color,transform] ` +
+        `duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 ` +
+        `focus-visible:outline-coal active:translate-y-px ${tones} ${className}`
+      }
+      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+    >
+      {children}
+    </Link>
   );
 }

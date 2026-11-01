@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bell, Command as CmdIcon, Moon, PanelLeftClose, Search, Sun } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui/primitives";
+import { ToLLmaMark } from "@/components/ui/Logo";
 import { useChatStore } from "@/store/chat";
 import { useUnreadCount } from "@/hooks/useOrgs";
 
@@ -56,9 +57,7 @@ export function SidebarHeader({ onOpenCommandPalette }: { onOpenCommandPalette?:
         data-testid="app-logo"
         title="ToLLma home"
       >
-        <div className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-[11px] font-black text-white shadow-sm transition-transform group-hover:scale-105 dark:bg-zinc-100 dark:text-zinc-900">
-          T
-        </div>
+        <ToLLmaMark size="sm" className="rounded-lg" />
         <span className="truncate text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
           ToLLma
         </span>

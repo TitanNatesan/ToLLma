@@ -173,3 +173,45 @@ export function IconGitHub({ className, size = 20 }: P) {
     </svg>
   );
 }
+
+// ToLLma routing mark: one inbound node fanning out to three routes.
+// Reused by nav + footer (single source for the wordmark icon).
+export function LogoMark({ size = 28 }: P) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden>
+      <rect x="1" y="1" width="26" height="26" rx="6" fill="#14150f" />
+      <circle cx="8" cy="14" r="2.4" fill="#f6f6ec" />
+      <path
+        d="M10.4 14h4.2M14.6 14c2.6 0 2.8-5 5.4-5M14.6 14h5.4M14.6 14c2.6 0 2.8 5 5.4 5"
+        stroke="#f6f6ec"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+      <circle cx="20.4" cy="9" r="1.6" fill="#9cf0c8" />
+      <circle cx="20.4" cy="14" r="1.6" fill="#b9c8f5" />
+      <circle cx="20.4" cy="19" r="1.6" fill="#f5b8b1" />
+    </svg>
+  );
+}
+
+// Tiny dropdown caret for nav links.
+export function IconCaret({ className, size = 10 }: P) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 10 10"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <path
+        d="M2.5 4l2.5 2.5L7.5 4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

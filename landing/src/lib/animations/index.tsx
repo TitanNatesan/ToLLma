@@ -20,10 +20,14 @@ export { prefersReducedMotion };
 
 // ---------- reduced motion ----------
 export function useReducedMotion(): boolean {
-  // Initialize synchronously from matchMedia: consumers gate their
-  // mount-time pre-hide effects on this value, so a false-first frame
-  // would hide content before the passive listener corrects it.
-  const [reduced, setReduced] = useState(() => prefersReducedMotion());
+  // SSR-safe: server and first client render both see `false` so render
+  // branches (e.g. platform stepper vs. static grid) match the prerender
+  // and never hydrate-mismatch (React error #418 under reduced-motion).
+  // The real preference applies in an effect — the reduced-motion static
+  // layout may appear one frame later. Consumers inside effects
+  // (useRevealOnScroll, useStaggerReveal) combine it with their own
+  // effect-set flag and simply skip animating until motion is allowed.
+  const [reduced, setReduced] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     setReduced(mq.matches);
@@ -73,10 +77,18 @@ export function useRevealOnScroll(
   const { threshold = 0.15, staggerMs = 70, y = 24 } = options;
   const ref = useRef<HTMLElement | null>(null);
   const reduced = useReducedMotion();
+  // Resolves only in an effect, alongside the reduced-motion query above, so
+  // the first paint (SSR + hydration) never hides content. Hiding happens
+  // only when motion is positively allowed: mounted with no reduce request.
+  const [effectReady, setEffectReady] = useState(false);
+  useEffect(() => {
+    setEffectReady(true);
+  }, []);
+  const motionAllowed = effectReady && !reduced;
 
   useEffect(() => {
     const root = ref.current;
-    if (!root || reduced) return;
+    if (!root || !motionAllowed) return;
     const items = Array.from(
       root.querySelectorAll<HTMLElement>("[data-reveal]")
     );
@@ -137,7 +149,7 @@ export function useRevealOnScroll(
       scope.revert();
       utils.set(items, { clear: "all" });
     };
-  }, [reduced, threshold, staggerMs, y]);
+  }, [motionAllowed, threshold, staggerMs, y]);
 
   return ref;
 }
@@ -147,9 +159,14 @@ export function useRevealOnScroll(
 export function useStaggerReveal(threshold = 0.2, staggerMs = 80) {
   const [ref, seen] = useInViewOnce<HTMLElement>(threshold);
   const reduced = useReducedMotion();
+  const [effectReady, setEffectReady] = useState(false);
+  useEffect(() => {
+    setEffectReady(true);
+  }, []);
+  const motionAllowed = effectReady && !reduced;
   useEffect(() => {
     const root = ref.current;
-    if (!root || !seen || reduced) return;
+    if (!root || !seen || !motionAllowed) return;
     const items = root.querySelectorAll("[data-stagger]");
     animate(items, {
       opacity: [0, 1],
@@ -158,7 +175,7 @@ export function useStaggerReveal(threshold = 0.2, staggerMs = 80) {
       delay: stagger(staggerMs),
       ease: "outExpo",
     });
-  }, [ref, seen, reduced, staggerMs]);
+  }, [ref, seen, motionAllowed, staggerMs]);
   return [ref, seen] as const;
 }
 
