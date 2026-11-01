@@ -501,17 +501,20 @@ body {
    reduced-motion via the global rule + explicit animation: none below) ===== */
 
 /* Provider marks: monochrome until the card is hovered/focused, then ease
-   back to full color with a 1.06 logo scale (artwork itself untouched). */
+   back to full color (artwork itself untouched). Logo never moves. */
 .provider-mark {
   filter: grayscale(1);
-  transition:
-    transform 250ms var(--ease-out-expo),
-    filter 250ms ease;
+  transition: filter 250ms ease;
 }
 .group:hover .provider-mark,
 .group:focus-within .provider-mark {
   filter: grayscale(0);
-  transform: scale(1.06);
+}
+/* Provider cards: static on hover — glow only, no lift, no logo shift.
+   (The generic .spotlight lift stays for other sections; this pins
+   provider cells in place.) */
+.spotlight.provider-card:hover {
+  transform: none;
 }
 
 /* Guide cards: illustration zoom on card hover (parallax lives on the

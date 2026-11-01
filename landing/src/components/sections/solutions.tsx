@@ -28,9 +28,10 @@ const CELLS = PROVIDERS.filter((p) => p.id !== "custom").map((p) => ({
 }));
 
 // R10: per-provider spotlight color (sets --spot on the card; the glow
-// uses it at 20% alpha). Catch-all uses brand blue.
+// uses it at 20% alpha). Catch-all uses brand blue. OpenAI stays gray;
+// Anthropic + Bedrock glow orange; Google + Vertex glow blue.
 const SPOT: Record<string, string> = {
-  openai: "#10A37F",
+  openai: "#737373",
   anthropic: "#D97757",
   gemini: "#4285F4",
   vertex: "#1A73E8",
@@ -88,7 +89,7 @@ export default function Solutions() {
           {CELLS.map((c) => (
             <SpotlightCard
               key={c.name}
-              className="group bg-cream"
+              className="group provider-card bg-cream"
               style={{ "--spot": SPOT[c.id] ?? SPOT_FALLBACK } as CSSProperties}
             >
               <a
@@ -117,7 +118,7 @@ export default function Solutions() {
           {/* Bottom-row catch-all: dashed CTA card with hover fill. Drifts
               with foreground parallax (0.92) for depth against the grid. */}
           <Parallax speed={0.92} className="bg-cream">
-            <SpotlightCard className="h-full" style={{ "--spot": SPOT_FALLBACK } as CSSProperties}>
+            <SpotlightCard className="h-full provider-card group" style={{ "--spot": SPOT_FALLBACK } as CSSProperties}>
             <a
               href={DOCS_URL}
               target="_blank"
