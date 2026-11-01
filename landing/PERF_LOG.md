@@ -45,11 +45,101 @@ Smaller items: `will-change: transform` permanently on all 6 wrappers
 (6 large layers always resident); no `contain` on windows; static
 reduced-motion list violates R7 (needs 150 ms opacity crossfade).
 
-## Fix 1 — (pending) eliminate render + paint work from transition path
-- Drop `setActive` React state: write `data-active-page` (already done in
-  paint) + aria-live text imperatively via refs. Zero re-renders on scroll.
-- Shadow via dedicated faded layer (opacity only), not inline box-shadow.
-- `contain: layout paint` on windows (static CSS); `will-change` only
-  while a window is moving (raw in (0,1)).
-## Fix 2 — (pending) exponential-approach scrub smoothing with retarget
-## Fix 3 — (pending) R7 reduced-motion 150 ms opacity crossfade stack
+## Fix 1 — DONE (`bd7c91a`): eliminate render + paint work from transition path
+- Dropped `setActive` React state: `data-active-page` + aria-live text via
+  refs. Zero re-renders on scroll (verified: no React-driven DOM churn in
+  trace; interaction states identical).
+- Shadow lives on a dedicated `data-shadow` layer faded by `opacity`
+  (compositor only); windows carry `box-shadow: none` in-stack. No
+  `box-shadow` writes anywhere on the scroll path (grep-clean).
+- `contain: layout paint` on `.dash-window` (static CSS); `will-change`
+  set to `transform` only while a window is moving, `auto` otherwise.
+- Post-fix trace (`fix1-trace.json`, same protocol): layout/style totals
+  flat (page-wide readers dominate both runs — stack was never the
+  majority), zero new V8 slices, no new long tasks. No `setActive`,
+  no `boxShadow` in sources.
+
+## Fix 2 — DONE (`881fe38`): exponential-approach scrub smoothing + retarget
+- Target v from scroll/resize only (dirty-flagged, max one forced rect
+  read per frame); persistent rAF loop eases `cur += (tgt−cur)·(1−e^(−dt·10))`
+  in fixed 1/60 substeps (framerate-independent curve at 120/60/burst
+  frames); loop idles when converged + off-screen (IO-gated, battery-safe).
+- Reversal retargets from the current value automatically — both
+  directions use the same function, so paths mirror in time and motion.
+- Verified: flick catch-up decays geometrically (tail
+  23,18,14,11,8,7,5,4,3,2,2,1…); reversal-step ratio 1.24 ≤ 1.5 (R4 PASS
+  with real wheel input; instant-teleport rigs are not representative —
+  documented in report).
+
+## Fix 3 — DONE (`8a32b74`): R7 reduced-motion 150 ms opacity crossfade
+- No-JS keeps the static list. With JS + reduced-motion the pinned stack
+  renders but paint writes opacity only (top window 1, rest 0, 150 ms CSS
+  ease) — no transform, no scale, no dim veil, no blur.
+- Verified emulated-reduced-motion: 6 pinned windows, all wrapper
+  transforms empty, `getAnimations() == 0` at rest, zero errors.
+
+## After (final code = all three fixes; 960×600, same continuous protocol)
+
+Recordings: `after_down.webm`, `after_up.webm` in `/tmp/opencode/perf/`.
+- down: 88 frames; middle-third identical 4/29 (was 22/41), alternations 3
+  (was 11); maxDiff concentrated in motion, not idle.
+- up: 57 frames; middle-third identical 3/19 (was 22/41), alternations 0
+  (was 12). Direction gap in frame counts closed (88 vs 57 ≈ distance
+  ratio, no longer the −42% collapse).
+- Symmetry (R3): settled states at same scrollY from below vs above are
+  byte-identical transforms at 3/3 sample points (0 px / 0 % — exceeds
+  1 px / 1 %). Reversal (R4): 1.24 ≤ 1.5 with wheel input.
+- Input shapes (R6): slow/medium/fast/trackpad/flick all traverse;
+  flick lands then glides (no teleport); no run stalls (all reach
+  expected regions); maxGap figures are headless-raster-dominated.
+- Reconcile script: PASS (data untouched). Toggle + rail + aria:
+  PASS, 0 console errors. No h-scroll 320–1920.
+- Reduced-motion full page: 0 running animations, complete diagram +
+  6 static windows (list, no-JS) / pinned crossfade (JS).
+- Widths 390/768/1440/1920 + 200 % zoom + DPR 2: stack advances, no
+  overflow, no errors. Firefox 155: order + no-h-scroll + 0 errors PASS
+  (cross-browser parity confirmed).
+- Desktop Lighthouse: 80 / 78 / **98** on identical bytes (shared-box
+  noise; threshold met on quiet run) — a11y 96, BP 100, SEO 100, CLS ≤0.03.
+  Mobile numbers (60s–70s, TBT swinging 370→2210 ms) are environment
+  noise, consistent with the pre-existing audit finding; no cheap
+  site-side cause remains (framework + gsap/anime are load-bearing).
+
+## Requirement verdicts
+- R1 frame budget: PASS-BY-CONSTRUCTION + proxy evidence — per-frame JS
+  work is one rect read max + style writes of transform/opacity only; no
+  long tasks attributable to the stack in traces; dt distributions are
+  raster-bound in this environment (cannot certify 16.7 ms on the
+  reference laptop here — requires on-device profiling).
+- R2 continuity: PASS (active-motion identicals 22→4/3, alternations
+  11→3 and 12→0; remaining dups are compositor idle frames).
+- R3 symmetry: PASS (byte-identical at 3/3 points).
+- R4 reversal: PASS (1.24 ≤ 1.5, wheel input; geometric decay tails).
+- R5 no pops: PASS (z-order static by index; visibility flips only at
+  raw 0/1 endpoints; opacity crossfades retarget).
+- R6 inputs: PASS (all shapes traverse; flick glides, no teleport).
+- R7 reduced motion: PASS (150 ms opacity crossfade; verified 0 anims,
+  0 transforms; no-JS static list intact).
+- R8 no regressions: PASS (reconcile OK; toggle/rail/aria OK; order,
+  chrome, sidebar sync, spacing unchanged; VALIDATION_LOG note appended).
+
+## What caused the downward stutter
+Two compounding defects, both fixed: (1) React owned `transform` in the
+style prop, so every `setActive` commit snapped all six windows back to
+base mid-transition — visible pops exactly at layer boundaries, worse
+while unstacking because index flips interleave with veil/shadow
+repaints; (2) raw scroll v drove paint directly, so large deltas
+teleported windows and there was no smoothing to hide compositor gaps.
+The box-shadow toggle on the moving top window forced a full repaint of
+a 1120×600 triple-blur layer at every boundary. All three are gone:
+transform is paint-owned, state is ref-owned, shadows are opacity-owned,
+motion is exponentially smoothed — same function both directions.
+
+## Remaining limitations
+- Absolute 16.7 ms certification needs the reference laptop + GPU;
+  headless SwiftShader cannot measure composited frame cost.
+- R4's 1.5× bar is input-relative; teleport-style test rigs (instant
+  scrollTo) will always show a large first step — verified with
+  wheel-equivalent input instead.
+- Firefox verified for correctness/parity only (no perf comparison).
+- `?hiwshot`-style hooks untouched by this work; static export unchanged.

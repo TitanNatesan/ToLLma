@@ -103,3 +103,15 @@ Full-emphasis min 5.73:1 (FAINT 55% caption) — AA PASS. Transient phase-C dim 
 2. Dimmed-state contrast (above) — transient, by design.
 3. `?hiwshot=` / `?hiwselftest=` hooks are query-gated, render nothing by default, add zero console output.
 4. Reduced-motion verified via emulated media (as in R11); physical-AT tab approximated by CDP document-order focus walk (11/11 reachable, zero traps).
+
+## 2026-11-02 — Perf-loop regression re-check (hero stack Fixes 1–3)
+Fixes: no React state on scroll, paint-owned transform, opacity-only shadow
+layer + dim, will-change gated, contain: layout paint, exponential-approach
+scrub smoothing with retarget, R7 reduced-motion 150 ms opacity crossfade.
+Re-ran suite after each fix: reconcile-dashboard.mjs PASS (data untouched);
+platform toggle/rail/aria PASS; no h-scroll 320–1920 (incl. 200% zoom, DPR 2);
+zero console errors/warnings (pre-existing font-preload only); reduced-motion
+verified (0 running animations, crossfade stack with JS / static list no-JS).
+Firefox 155 parity PASS (order, no-h-scroll, 0 errors). Desktop Lighthouse
+80/78/98 across identical bytes (box noise; 98 + a11y 96 on quiet run).
+Full detail + recordings: landing/PERF_LOG.md, /tmp/opencode/perf/.
