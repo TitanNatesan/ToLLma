@@ -462,3 +462,95 @@ Evidence: `/tmp/opencode/r5/` (12 top-state screenshots 1440+390,
   `scale(0.95–0.975)` + sink, reversing exactly on scroll-up.
 - Re-ran reconcile after all changes: still all PASS
   (`/tmp/opencode/slide/` mid-transition screenshots desktop+mobile).
+
+## R9 — Scripted camera over the how-it-works diagram (2026-11-02)
+
+Change (`landing/src/components/sections/platform.tsx` only; diagram content,
+labels, toggle, stepper, copy, palette untouched):
+
+- Five-phase scrubbed timeline on the existing ~600vh pin
+  (`PH = A .05 / B .30 / C .78 / D .93`): A entry — full diagram fades+scales
+  .92→1 once, then holds; B first pass — all layers full emphasis, packets
+  make one pass; C layer steps 01→08 — equal eighths, camera zooms to each
+  layer's bbox, others dim to .35, in/out connectors highlight; D second
+  pass — full emphasis, packets again; E exit — scales to .9 + fades to 0.
+  `stageAt`/`activeAt`/`camAt` are pure functions of progress → scroll-up
+  reverses exactly (20/20 round-trip identical).
+- Camera = one transform on a single inner `<g data-camera>` (existing SVG,
+  transform/opacity only, vector). Keyframes computed from `layoutNodes`
+  bboxes — never hand-typed: `s = 0.65·min(Vw/rw, Vh/rh)` so the layer fills
+  65% of the diagram frame; smoothstep blends between adjacent states.
+  L05+injection unions the blocked badge so the coral branch stays in frame.
+- Phase C emphasis: active layer opacity 1, rest .35; connector highlight via
+  bbox-adjacency sets (endpoint within 10u of the layer bbox, computed);
+  non-adjacent dim to .12. Lead packet parks at the active layer's input
+  (hidden where injection blocks downstream); B/D follow the toggle
+  (injection parks the lead at the L05 exit, downstream dimmed, coral lit).
+- Pass routes redefined as continuous visual passes over EXISTING connector
+  names (`PASS_WIDE`/`PASS_TALL`; the old list referenced non-existent
+  `fan-0`/`route-fan0`, leaving the lead hidden mid-pass).
+- `jumpTo` rail clicks now target the absolute pin range from the ScrollTrigger
+  instance (was `wrap.offsetTop + frac·wrapHeight`, landing at wrong
+  progress); rail driver fixed `scaleY`→`scaleX` (bar never filled).
+- `setPkt` resets hidden packets to a canonical transform-less state, so the
+  hidden reading is identical down and back up.
+- Static contexts (tall / reduced-motion / unpinned): full diagram, camera
+  identity, no fades; stepper clicks highlight + scrollIntoView (reduced-motion
+  renders finals, zero camera/fade writes).
+- Text: all SVG text ≥12u (11s→12, 10s→12, wide title 15→16), halo pills
+  widened to fit (`7.2→7.8` factor, 24px tall), legend + stepper numbers to
+  12px; FAN-OUT pill nudged `lx 900→890` (clears the return corridor at 12px);
+  tall WORKSPACE TAP `lx 560→545` (stays inside the viewBox); lane frames
+  moved INSIDE the camera group (they are diagram, not backdrop).
+- Test hooks only: `data-camera`, `data-lbl`, `data-ledger`, `data-captures`.
+  Verified zero zoom/pan/fit controls in DOM (10 clickables: toggle×2 +
+  steppers×8; Explore link 11th tab stop).
+- `data-allow-overlap` marks the four packet groups (they ride wires / park
+  on the layer input edge by design). No node/pill pair overlaps, so nothing
+  else needed the mark; the uniform camera transform introduces no new
+  geometric overlaps by construction.
+
+### Acceptance
+
+- [x] PASS — entry `svgOp 0.4` mid-fade w/ scale .952; full pass all 8 layers
+  `1`; exit `svgOp 0` at p=1 (`r9-entry/fullpass/exit.png`).
+- [x] PASS — each C step spotlights exactly its layer (7 others at .35) with
+  matching step label (`r9-step1..8.png`, S4.1–8).
+- [x] PASS — camera fill exactly 65.0% of diagram height on all 8 steps, safe
+  + injection L05 (union keeps badge in frame, coral=1, badge=1).
+- [x] PASS — Safe↔Injection toggle: coral 0.15→1→0.12, aria-pressed flips,
+  lead parks at L05 exit in passes / layer input in C.
+- [x] PASS — scroll round-trip 20/20 exact (camera/stage/4 packets/rail/step/
+  8 layers); entry rises 0→1, exit falls →0, rail monotonic.
+- [x] PASS — pin spacer 6300 vs wrap 900 (~600%+viewport, `+=600%` intact);
+  camera takes 14 distinct states across the pin.
+- [x] PASS — node/pill pairwise 27 boxes wide + 26 tall, 0 overlaps; toggle
+  and stepper rects disjoint from svg at full + zoomed (active layer fully
+  inside svg viewport).
+- [x] PASS — stepper clicks land on stages (observe@11859 step 08, register@
+  9591 step 01); 10/10 clickables expected, zero extras.
+- [x] PASS — keyboard tab-through 11/11 in order (Safe → Injection → 01..08
+  → Explore), zero traps.
+- [x] PASS — contrast 5.73–16.94 (AA) on all full-emphasis text/chrome.
+- [x] PASS — no h-scroll at 390/768/1440/1920 (top + bottom); 400% zoom
+  (360 CSS px) no h-scroll, svg 305px.
+- [x] PASS — zero console errors; zero own warnings (2 external font-preload
+  warnings, pre-existing per R8/V009, out of scope).
+- [x] PASS — in-page selftest T1–T6 all PASS (endpoints worst 0.00px/28
+  paths, packet-on-path 1066/0, no overlap, vocabulary clean).
+- [x] PASS — reduced-motion: static full diagram, camera identity, all layers
+  1, stepper click sets aria-current + description; 390 tall identical across
+  p=0.02/0.55/0.97.
+- [x] PASS — DPR3 vector-crisp: 72% of transitions carry a steep ≥60-grey
+  step; sample text edges 73/74 grey levels over 3 device px.
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green at every step.
+- [~] PARTIAL — full-overview micro-labels (12u) render ~9–11px CSS at 1440:
+  geometrically infeasible to do otherwise (proof in VALIDATION_LOG) — an
+  8-layer 1600u diagram at 1246 CSS px gives 137px per 29-char label.
+  Mitigations shipped: titles render ≥12.5px, every zoomed step renders
+  ≥50px, everything is vector (400% zoom + DPR3 verified crisp). Authored
+  sizes ≥12u everywhere (measurement-verified).
+
+Evidence: `/tmp/opencode/r9/` (20 PNGs: entry/fullpass/steps×8/pass2/
+exitfade/exit/step5-injection/reduced + 390 full/inj/reduced + dpr3 + 400%),
+`states.json`, `suite{1..5}.log`.
