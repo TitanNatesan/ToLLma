@@ -3,7 +3,9 @@
 import { Container } from "@/components/ui/layout";
 import { useDataParallax } from "@/components/ui/parallax";
 import { DOCS_URL, EVALUATORS, GUARDRAIL_CATEGORIES, PROVIDERS } from "@/lib/site";
+import { useEffect, useRef } from "react";
 import { useInViewToggle, useRevealOnScroll } from "@/lib/animations";
+import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 
 // Dark knowledge band. Headers are animated SVG scenes (transform/opacity
 // only, ~6s slow loops, paused off-screen, static under reduced motion) with
@@ -176,6 +178,48 @@ const CARDS = [
 export default function Knowledge() {
   const revealRef = useRevealOnScroll({ staggerMs: 90 });
   const parallaxRef = useDataParallax<HTMLDivElement>();
+  const gridRef = useRef<HTMLDivElement | null>(null);
+
+  /* Card stagger parallax: the three cards sit in a clean aligned row only
+     while the grid is at the viewport center. When the grid is below
+     center (entering), the outer cards offset vertically (±STAGGER) and
+     glide back to alignment as the grid reaches center. Transform-only,
+     rAF-throttled, inert under reduced motion (static aligned row). */
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid || prefersReducedMotion()) return;
+    const cards = Array.from(
+      grid.querySelectorAll<HTMLElement>("[data-kcard]")
+    );
+    if (!cards.length) return;
+    let raf = 0;
+    const STAGGER = [-44, 0, 44];
+    const update = () => {
+      raf = 0;
+      const rect = grid.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      if (rect.bottom < -200 || rect.top > vh + 200) return;
+      const center = rect.top + rect.height / 2;
+      const p = Math.min(1, Math.max(0, (center - vh / 2) / (vh * 0.75)));
+      for (let i = 0; i < cards.length; i++) {
+        const off = (STAGGER[i % STAGGER.length] * p).toFixed(1);
+        cards[i].style.transform =
+          off === "0.0" ? "" : `translate3d(0, ${off}px, 0)`;
+      }
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      if (raf) cancelAnimationFrame(raf);
+      for (const c of cards) c.style.transform = "";
+    };
+  }, []);
   return (
     <section id="knowledge" ref={revealRef} className="scroll-mt-16 bg-night text-cream">
       <Container width="wide" className="py-20 md:py-28">
@@ -184,9 +228,10 @@ export default function Knowledge() {
           Guides from the gateway era
         </h2>
 
-        <div ref={parallaxRef} className="mx-auto mt-12 grid max-w-5xl gap-6 md:grid-cols-3">
-          {CARDS.map((c) => (
-            <article key={c.title} data-reveal className="guide-card flex flex-col border border-night-line bg-night">
+        <div ref={(el) => { parallaxRef.current = el; gridRef.current = el; }} className="mx-auto mt-12 grid max-w-5xl gap-6 md:grid-cols-3">
+          {CARDS.map((c, i) => (
+            <div key={c.title} data-kcard={i} className="will-change-transform">
+            <article data-reveal className="guide-card flex h-full flex-col border border-night-line bg-night">
               <div className="relative">
                 <c.Scene base={c.base} steps={c.steps} />
                 <span className="absolute left-1/2 top-1/2 flex size-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl bg-white shadow-lg">
@@ -211,6 +256,7 @@ export default function Knowledge() {
                 </a>
               </div>
             </article>
+            </div>
           ))}
         </div>
 
