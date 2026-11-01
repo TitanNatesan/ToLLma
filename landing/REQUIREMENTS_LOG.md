@@ -444,3 +444,21 @@ Change (3 files, no new deps, copy/palette untouched):
 
 Evidence: `/tmp/opencode/r5/` (12 top-state screenshots 1440+390,
 `validate.py` ALL PASS), `scripts/reconcile-dashboard.mjs`.
+
+### R5 follow-ups (2026-11-01, commits `c6f87ff`, `30af024`, `9abfc56`)
+- Fixed windows: uniform `70rem×600px` desktop / full-width `740px`
+  mobile, zero internal scroll (logs show latest 9 of 28 + count line;
+  columns hide gracefully on narrow screens instead of x-scrolling).
+- Single top-window shadow (covered windows drop theirs — shadows can no
+  longer pool darker); smoothstep rise, depth sink (−12px/level,
+  0.975→0.95) + graded veil; `Degraded` pill amber instead of red.
+- Region 620→300vh so each window arrives faster and the slide reads;
+  stage top-aligned, hero gap CTA→window ≈56px.
+- Root-cause fix `9abfc56`: `transform` was in the React style prop, so
+  every `setActive` commit reset the inline motion and windows popped
+  instead of sliding. Centering moved to Tailwind classes; the paint
+  loop fully owns `el.style.transform`. Verified mid-transition:
+  incoming at partial `translate3d`/full `scale(1)` over covered at
+  `scale(0.95–0.975)` + sink, reversing exactly on scroll-up.
+- Re-ran reconcile after all changes: still all PASS
+  (`/tmp/opencode/slide/` mid-transition screenshots desktop+mobile).
