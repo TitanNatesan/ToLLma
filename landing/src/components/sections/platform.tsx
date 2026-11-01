@@ -20,7 +20,7 @@
 // and L07, right-side annotation chips). ONE stepper instance, ONE
 // eyebrow+title+tagline heading (never duplicated).
 //
-// Motion: GSAP ScrollTrigger pins ~350vh and scrubs progress → layer
+// Motion: GSAP ScrollTrigger pins ~600vh and scrubs progress → layer
 // emphasis + edge draw-in + packets (ONE lead + ≤3 secondary, placed with
 // native getPointAtLength — the MotionPath getPointAtLength-equivalent —
 // as a pure function of progress, so reverse scroll is exact). anime.js is
@@ -30,8 +30,7 @@
 // highlight. Safe/Injection toggle: injection parks the lead packet at L05
 // and draws the coral blocked branch (existing behavior pattern).
 //
-// Zoom/pan: buttons (+/−/fit) + drag pan on an inner <g>; vector-only so
-// 400% zoom and DPR 1–3 stay crisp (strokes scale with the transform).
+// Diagram is vector-only so 400% zoom and DPR 1–3 stay crisp.
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -321,11 +320,9 @@ export default function Platform() {
   const [mounted, setMounted] = useState(false);
   const [traffic, setTraffic] = useState<"safe" | "injection">("safe");
   const [activeIdx, setActiveIdx] = useState(-1);
-  const [zoom, setZoom] = useState({ k: 1, tx: 0, ty: 0 });
   const reduced = useReducedMotion();
   const stateRef = useRef({ p: 0, active: -1, traffic: "safe" as "safe" | "injection" });
   const paintRef = useRef<(p: number) => void>(() => {});
-  const dragRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => {
@@ -499,7 +496,7 @@ export default function Platform() {
     const wrap = wrapRef.current;
     if (!wrap) { paint(1); return; }
     const st = ScrollTrigger.create({
-      trigger: wrap, start: "top top", end: "+=350%", pin: true, scrub: true,
+      trigger: wrap, start: "top top", end: "+=600%", pin: true, scrub: 1,
       onUpdate: (self) => paint(self.progress),
     });
     paint(0);
@@ -511,22 +508,6 @@ export default function Platform() {
     stateRef.current.traffic = traffic;
     paintRef.current(stateRef.current.p || (pinned ? 0 : 1));
   }, [traffic, pinned]);
-
-  /* In-diagram zoom controls + drag pan (vector-only). */
-  const zoomBy = (f: number) => setZoom((z) => ({ ...z, k: Math.min(4, Math.max(0.5, z.k * f)) }));
-  const zoomFit = () => setZoom({ k: 1, tx: 0, ty: 0 });
-  const onPanStart = (e: React.PointerEvent) => {
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-    dragRef.current = { x: e.clientX, y: e.clientY, tx: zoom.tx, ty: zoom.ty };
-  };
-  const onPanMove = (e: React.PointerEvent) => {
-    const d = dragRef.current;
-    if (!d) return;
-    const svg = svgRef.current;
-    const scale = svg ? VIEW[mode].w / svg.getBoundingClientRect().width : 1;
-    setZoom((z) => ({ ...z, tx: d.tx + (e.clientX - d.x) * scale, ty: d.ty + (e.clientY - d.y) * scale }));
-  };
-  const onPanEnd = () => { dragRef.current = null; };
 
   const jumpTo = (i: number) => {
     if (pinned && wrapRef.current) {
@@ -582,30 +563,12 @@ export default function Platform() {
         <div ref={wrapRef} className={pinned ? "relative" : "relative mt-8"}>
           <div className={pinned ? "flex h-screen flex-col justify-center" : ""}>
             <div className="relative mx-auto w-full max-w-[1500px]">
-              {/* Zoom controls + pan */}
-              <div className="absolute right-2 top-2 z-10 flex gap-1.5" role="group" aria-label="Diagram zoom">
-                {[["+", () => zoomBy(1.25), "Zoom in"], ["−", () => zoomBy(0.8), "Zoom out"], ["Fit", zoomFit, "Reset zoom"]].map(([label, fn, aria]) => (
-                  <button
-                    key={aria as string}
-                    type="button"
-                    aria-label={aria as string}
-                    onClick={fn as () => void}
-                    className="flex min-h-[44px] min-w-[44px] items-center justify-center border border-white/25 bg-night/80 px-2 font-mono text-sm text-white/80 hover:border-white/60 hover:text-white"
-                  >
-                    {label as string}
-                  </button>
-                ))}
-              </div>
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${V.w} ${V.h}`}
-                className="h-auto w-full touch-none select-none"
+                className="h-auto w-full select-none"
                 role="img"
                 aria-label="ToLLma gateway: eight layers from register to observe"
-                onPointerDown={onPanStart}
-                onPointerMove={onPanMove}
-                onPointerUp={onPanEnd}
-                onPointerCancel={onPanEnd}
               >
                 <defs>
                   <pattern id="hiw-grid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -637,7 +600,7 @@ export default function Platform() {
                   </>
                 )}
 
-                <g transform={`translate(${zoom.tx} ${zoom.ty}) scale(${zoom.k})`}>
+                <g>
                   {/* Connectors (computed from bounding boxes). */}
                   {conns.filter((cn) => cn.d).map((cn) => (
                     <path
