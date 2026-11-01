@@ -648,6 +648,30 @@ body {
   transform: rotate(-14deg);
 }
 
+/* R11 giant footer wordmark: display type scaled with clamp()+vw to span
+   almost the full container at every width. The clip cuts it at the footer
+   bottom while the (negative-speed) parallax drift rises from below on
+   scroll — transform-only, fully reversible, inert under reduced-motion. */
+.foot-wordmark-clip {
+  overflow: hidden;
+  margin-top: clamp(2rem, 5vw, 3.5rem);
+}
+.foot-wordmark-drift {
+  will-change: transform;
+}
+.foot-wordmark {
+  display: block;
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 0.84;
+  font-size: clamp(5.5rem, 23vw, 20rem);
+  color: var(--color-coal);
+  user-select: none;
+}
+
 /* Footer license pill: subtle hairline pill (Apache 2.0 + self-host story). */
 .foot-pill {
   display: inline-flex;

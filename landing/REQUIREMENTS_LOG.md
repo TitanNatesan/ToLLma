@@ -340,3 +340,50 @@ Change (3 files, copy/palette/layout untouched):
 
 Evidence: `/tmp/opencode/r10/r10-{openai,anthropic,gemini,vertex,bedrock,catch-all}-{hover,focus}.png`
 (12 screenshots), `/tmp/opencode/r10/validate.py` (32 checks ALL PASS).
+
+## R11 — Giant footer wordmark with scroll parallax (2026-11-01)
+
+Change (2 files, copy/palette/layout untouched):
+- `src/components/sections/closing.tsx`: new `foot-wordmark-clip` block
+  between the link grid and the copyright bar — `aria-hidden` decorative
+  duplicate of the logo wordmark (`ToLLma`, sans extrabold 800,
+  `letter-spacing -0.045em`, `line-height 0.84`, centered). New page-local
+  `useWordmarkRise` hook (not the shared `<Parallax>`: that wrapper
+  self-measures its own transformed rect, which converges only asymptotically
+  and returns ±2px off after a scroll cycle; measuring the untransformed
+  clip parent makes the offset a pure function of scroll position).
+  Negative speed (-0.5) rises from below the footer edge as the footer
+  scrolls in; rAF-throttled scroll/resize listeners, transform cleared on
+  cleanup, inert under `prefers-reduced-motion` (static wordmark stays
+  visible). No new deps.
+- `src/app/globals.css`: `.foot-wordmark-{clip,drift,wordmark}` —
+  `overflow: hidden` clip (cuts the wordmark at the footer bottom),
+  `font-size: clamp(5.5rem, 23vw, 20rem)` so the glyph line spans almost the
+  full container at every width. Transform-only; no `outline: none` anywhere
+  (global `:focus-visible` 2px ring kept on all footer links).
+
+### Acceptance
+
+- [x] PASS — glyph width / container content width ≥ 90% at all widths
+  (served `out/`, headless Chrome, Range rect vs container content box):
+  390px 92.1% (322/350), 768px 90.8% (635/699), 1440px 92.3% (1150/1246),
+  1920px 93.4% (1150/1232).
+- [x] PASS — no h-overflow: `documentElement.scrollWidth == innerWidth`
+  at all 4 widths; clip `overflow: hidden`.
+- [x] PASS — offset changes with scroll + exactly reverses: −400px scroll
+  moves the drift +17–20px (rises from below), scrolling back to the same
+  `scrollY` restores the bit-identical matrix; transform equals the
+  closed-form function of the live clip rect to the centipixel at every
+  sample (`pureFn: true`), so reversal holds by construction, not tolerance.
+- [x] PASS — focus rings visible: programmatic focus on a footer link shows
+  computed `outline: 2px solid` (global `:focus-visible` rule untouched);
+  focus screenshots captured at all 4 widths.
+- [x] PASS — reduced-motion: drift transform stays `none` across scroll,
+  wordmark fully visible (static composition, no-JS likewise shows finals).
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green (static `out/`),
+  zero page/console errors at all widths. Vitest N/A — no runner or test
+  files configured in `landing/` (consistent with R7/R10 records).
+
+Evidence: `/tmp/opencode/r11/r11-{390,768,1440,1920}.png`,
+`/tmp/opencode/r11/r11-{390,768,1440,1920}-focus.png`, `validate{,2..8}.py`,
+`dbg{,2..4}.py` (parallax self-measurement feedback diagnosis).

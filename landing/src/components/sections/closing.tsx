@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { Container } from "@/components/ui/layout";
 import { useRevealOnScroll } from "@/lib/animations";
+import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
 import tollmaLight from "./brand/tollma-light-256.png";
 
@@ -69,8 +71,49 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
   },
 ];
 
+// R11 wordmark rise: scroll-linked translate on the drift child, measured
+// off the untransformed clip parent (never self-measured, so the offset is a
+// pure function of scroll position and exactly reversible). Negative speed
+// rises from below the footer edge as the footer scrolls in. Transform-only,
+// rAF-throttled, inert under prefers-reduced-motion.
+const WORDMARK_SPEED = -0.5;
+
+function useWordmarkRise(
+  clipRef: React.RefObject<HTMLDivElement | null>,
+  driftRef: React.RefObject<HTMLDivElement | null>
+) {
+  useEffect(() => {
+    const clip = clipRef.current;
+    const drift = driftRef.current;
+    if (!clip || !drift || prefersReducedMotion()) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const rect = clip.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      const progress = (vh - rect.top) / (vh + rect.height) - 0.5;
+      drift.style.transform = `translate3d(0, ${(progress * WORDMARK_SPEED * 100).toFixed(2)}px, 0)`;
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      if (raf) cancelAnimationFrame(raf);
+      drift.style.transform = "";
+    };
+  }, [clipRef, driftRef]);
+}
+
 export function Footer() {
   const revealRef = useRevealOnScroll({ staggerMs: 90, y: 16 });
+  const clipRef = useRef<HTMLDivElement | null>(null);
+  const driftRef = useRef<HTMLDivElement | null>(null);
+  useWordmarkRise(clipRef, driftRef);
   return (
     <footer id="company" ref={revealRef} className="scroll-mt-20 border-t border-cream-line bg-cream">
       <Container width="wide" className="py-14">
@@ -123,6 +166,15 @@ export function Footer() {
               </div>
             ))}
           </nav>
+        </div>
+        {/* R11 giant wordmark: link columns above, copyright bar below.
+            Negative parallax speed rises from below the footer edge as the
+            footer scrolls in (fully reversible); the clip cuts it at the
+            footer bottom. Decorative duplicate of the logo wordmark. */}
+        <div data-reveal aria-hidden="true" ref={clipRef} className="foot-wordmark-clip">
+          <div ref={driftRef} className="foot-wordmark-drift">
+            <span className="foot-wordmark">ToLLma</span>
+          </div>
         </div>
         <div data-reveal className="mt-12 flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© 2026 ToLLma · Apache-2.0</p>
