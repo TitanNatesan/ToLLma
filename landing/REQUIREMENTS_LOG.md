@@ -45,3 +45,30 @@ Cache-bust `?v=2` on every icon href. No new deps; palette/typography untouched.
 
 Evidence: `/tmp/opencode/r1/landing-1440.png`, `/tmp/opencode/r1/console.log`,
 `out/index.html` link tags.
+
+## R2 — Center alignment: pill, headline, subcopy, CTA on one vertical axis (2026-11-01)
+
+Change (`landing/src/components/sections/hero.tsx` only, copy/palette untouched):
+- Hero copy wrapper (`driftRef` div) → `flex w-full flex-col items-center text-center`.
+- Open-source pill → `mx-auto w-fit justify-center text-center`.
+- `HeroHeadline` h1 → `w-full text-center` + explicit `textWrap: "balance"`
+  (kept `text-balance` class + `max-w-4xl mx-auto`).
+- Subcopy → `w-full text-center` (kept `max-w-2xl mx-auto`).
+- CTA row → `w-full justify-center`. Transform/opacity-only motion kept;
+  reduced-motion finals unchanged.
+
+### Acceptance
+
+- [x] PASS — `text-wrap: balance` on headline (computed `textWrap: balance`,
+  `text-balance` class).
+- [x] PASS — horizontal centers within 1px of viewport center at all widths
+  (served `out/`, headless Chrome, `getBoundingClientRect` centers vs `innerWidth`):
+  - 390px: pill/headline/subcopy/CTA cx=195.00, Δ=0 — PASS
+  - 768px: cx=384.00, Δ=0 — PASS
+  - 1440px: cx=720.00, Δ=0 — PASS
+  - 1920px: cx=960.00, Δ=0 — PASS
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green.
+- [x] PASS — zero console/page errors at all widths.
+
+Evidence: `/tmp/opencode/r2r4/r2-390.png`, `/tmp/opencode/r2r4/r2-768.png`,
+`/tmp/opencode/r2r4/r2-1440.png`, `/tmp/opencode/r2r4/r2-1920.png`.

@@ -153,8 +153,8 @@ function HeroHeadline() {
     <h1
       ref={ref}
       aria-label={`${BRAND.headline}.`}
-      className="mx-auto mt-7 max-w-4xl text-balance font-serif font-medium tracking-tight text-coal"
-      style={{ fontSize: "clamp(2.6rem, 6vw, 4.75rem)", lineHeight: 1.05 }}
+      className="mx-auto mt-7 w-full max-w-4xl text-balance text-center font-serif font-medium tracking-tight text-coal"
+      style={{ fontSize: "clamp(2.6rem, 6vw, 4.75rem)", lineHeight: 1.05, textWrap: "balance" }}
     >
       {words.map((w, i) => (
         <span key={i} aria-hidden="true" className="hw-mask">
@@ -459,8 +459,8 @@ export default function Hero() {
       <HeroBackdrop />
       <HeroPills />
       <Container width="wide" className="relative pb-20 pt-16 md:pt-24">
-        <div ref={driftRef}>
-          <p className="inline-flex items-center gap-2.5 rounded-full border border-cream-line bg-white px-4 py-1.5 text-sm font-medium text-coal">
+        <div ref={driftRef} className="flex w-full flex-col items-center text-center">
+          <p className="mx-auto inline-flex w-fit items-center justify-center gap-2.5 rounded-full border border-cream-line bg-white px-4 py-1.5 text-center text-sm font-medium text-coal">
             <span className="font-bold" aria-hidden="true">
               ✳
             </span>
@@ -469,11 +469,11 @@ export default function Hero() {
 
           <HeroHeadline />
 
-          <p className="mx-auto mt-6 max-w-2xl text-pretty text-[1.1rem] leading-relaxed text-coal/70">
+          <p className="mx-auto mt-6 w-full max-w-2xl text-center text-pretty text-[1.1rem] leading-relaxed text-coal/70">
             Connect your applications to multiple AI providers through one unified gateway. Manage credentials, models, usage, and policies from a single control plane.
           </p>
 
-          <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
+          <div className="mt-9 flex w-full flex-wrap items-center justify-center gap-4">
             <BlackButton href={GET_STARTED_URL} ariaLabel="Get started with ToLLma">
               Get Started <span aria-hidden="true">→</span>
             </BlackButton>
