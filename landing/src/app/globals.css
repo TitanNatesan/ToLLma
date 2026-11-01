@@ -665,7 +665,7 @@ body {
   text-align: center;
   white-space: nowrap;
   font-weight: 800;
-  letter-spacing: -0.045em;
+  letter-spacing: 0.01em;
   line-height: 0.84;
   font-size: clamp(5.5rem, 23vw, 20rem);
   color: var(--color-coal);

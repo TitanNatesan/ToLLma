@@ -24,7 +24,7 @@ export default function Page() {
         <Hero />
         {/* R8 dividers (inverted): PREV-section field + NEXT-section teeth,
             rise-on-enter only — no parallax, no hairlines. */}
-        <PixelWipe tone="dark" />
+        <PixelWipe tone="light" />
         <Marquee />
         <WhatWeDo />
         <Outcomes />
