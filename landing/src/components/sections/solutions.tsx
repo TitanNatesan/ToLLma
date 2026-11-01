@@ -12,9 +12,8 @@
 import type { CSSProperties } from "react";
 import { Container } from "@/components/ui/layout";
 import { SpotlightCard } from "@/components/ui/spotlight-card";
-import { Parallax } from "@/components/ui/parallax";
-import { DOCS_URL, PROVIDERS } from "@/lib/site";
 import { useRevealOnScroll } from "@/lib/animations";
+import { DOCS_URL, PROVIDERS } from "@/lib/site";
 import { AnthropicMark, OpenAIMark } from "./brand/provider-marks";
 import googleG from "./brand/providers-google-g.png";
 import vertexPng from "./brand/providers-vertex.png";
@@ -115,16 +114,16 @@ export default function Solutions() {
               </a>
             </SpotlightCard>
           ))}
-          {/* Bottom-row catch-all: dashed CTA card with hover fill. Drifts
-              with foreground parallax (0.92) for depth against the grid. */}
-          <Parallax speed={0.92} className="bg-cream">
-            <SpotlightCard className="h-full provider-card group" style={{ "--spot": SPOT_FALLBACK } as CSSProperties}>
+          {/* Bottom-row catch-all: dashed CTA card with hover fill. Pinned
+              in its grid cell (no parallax) so the 6th card always sits
+              exactly in place. */}
+          <SpotlightCard className="h-full provider-card group" style={{ "--spot": SPOT_FALLBACK } as CSSProperties}>
             <a
               href={DOCS_URL}
               target="_blank"
               rel="noopener noreferrer"
               data-reveal
-              className="group relative flex min-h-[190px] flex-col border-2 border-dashed border-coal/25 bg-cream p-7 transition-colors duration-200 hover:border-coal hover:bg-coal"
+              className="group relative flex min-h-[190px] h-full flex-col border-2 border-dashed border-coal/25 bg-cream p-7 transition-colors duration-200 hover:border-coal hover:bg-coal"
             >
               <TargetCorners />
               <p className="text-[1.05rem] leading-snug text-coal/80 transition-colors group-hover:text-cream/85">
@@ -135,8 +134,7 @@ export default function Solutions() {
                 <span aria-hidden="true" className="transition-transform duration-200 group-hover:translate-x-1">→</span>
               </span>
             </a>
-            </SpotlightCard>
-          </Parallax>
+          </SpotlightCard>
         </div>
       </Container>
     </section>
