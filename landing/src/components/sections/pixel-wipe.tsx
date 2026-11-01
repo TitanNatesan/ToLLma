@@ -1,15 +1,10 @@
 "use client";
 
-// Scroll-driven pixel block-wipe: stepped teeth that rise on enter (scaleY
-// from the bottom baseline, transform-only, left→right stagger).
-//
-// R8: NO parallax, NO cursor lift. The divider paints the NEXT section's
-// field with the PREV section's color as teeth (D1 is decorative night teeth
-// on cream, where prev == next). The divider sits 2px ON TOP of the next
-// section (-mb-2px + z-10), so teeth rise out of the next color and no
-// previous-section band or hairline shows at the boundary. Slots overlap 1px
-// horizontally to hide subpixel seams. Static full pattern under reduced
-// motion / no-JS (finals).
+// R8 (inverted): NO parallax, NO cursor lift. The divider paints the PREV
+// section's field with the NEXT section's color as teeth (D1 decorative
+// night teeth on cream, where prev == next). The divider sits 2px ON TOP
+// of the next section (-mb-2px + z-10), slots overlap 1px horizontally to
+// hide subpixel seams. Static full pattern under reduced motion / no-JS.
 import { useEffect, useRef, useState } from "react";
 
 // Stepped column pattern: [width flex, max height 0..1].
@@ -22,12 +17,14 @@ const PATTERN: [number, number][] = [
 export default function PixelWipe({
   tone = "dark",
   block,
+  field,
 }: {
-  /** "dark" = night teeth on a cream (next-light) field;
-      "light" = cream teeth on a night (next-dark) field. */
+  /** "dark" = night field (inverted); "light" = cream field (inverted). */
   tone?: "dark" | "light";
-  /** Teeth color override (e.g. "bg-sage"); defaults to night/cream by tone. */
+  /** Teeth color override (e.g. "bg-night"); defaults to cream/night by tone. */
   block?: string;
+  /** Field (band) color override (e.g. "bg-sage"). */
+  field?: string;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const blocks = useRef<Array<HTMLDivElement | null>>([]);
@@ -91,8 +88,8 @@ export default function PixelWipe({
     };
   }, [reduced]);
 
-  const bandCls = tone === "dark" ? "bg-cream" : "bg-night";
-  const blockCls = block ?? (tone === "dark" ? "bg-night" : "bg-cream");
+  const bandCls = field ?? (tone === "dark" ? "bg-night" : "bg-cream");
+  const blockCls = block ?? (tone === "dark" ? "bg-cream" : "bg-night");
 
   return (
     <div ref={ref} data-wipe aria-hidden="true" className={`relative z-10 -mb-[2px] overflow-hidden ${bandCls}`}>

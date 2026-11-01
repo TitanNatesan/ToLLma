@@ -22,13 +22,13 @@ export default function Page() {
       <Nav />
       <main id="top">
         <Hero />
-        {/* R8 dividers: NEXT-section field + PREV-section teeth (D1 decorative),
+        {/* R8 dividers (inverted): PREV-section field + NEXT-section teeth,
             rise-on-enter only — no parallax, no hairlines. */}
         <PixelWipe tone="dark" />
         <Marquee />
         <WhatWeDo />
         <Outcomes />
-        <PixelWipe tone="light" block="bg-sage" />
+        <PixelWipe tone="dark" field="bg-sage" block="bg-night" />
         <Platform />
         <PixelWipe tone="dark" />
         <Solutions />
