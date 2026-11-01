@@ -400,25 +400,8 @@ body {
   transform: scaleX(1);
 }
 
-/* Nav bar: scroll-linked shrink (~10% over the first 120px) via --shrink
-   (0→1, written by one rAF loop). Height stays in CSS — JS never writes
-   style.height, so no per-frame layout property churn from the component. */
-.nav-bar {
-  height: calc(var(--nav-h) - (var(--nav-h) - var(--nav-h-scrolled)) * var(--shrink, 0));
-}
-
-/* Nav scroll-progress line: page 0→1, JS sets scaleX via rAF. */
-.nav-progress {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  transform: scaleX(0);
-  transform-origin: 0 50%;
-  background: linear-gradient(90deg, var(--color-brand), var(--color-teal));
-  pointer-events: none;
-}
+/* Island nav link underline is defined on .nav-link; this keeps the
+   light-variant on the dark island using the same currentColor rule. */
 
 /* Reveal: fade + rise (24px, 700ms, var(--ease-reveal)). JS sets
    [data-hidden] only when motion is allowed; --reveal-delay staggers

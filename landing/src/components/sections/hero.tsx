@@ -214,7 +214,7 @@ export default function Hero() {
     <section className="relative overflow-x-clip bg-cream">
       <HeroBackdrop />
       <HeroPills />
-      <Container width="wide" className="relative pb-10 pt-16 md:pt-24">
+      <Container width="wide" className="relative pb-10 pt-32 md:pt-36">
         <div ref={driftRef} className="flex w-full flex-col items-center text-center">
           <p className="mx-auto inline-flex w-fit items-center justify-center gap-2.5 rounded-full border border-cream-line bg-white px-4 py-1.5 text-center text-sm font-medium text-coal">
             <span className="font-bold" aria-hidden="true">

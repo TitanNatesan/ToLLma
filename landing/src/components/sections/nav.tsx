@@ -1,21 +1,20 @@
 "use client";
 
-// Sticky cream navbar: app-style T-badge wordmark left, application section
-// links center, "API Docs" text link + black square "Get Started" right.
-// At top: solid cream, full height (var(--nav-h)). Past 24px of scroll the
-// bar frosts (cream/85 + blur + hairline border + soft shadow), shrinks
-// ~10% across the first 120px, and shows a thin page-progress line at its
-// bottom edge (rAF-driven, transform-only — no re-renders on scroll).
-// Desktop links draw an underline left→right on hover; the scrollspy item
-// (useActiveSection) holds it full. Mobile panel staggers links in.
-// Header box height follows the bar, so the shrink is smooth and
-// scroll-linked — no abrupt layout shift. Copy/destinations unchanged.
-import { useEffect, useMemo, useRef, useState } from "react";
+// Floating dynamic-island navbar: a centered coal pill, detached from the
+// viewport top. At the top (or whenever the island is hovered / focused /
+// tapped open) it shows everything — wordmark, all section links, API Docs
+// and Get Started. While scrolled down and idle it collapses to just the
+// wordmark, the current scroll-spy section, and Get Started. No progress
+// line. The collapse/expand is a smooth FLIP-measured width glide
+// (curtain reveal, exact widths, no snapping) plus a crossfade between the
+// link row and the section label; transform/opacity-only otherwise. Static
+// full nav under reduced motion (no collapse — everything stays visible).
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BlackButton } from "@/components/ui/primitives";
 import { MagneticButton } from "@/components/ui/magnetic-button";
 import { IconClose, IconMenu } from "@/components/ui/icons";
 import { useActiveSection } from "@/lib/animations";
+import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { DOCS_URL, GET_STARTED_URL } from "@/lib/site";
 import tollmaLight from "./brand/tollma-light-256.png";
 
@@ -37,32 +36,37 @@ const LINKS = [
 export default function Nav() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [touchOpen, setTouchOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const barRef = useRef<HTMLElement | null>(null);
-  const progressRef = useRef<HTMLSpanElement | null>(null);
+  const foldRef = useRef<HTMLDivElement | null>(null);
+  const foldW = useRef(0);
   const ids = useMemo(() => LINKS.map((l) => l.id), []);
   const active = useActiveSection(ids);
+  const reduced = prefersReducedMotion();
 
-  // Frost + shrink + progress: one rAF-throttled scroll listener updating
-  // the DOM directly (no per-frame React renders). Reduced-motion keeps the
-  // scroll-linked bar (informative, not autoplay); magnetic is separate.
+  const current = LINKS.find((l) => l.id === active) ?? {
+    label: "Overview",
+    href: "#top",
+    id: "top",
+  };
+  // Reduced motion: never collapse — the full nav is always shown.
+  const expanded = reduced || !scrolled || hovered || focused || touchOpen || open;
+
   useEffect(() => {
     let raf = 0;
-    let lastScrolled: boolean | null = null;
+    let last: boolean | null = null;
     const update = () => {
       raf = 0;
-      const y = window.scrollY || 0;
-      const isScrolled = y > 24;
-      if (isScrolled !== lastScrolled) {
-        lastScrolled = isScrolled;
+      const isScrolled = (window.scrollY || 0) > 24;
+      if (isScrolled !== last) {
+        last = isScrolled;
         setScrolled(isScrolled);
       }
-      const t = Math.min(1, y / 120);
-      barRef.current?.style.setProperty("--shrink", t.toFixed(3));
-      const max = document.documentElement.scrollHeight - window.innerHeight;
-      const p = max > 0 ? Math.min(1, Math.max(0, y / max)) : 0;
-      progressRef.current?.style.setProperty("transform", `scaleX(${p.toFixed(4)})`);
+      // Any scroll collapses a tap-opened island.
+      if (isScrolled) setTouchOpen(false);
     };
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(update);
@@ -76,6 +80,44 @@ export default function Nav() {
       if (raf) cancelAnimationFrame(raf);
     };
   }, []);
+
+  // Record the fold's resting width after every commit so the next toggle
+  // can glide from the exact old width to the exact new one.
+  useEffect(() => {
+    const el = foldRef.current;
+    if (el) foldW.current = el.scrollWidth;
+  });
+
+  // FLIP width glide on expand/collapse: animate the fold from its
+  // previous measured width to the new content width, then release back
+  // to auto. The outgoing row is display:none so it never inflates the
+  // measurement; the incoming row is revealed by the width curtain.
+  useLayoutEffect(() => {
+    const el = foldRef.current;
+    if (!el || reduced) return;
+    const from = foldW.current;
+    const to = el.scrollWidth;
+    foldW.current = to;
+    if (!from || Math.abs(from - to) < 2) return;
+    el.style.width = `${from}px`;
+    const anim = el.animate(
+      [{ width: `${from}px` }, { width: `${to}px` }],
+      { duration: 360, easing: "cubic-bezier(0.2,0.7,0.2,1)" }
+    );
+    const clear = () => {
+      el.style.width = "";
+    };
+    anim.onfinish = clear;
+    return () => {
+      try {
+        anim.cancel();
+      } catch {
+        /* noop */
+      }
+      clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
 
   // Mobile panel: Escape closes, Tab stays trapped, focus returns on close.
   useEffect(() => {
@@ -113,101 +155,162 @@ export default function Nav() {
   }, [open ]);
 
   return (
-    <header
-      // Single opaque background state (cream) top AND scrolled: a
-      // translucent frosted bar changes appearance over dark sections
-      // (e.g. #platform), reading as a background "flip" while scrolling.
-      // Scoped fix: keep the blur class (no-op on opaque) for the design
-      // language, but never let dark content bleed through. Shrink +
-      // progress line still signal scroll.
-      className={`sticky top-0 z-50 border-b transition-[border-color,box-shadow] duration-300 bg-cream ${
-        scrolled
-          ? "border-cream-line shadow-[var(--shadow-sm)] backdrop-blur-md"
-          : "border-transparent"
-      }`}
-    >
-      <nav
-        ref={barRef}
-        aria-label="Primary"
-        className="nav-bar container-gutter container-wide mx-auto flex items-center justify-between gap-6"
-      >
-        <Link href="#top" className="flex items-center gap-2" aria-label="ToLLma home">
-          {/* Official ToLLma mark (supplied PNG, light version for cream). */}
-          <img
-            src={tollmaLight.src}
-            alt=""
-            width={28}
-            height={28}
-            className="size-7"
-          />
-          <span className="text-[1.1rem] font-semibold tracking-tight text-coal">
-            ToLLma
-          </span>
-        </Link>
-
-        <ul className="hidden items-center gap-8 lg:flex">
-          {LINKS.map((l) => {
-            const isActive = active === l.id;
-            return (
-              <li key={l.label}>
-                <Link
-                  href={l.href}
-                  aria-current={isActive ? "true" : undefined}
-                  data-active={isActive ? "true" : undefined}
-                  className={`nav-link py-1 text-[0.95rem] font-medium transition-opacity hover:opacity-60 ${
-                    isActive ? "text-coal" : "text-coal/80"
-                  }`}
-                >
-                  {l.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-
-        <div className="hidden items-center gap-6 lg:flex">
-          <a
-            href={DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[0.95rem] font-medium text-coal/80 transition-opacity hover:opacity-60"
-          >
-            API Docs
-          </a>
-          <MagneticButton strength={5}>
-            <BlackButton href={GET_STARTED_URL} className="btn-shine px-6 py-2.5 text-[0.9rem]">
-              Get Started
-            </BlackButton>
-          </MagneticButton>
-        </div>
-
-        <button
-          ref={toggleRef}
-          type="button"
-          className="inline-flex size-11 items-center justify-center text-coal lg:hidden"
-          aria-expanded={open}
-          aria-controls="nav-mobile-panel"
-          aria-label={open ? "Close menu" : "Open menu"}
-          onClick={() => setOpen((v) => !v)}
+    <>
+      <header className="pointer-events-none fixed inset-x-0 top-3 z-50 flex justify-center px-4 sm:top-4">
+        <nav
+          aria-label="Primary"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onClick={() => {
+            // Touch: tapping the collapsed island expands it.
+            if (!expanded) setTouchOpen(true);
+          }}
+          className={`pointer-events-auto flex max-w-full items-center gap-4 rounded-full border border-white/10 bg-coal/95 px-4 py-2 text-cream shadow-[0_18px_50px_-12px_rgba(23,25,20,0.55)] backdrop-blur-md transition-[padding] duration-300 ease-out sm:px-5 sm:py-2.5 ${
+            expanded ? "" : "cursor-pointer"
+          }`}
         >
-          {open ? <IconClose size={22} /> : <IconMenu size={22} />}
-        </button>
-      </nav>
-      <span ref={progressRef} aria-hidden="true" className="nav-progress" />
+          <Link
+            href="#top"
+            className="flex shrink-0 items-center gap-2"
+            aria-label="ToLLma home"
+            onClick={() => {
+              setTouchOpen(false);
+              setOpen(false);
+            }}
+          >
+            {/* Official ToLLma mark (supplied PNG, light version for the dark island). */}
+            <img
+              src={tollmaLight.src}
+              alt=""
+              width={26}
+              height={26}
+              className="size-[26px]"
+            />
+            <span className="hidden text-[1.05rem] font-semibold tracking-tight min-[400px]:inline">
+              ToLLma
+            </span>
+          </Link>
 
-      {/* Always mounted for a smooth open/close (grid-rows + opacity);
-          hidden from AT + inert when closed. Links stagger in on open. */}
-      <div
-        id="nav-mobile-panel"
-        ref={panelRef}
-        inert={!open}
-        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out lg:hidden ${
-          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-        }`}
-      >
-        <div className="overflow-hidden">
-          <div className="container-gutter container-wide mx-auto flex flex-col gap-1 py-4">
-            <div aria-hidden={!open} className={open ? undefined : "invisible"}>
+          {/* Middle fold: full link row when expanded, current-section
+              label when collapsed. Width glides via FLIP; contents
+              crossfade. On mobile the link row stays hidden and the label
+              persists in both states. */}
+          <div ref={foldRef} className="island-fold min-w-0">
+            <div className="relative">
+              <div
+                className={`items-center gap-7 whitespace-nowrap transition-opacity duration-200 ${
+                  expanded ? "flex opacity-100 max-lg:hidden" : "hidden"
+                }`}
+              >
+                <ul className="flex items-center gap-7">
+                  {LINKS.map((l) => {
+                    const isActive = active === l.id;
+                    return (
+                      <li key={l.label}>
+                        <Link
+                          href={l.href}
+                          aria-current={isActive ? "true" : undefined}
+                          data-active={isActive ? "true" : undefined}
+                          onClick={() => {
+                            setTouchOpen(false);
+                            setOpen(false);
+                          }}
+                          className={`nav-link nav-link-light py-1 text-[0.95rem] font-medium transition-opacity hover:opacity-60 ${
+                            isActive ? "text-cream" : "text-cream/80"
+                          }`}
+                        >
+                          {l.label}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <a
+                  href={DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[0.95rem] font-medium text-cream/80 transition-opacity hover:opacity-60"
+                >
+                  API Docs
+                </a>
+              </div>
+              <span
+                className={`whitespace-nowrap transition-opacity duration-200 ${
+                  expanded
+                    ? "opacity-100 lg:pointer-events-none lg:absolute lg:inset-0 lg:opacity-0"
+                    : "opacity-100"
+                }`}
+              >
+                <Link
+                  href={current.href}
+                  aria-current={active ? "true" : undefined}
+                  onClick={(e) => e.stopPropagation()}
+                  className="truncate text-[0.95rem] font-medium text-cream/85"
+                >
+                  {current.label}
+                </Link>
+              </span>
+            </div>
+          </div>
+
+          <MagneticButton strength={5} className="shrink-0">
+            <span className="btn-shine inline-flex shrink-0 items-center rounded-full bg-cream px-4 py-1.5 text-[0.85rem] font-semibold text-coal sm:px-5 sm:py-2 sm:text-[0.9rem]">
+              <Link
+                href={GET_STARTED_URL}
+                onClick={(e) => e.stopPropagation()}
+              >
+                Get Started
+              </Link>
+            </span>
+          </MagneticButton>
+
+          {/* Mobile menu toggle: fades/slides open only with the island. */}
+          <span
+            className={`grid transition-[grid-template-columns,opacity,margin] duration-300 ease-out lg:hidden ${
+              expanded
+                ? "ml-0 grid-cols-[1fr] opacity-100"
+                : "grid-cols-[0fr] opacity-0"
+            }`}
+          >
+            <span className="min-w-0 overflow-hidden">
+              <button
+                ref={toggleRef}
+                type="button"
+                tabIndex={expanded ? 0 : -1}
+                className="inline-flex size-10 items-center justify-center rounded-full text-cream"
+                aria-expanded={open}
+                aria-controls="nav-mobile-panel"
+                aria-label={open ? "Close menu" : "Open menu"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen((v) => !v);
+                }}
+              >
+                {open ? <IconClose size={20} /> : <IconMenu size={20} />}
+              </button>
+            </span>
+          </span>
+        </nav>
+      </header>
+
+      {/* Mobile drop-down card, mounted only when the island is expanded. */}
+      {expanded && (
+        <div
+          id="nav-mobile-panel"
+          ref={panelRef}
+          inert={!open}
+          className={`fixed inset-x-4 top-[72px] z-50 grid transition-[grid-template-rows,opacity] duration-300 ease-out lg:hidden ${
+            open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          }`}
+        >
+          <div className="overflow-hidden">
+            <div
+              className={`flex flex-col gap-1 rounded-3xl border border-white/10 bg-coal/95 p-3 text-cream shadow-[0_18px_50px_-12px_rgba(23,25,20,0.55)] backdrop-blur-md ${
+                open ? undefined : "invisible"
+              }`}
+            >
               {LINKS.map((l, i) => (
                 <Link
                   key={l.label}
@@ -216,13 +319,13 @@ export default function Nav() {
                   onClick={() => setOpen(false)}
                   aria-current={active === l.id ? "true" : undefined}
                   style={{ transitionDelay: open ? `${i * 45}ms` : "0ms" }}
-                  className={`flex items-center gap-1.5 px-2 py-2.5 text-[0.95rem] font-medium transition-[opacity,transform] duration-300 ease-out ${
+                  className={`flex items-center gap-1.5 rounded-2xl px-3 py-2.5 text-[0.95rem] font-medium transition-[opacity,transform] duration-300 ease-out ${
                     open ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
-                  } ${active === l.id ? "text-coal" : "text-coal/80"}`}
+                  } ${active === l.id ? "text-cream" : "text-cream/80"}`}
                 >
                   <span
                     aria-hidden="true"
-                    className={`size-1.5 rounded-full bg-coal ${
+                    className={`size-1.5 rounded-full bg-cream ${
                       active === l.id ? "opacity-100" : "opacity-0"
                     }`}
                   />
@@ -231,7 +334,7 @@ export default function Nav() {
               ))}
               <div
                 style={{ transitionDelay: open ? `${LINKS.length * 45}ms` : "0ms" }}
-                className={`mt-2 flex items-center gap-4 border-t border-cream-line px-2 pt-4 transition-[opacity,transform] duration-300 ease-out ${
+                className={`mt-1 flex items-center gap-4 border-t border-white/10 px-3 pt-4 transition-[opacity,transform] duration-300 ease-out ${
                   open ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
                 }`}
               >
@@ -240,21 +343,22 @@ export default function Nav() {
                   target="_blank"
                   rel="noopener noreferrer"
                   tabIndex={open ? 0 : -1}
-                  className="text-[0.95rem] font-medium text-coal/80"
+                  className="text-[0.95rem] font-medium text-cream/80"
                 >
                   API Docs
                 </a>
-                <BlackButton
-                  href={GET_STARTED_URL}
-                  className="btn-shine flex-1 px-6 py-3"
-                >
-                  Get Started
-                </BlackButton>
+                <span className="btn-shine inline-flex flex-1 items-center justify-center rounded-full bg-cream px-6 py-3 text-[0.95rem] font-semibold text-coal">
+                  <Link href={GET_STARTED_URL}>Get Started</Link>
+                </span>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </header>
+      )}
+      <style>{`
+        .nav-link-light::after { background: currentColor; }
+        .island-fold { overflow: hidden; }
+      `}</style>
+    </>
   );
 }
