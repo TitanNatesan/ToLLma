@@ -72,3 +72,35 @@ Change (`landing/src/components/sections/hero.tsx` only, copy/palette untouched)
 
 Evidence: `/tmp/opencode/r2r4/r2-390.png`, `/tmp/opencode/r2r4/r2-768.png`,
 `/tmp/opencode/r2r4/r2-1440.png`, `/tmp/opencode/r2r4/r2-1920.png`.
+
+## R3 — Remove equalizer row under hero CTA (2026-11-01)
+
+Confirmed: `SKYLINE` in `landing/src/components/sections/hero.tsx` was the
+equalizer — 28 black vertical bars (`span.sky-bar.bg-coal`, `h-16` flex row,
+`scaleY` staggered entry + `0.3` scroll parallax) rendered directly under the
+hero CTA via `<Skyline />`.
+
+Change (`hero.tsx` only):
+- Deleted `SKYLINE` const + `Skyline()` component (markup + `scaleY`/`stagger`
+  JS + `useInViewOnce`/`Parallax` usage for that block) and the `<Skyline />`
+  call site. Header comment updated to drop the skyline sentence.
+- No import changes needed (`Parallax`, `useInViewOnce`, `animate`,
+  `stagger`, `utils` all still used by backdrop/pills/headline/dashboard).
+- Reflow: `DashboardCard` keeps its `mt-14` — normal section rhythm, no
+  spacer left behind. Out-of-scope note: `get-started.tsx` has its own
+  unrelated decorative band (no `sky-bar` classes); left untouched.
+
+### Acceptance
+
+- [x] PASS — no element with those classes/data attrs remains: `.sky-bar`
+  count 0, `*skyline*`/`data-skyline` elements 0, `/sky-bar|SKYLINE|Skyline/i`
+  in DOM HTML false — at 390/768/1440/1920 (served `out/`).
+- [x] PASS — no gap larger than standard rhythm: CTA bottom → `#activity`
+  top = 83px (390), 70px (768), 74px (1440/1920) — all within normal
+  `mt-14` + card chrome rhythm (< 200px, > 0).
+- [x] PASS — R2 centering retained: pill/headline/subcopy/CTA Δ=0 at all widths.
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green.
+- [x] PASS — zero console/page errors at all widths.
+
+Evidence: `/tmp/opencode/r2r4/r3-390.png`, `/tmp/opencode/r2r4/r3-768.png`,
+`/tmp/opencode/r2r4/r3-1440.png`, `/tmp/opencode/r2r4/r3-1920.png`.

@@ -5,9 +5,8 @@
 // the copy (parallax layers + idle float), each with a one-line site.ts-
 // derived context tooltip. Below: Request Activity dashboard card —
 // pointer-tilt (max 6°, fine pointers) + cursor glare + scroll flatten
-// (rotateX 14°→0 at viewport middle, slight lift on exit). Black skyline
-// blocks grow scaleY staggered on entry + 0.3 scroll parallax (signature
-// moment). Dotted grid at 0.08 + radial glow at 0.2 behind everything.
+// (rotateX 14°→0 at viewport middle, slight lift on exit).
+// Dotted grid at 0.08 + radial glow at 0.2 behind everything.
 // Hero copy fades/drifts over the first 60vh. SSR/no-JS renders terminal
 // states; JS arms motion only when allowed — reduced-motion shows finals.
 import { useEffect, useRef, useState } from "react";
@@ -163,44 +162,6 @@ function HeroHeadline() {
         </span>
       ))}
     </h1>
-  );
-}
-
-/* Black skyline: signature entry — blocks grow scaleY staggered, then drift
-   with 0.3 scroll parallax. Tasteful: short, hairline gaps, coal only. */
-const SKYLINE = [28, 44, 20, 52, 36, 60, 24, 48, 32, 56, 20, 40, 64, 28, 44, 24, 52, 36, 60, 28, 40, 20, 48, 32, 56, 24, 44, 36];
-
-function Skyline() {
-  const [ref, seen] = useInViewOnce<HTMLDivElement>(0.3);
-
-  useEffect(() => {
-    const root = ref.current;
-    if (!root || !seen || prefersReducedMotion()) return;
-    const bars = Array.from(root.querySelectorAll<HTMLElement>(".sky-bar"));
-    utils.set(bars, { scaleY: 0 });
-    const a = animate(bars, {
-      scaleY: [0, 1],
-      duration: 700,
-      delay: stagger(45),
-      ease: "outExpo",
-    });
-    return () => {
-      a.revert();
-    };
-  }, [ref, seen]);
-
-  return (
-    <Parallax speed={0.3} className="mt-14 hidden justify-center sm:flex">
-      <div ref={ref} aria-hidden="true" className="flex h-16 items-end gap-1.5">
-        {SKYLINE.map((h, i) => (
-          <span
-            key={i}
-            className="sky-bar block w-3 rounded-t-[3px] bg-coal md:w-3.5"
-            style={{ height: `${h}px`, transformOrigin: "50% 100%" }}
-          />
-        ))}
-      </div>
-    </Parallax>
   );
 }
 
@@ -480,7 +441,6 @@ export default function Hero() {
           </div>
         </div>
 
-        <Skyline />
         <DashboardCard />
       </Container>
       <style>{`
