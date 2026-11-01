@@ -387,3 +387,60 @@ Change (2 files, copy/palette/layout untouched):
 Evidence: `/tmp/opencode/r11/r11-{390,768,1440,1920}.png`,
 `/tmp/opencode/r11/r11-{390,768,1440,1920}-focus.png`, `validate{,2..8}.py`,
 `dbg{,2..4}.py` (parallax self-measurement feedback diagnosis).
+
+## R5 — Six-window scroll-stacked dashboard from one seeded dataset (2026-11-01)
+
+Change (3 files, no new deps, copy/palette untouched):
+- NEW `src/data/dashboard.ts`: single seeded dataset — 28 `REQUEST_LOGS`
+  rows (openai 8, anthropic 6, gemini 4, bedrock 4, vertex 3, custom 3;
+  Allowed 19, Warned 2, Blocked 3, Pending 1, Throttled 1, 401 1, 403 1),
+  3 API keys (`tlm_live_••••3a9c/7f2e/b811`, global/per-key, limits
+  0.50/0.25/0.05), guardrail modes/scopes per category. All KPIs, provider
+  rows (p50 median, error = Blocked/Throttled/401/403, >5% → Degraded),
+  key budgets, guardrail hits, spend/tokens/daily-cost/throughput/top/
+  recent-blocked are pure derivations of `REQUEST_LOGS`. Surfaces +
+  categories trace to `site.ts` (imported, never redeclared).
+  `node scripts/reconcile-dashboard.mjs` (Node 24 type-stripping, tmp-copy
+  for the extensionless `../lib/site` import) recomputes every number
+  independently — 50/50 PASS.
+- NEW `src/components/sections/dashboard-stack.tsx`: one ~620vh region
+  with a sticky h-screen stage; scroll progress v is the only driver
+  (pure function → scroll-up reverses exactly). Overview pins at center;
+  each following window slides up 110vh→0 landing opaque on top;
+  covered windows scale 0.96 + 22% night-veil (transform/opacity only);
+  hold on Analytics for v in [0.86, 1]. Per-window chrome (traffic
+  lights, `ToLLma — <Page>`, 6-item sidebar with `aria-current` on the
+  top page, sample-data pill) + `data-allow-overlap` on every window
+  (intentional stacking) and `data-active-page`/`data-progress` on the
+  region. Reduced-motion/no-JS renders all six statically stacked.
+- `src/components/sections/hero.tsx`: `DashboardCard` replaced by
+  `<DashboardStack />` (tilt/flatten/StatusFlip removed with the single
+  window). Pills layer constrained to the top 100vh and faded out by
+  0.45vh of scroll (opacity-only, motion-safe) so chips never sit on the
+  pinned windows. Section `overflow-hidden` → `overflow-x-clip` (any
+  non-visible/non-clip overflow ancestor traps `position: sticky`; x-clip
+  clips horizontal parallax spill without creating a scroll container —
+  same reason outcomes keeps its clip off the section).
+
+### Acceptance
+
+- [x] PASS — 6 windows in spec order, each `data-page` top-state reached
+  in scroll order; reverse 20-point sweep bit-identical (transform +
+  visibility + active) at 1440 and 390; `data-active-page` matches the
+  top window and its sidebar `aria-current` at all 6 top-states.
+- [x] PASS — `node scripts/reconcile-dashboard.mjs`: 50/50 (KPIs,
+  per-provider req/p50/error, per-key used<limit, 10 guardrail hits,
+  spend/daily/tokens/throughput/top-provider sums, 7 status kinds).
+- [x] PASS — no page-level h-scroll at 390/1440 (overflow 0); wide tables
+  scroll inside their container (4 `overflow-x-auto` blocks, content wider
+  than viewport at 390); 390 log rows wrap, nothing clipped.
+- [x] PASS — R4 retained: 6 glass chips, no headline overlap at 1440,
+  hidden below 1024px (fades are post-load scroll behavior only).
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green (static
+  `out/`); zero console/page errors at both widths; reduced-motion shows
+  all six windows statically. Vitest N/A (no runner in landing).
+- [~] PARTIAL — 5/6 providers read Degraded (>5% error rule on a sample
+  deliberately packed with denials): honest per the documented rule, kept.
+
+Evidence: `/tmp/opencode/r5/` (12 top-state screenshots 1440+390,
+`validate.py` ALL PASS), `scripts/reconcile-dashboard.mjs`.
