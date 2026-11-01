@@ -263,6 +263,10 @@ export default function Hero() {
           .hero-chip { background-color: color-mix(in srgb, var(--chip-bg) 72%, white); }
         }
         .hero-chipgroup { position: relative; display: inline-block; border-radius: 999px; transition: transform 250ms var(--ease-out-expo); }
+        /* No spotlight gradient ring on hero pills — the pill's own 1px
+           highlight border is the edge. The blue ring read as a stuck
+           focus border on hover, so it stays off here. */
+        .hero-chipgroup .spotlight::before { display: none; }
         .hero-chipgroup:hover, .hero-chipgroup:focus-visible { transform: translateY(-3px); }
         .hero-tip {
           position: absolute; left: 50%; top: calc(100% + 8px);
