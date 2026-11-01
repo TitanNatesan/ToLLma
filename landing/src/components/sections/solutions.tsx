@@ -9,6 +9,7 @@
 // 2px lift <300ms); logos render monochrome until hovered (CSS filter on the
 // existing marks — assets untouched); rows reveal with an 80ms stagger; the
 // bottom-row CTA card drifts with foreground parallax (0.92).
+import type { CSSProperties } from "react";
 import { Container } from "@/components/ui/layout";
 import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { Parallax } from "@/components/ui/parallax";
@@ -25,6 +26,17 @@ const CELLS = PROVIDERS.filter((p) => p.id !== "custom").map((p) => ({
   api: p.api,
   note: p.note,
 }));
+
+// R10: per-provider spotlight color (sets --spot on the card; the glow
+// uses it at 20% alpha). Catch-all uses brand blue.
+const SPOT: Record<string, string> = {
+  openai: "#10A37F",
+  anthropic: "#D97757",
+  gemini: "#4285F4",
+  vertex: "#1A73E8",
+  bedrock: "#FF9900",
+};
+const SPOT_FALLBACK = "#2563EB";
 
 // Official marks: OpenAI/Anthropic/Google from the vendors' own brand kits
 // (user-supplied zips); Vertex AI / Bedrock from the official pixels the app
@@ -74,7 +86,11 @@ export default function Solutions() {
           className="mx-auto mt-12 grid max-w-5xl scroll-mt-24 grid-cols-1 gap-px border border-cream-line bg-cream-line min-[560px]:grid-cols-2 lg:grid-cols-3"
         >
           {CELLS.map((c) => (
-            <SpotlightCard key={c.name} className="group bg-cream">
+            <SpotlightCard
+              key={c.name}
+              className="group bg-cream"
+              style={{ "--spot": SPOT[c.id] ?? SPOT_FALLBACK } as CSSProperties}
+            >
               <a
                 href={DOCS_URL}
                 target="_blank"
@@ -101,6 +117,7 @@ export default function Solutions() {
           {/* Bottom-row catch-all: dashed CTA card with hover fill. Drifts
               with foreground parallax (0.92) for depth against the grid. */}
           <Parallax speed={0.92} className="bg-cream">
+            <SpotlightCard className="h-full" style={{ "--spot": SPOT_FALLBACK } as CSSProperties}>
             <a
               href={DOCS_URL}
               target="_blank"
@@ -117,6 +134,7 @@ export default function Solutions() {
                 <span aria-hidden="true" className="transition-transform duration-200 group-hover:translate-x-1">→</span>
               </span>
             </a>
+            </SpotlightCard>
           </Parallax>
         </div>
       </Container>

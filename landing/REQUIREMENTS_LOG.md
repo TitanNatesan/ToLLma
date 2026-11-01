@@ -291,3 +291,52 @@ Change (4 files, copy/palette untouched):
 
 Evidence: `/tmp/opencode/r8/b{1..5}-{390,1440}.png` (10 boundary shots),
 `/tmp/opencode/r8/result2.log` (ALL PASS), `validate.py` + `shots.py`.
+
+## R10 — Per-provider spotlight colors (2026-11-01)
+
+Change (3 files, copy/palette/layout untouched):
+- `src/components/sections/solutions.tsx`: new `SPOT` map
+  (openai `#10A37F`, anthropic `#D97757`, gemini `#4285F4`,
+  vertex `#1A73E8`, bedrock `#FF9900`, fallback/catch-all `#2563EB`)
+  passed as `--spot` inline style (static per mount) to each
+  `SpotlightCard`. Catch-all CTA anchor wrapped in a `SpotlightCard`
+  (`--spot: #2563EB`) inside the existing `Parallax` so it gets the
+  same cursor glow (its hover fill + dashed border kept as-is).
+- `src/components/ui/spotlight-card.tsx`: new optional `style` prop,
+  passed straight to the wrapper div (no re-render change — visuals
+  stay in CSS pseudo-elements; hero usages get no `style`, so their
+  glow falls back to `--color-brand` unchanged).
+- `src/app/globals.css`: `.spotlight::after` glow now reads
+  `color-mix(in srgb, var(--spot, var(--color-brand)) 20%, transparent)`
+  (20% ∈ required 18–22%); added `.spotlight:focus-within::after`
+  so keyboard/touch focus shows the same spotlight as hover
+  (cursor-less focus renders centered via the existing
+  `var(--mx, 50%) var(--my, 50%)` defaults). Unrelated `.cta-glow`
+  left at its original brand-12% (a blanket replace briefly touched
+  it and was reverted).
+
+### Acceptance
+
+- [x] PASS — each card sets its own `--spot` (computed values match
+  the six hex codes above exactly).
+- [x] PASS — hover pixel under cursor matches the 20%-alpha blend of
+  the card's color over its hover bg within tolerance 48 (actual
+  max delta 1; providers blend over white, catch-all over coal):
+  openai (208,237,230), anthropic (247,228,222), gemini (218,231,253),
+  vertex (210,228,251), bedrock (255,235,205), catch-all (25,39,62);
+  glow visibly lifts pixel off the plain bg (lift 43–56).
+- [x] PASS — focus (no hover) drives `::after` opacity to 1 on all 6
+  cards (touch/keyboard path).
+- [x] PASS — primary text contrast over the spotlight blend ≥ 4.5:1
+  everywhere: 14.25 / 14.42 / 14.17 / 13.56 / 15.19 (coal on provider
+  blends), 13.74 (cream on catch-all blend).
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green
+  (static `out/`), zero page/console errors.
+- [~] PARTIAL — secondary `text-coal/55` api line is 3.97:1 on plain
+  white / 3.76:1 on the strongest (bedrock) wash: below 4.5:1
+  independent of R10 (pre-existing type treatment, spotlight delta
+  only 0.21). Primary text (name + Explore + CTA copy) passes;
+  retyping the secondary line is out of scope.
+
+Evidence: `/tmp/opencode/r10/r10-{openai,anthropic,gemini,vertex,bedrock,catch-all}-{hover,focus}.png`
+(12 screenshots), `/tmp/opencode/r10/validate.py` (32 checks ALL PASS).

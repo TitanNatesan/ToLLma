@@ -2,18 +2,21 @@
 
 // SpotlightCard: cursor-following radial glow + 1px gradient border
 // fade-in + 2px lift on hover (all <300ms). Pointer position flows into
-// --mx/--my (rAF-throttled); visuals stay in CSS pseudo-elements so the
-// card subtree never re-renders. Reduced-motion / no-JS: static card,
-// no glow tracking, no lift.
-import { useEffect, useRef, type ReactNode } from "react";
+// --mx/--my (rAF-throttled); per-card glow color flows in via --spot
+// (inline style, static per mount); visuals stay in CSS pseudo-elements
+// so the card subtree never re-renders. Reduced-motion / no-JS: static
+// card, no glow tracking, no lift.
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 
 export function SpotlightCard({
   children,
   className = "",
+  style,
 }: {
   children: ReactNode;
   className?: string;
+  style?: CSSProperties;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -38,7 +41,7 @@ export function SpotlightCard({
     };
   }, []);
   return (
-    <div ref={ref} className={`spotlight ${className}`}>
+    <div ref={ref} className={`spotlight ${className}`} style={style}>
       {children}
     </div>
   );

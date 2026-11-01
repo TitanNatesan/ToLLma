@@ -436,8 +436,10 @@ body {
   }
 }
 
-/* SpotlightCard: cursor-following radial glow + 1px gradient border
-   fade-in + 2px lift on hover. All fades <300ms. */
+/* SpotlightCard: cursor-following radial glow (per-card --spot at 20%,
+   fallback --color-brand) + 1px gradient border fade-in + 2px lift on
+   hover. Glow also shows on :focus-within so touch/keyboard focus gets
+   the same spotlight as hover. All fades <300ms. */
 .spotlight {
   position: relative;
   transition: transform 250ms var(--ease-out-expo);
@@ -468,7 +470,7 @@ body {
   pointer-events: none;
   background: radial-gradient(
     220px circle at var(--mx, 50%) var(--my, 50%),
-    color-mix(in srgb, var(--color-brand) 12%, transparent),
+    color-mix(in srgb, var(--spot, var(--color-brand)) 20%, transparent),
     transparent 70%
   );
   opacity: 0;
@@ -478,7 +480,8 @@ body {
 .spotlight:focus-within::before {
   opacity: 1;
 }
-.spotlight:hover::after {
+.spotlight:hover::after,
+.spotlight:focus-within::after {
   opacity: 1;
 }
 @media (prefers-reduced-motion: no-preference) {
