@@ -654,7 +654,11 @@ body {
    scroll — transform-only, fully reversible, inert under reduced-motion. */
 .foot-wordmark-clip {
   overflow: hidden;
-  margin-top: clamp(2rem, 5vw, 3.5rem);
+  /* Breathing room so the parallax drift never clips glyphs: padding
+     extends the clip box while the negative margins keep page layout
+     identical. Inline room covers the trailing letter-spacing overhang. */
+  padding: 100px 0.12em 80px;
+  margin: calc(clamp(2rem, 5vw, 3.5rem) - 100px) -0.12em -80px;
 }
 .foot-wordmark-drift {
   will-change: transform;
@@ -666,7 +670,7 @@ body {
   white-space: nowrap;
   font-weight: 800;
   letter-spacing: 0.01em;
-  line-height: 0.84;
+  line-height: 0.9;
   font-size: clamp(5.5rem, 23vw, 20rem);
   color: var(--color-coal);
   user-select: none;

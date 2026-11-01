@@ -76,7 +76,7 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 // pure function of scroll position and exactly reversible). Negative speed
 // rises from below the footer edge as the footer scrolls in. Transform-only,
 // rAF-throttled, inert under prefers-reduced-motion.
-const WORDMARK_SPEED = -1.2;
+const WORDMARK_SPEED = -2.0;
 
 function useWordmarkRise(
   clipRef: React.RefObject<HTMLDivElement | null>,
