@@ -280,6 +280,12 @@ export default function Hero() {
         .hero-chipgroup:hover .hero-tip, .hero-chipgroup:focus-visible .hero-tip { opacity: 1; transform: translate(-50%, 0); }
         .dash-row { transition: background-color 180ms ease; }
         .dash-row:hover { background-color: color-mix(in srgb, var(--color-mint) 16%, transparent); }
+        /* Stacked windows: static containment isolates repaints; the
+           stacked variant carries no shadow of its own (a dedicated
+           opacity-faded layer casts the single stack shadow). */
+        .dash-window { contain: layout paint; }
+        .dash-window--stacked { box-shadow: none; }
+        .dash-shadow { transition: opacity 300ms ease; will-change: opacity; }
         @media (prefers-reduced-motion: reduce) {
           .hero-tip { display: none; }
         }

@@ -99,17 +99,23 @@ function Sidebar({ page }: { page: PageId }) {
 function Window({
   page,
   heading,
+  stacked,
   children,
 }: {
   page: PageId;
   heading: string;
+  stacked?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div
       data-page={page}
       data-allow-overlap=""
-      className="dash-window flex h-[740px] w-[min(70rem,92vw)] flex-col overflow-hidden rounded-2xl border border-cream-line bg-white shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)] md:h-[600px]"
+      className={`dash-window relative flex h-[740px] w-[min(70rem,92vw)] flex-col overflow-hidden rounded-2xl border border-cream-line bg-white md:h-[600px] ${
+        stacked
+          ? "dash-window--stacked"
+          : "shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)]"
+      }`}
     >
       <div className="relative flex shrink-0 items-center border-b border-cream-line/80 px-5 py-3">
         <div className="flex items-center gap-2" aria-hidden="true">
@@ -457,7 +463,8 @@ const HEADINGS: Record<PageId, string> = {
 export default function DashboardStack() {
   const regionRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [active, setActive] = useState(0);
+  const liveRef = useRef<HTMLSpanElement | null>(null);
+  const livePage = useRef<string>(PAGES[0]);
   const [jsReady, setJsReady] = useState(false);
   const reduced = useReducedMotion();
 
@@ -482,7 +489,12 @@ export default function DashboardStack() {
       const rect = region.getBoundingClientRect();
       const v = total > 0 ? Math.min(1, Math.max(0, -rect.top / total)) : 0;
       const next = Math.min(PAGES.length - 1, Math.round(v / SEG));
-      setActive((prev) => (prev === next ? prev : next));
+      // No React state on the scroll path: announce through a ref so the
+      // six windows (and their tables) never re-render while scrolling.
+      if (livePage.current !== PAGES[next]) {
+        livePage.current = PAGES[next];
+        if (liveRef.current) liveRef.current.textContent = `${PAGES[next]} window on top.`;
+      }
       cardRefs.current.forEach((el, i) => {
         if (!el) return;
         const raw = i === 0 ? 1 : Math.min(1, Math.max(0, (v - (i - 1) * SEG) / SEG));
@@ -501,12 +513,16 @@ export default function DashboardStack() {
         // commit resets the inline motion back to the prop value and the
         // windows pop instead of sliding.
         el.style.transform = `translate3d(0, calc(${y}vh + ${sink.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`;
+        // will-change only while the window is actually moving — never a
+        // permanent giant layer.
+        el.style.willChange = raw > 0 && raw < 1 ? "transform" : "auto";
         const dim = el.querySelector<HTMLElement>("[data-dim]");
         if (dim) dim.style.opacity = covered ? (0.1 + depth * 0.06).toFixed(2) : "0";
-        // One shadow for the whole stack: only the top window casts. Covered
-        // windows drop theirs so stacked shadows can never pool darker.
-        const win = el.querySelector<HTMLElement>("[data-page]");
-        if (win) win.style.boxShadow = i === next ? "" : "none";
+        // Shadow lives on a dedicated layer faded by opacity (compositor
+        // only) — never touching box-shadow mid-transition, so covered
+        // windows can't pool darker and nothing repaints on flip.
+        const sh = el.querySelector<HTMLElement>("[data-shadow]");
+        if (sh) sh.style.opacity = i === next ? "1" : "0";
         el.style.pointerEvents = i === next ? "auto" : "none";
         el.style.visibility = raw <= 0 ? "hidden" : "visible";
       });
@@ -548,7 +564,7 @@ export default function DashboardStack() {
     <div
       ref={regionRef}
       id="activity"
-      data-active-page={PAGES[active]}
+      data-active-page="Overview"
       className="relative -mt-8 scroll-mt-24"
       style={{ height: `${REGION_VH}vh` }}
     >
@@ -562,17 +578,25 @@ export default function DashboardStack() {
                 cardRefs.current[i] = el;
               }}
               data-page-wrap={p}
-              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 will-change-transform"
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
               style={{ zIndex: i, pointerEvents: i === 0 ? "auto" : "none" }}
             >
-              <Window page={p} heading={HEADINGS[p]}>
+              {/* Dedicated shadow layer: faded by opacity only, so the
+                  stack keeps exactly one shadow with zero repaints. */}
+              <div
+                aria-hidden="true"
+                data-shadow=""
+                className="dash-shadow pointer-events-none absolute inset-0 rounded-2xl shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)]"
+                style={{ opacity: i === 0 ? 1 : 0 }}
+              />
+              <Window page={p} heading={HEADINGS[p]} stacked>
                 <Body />
               </Window>
             </div>
           );
         })}
-        <span className="sr-only" aria-live="polite">
-          {PAGES[active]} window on top.
+        <span ref={liveRef} className="sr-only" aria-live="polite">
+          Overview window on top.
         </span>
       </div>
     </div>
