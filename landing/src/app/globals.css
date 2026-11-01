@@ -661,7 +661,7 @@ body {
      extends the clip box while the negative margins keep page layout
      identical. Inline room covers the trailing letter-spacing overhang. */
   padding: 100px 0.12em 80px;
-  margin: calc(clamp(2rem, 5vw, 3.5rem) - 100px) -0.12em -80px;
+  margin: calc(clamp(2rem, 5vw, 3.5rem) - 100px) 0 -80px;
 }
 .foot-wordmark-drift {
   will-change: transform;
@@ -674,9 +674,15 @@ body {
   font-weight: 800;
   letter-spacing: 0.01em;
   line-height: 0.9;
-  font-size: clamp(5.5rem, 23vw, 20rem);
+  /* Full-bleed: sized in viewport units so the word spans ~96% of the
+     screen at every width, edge to edge. */
+  font-size: clamp(6rem, 23.5vw, 40rem);
   color: var(--color-coal);
   user-select: none;
+}
+.foot-letter {
+  display: inline-block;
+  will-change: transform;
 }
 
 /* Footer license pill: subtle hairline pill (Apache 2.0 + self-host story). */

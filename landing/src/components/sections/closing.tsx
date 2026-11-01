@@ -71,12 +71,20 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
   },
 ];
 
-// R11 wordmark rise: scroll-linked translate on the drift child, measured
-// off the untransformed clip parent (never self-measured, so the offset is a
-// pure function of scroll position and exactly reversible). Negative speed
-// rises from below the footer edge as the footer scrolls in. Transform-only,
-// rAF-throttled, inert under prefers-reduced-motion.
-const WORDMARK_SPEED = -2.0;
+// R11 wordmark rise: per-letter scroll-linked translate. Each letter has
+// its own speed (outer letters travel fastest, inner slowest) so the word
+// shears gently as it rises from below the footer edge. Measured off the
+// untransformed clip parent (never self-measured), so every offset is a
+// pure function of scroll position and exactly reversible. Transform-only,
+// rAF-throttled, inert under prefers-reduced-motion (static full word).
+const LETTERS = [
+  { ch: "T", speed: -2.8 },
+  { ch: "o", speed: -2.3 },
+  { ch: "L", speed: -1.8 },
+  { ch: "L", speed: -1.3 },
+  { ch: "m", speed: -0.9 },
+  { ch: "a", speed: -0.5 },
+];
 
 function useWordmarkRise(
   clipRef: React.RefObject<HTMLDivElement | null>,
@@ -86,13 +94,18 @@ function useWordmarkRise(
     const clip = clipRef.current;
     const drift = driftRef.current;
     if (!clip || !drift || prefersReducedMotion()) return;
+    const spans = Array.from(drift.querySelectorAll<HTMLElement>("[data-letter]"));
+    if (!spans.length) return;
     let raf = 0;
     const update = () => {
       raf = 0;
       const rect = clip.getBoundingClientRect();
       const vh = window.innerHeight || 1;
       const progress = (vh - rect.top) / (vh + rect.height) - 0.5;
-      drift.style.transform = `translate3d(0, ${(progress * WORDMARK_SPEED * 100).toFixed(2)}px, 0)`;
+      for (const s of spans) {
+        const sp = parseFloat(s.dataset.speed || "-1");
+        s.style.transform = `translate3d(0, ${(progress * sp * 100).toFixed(2)}px, 0)`;
+      }
     };
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(update);
@@ -104,7 +117,7 @@ function useWordmarkRise(
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
       if (raf) cancelAnimationFrame(raf);
-      drift.style.transform = "";
+      for (const s of spans) s.style.transform = "";
     };
   }, [clipRef, driftRef]);
 }
@@ -116,7 +129,7 @@ export function Footer() {
   useWordmarkRise(clipRef, driftRef);
   return (
     <footer id="company" ref={revealRef} className="scroll-mt-20 border-t border-cream-line bg-cream">
-      <Container width="wide" className="py-14">
+      <Container width="wide" className="pt-14">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,10fr)]">
           <div data-reveal className="flex flex-col items-start gap-3">
             <Link href="#top" className="foot-logo flex items-center gap-2" aria-label="ToLLma home">
@@ -167,16 +180,25 @@ export function Footer() {
             ))}
           </nav>
         </div>
-        {/* R11 giant wordmark: link columns above, copyright bar below.
-            Negative parallax speed rises from below the footer edge as the
-            footer scrolls in (fully reversible); the clip cuts it at the
-            footer bottom. Decorative duplicate of the logo wordmark. */}
-        <div data-reveal aria-hidden="true" ref={clipRef} className="foot-wordmark-clip">
-          <div ref={driftRef} className="foot-wordmark-drift">
-            <span className="foot-wordmark">ToLLma</span>
-          </div>
+        {/* R11 giant wordmark: full-bleed below the link columns, copyright
+            bar after it. Each letter rides its own parallax speed (outer
+            letters fastest) rising from below the footer edge as the footer
+            scrolls in (fully reversible); the clip cuts it at the footer
+            bottom. Decorative duplicate of the logo wordmark. */}
+      </Container>
+      <div data-reveal aria-hidden="true" ref={clipRef} className="foot-wordmark-clip">
+        <div ref={driftRef} className="foot-wordmark-drift">
+          <span className="foot-wordmark">
+            {LETTERS.map((l, i) => (
+              <span key={i} data-letter="" data-speed={l.speed} className="foot-letter">
+                {l.ch}
+              </span>
+            ))}
+          </span>
         </div>
-        <div data-reveal className="mt-12 flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
+      </div>
+      <Container width="wide" className="pb-14">
+        <div data-reveal className="flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© 2026 ToLLma · Apache-2.0</p>
           <p className="flex gap-5">
             <span>Privacy</span>
