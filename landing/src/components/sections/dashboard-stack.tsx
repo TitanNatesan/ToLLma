@@ -38,7 +38,7 @@ import {
   type PageId,
 } from "@/data/dashboard";
 
-const REGION_VH = 380;
+const REGION_VH = 300;
 /** Transitions occupy v in [0, TRANS_END]; the rest holds Analytics. */
 const TRANS_END = 0.86;
 const SEG = TRANS_END / (PAGES.length - 1);
@@ -496,7 +496,11 @@ export default function DashboardStack() {
         // nearer cover at -12px/0.975, deeper at -24px/0.95. Top stays flat.
         const sink = covered ? depth * 12 : 0;
         const scale = covered ? 1 - depth * 0.025 : 1;
-        el.style.transform = `translate(-50%, -50%) translate3d(0, calc(${y}vh + ${sink.toFixed(1)}px)) scale(${scale.toFixed(3)})`;
+        // Centering lives in CSS classes (see the wrapper markup), so React
+        // never writes `transform` and paint fully owns it — otherwise each
+        // commit resets the inline motion back to the prop value and the
+        // windows pop instead of sliding.
+        el.style.transform = `translate3d(0, calc(${y}vh + ${sink.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`;
         const dim = el.querySelector<HTMLElement>("[data-dim]");
         if (dim) dim.style.opacity = covered ? (0.1 + depth * 0.06).toFixed(2) : "0";
         // One shadow for the whole stack: only the top window casts. Covered
@@ -558,8 +562,8 @@ export default function DashboardStack() {
                 cardRefs.current[i] = el;
               }}
               data-page-wrap={p}
-              className="absolute left-1/2 top-1/2"
-              style={{ zIndex: i, transform: "translate(-50%, -50%)", pointerEvents: i === 0 ? "auto" : "none" }}
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 will-change-transform"
+              style={{ zIndex: i, pointerEvents: i === 0 ? "auto" : "none" }}
             >
               <Window page={p} heading={HEADINGS[p]}>
                 <Body />
