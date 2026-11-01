@@ -35,7 +35,7 @@ export default function Marquee() {
       ref={ref}
       data-playing={playing}
       aria-label="Providers"
-      className="marquee marquee-slow overflow-hidden border-y border-cream-line bg-cream"
+      className="marquee marquee-slow overflow-hidden border-b border-cream-line bg-cream"
     >
       <Container width="wide" className="flex items-center gap-8 py-5">
         <p className="w-40 shrink-0 text-xs font-semibold uppercase leading-snug tracking-[0.14em] text-coal/50">

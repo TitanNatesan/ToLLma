@@ -251,3 +251,43 @@ Change (`landing/src/components/sections/outcomes.tsx` only, copy/palette untouc
 
 Evidence: `/tmp/opencode/r7/r7-pin-{start,q1,q2,q3,end}-1440.png`,
 `/tmp/opencode/r7/r7-card{0..3}-{1440,390}.png` (13 screenshots).
+
+## R8 — Dividers: no parallax, next-field + prev-teeth, 2px overlap, no hairlines (2026-11-01)
+
+Change (4 files, copy/palette untouched):
+- `src/components/sections/pixel-wipe.tsx`: deleted ALL parallax (per-block
+  `depth` drift `translateY`, cursor-proximity `lift`, `pointermove/leave`
+  listeners) and the `flip`/`band`/`cssDriven` props. Driver is now entry-only
+  `scaleY` (bottom origin, left→right stagger, rAF scroll/resize) —
+  transform-only; reduced-motion/no-JS render the full static pattern
+  (no inline transforms). New overlap model: root `relative z-10 -mb-[2px]`
+  sits 2px ON TOP of the next section (next bg extends underneath the teeth);
+  teeth `band` = NEXT-section field, `block` = PREV-section color
+  (new optional `block` prop; D1 decorative night-on-cream unchanged).
+  Slots overlap 1px horizontally (`marginLeft: -1`, `gap-0`, track
+  `w-[calc(100%+1px)]`) — no subpixel seams.
+- `src/app/page.tsx`: D1 `tone="dark"` (unchanged); D2 `tone="light"
+  block="bg-sage"` (sage teeth on night field); D3 `tone="dark"` (was light
+  flip cssDriven); D4 `tone="light"` (was dark); D5 `tone="dark"` (was light).
+- `src/app/globals.css`: deleted the `.wipe-css` view-timeline rules +
+  `platform-exit-cover/lift` keyframes (scroll-linked translate — parallax by
+  another name; the rAF driver is now the single owner). `.wipe-col` kept.
+- `src/components/sections/marquee.tsx`: `border-y` → `border-b` (top hairline
+  touched divider D1; bottom edge kept).
+
+### Acceptance
+
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green (static `out/`).
+- [x] PASS — 50 scroll positions × 5 boundaries × 2 widths (390/1440, served
+  `out/`): no scanned row >90% uniform in an unexpected color (no
+  previous-section band row, no 1px hairline); mechanics asserted per divider:
+  `margin-bottom: -2px`, `z-index: 10`, 2.0px overlap, `animation-name: none`.
+- [x] PASS — no parallax: every block computed transform is `none` or
+  `matrix(1,0,0,sy,0,0)` at all 500 positions (translate components ≡ 0);
+  `scaleY` spans 0.00→1.00 per divider (entry preserved, nothing else moves).
+- [x] PASS — reduced-motion: all 70 blocks inline-transform-free and visible
+  at 390 + 1440 (finals).
+- [x] PASS — zero page/console errors at 390 + 1440.
+
+Evidence: `/tmp/opencode/r8/b{1..5}-{390,1440}.png` (10 boundary shots),
+`/tmp/opencode/r8/result2.log` (ALL PASS), `validate.py` + `shots.py`.

@@ -365,52 +365,6 @@ body {
   }
 }
 
-/* Platform → Solutions handoff: the wipe flagged `exit` (see pixel-wipe
-   `cssDriven`) renders as ONE uniform cream sheet (no staggered teeth, no
-   sliver gaps) driven by scroll (fully reversible), then lifts fully
-   off-screen and hides on complete. Cream fill matches the Solutions band
-   exactly, so Providers holds below the fold until the wipe passes, then
-   enters intact. Scoped to .wipe-css (set by the component prop), never to
-   DOM order. The rAF driver in pixel-wipe skips this instance — CSS owns
-   its transform, so the two drivers never fight. */
-.wipe-css {
-  background: var(--color-cream);
-}
-.wipe-css > div {
-  gap: 0;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .wipe-css > div {
-    animation: platform-exit-lift linear both;
-    animation-timeline: view();
-    animation-range: cover 82% cover 100%;
-  }
-  .wipe-css .wipe-col {
-    transform-origin: bottom;
-    animation: platform-exit-cover linear both;
-    animation-timeline: view();
-    animation-range: cover 0% cover 82%;
-  }
-}
-@keyframes platform-exit-cover {
-  from {
-    transform: scaleY(0);
-  }
-  to {
-    transform: scaleY(1);
-  }
-}
-@keyframes platform-exit-lift {
-  from {
-    transform: translateY(0);
-    visibility: visible;
-  }
-  to {
-    transform: translateY(-101%);
-    visibility: hidden;
-  }
-}
-
 /* Night stage scope: dark form controls + balanced headings. */
 #platform {
   color-scheme: dark;
