@@ -287,6 +287,10 @@ export default function Hero() {
         .dash-window--stacked { box-shadow: none; }
         .dash-shadow { transition: opacity 300ms ease; will-change: opacity; }
         @media (prefers-reduced-motion: reduce) {
+          /* R7: opacity crossfade only — no transform, scale, blur, or dim. */
+          .dash-window { transition: opacity 150ms ease; }
+        }
+        @media (prefers-reduced-motion: reduce) {
           .hero-tip { display: none; }
         }
       `}</style>

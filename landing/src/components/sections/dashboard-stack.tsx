@@ -467,12 +467,16 @@ export default function DashboardStack() {
   const livePage = useRef<string>(PAGES[0]);
   const [jsReady, setJsReady] = useState(false);
   const reduced = useReducedMotion();
+  const reducedRef = useRef(reduced);
+  reducedRef.current = reduced;
 
   useEffect(() => {
     setJsReady(true);
   }, []);
 
-  const static_ = !jsReady || reduced;
+  // No-JS gets the complete static list. Reduced-motion keeps the pinned
+  // stack but crossfades opacity only (see paint + CSS 150 ms transition).
+  const static_ = !jsReady;
 
   /* Scroll driver: target progress comes from scroll/resize events only
      (one forced rect read per event); a persistent rAF loop eases a
@@ -508,9 +512,25 @@ export default function DashboardStack() {
         livePage.current = PAGES[next];
         if (liveRef.current) liveRef.current.textContent = `${PAGES[next]} window on top.`;
       }
+      // Reduced motion: opacity crossfade only — no transform, no scale,
+      // no blur, no dim (the 150 ms ease lives in CSS).
+      const rm = reducedRef.current;
       cardRefs.current.forEach((el, i) => {
         if (!el) return;
         const raw = i === 0 ? 1 : Math.min(1, Math.max(0, (v - (i - 1) * SEG) / SEG));
+        const win = el.querySelector<HTMLElement>("[data-page]");
+        if (rm) {
+          el.style.transform = "";
+          el.style.willChange = "auto";
+          if (win) win.style.opacity = i <= next ? "1" : "0";
+          const dim = el.querySelector<HTMLElement>("[data-dim]");
+          if (dim) dim.style.opacity = "0";
+          const sh = el.querySelector<HTMLElement>("[data-shadow]");
+          if (sh) sh.style.opacity = i === next ? "1" : "0";
+          el.style.pointerEvents = i === next ? "auto" : "none";
+          el.style.visibility = raw <= 0 ? "hidden" : "visible";
+          return;
+        }
         // Smoothstep eases each window's rise with a soft landing; still a
         // pure function of v, so scroll-up reverses it exactly.
         const t = raw * raw * (3 - 2 * raw);
@@ -604,7 +624,8 @@ export default function DashboardStack() {
   }, [static_]);
 
   if (static_) {
-    // No-JS / reduced-motion: complete final state, plain vertical list.
+    // No-JS: complete final state, plain vertical list. (Reduced-motion
+    // with JS keeps the pinned stack but crossfades opacity only.)
     return (
       <div ref={regionRef} id="activity" data-active-page="Overview" className="mx-auto mt-14 flex max-w-6xl flex-col gap-8 scroll-mt-24">
         {PAGES.map((p) => {
