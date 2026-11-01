@@ -17,20 +17,57 @@ import { useDataParallax } from "@/components/ui/parallax";
 import { prefersReducedMotion, usePointerTilt } from "@/lib/animations";
 import { GET_STARTED_URL } from "@/lib/site";
 
-// Per-block parallax depths across the skyline (decorative band).
+// Per-square parallax strengths across the collage — each square drifts at
+// its own speed (and the small chip drifts against scroll) so the cluster
+// has real depth as the section crosses the viewport. Driven by ONE
+// section-measured loop (offsets stay in a sane ±px range and reverse
+// exactly); spans carry data-depth, NOT data-parallax, so the shared scope
+// driver never double-drives them. Transform-only, inert reduced-motion.
 const BLOCKS: { cls: string; depth: number }[] = [
-  { cls: "right-[8%] top-0 h-[38%] w-[34%]", depth: 0.12 },
-  { cls: "right-[30%] top-[38%] h-[24%] w-[22%]", depth: 0.26 },
-  { cls: "bottom-0 right-0 h-[38%] w-[62%]", depth: 0.18 },
-  { cls: "bottom-[38%] left-[16%] h-[24%] w-[12%]", depth: 0.34 },
-  { cls: "left-0 top-[30%] h-[20%] w-[10%]", depth: 0.22 },
+  { cls: "right-[8%] top-0 h-[38%] w-[34%]", depth: 1.1 },
+  { cls: "right-[30%] top-[38%] h-[24%] w-[22%]", depth: 0.5 },
+  { cls: "bottom-0 right-0 h-[38%] w-[62%]", depth: 0.8 },
+  { cls: "bottom-[38%] left-[16%] h-[24%] w-[12%]", depth: -0.45 },
+  { cls: "left-0 top-[30%] h-[20%] w-[10%]", depth: 0.2 },
 ];
 
 function PixelBlocks() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || prefersReducedMotion()) return;
+    const squares = Array.from(root.querySelectorAll<HTMLElement>("[data-depth]"));
+    if (!squares.length) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const section = root.closest("section");
+      if (!section) return;
+      const r = section.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      const p = Math.min(1, Math.max(0, (vh - r.top) / (vh + r.height)));
+      for (const s of squares) {
+        const d = parseFloat(s.dataset.depth || "0");
+        s.style.transform = `translate3d(0, ${((0.5 - p) * d * 100).toFixed(1)}px, 0)`;
+      }
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      for (const s of squares) s.style.transform = "";
+    };
+  }, []);
   return (
-    <div aria-hidden="true" className="relative h-56 w-full overflow-hidden md:h-72">
+    <div ref={ref} aria-hidden="true" className="relative h-56 w-full overflow-hidden md:h-72">
       {BLOCKS.map((b, i) => (
-        <span key={i} data-parallax={b.depth} className={`absolute bg-coal ${b.cls}`} />
+        <span key={i} data-depth={b.depth} className={`absolute bg-coal ${b.cls}`} />
       ))}
     </div>
   );
