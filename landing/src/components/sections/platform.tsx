@@ -37,13 +37,12 @@
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { MotionPathPlugin } from "gsap/MotionPathPlugin";
 import { animate } from "animejs";
 import { Container } from "@/components/ui/layout";
 import { GET_STARTED_URL } from "@/lib/site";
 import { useReducedMotion } from "@/lib/animations";
 
-gsap.registerPlugin(ScrollTrigger, MotionPathPlugin);
+gsap.registerPlugin(ScrollTrigger);
 
 const MINT = "#72ddb1";
 const BLUE = "#a9bdf4";
@@ -166,7 +165,9 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     const setupY = 88; const reqY = 296;
     layers.register = { x: 48, y: setupY, w: LW, h: LH };
     layers.keys = { x: 240, y: setupY, w: LW, h: LH };
-    const xs = [472, 652, 832, 1012, 1192, 1372];
+    // Route sits 10u left of the regular pitch: its sub + points rows are
+    // the widest in the lane and overflowed normalize's slot by ~5u.
+    const xs = [472, 652, 832, 1002, 1192, 1372];
     ["auth", "ratelimit", "guardrails", "route", "normalize", "observe"].forEach((id, i) => {
       layers[id] = { x: xs[i], y: reqY, w: LW, h: LH };
     });

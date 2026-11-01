@@ -252,6 +252,9 @@ Change (`landing/src/components/sections/outcomes.tsx` only, copy/palette untouc
 Evidence: `/tmp/opencode/r7/r7-pin-{start,q1,q2,q3,end}-1440.png`,
 `/tmp/opencode/r7/r7-card{0..3}-{1440,390}.png` (13 screenshots).
 
+### Audit fix F-01 (2026-11-02)
+- Mobile static list overflowed 320px by 32px (fixed `w-16` progress bars forced min-content 328px). `StaticSlide` + main card: panes `min-w-0`, bars `min-w-0 flex-1` (fixed `w-16` restored at `sm:`/`md:`), copy/order untouched. Verified `scrollWidth <= innerWidth` at 320/360/390 full-page sweep, 0 console errors.
+
 ## R8 — Dividers: no parallax, next-field + prev-teeth, 2px overlap, no hairlines (2026-11-01)
 
 Change (4 files, copy/palette untouched):
@@ -462,6 +465,7 @@ Evidence: `/tmp/opencode/r5/` (12 top-state screenshots 1440+390,
   `scale(0.95–0.975)` + sink, reversing exactly on scroll-up.
 - Re-ran reconcile after all changes: still all PASS
   (`/tmp/opencode/slide/` mid-transition screenshots desktop+mobile).
+- Audit fix F-04 (2026-11-02): Analytics `Custom / OpenAI-compatible` truncated at 390px (`w-28 truncate`, sw=176 cw=112). Cell now wraps to two lines (truncate removed, `title` kept); full provider name readable, no renames (`site.ts` truth kept).
 
 ## R9 — Scripted camera over the how-it-works diagram (2026-11-02)
 
@@ -554,3 +558,10 @@ labels, toggle, stepper, copy, palette untouched):
 Evidence: `/tmp/opencode/r9/` (20 PNGs: entry/fullpass/steps×8/pass2/
 exitfade/exit/step5-injection/reduced + 390 full/inj/reduced + dpr3 + 400%),
 `states.json`, `suite{1..5}.log`.
+
+### Audit fix F-03 (2026-11-02)
+- Route sub/points rows overflowed normalize's slot by ~5u (SINGLE layout config nudge only: request-lane `xs` route `1012→1002`; dims/uniform sizes, fonts ≥12u, copy untouched; all connectors recompute from bboxes). Verified 0 text overlaps at full + all 8 camera steps, T2 endpoints still worst 0.00px.
+
+## Nav island — audit fix F-02 (2026-11-02)
+- Width snapped instead of gliding: the per-commit recorder `useEffect` overwrote `foldW` while a previous inline width was still applied, collapsing from/to. Fix (`nav.tsx` only): single `useLayoutEffect` records the old width before clearing inline style and reading the new `scrollWidth`; recorder effect deleted. Curtain reveal + crossfade untouched; reduced-motion path unchanged (early return, always expanded).
+- Verified at 1440: expand 91→574 with 15 intermediate widths + live WAAPI width animation, collapse 574→91 with 8 intermediates, 0 console errors.

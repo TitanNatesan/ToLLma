@@ -81,22 +81,22 @@ export default function Nav() {
     };
   }, []);
 
-  // Record the fold's resting width after every commit so the next toggle
-  // can glide from the exact old width to the exact new one.
-  useEffect(() => {
-    const el = foldRef.current;
-    if (el) foldW.current = el.scrollWidth;
-  });
-
   // FLIP width glide on expand/collapse: animate the fold from its
-  // previous measured width to the new content width, then release back
-  // to auto. The outgoing row is display:none so it never inflates the
-  // measurement; the incoming row is revealed by the width curtain.
+  // previous settled width to the new content width, then release back
+  // to auto. The old width is recorded here — in the same layout effect,
+  // before reading the new width — so a mid-animation re-render can never
+  // overwrite it with a stale measurement (the old separate recorder ran
+  // after every commit, including while a previous inline width was still
+  // applied, which collapsed from/to and snapped instead of gliding).
+  // Inline width is cleared before measuring so `to` is the natural
+  // content width. The outgoing row is display:none so it never inflates
+  // the measurement; the incoming row is revealed by the width curtain.
   useLayoutEffect(() => {
     const el = foldRef.current;
     if (!el || reduced) return;
-    const from = foldW.current;
+    el.style.width = "";
     const to = el.scrollWidth;
+    const from = foldW.current;
     foldW.current = to;
     if (!from || Math.abs(from - to) < 2) return;
     el.style.width = `${from}px`;

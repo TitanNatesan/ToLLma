@@ -396,7 +396,7 @@ function AnalyticsBody() {
         <ul className="mt-1.5 space-y-1.5">
           {spend.map((s) => (
             <li key={s.id} className="flex items-center gap-2 text-sm">
-              <span className="w-28 shrink-0 truncate text-[0.8rem] font-medium leading-tight text-coal">{s.name}</span>
+              <span className="w-28 shrink-0 text-[0.8rem] font-medium leading-tight text-coal" title={s.name}>{s.name}</span>
               <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-coal/10">
                 <span className="block h-full rounded-full bg-warm" style={{ width: `${Math.max(2, Math.round((s.spend / spendMax) * 100))}%` }} />
               </span>

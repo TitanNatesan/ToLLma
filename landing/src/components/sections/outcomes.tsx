@@ -195,23 +195,23 @@ function SlideVisual({ n }: { n: number }) {
 function StaticSlide({ n }: { n: number }) {
   const s = OUTCOME_STATS[n];
   return (
-    <div className="outcome-card grid bg-white md:grid-cols-2">
-      <div className="flex min-h-[200px] flex-col justify-center px-6 py-8">
+    <div className="outcome-card grid min-w-0 bg-white md:grid-cols-2">
+      <div className="flex min-w-0 min-h-[200px] flex-col justify-center px-6 py-8">
         <p className="outcome-stat font-serif text-6xl font-medium tracking-tight text-coal">
           {s.countTo == null ? <span>∞</span> : <CountStat value={s.countTo} suffix={s.suffix} />}
         </p>
         <p className="mt-3 text-[1.05rem] font-medium text-coal/70">{s.label}</p>
         <SlideVisual n={n} />
-        <div className="mt-6 flex gap-2" aria-hidden="true">
+        <div className="mt-6 flex min-w-0 gap-2" aria-hidden="true">
           {OUTCOME_STATS.map((_, i) => (
             <span
               key={i}
-              className={`h-[3px] w-16 ${i === n ? "bg-[#2f9e6e]" : "bg-coal/15"}`}
+              className={`h-[3px] min-w-0 flex-1 sm:w-16 sm:flex-none ${i === n ? "bg-[#2f9e6e]" : "bg-coal/15"}`}
             />
           ))}
         </div>
       </div>
-      <div className="flex flex-col justify-center border-t border-cream-line px-6 py-8 md:border-l md:border-t-0">
+      <div className="flex min-w-0 flex-col justify-center border-t border-cream-line px-6 py-8 md:border-l md:border-t-0">
         <span aria-hidden="true" className="font-serif text-5xl leading-none text-mint">
           &ldquo;
         </span>
@@ -395,11 +395,11 @@ export default function Outcomes() {
             {slide.label}
           </p>
           <SlideVisual n={index} />
-          <div className="mt-6 flex gap-2" aria-hidden="true">
+          <div className="mt-6 flex min-w-0 gap-2" aria-hidden="true">
             {OUTCOME_STATS.map((_, i) => (
               <span
                 key={i}
-                className={`h-[3px] w-16 transition-colors duration-300 ${i === index ? "bg-[#2f9e6e]" : "bg-coal/15"}`}
+                className={`h-[3px] min-w-0 flex-1 transition-colors duration-300 md:w-16 md:flex-none ${i === index ? "bg-[#2f9e6e]" : "bg-coal/15"}`}
               />
             ))}
           </div>
@@ -408,7 +408,7 @@ export default function Outcomes() {
           </p>
         </div>
         {/* Right: quote crossfades after the stat */}
-        <div className="flex flex-col justify-center border-t border-cream-line px-6 py-8 md:border-l md:border-t-0 md:px-10">
+        <div className="flex min-w-0 flex-col justify-center border-t border-cream-line px-6 py-8 md:border-l md:border-t-0 md:px-10">
           <div
             key={`quote-${index}`}
             className={phase === "quote" || phase === "idle" ? "quote-fade-enter" : undefined}
