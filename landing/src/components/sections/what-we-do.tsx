@@ -3,11 +3,14 @@
 // Three capability columns: Secure / Govern / Observe. Heading drifts at
 // 0.5 parallax, columns at 0.85. Each column carries a top rule that draws
 // L→R scrubbed on entry; bullets stagger 60ms at 40% visibility. Icons are
-// single-weight (1.7) strokes in 40px gradient tiles and stroke-draw on
-// hover while the rule brightens. Clicking a title opens ONE detail panel
-// at a time (2 site.ts-derived sentences + 1 link). Every bullet is a
-// verified site.ts fact. SSR/reduced-motion render final states.
-import { useEffect, useRef, useState } from "react";
+// 24px single-weight (1.7) stroke glyphs in ink with a transparent container
+// (no tile) and stroke-draw on hover while the rule brightens. Clicking a
+// title toggles its detail INSIDE the same card (2 site.ts-derived sentences
+// + 1 link, chevron rotates); only one card is open at a time and clicking
+// the open card closes it. Every bullet is a verified site.ts fact.
+// SSR/reduced-motion render final states; expansion is CSS-only (320ms
+// ease-out, instant under reduced-motion).
+import { useEffect, useState } from "react";
 import { Container } from "@/components/ui/layout";
 import { Parallax } from "@/components/ui/parallax";
 import {
@@ -29,13 +32,13 @@ import {
 
 const SCOPES = "global or per-key";
 
-/* 40px gradient tile, single-weight stroke icon inside. */
-function Tile({ children }: { children: React.ReactNode }) {
+/* 24px single-weight stroke glyph, ink color, transparent container. */
+function Glyph({ children }: { children: React.ReactNode }) {
   return (
-    <span className="pillar-tile" aria-hidden="true">
+    <span className="pillar-icon" aria-hidden="true">
       <svg
-        width="22"
-        height="22"
+        width="24"
+        height="24"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -88,10 +91,10 @@ const COLS = [
   {
     title: "Secure",
     icon: (
-      <Tile>
+      <Glyph>
         <circle className="pillar-stroke" cx="8" cy="8" r="4" pathLength={1} />
         <path className="pillar-stroke" d="M11 11l9 9M17 17l2-2M14 14l1.5-1.5" pathLength={1} />
-      </Tile>
+      </Glyph>
     ),
     desc: "Store credentials once — every request authenticates without exposing a provider key.",
     bullets: [
@@ -108,10 +111,10 @@ const COLS = [
   {
     title: "Govern",
     icon: (
-      <Tile>
+      <Glyph>
         <path className="pillar-stroke" d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" pathLength={1} />
         <path className="pillar-stroke" d="M9.5 12l1.8 1.8L15 10" pathLength={1} />
-      </Tile>
+      </Glyph>
     ),
     desc: "Each request passes policy before it runs — allowed through, or blocked before spend.",
     bullets: [
@@ -128,10 +131,10 @@ const COLS = [
   {
     title: "Observe",
     icon: (
-      <Tile>
+      <Glyph>
         <path className="pillar-stroke" d="M4 20V4M4 20h16" pathLength={1} />
         <path className="pillar-stroke" d="M8 20v-6M12 20v-9M16 20v-4M20 20v-8" pathLength={1} />
-      </Tile>
+      </Glyph>
     ),
     desc: "Every request leaves a trail: usage, cost, and logs you can actually audit.",
     bullets: [
@@ -147,45 +150,40 @@ const COLS = [
   },
 ];
 
-function DetailPanel({ index }: { index: number }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const col = COLS[index];
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || prefersReducedMotion()) return;
-    const a = animate(el, {
-      opacity: [0, 1],
-      y: [14, 0],
-      duration: 450,
-      ease: "outExpo",
-    });
-    return () => {
-      a.revert();
-    };
-  }, []);
-
+function CardDetail({
+  col,
+  detailId,
+  isOpen,
+}: {
+  col: (typeof COLS)[number];
+  detailId: string;
+  isOpen: boolean;
+}) {
   return (
     <div
-      ref={ref}
-      id="wwd-detail"
+      id={detailId}
       role="region"
       aria-label={`${col.title} details`}
-      className="mx-auto mt-10 max-w-3xl border border-cream-line bg-white p-6 md:p-7"
+      inert={!isOpen}
+      className={`pillar-detail w-full${isOpen ? " is-open" : ""}`}
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-coal/50">
-        {col.title}
-      </p>
-      <p className="mt-3 leading-relaxed text-coal">{col.detail[0]}</p>
-      <p className="mt-2 leading-relaxed text-coal">{col.detail[1]}</p>
-      <a
-        href={col.link.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-coal underline decoration-mint decoration-2 underline-offset-4 hover:decoration-coal"
+      <div
+        className={`pillar-detail-inner ${isOpen ? "pt-4 border-t border-cream-line" : "pt-0"}`}
       >
-        {col.link.label} <span aria-hidden="true">→</span>
-      </a>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-coal/50">
+          {col.title.toUpperCase()}
+        </p>
+        <p className="mt-3 leading-relaxed text-coal">{col.detail[0]}</p>
+        <p className="mt-2 leading-relaxed text-coal">{col.detail[1]}</p>
+        <a
+          href={col.link.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-coal underline decoration-mint decoration-2 underline-offset-4 hover:decoration-coal"
+        >
+          {col.link.label} <span aria-hidden="true">→</span>
+        </a>
+      </div>
     </div>
   );
 }
@@ -246,36 +244,50 @@ export default function WhatWeDo() {
 
         <Parallax speed={0.85}>
           <div className="mt-14 grid gap-10 md:grid-cols-3 md:gap-0 md:divide-x md:divide-cream-line">
-            {COLS.map((c, i) => (
-              <article
-                key={c.title}
-                data-reveal
-                className="pillar flex h-full flex-col items-start gap-4 md:px-10 md:first:pl-0 md:last:pr-0"
-              >
-                <span className="pillar-rule" aria-hidden="true" />
-                {c.icon}
-                <h3 className="font-serif text-2xl font-medium text-coal">
-                  <button
-                    type="button"
-                    onClick={() => setOpen(open === i ? null : i)}
-                    aria-expanded={open === i}
-                    aria-controls="wwd-detail"
-                    className="pillar-toggle inline-flex items-center gap-2"
-                  >
-                    {c.title}
-                    <span aria-hidden="true" className="pillar-caret text-base leading-none text-coal/50">
-                      {open === i ? "−" : "+"}
-                    </span>
-                  </button>
-                </h3>
-                <p className="font-semibold leading-relaxed text-coal">{c.desc}</p>
-                <BulletList bullets={c.bullets} />
-              </article>
-            ))}
+            {COLS.map((c, i) => {
+              const detailId = `wwd-detail-${c.title.toLowerCase()}`;
+              const isOpen = open === i;
+              return (
+                <article
+                  key={c.title}
+                  data-reveal
+                  className="pillar flex h-full flex-col items-start gap-4 md:px-10 md:first:pl-0 md:last:pr-0"
+                >
+                  <span className="pillar-rule" aria-hidden="true" />
+                  {c.icon}
+                  <h3 className="font-serif text-2xl font-medium text-coal">
+                    <button
+                      type="button"
+                      onClick={() => setOpen(isOpen ? null : i)}
+                      aria-expanded={isOpen}
+                      aria-controls={detailId}
+                      className="pillar-toggle inline-flex items-center gap-2"
+                    >
+                      {c.title}
+                      <svg
+                        className="pillar-chevron"
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                  </h3>
+                  <p className="font-semibold leading-relaxed text-coal">{c.desc}</p>
+                  <BulletList bullets={c.bullets} />
+                  <CardDetail col={c} detailId={detailId} isOpen={isOpen} />
+                </article>
+              );
+            })}
           </div>
         </Parallax>
-
-        {open !== null && <DetailPanel key={open} index={open} />}
       </Container>
       <style>{`
         .pillar-rule {
@@ -285,10 +297,10 @@ export default function WhatWeDo() {
           transition: background-color 250ms ease;
         }
         .pillar:hover .pillar-rule { background: var(--color-coal); }
-        .pillar-tile {
-          width: 40px; height: 40px; border-radius: 12px; flex: none;
+        .pillar-icon {
+          width: 24px; height: 24px; flex: none;
           display: grid; place-items: center; color: var(--color-coal);
-          background: linear-gradient(135deg, var(--color-mint), var(--color-peri));
+          background: transparent; background-color: transparent;
         }
         .pillar-stroke { stroke-dasharray: 1; stroke-dashoffset: 0; }
         .pillar:hover .pillar-stroke { animation: pillar-draw 650ms var(--ease-out-expo); }
@@ -296,8 +308,17 @@ export default function WhatWeDo() {
         @keyframes pillar-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
         .pillar-toggle { transition: opacity 200ms ease; }
         .pillar-toggle:hover { opacity: 0.72; }
+        .pillar-chevron { transition: transform 320ms ease-out; }
+        .pillar-toggle[aria-expanded="true"] .pillar-chevron { transform: rotate(180deg); }
+        .pillar-detail {
+          display: grid; grid-template-rows: 0fr; opacity: 0;
+          transition: grid-template-rows 320ms ease-out, opacity 320ms ease-out;
+        }
+        .pillar-detail-inner { overflow: hidden; min-height: 0; transition: padding-top 320ms ease-out; }
+        .pillar-detail.is-open { grid-template-rows: 1fr; opacity: 1; }
         @media (prefers-reduced-motion: reduce) {
           .pillar:hover .pillar-stroke { animation: none; }
+          .pillar-detail, .pillar-detail-inner, .pillar-chevron { transition: none; }
         }
       `}</style>
     </section>

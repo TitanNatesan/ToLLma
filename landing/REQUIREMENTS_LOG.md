@@ -145,3 +145,48 @@ Change (`landing/src/components/sections/hero.tsx` only, copy/palette untouched)
 Evidence: `/tmp/opencode/r2r4/r4-390.png`, `/tmp/opencode/r2r4/r4-768.png`,
 `/tmp/opencode/r2r4/r4-1440.png`, `/tmp/opencode/r2r4/r4-1920.png`
 (plus `/tmp/opencode/r2r4/r3-*.png` for the R3 baseline).
+
+## R6 — In-card detail expansion, tile-free stroke icons (2026-11-01)
+
+Change (`landing/src/components/sections/what-we-do.tsx` only, copy/palette untouched):
+- Removed 40px gradient `.pillar-tile`; new `.pillar-icon` is a transparent
+  24×24 container (`background: transparent`, ink `var(--color-coal)`) holding
+  a 24×24 single-weight (1.7) stroke svg. Same three glyph paths, no new claims.
+- Detail moved from a shared below-grid panel into each card (`CardDetail`
+  inside `article.pillar`, unique ids `wwd-detail-secure/govern/observe`).
+  Toggle is the title `button` (native click/Enter/Space) with `aria-expanded`
+  + per-card `aria-controls`; `setOpen(open === i ? null : i)` keeps single-open
+  with click-open-to-close. Closed detail collapses to 0px (`inert` when shut).
+- Detail reuses on-page copy verbatim: uppercase label (SECURE/GOVERN/OBSERVE),
+  the two existing `detail` sentences, existing link + `→` (Govern:
+  "See guardrails on GitHub →", `GITHUB_URL` from `site.ts`).
+- `+`/`−` caret replaced by a 12px chevron svg rotating 180° when
+  `aria-expanded="true"`.
+- Expansion is CSS-only (`grid-template-rows` 0fr→1fr + opacity, 320ms
+  ease-out; `transition: none` under `prefers-reduced-motion`); removed the old
+  JS `animate` mount tween and the shared `wwd-detail` panel. Grid/dividers/
+  alignment/typography untouched.
+
+### Acceptance
+
+- [x] PASS — icon container computed `backgroundColor: rgba(0, 0, 0, 0)`,
+  ink `rgb(23, 25, 20)`, svg 24×24; no `.pillar-tile`/`.pillar-caret` remains.
+- [x] PASS — detail renders inside its card DOM (all 3 cards), closed height 0,
+  open ≈194–220px; Govern text starts `GOVERN / Every request passes 10
+  guardrail categories…`, link `See guardrails on GitHub →`.
+- [x] PASS — column x-positions at 1440 within 1px of pre-change build:
+  before [96.7969, 512.2656, 927.7344] → after [96.7969, 512.2656, 927.7344]
+  (Δ ≤ 0.0001px), identical with a card open.
+- [x] PASS — chevron `transform: none` → `matrix(-1, 0, 0, -1, 0, 0)` on open;
+  `aria-expanded` toggles true/false; re-click closes; keyboard Enter and Space
+  both open; opening a second card closes the first (single-open).
+- [x] PASS — reduced-motion: `transition: none` on detail + chevron
+  (duration serializes 1e-06s ≈ 0, incl. a bare `transition:none` probe —
+  headless-Chrome zero serialization), `transition-property: none`,
+  `matchMedia reduce: True`; detail still opens instantly.
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green, zero
+  console/page errors at 390 + 1440.
+
+Evidence: `/tmp/opencode/r6/r6-closed-{1440,390}.png`,
+`/tmp/opencode/r6/r6-open-{secure,govern,observe}-{1440,390}.png`
+(8 screenshots), `before-1440.png` baseline.
