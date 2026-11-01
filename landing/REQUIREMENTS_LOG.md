@@ -104,3 +104,44 @@ Change (`hero.tsx` only):
 
 Evidence: `/tmp/opencode/r2r4/r3-390.png`, `/tmp/opencode/r2r4/r3-768.png`,
 `/tmp/opencode/r2r4/r3-1440.png`, `/tmp/opencode/r2r4/r3-1920.png`.
+
+## R4 — Floating pills: glyph-free glassmorphism, no overlap (2026-11-01)
+
+Change (`landing/src/components/sections/hero.tsx` only, copy/palette untouched):
+- Removed `glyph` field from `Pill` type + all 6 `PILLS` entries
+  (◆ U+25C8, ● U+25CF, ◆ U+25C6, ■ U+25A0, ≡ U+2261, ▲ U+25B2) and the
+  badge `<span>` (`{p.glyph}`) from the chip render. Chip is now label-only
+  with symmetric `px-4` padding (was `pl-1.5 pr-4` for the badge).
+- Glassmorphic `.hero-chip`: translucent fill
+  `color-mix(in srgb, var(--chip-bg) 38%, rgba(255,255,255,0.72))`,
+  `backdrop-filter: blur(14px) saturate(160%)` (+ `-webkit-` prefix),
+  1px highlight border `rgba(255,255,255,0.65)`, inner top highlight
+  `inset 0 1px 0 rgba(255,255,255,0.7)`, soft shadow
+  `0 12px 32px -12px rgba(23,25,20,0.25)`, full radius `999px`.
+- `@supports not ((backdrop-filter: blur(14px)) or (-webkit-backdrop-filter: blur(14px)))`
+  fallback to solid tint `color-mix(in srgb, var(--chip-bg) 72%, white)`.
+- Kept faint bg shapes (`GHOSTS`, 6 blurred ghosts, markup untouched).
+- Narrow fix: pills+ghosts visibility raised `min-[900px]:block` →
+  `min-[1024px]:block` — at 900px `API keys` overlapped the subcopy;
+  at ≥1024px all clear. Motion stays transform/opacity-only; reduced-motion
+  finals unchanged.
+
+### Acceptance
+
+- [x] PASS — no glyph elements remain: `/[◆●◆■≡▲]/` in DOM HTML false,
+  `.hero-chip *` child count 0, `glyph` occurrences in source 0.
+- [x] PASS — glass active: computed `backdrop-filter: blur(14px) saturate(1.6)`,
+  translucent bg (alpha 0.83), `border-radius: 999px`, `@supports` fallback
+  rule present in stylesheets.
+- [x] PASS — contrast text `text-coal` (#171914) vs worst-case chip-over-cream
+  (#F7F7EE) fill: 14.45:1 (warm) – 16.27:1 (butter), all ≥ 4.5:1.
+- [x] PASS — no overlap (chip boxes vs headline/subcopy/CTA boxes) at every
+  tested width (served `out/`, headless Chrome): 390/768/900 hidden (0 chips,
+  0 collisions), 1024/1100/1280/1440/1920 visible (6 chips, 0 collisions).
+- [x] PASS — R2 centering retained: pill/headline/subcopy/CTA Δ=0 at all widths.
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green.
+- [x] PASS — zero console/page errors at all widths.
+
+Evidence: `/tmp/opencode/r2r4/r4-390.png`, `/tmp/opencode/r2r4/r4-768.png`,
+`/tmp/opencode/r2r4/r4-1440.png`, `/tmp/opencode/r2r4/r4-1920.png`
+(plus `/tmp/opencode/r2r4/r3-*.png` for the R3 baseline).

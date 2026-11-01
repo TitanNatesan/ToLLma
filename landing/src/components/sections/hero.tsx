@@ -37,7 +37,6 @@ type Pill = {
   label: string;
   bg: string;
   pos: string;
-  glyph: string;
   dur: string;
   delay: string;
   speed: number;
@@ -48,12 +47,12 @@ const STREAMING_COUNT = PROVIDERS.filter((p) => p.streaming).length;
 const SCOPES = POLICY_SCOPE.map((s) => (s === "api_key" ? "per-key" : s)).join(" or ");
 
 const PILLS: Pill[] = [
-  { label: "Multi-provider", bg: "#72ddb1", pos: "left-[4%] top-[4%]", glyph: "\u25C8", dur: "6.5s", delay: "0s", speed: 0.55, tip: `${PROVIDERS.length} adapters · one endpoint` },
-  { label: "Usage & cost", bg: "#e8b1a2", pos: "right-[4%] top-[8%]", glyph: "\u25CF", dur: "7.5s", delay: "-2s", speed: 0.4, tip: "Usage & cost tracked per key" },
-  { label: "Guardrails", bg: "#f5e6a3", pos: "left-[7%] top-[32%]", glyph: "\u25C6", dur: "6s", delay: "-1s", speed: 0.25, tip: `Guardrails: ${GUARDRAIL_CATEGORIES.length} categories active` },
-  { label: "API keys", bg: "#a9bdf4", pos: "right-[7%] top-[30%]", glyph: "\u25A0", dur: "8s", delay: "-3.5s", speed: -0.15, tip: `Keys carry ${SCOPES} scope` },
-  { label: "Request logs", bg: "#dde8d0", pos: "left-[5%] top-[52%]", glyph: "\u2261", dur: "7s", delay: "-4s", speed: 0.4, tip: "Every request leaves a trail" },
-  { label: "Streaming", bg: "#72ddb1", pos: "right-[10%] bottom-[16%]", glyph: "\u25B2", dur: "6.8s", delay: "-1.8s", speed: 0.25, tip: `Streaming on ${STREAMING_COUNT}/${PROVIDERS.length} adapters` },
+  { label: "Multi-provider", bg: "#72ddb1", pos: "left-[4%] top-[4%]", dur: "6.5s", delay: "0s", speed: 0.55, tip: `${PROVIDERS.length} adapters · one endpoint` },
+  { label: "Usage & cost", bg: "#e8b1a2", pos: "right-[4%] top-[8%]", dur: "7.5s", delay: "-2s", speed: 0.4, tip: "Usage & cost tracked per key" },
+  { label: "Guardrails", bg: "#f5e6a3", pos: "left-[7%] top-[32%]", dur: "6s", delay: "-1s", speed: 0.25, tip: `Guardrails: ${GUARDRAIL_CATEGORIES.length} categories active` },
+  { label: "API keys", bg: "#a9bdf4", pos: "right-[7%] top-[30%]", dur: "8s", delay: "-3.5s", speed: -0.15, tip: `Keys carry ${SCOPES} scope` },
+  { label: "Request logs", bg: "#dde8d0", pos: "left-[5%] top-[52%]", dur: "7s", delay: "-4s", speed: 0.4, tip: "Every request leaves a trail" },
+  { label: "Streaming", bg: "#72ddb1", pos: "right-[10%] bottom-[16%]", dur: "6.8s", delay: "-1.8s", speed: 0.25, tip: `Streaming on ${STREAMING_COUNT}/${PROVIDERS.length} adapters` },
 ];
 
 /* Blurred ghosts: same hues, out of focus, offset from the sharp pills. */
@@ -90,7 +89,7 @@ function HeroPills() {
       {GHOSTS.map((g, i) => (
         <span
           key={`g-${i}`}
-          className={`absolute hidden h-9 w-36 rounded-full opacity-50 blur-md min-[900px]:block ${g.pos}`}
+          className={`absolute hidden h-9 w-36 rounded-full opacity-50 blur-md min-[1024px]:block ${g.pos}`}
           style={{ backgroundColor: g.bg }}
         />
       ))}
@@ -98,20 +97,14 @@ function HeroPills() {
         <Parallax
           key={p.label}
           speed={p.speed}
-          className={`absolute hidden min-[900px]:block ${p.pos}`}
+          className={`absolute hidden min-[1024px]:block ${p.pos}`}
         >
           <span className="hero-chipgroup pointer-events-auto">
             <SpotlightCard className="rounded-full">
               <span
-                className="hero-chip pill-float flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[0.8rem] font-semibold text-coal"
+                className="hero-chip pill-float flex items-center rounded-full px-4 py-1.5 text-[0.8rem] font-semibold text-coal"
                 style={{ "--chip-bg": p.bg, animationDuration: p.dur, animationDelay: p.delay } as React.CSSProperties}
               >
-                <span
-                  className="flex size-6 items-center justify-center rounded-[7px] border border-coal/10 bg-white/55 text-xs leading-none text-coal"
-                  aria-hidden="true"
-                >
-                  {p.glyph}
-                </span>
                 {p.label}
               </span>
             </SpotlightCard>
@@ -456,13 +449,16 @@ export default function Hero() {
         .hw-mask { display: inline-block; overflow: hidden; vertical-align: bottom; padding-bottom: 0.08em; margin-bottom: -0.08em; }
         .hw-word { display: inline-block; will-change: transform; }
         .hero-chip {
-          background-color: color-mix(in srgb, var(--chip-bg) 72%, white);
-          -webkit-backdrop-filter: blur(10px);
-          backdrop-filter: blur(10px);
-          border: 1px solid color-mix(in srgb, white 60%, var(--chip-bg));
-          box-shadow: 0 10px 28px -10px rgba(23, 25, 20, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+          background-color: color-mix(in srgb, var(--chip-bg) 38%, rgba(255, 255, 255, 0.72));
+          -webkit-backdrop-filter: blur(14px) saturate(160%);
+          backdrop-filter: blur(14px) saturate(160%);
+          border: 1px solid rgba(255, 255, 255, 0.65);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 12px 32px -12px rgba(23, 25, 20, 0.25);
           border-radius: 999px;
           transition: transform 250ms var(--ease-out-expo);
+        }
+        @supports not ((backdrop-filter: blur(14px)) or (-webkit-backdrop-filter: blur(14px))) {
+          .hero-chip { background-color: color-mix(in srgb, var(--chip-bg) 72%, white); }
         }
         .hero-chipgroup { position: relative; display: inline-block; border-radius: 999px; transition: transform 250ms var(--ease-out-expo); }
         .hero-chipgroup:hover, .hero-chipgroup:focus-visible { transform: translateY(-3px); }
