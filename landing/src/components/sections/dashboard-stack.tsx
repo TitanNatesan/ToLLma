@@ -1,17 +1,21 @@
 "use client";
 
 // R5 — six-window stacked dashboard (replaces the single Request
-// Activity window). One tall region (~620vh) pins a centered sticky
+// Activity window). One compact region (~380vh) pins a centered sticky
 // viewport; scroll progress v in [0,1] is the ONLY driver (pure
 // function — scroll-up reverses exactly). Overview (i=0) sits at
 // vertical center; each following window slides up from below
 // (translateY 110vh → 0, transform-only) and lands opaque on top of
 // the previous ones, which shrink to 0.96 + dim (scale via transform,
 // dim via an overlay's opacity — cards themselves stay fully opaque,
-// no bleed). The last window holds for v in [0.86, 1]. The sidebar in
-// the top window highlights that window's page; the region mirrors it
-// in data-active-page. Reduced-motion / no-JS: all six windows render
-// as a plain static list (complete final state, no transforms).
+// no bleed). The last window holds for v in [0.86, 1]. Every window is
+// the SAME fixed size (w × h per breakpoint) with content condensed to
+// fit — no scrollable content inside. The sticky stage is
+// overflow-visible with breathing room so the layered window shadows
+// never crop at the edges. The sidebar in the top window highlights
+// that window's page; the region mirrors it in data-active-page.
+// Reduced-motion / no-JS: all six windows render as a plain static
+// list (complete final state, no transforms).
 import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
@@ -34,13 +38,11 @@ import {
   type PageId,
 } from "@/data/dashboard";
 
-const REGION_VH = 620;
+const REGION_VH = 380;
 /** Transitions occupy v in [0, TRANS_END]; the rest holds Analytics. */
 const TRANS_END = 0.86;
 const SEG = TRANS_END / (PAGES.length - 1);
 const OFFSCREEN_VH = 110;
-const COVERED_SCALE = 0.96;
-const DIM_OPACITY = "0.22";
 
 const SIDEBAR: PageId[] = [...PAGES];
 
@@ -107,7 +109,7 @@ function Window({
     <div
       data-page={page}
       data-allow-overlap=""
-      className="dash-window flex max-h-[82vh] w-[min(72rem,94vw)] flex-col overflow-hidden rounded-2xl border border-cream-line bg-white shadow-[0_40px_90px_-28px_rgba(23,25,20,0.35),0_12px_28px_-16px_rgba(23,25,20,0.22)]"
+      className="dash-window flex h-[740px] w-[min(70rem,92vw)] flex-col overflow-hidden rounded-2xl border border-cream-line bg-white shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)] md:h-[600px]"
     >
       <div className="relative flex shrink-0 items-center border-b border-cream-line/80 px-5 py-3">
         <div className="flex items-center gap-2" aria-hidden="true">
@@ -125,9 +127,9 @@ function Window({
           Sample data for illustration
         </p>
       </div>
-      <div className="grid min-h-0 md:grid-cols-[180px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 md:grid-cols-[180px_minmax(0,1fr)]">
         <Sidebar page={page} />
-        <div className="min-w-0 min-h-0 overflow-y-auto">{children}</div>
+        <div className="min-w-0 min-h-0 overflow-hidden">{children}</div>
       </div>
       {/* Dim veil for covered windows (opacity-only; card stays opaque). */}
       <div
@@ -149,9 +151,9 @@ function money(n: number) {
 function OverviewBody() {
   const hours = throughputByHour();
   const max = Math.max(1, ...hours);
-  const top = topProviders().slice(0, 5);
+  const top = topProviders().slice(0, 4);
   const topMax = Math.max(1, ...top.map((t) => t.req24h));
-  const blocked = recentBlocked(4);
+  const blocked = recentBlocked(3);
   const kpis = [
     { label: "Requests today", value: String(KPIS.requestsToday) },
     { label: "Allowed rate", value: `${(KPIS.allowedRate * 100).toFixed(1)}%` },
@@ -159,17 +161,17 @@ function OverviewBody() {
     { label: "Spend today", value: money(KPIS.spendToday) },
   ];
   return (
-    <div className="px-6 py-5">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="px-5 py-4">
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         {kpis.map((k) => (
-          <div key={k.label} className="rounded-xl border border-cream-line bg-cream/60 px-4 py-3">
-            <p className="font-mono text-2xl font-semibold text-coal">{k.value}</p>
-            <p className="mt-1 text-xs font-medium text-coal/55">{k.label}</p>
+          <div key={k.label} className="rounded-xl border border-cream-line bg-cream/60 px-3.5 py-2.5">
+            <p className="font-mono text-xl font-semibold text-coal">{k.value}</p>
+            <p className="mt-0.5 text-xs font-medium text-coal/55">{k.label}</p>
           </div>
         ))}
       </div>
-      <p className="mt-5 text-sm font-semibold text-coal">Throughput · requests per hour</p>
-      <div className="mt-2 flex h-20 items-end gap-[3px]" role="img" aria-label={`Hourly requests, peak ${max}`}>
+      <p className="mt-4 text-sm font-semibold text-coal">Throughput · requests per hour</p>
+      <div className="mt-1.5 flex h-14 items-end gap-[3px]" role="img" aria-label={`Hourly requests, peak ${max}`}>
         {hours.map((h, i) => (
           <span
             key={i}
@@ -178,10 +180,10 @@ function OverviewBody() {
           />
         ))}
       </div>
-      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
           <p className="text-sm font-semibold text-coal">Top providers by volume</p>
-          <ul className="mt-2 space-y-2">
+          <ul className="mt-1.5 space-y-1.5">
             {top.map((t) => (
               <li key={t.id} className="flex items-center gap-2 text-sm">
                 <span className="w-28 shrink-0 truncate font-medium text-coal">{t.name}</span>
@@ -195,9 +197,9 @@ function OverviewBody() {
         </div>
         <div>
           <p className="text-sm font-semibold text-coal">Recent blocked events</p>
-          <ul className="mt-2 space-y-2">
+          <ul className="mt-1.5 space-y-1.5">
             {blocked.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-2 rounded-lg border border-cream-line/70 px-3 py-1.5 text-xs">
+              <li key={l.id} className="flex items-center justify-between gap-2 rounded-lg border border-cream-line/70 px-3 py-1 text-xs">
                 <span className="font-mono text-coal/55">{l.time}</span>
                 <span className="min-w-0 flex-1 truncate font-medium text-coal">{l.model}</span>
                 <span className="hidden shrink-0 text-coal/55 sm:inline">{l.category?.replace(/_/g, " ")}</span>
@@ -213,12 +215,19 @@ function OverviewBody() {
 
 function ProvidersBody() {
   return (
-    <div className="overflow-x-auto px-2 py-2">
-      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+    <div className="overflow-x-auto px-2 py-1.5">
+      <table className="w-full border-collapse text-left text-sm md:min-w-[600px]">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
-            {["Provider", "API surface", "Status", "p50 latency", "Req 24h", "Error rate"].map((h) => (
-              <th key={h} scope="col" className="px-4 py-2.5 font-semibold">{h}</th>
+            {[
+              { l: "Provider", c: "" },
+              { l: "API surface", c: "hidden md:table-cell" },
+              { l: "Status", c: "" },
+              { l: "p50 latency", c: "" },
+              { l: "Req 24h", c: "hidden sm:table-cell" },
+              { l: "Error rate", c: "hidden sm:table-cell" },
+            ].map((h) => (
+              <th key={h.l} scope="col" className={`px-2 py-2 font-semibold md:px-4 ${h.c}`}>{h.l}</th>
             ))}
           </tr>
         </thead>
@@ -227,17 +236,17 @@ function ProvidersBody() {
             const s = providerStats(p.id);
             return (
               <tr key={p.id} className="dash-row border-t border-cream-line/70">
-                <td className="px-4 py-2.5 font-medium text-coal">{p.name}</td>
-                <td className="px-4 py-2.5 font-mono text-[0.8rem] text-coal/70">{p.api}<span className="block text-[0.7rem] text-coal/45">{p.note}</span></td>
-                <td className="px-4 py-2.5">
+                <td className="px-2 py-1.5 font-medium text-coal md:px-4">{p.name}</td>
+                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal/70 md:table-cell md:px-4">{p.api}<span className="block text-[0.7rem] text-coal/45">{p.note}</span></td>
+                <td className="px-2 py-1.5 md:px-4">
                   <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.status === "Operational" ? "bg-mint/60 text-coal" : "bg-warm text-coal"}`}>
                     <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
                     {s.status}
                   </span>
                 </td>
-                <td className="px-4 py-2.5 font-mono text-[0.8rem] text-coal">{s.p50Ms} ms</td>
-                <td className="px-4 py-2.5 font-mono text-[0.8rem] text-coal">{s.req24h}</td>
-                <td className="px-4 py-2.5 font-mono text-[0.8rem] text-coal">{(s.errorRate * 100).toFixed(1)}%</td>
+                <td className="px-2 py-1.5 font-mono text-[0.8rem] text-coal md:px-4">{s.p50Ms} ms</td>
+                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal sm:table-cell md:px-4">{s.req24h}</td>
+                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal sm:table-cell md:px-4">{(s.errorRate * 100).toFixed(1)}%</td>
               </tr>
             );
           })}
@@ -249,12 +258,12 @@ function ProvidersBody() {
 
 function KeysBody() {
   return (
-    <div className="overflow-x-auto px-2 py-2">
-      <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+    <div className="overflow-x-auto px-2 py-1.5">
+      <table className="w-full min-w-[540px] border-collapse text-left text-sm">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
             {["Key", "Scope", "Budget", "Last used", "Status"].map((h) => (
-              <th key={h} scope="col" className="px-4 py-2.5 font-semibold">{h}</th>
+              <th key={h} scope="col" className="px-4 py-2 font-semibold">{h}</th>
             ))}
           </tr>
         </thead>
@@ -264,19 +273,19 @@ function KeysBody() {
             const pct = Math.min(100, Math.round((u.used / u.limit) * 100));
             return (
               <tr key={k.id} className="dash-row border-t border-cream-line/70">
-                <td className="px-4 py-2.5">
+                <td className="px-4 py-2">
                   <span className="block font-medium text-coal">{k.id}</span>
                   <span className="block font-mono text-[0.75rem] text-coal/55">{k.masked}</span>
                 </td>
-                <td className="px-4 py-2.5 text-xs font-semibold text-coal/60">{k.scope}</td>
-                <td className="px-4 py-2.5">
+                <td className="px-4 py-2 text-xs font-semibold text-coal/60">{k.scope}</td>
+                <td className="px-4 py-2">
                   <span className="font-mono text-[0.8rem] text-coal">{money(u.used)} / {money(u.limit)}</span>
                   <span className="mt-1 block h-1.5 w-32 overflow-hidden rounded-full bg-coal/10">
                     <span className="block h-full rounded-full bg-mint" style={{ width: `${pct}%` }} />
                   </span>
                 </td>
-                <td className="px-4 py-2.5 font-mono text-[0.8rem] text-coal/70">{u.lastUsed}</td>
-                <td className="px-4 py-2.5">
+                <td className="px-4 py-2 font-mono text-[0.8rem] text-coal/70">{u.lastUsed}</td>
+                <td className="px-4 py-2">
                   <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${k.status === "active" ? "bg-mint/60 text-coal" : "bg-coal/10 text-coal/60"}`}>
                     <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
                     {k.status}
@@ -287,6 +296,7 @@ function KeysBody() {
           })}
         </tbody>
       </table>
+      <p className="px-4 pb-3 pt-1 font-mono text-xs text-coal/45">3 keys · budgets capped per key</p>
     </div>
   );
 }
@@ -294,22 +304,22 @@ function KeysBody() {
 function GuardrailsBody() {
   const rows = guardrailRows();
   return (
-    <div className="overflow-x-auto px-2 py-2">
-      <table className="w-full min-w-[520px] border-collapse text-left text-sm">
+    <div className="overflow-x-auto px-2 py-1.5">
+      <table className="w-full min-w-[500px] border-collapse text-left text-sm">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
             {["Category", "Mode", "Scope", "Hits 24h"].map((h) => (
-              <th key={h} scope="col" className="px-4 py-2.5 font-semibold">{h}</th>
+              <th key={h} scope="col" className="px-4 py-2 font-semibold">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((g) => (
             <tr key={g.category} className="dash-row border-t border-cream-line/70">
-              <td className="px-4 py-2 font-mono text-[0.8rem] text-coal">{g.category}</td>
-              <td className="px-4 py-2 text-xs font-semibold text-coal/60">{g.mode}</td>
-              <td className="px-4 py-2 text-xs font-semibold text-coal/60">{g.scope}</td>
-              <td className="px-4 py-2 font-mono text-[0.8rem] text-coal">{g.hits24h}</td>
+              <td className="px-4 py-[5px] font-mono text-[0.8rem] text-coal">{g.category}</td>
+              <td className="px-4 py-[5px] text-xs font-semibold text-coal/60">{g.mode}</td>
+              <td className="px-4 py-[5px] text-xs font-semibold text-coal/60">{g.scope}</td>
+              <td className="px-4 py-[5px] font-mono text-[0.8rem] text-coal">{g.hits24h}</td>
             </tr>
           ))}
         </tbody>
@@ -319,30 +329,43 @@ function GuardrailsBody() {
 }
 
 function LogsBody() {
+  // Fixed-height window: show the 9 most recent requests; the full 28-row
+  // dataset still lives in dashboard.ts and feeds every KPI + the
+  // reconcile script — this view is a window onto it, not the store.
+  const rows = [...REQUEST_LOGS].reverse().slice(0, 9).reverse();
   return (
-    <div className="overflow-x-auto px-2 py-2">
-      <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+    <div className="overflow-hidden px-1 py-1.5 md:px-2">
+      <table className="w-full border-collapse text-left text-xs md:text-sm">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
-            {["Time", "Key", "Model", "Provider", "Status", "Latency", "Tokens"].map((h) => (
-              <th key={h} scope="col" className="px-4 py-2.5 font-semibold">{h}</th>
+            {[
+              { l: "Time", c: "" },
+              { l: "Key", c: "" },
+              { l: "Model", c: "" },
+              { l: "Provider", c: "hidden md:table-cell" },
+              { l: "Status", c: "" },
+              { l: "Latency", c: "hidden sm:table-cell" },
+              { l: "Tokens", c: "hidden sm:table-cell" },
+            ].map((h) => (
+              <th key={h.l} scope="col" className={`px-2 py-2 font-semibold md:px-4 ${h.c}`}>{h.l}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {REQUEST_LOGS.map((l) => (
+          {rows.map((l) => (
             <tr key={l.id} className="dash-row border-t border-cream-line/70">
-              <td className="px-4 py-2 font-mono text-[0.8rem] text-coal/70">{l.time}</td>
-              <td className="px-4 py-2 font-mono text-[0.8rem] text-coal">{l.keyId}</td>
-              <td className="px-4 py-2 font-mono text-[0.8rem] text-coal">{l.model}</td>
-              <td className="px-4 py-2 text-[0.8rem] font-medium text-coal/70">{PROVIDER_ROWS.find((p) => p.id === l.provider)?.name}</td>
-              <td className="px-4 py-2"><StatusPill status={l.status} retryAfterS={l.retryAfterS} /></td>
-              <td className="px-4 py-2 font-mono text-[0.8rem] text-coal/70">{l.latencyMs === 0 ? "—" : `${l.latencyMs} ms`}</td>
-              <td className="px-4 py-2 font-mono text-[0.8rem] text-coal/70">{l.tokens === 0 ? "—" : l.tokens.toLocaleString("en-US")}</td>
+              <td className="px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 md:px-4">{l.time}</td>
+              <td className="break-all px-2 py-[7px] font-mono text-[0.8rem] text-coal md:px-4">{l.keyId}</td>
+              <td className="truncate px-2 py-[7px] font-mono text-[0.8rem] text-coal md:px-4">{l.model}</td>
+              <td className="hidden truncate px-2 py-[7px] text-[0.8rem] font-medium text-coal/70 md:table-cell md:px-4">{PROVIDER_ROWS.find((p) => p.id === l.provider)?.name}</td>
+              <td className="px-2 py-[7px] md:px-4"><StatusPill status={l.status} retryAfterS={l.retryAfterS} /></td>
+              <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-4">{l.latencyMs === 0 ? "—" : `${l.latencyMs} ms`}</td>
+              <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-4">{l.tokens === 0 ? "—" : l.tokens.toLocaleString("en-US")}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      <p className="px-4 pb-2 pt-1 font-mono text-xs text-coal/45">Latest 9 of {REQUEST_LOGS.length} requests today · full log in the app</p>
     </div>
   );
 }
@@ -350,7 +373,7 @@ function LogsBody() {
 function AnalyticsBody() {
   const spend = spendByProvider();
   const spendMax = Math.max(0.0001, ...spend.map((s) => s.spend));
-  const tokens = tokensByModel();
+  const tokens = tokensByModel().slice(0, 5);
   const tokensMax = Math.max(1, ...tokens.map((t) => t.tokens));
   const daily = dailyCost();
   const dailyMax = Math.max(0.0001, ...daily.map((b) => b.cost));
@@ -362,13 +385,13 @@ function AnalyticsBody() {
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
   return (
-    <div className="grid gap-5 px-6 py-5 lg:grid-cols-2">
+    <div className="grid gap-4 px-5 py-4 lg:grid-cols-2">
       <div>
         <p className="text-sm font-semibold text-coal">Spend by provider</p>
-        <ul className="mt-2 space-y-2">
+        <ul className="mt-1.5 space-y-1.5">
           {spend.map((s) => (
             <li key={s.id} className="flex items-center gap-2 text-sm">
-              <span className="w-28 shrink-0 text-[0.8rem] font-medium leading-tight text-coal">{s.name}</span>
+              <span className="w-28 shrink-0 truncate text-[0.8rem] font-medium leading-tight text-coal">{s.name}</span>
               <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-coal/10">
                 <span className="block h-full rounded-full bg-warm" style={{ width: `${Math.max(2, Math.round((s.spend / spendMax) * 100))}%` }} />
               </span>
@@ -378,11 +401,11 @@ function AnalyticsBody() {
         </ul>
       </div>
       <div>
-        <p className="text-sm font-semibold text-coal">Tokens by model</p>
-        <ul className="mt-2 space-y-2">
+        <p className="text-sm font-semibold text-coal">Tokens by model · top 5</p>
+        <ul className="mt-1.5 space-y-1.5">
           {tokens.map((t) => (
             <li key={t.model} className="flex items-center gap-2 text-sm">
-              <span className="w-36 shrink-0 font-mono text-[0.8rem] leading-tight text-coal">{t.model}</span>
+              <span className="w-36 shrink-0 truncate font-mono text-[0.8rem] leading-tight text-coal">{t.model}</span>
               <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-coal/10">
                 <span className="block h-full rounded-full bg-peri" style={{ width: `${Math.max(2, Math.round((t.tokens / tokensMax) * 100))}%` }} />
               </span>
@@ -393,7 +416,7 @@ function AnalyticsBody() {
       </div>
       <div className="lg:col-span-2">
         <p className="text-sm font-semibold text-coal">Daily cost</p>
-        <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 h-28 w-full" role="img" aria-label={`Daily cost line, total ${money(KPIS.spendToday)}`}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 h-20 w-full" role="img" aria-label={`Daily cost line, total ${money(KPIS.spendToday)}`}>
           <polyline points={pts.join(" ")} fill="none" stroke="var(--color-mint)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
           {pts.map((pt, i) => {
             const [x, y] = pt.split(",").map(Number);
@@ -457,15 +480,26 @@ export default function DashboardStack() {
       setActive((prev) => (prev === next ? prev : next));
       cardRefs.current.forEach((el, i) => {
         if (!el) return;
-        const t = i === 0 ? 1 : Math.min(1, Math.max(0, (v - (i - 1) * SEG) / SEG));
+        const raw = i === 0 ? 1 : Math.min(1, Math.max(0, (v - (i - 1) * SEG) / SEG));
+        // Smoothstep eases each window's rise with a soft landing; still a
+        // pure function of v, so scroll-up reverses it exactly.
+        const t = raw * raw * (3 - 2 * raw);
         const y = ((1 - t) * OFFSCREEN_VH).toFixed(2);
         const covered = i < next;
-        const scale = covered ? COVERED_SCALE : 1;
-        el.style.transform = `translate(-50%, -50%) translate3d(0, ${y}vh, 0) scale(${scale})`;
+        const depth = covered ? Math.min(next - i, 2) : 0;
+        // Covered windows sink (negative elevation) and shrink per depth —
+        // nearer cover at -12px/0.975, deeper at -24px/0.95. Top stays flat.
+        const sink = covered ? depth * 12 : 0;
+        const scale = covered ? 1 - depth * 0.025 : 1;
+        el.style.transform = `translate(-50%, -50%) translate3d(0, calc(${y}vh + ${sink.toFixed(1)}px)) scale(${scale.toFixed(3)})`;
         const dim = el.querySelector<HTMLElement>("[data-dim]");
-        if (dim) dim.style.opacity = covered ? DIM_OPACITY : "0";
+        if (dim) dim.style.opacity = covered ? (0.1 + depth * 0.06).toFixed(2) : "0";
+        // One shadow for the whole stack: only the top window casts. Covered
+        // windows drop theirs so stacked shadows can never pool darker.
+        const win = el.querySelector<HTMLElement>("[data-page]");
+        if (win) win.style.boxShadow = i === next ? "" : "none";
         el.style.pointerEvents = i === next ? "auto" : "none";
-        el.style.visibility = t <= 0 ? "hidden" : "visible";
+        el.style.visibility = raw <= 0 ? "hidden" : "visible";
       });
       region.dataset.progress = v.toFixed(4);
       region.dataset.activePage = PAGES[next];
@@ -509,7 +543,7 @@ export default function DashboardStack() {
       className="relative scroll-mt-24"
       style={{ height: `${REGION_VH}vh` }}
     >
-      <div className="sticky top-0 flex h-screen items-center justify-center overflow-hidden">
+      <div className="sticky top-0 flex h-screen items-center justify-center px-6 py-12">
         {PAGES.map((p, i) => {
           const Body = BODIES[p];
           return (
