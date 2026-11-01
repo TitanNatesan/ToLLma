@@ -1,18 +1,22 @@
 "use client";
 
-// Outcomes carousel — SCROLL-DRIVEN via a ~250vh sticky stage on md+ only:
-// scroll progress selects slide 0→1→2 (thin progress ticks track the active
-// slide), with a smooth switch (stat wipes first, quote crossfades). The
-// ← → buttons scroll to that slide's position while a suppress flag keeps
-// the scroll driver from hard-cutting the in-flight switch. Below md the
-// sticky stage would trap touch scroll, so the slides render as a static
-// stacked list instead (no sticky, no overflow-hidden clipping). Stats
-// count up 0→value (1.2s ease-out) at 50% visibility; stacked cards enter
-// staggered (middle offset lower) and drift at 0.9/1.0/1.1 parallax; a mint
-// gradient shifts behind at 0.1. Each card carries a mini-visual that runs
-// once on entry then idles (6 provider dots / 10 shield ticks / endpoint
-// pulse); cards lift + stat weight shifts on hover. All slide content is
-// verified site.ts facts — no invented metrics or testimonials.
+// Outcomes carousel — SCROLL-DRIVEN via a ~350vh sticky stage on md+ only:
+// the eyebrow + heading ride INSIDE the sticky viewport (pinned like a
+// ScrollTrigger pin — visible the whole time cards are shown, released when
+// the tall region ends), scroll progress selects slide 0→1→2→3 (thin
+// progress ticks track the active slide), with a smooth switch (stat wipes
+// first, quote crossfades). The ← → buttons scroll to that slide's position
+// while a suppress flag keeps the scroll driver from hard-cutting the
+// in-flight switch. Below md the sticky stage would trap touch scroll, so
+// the slides render as a static stacked list instead (no sticky, no
+// overflow-hidden clipping). Stats count up 0→value (1.2s ease-out) at 50%
+// visibility, once per activation; stacked cards enter staggered and drift
+// at 0.9/1.0/1.1/1.0 parallax; a mint gradient shifts behind at 0.1. Each
+// card carries an abstract mini-visual (aria-hidden, NOT a count — 6 dots /
+// 10 ticks / endpoint pulse) that runs once on entry then idles; cards lift
+// + stat weight shifts on hover. Slide 0 keeps verified site.ts-adjacent
+// copy; slides 1–3 carry DRAFT copy (see marks) with 200+/9000+ flagged
+// unverified below — never presented as verified facts.
 // Reduced-motion / no-JS: static slide 0, no sticky, final numbers.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Container } from "@/components/ui/layout";
@@ -30,78 +34,115 @@ import {
 } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 
-const SLIDES = [
+export type OutcomeStat = {
+  display: string;
+  countTo: number | null;
+  suffix: string;
+  label: string;
+  quote: string;
+  attr: string;
+  verified: boolean;
+};
+
+/* Four ordered outcomes. `verified:false` on the two unconfirmed draft
+   figures (200+, 9000+) — flagged in UI + report, never stated as fact. */
+export const OUTCOME_STATS: OutcomeStat[] = [
   {
-    stat: String(PROVIDERS.length),
-    caption: "Provider adapters",
-    ticks: ["OpenAI · Anthropic", "Gemini · Vertex AI", "Bedrock · Custom"],
+    display: "1",
+    countTo: 1,
+    suffix: "",
+    label: "One Proxy",
     quote:
       "One OpenAI-compatible endpoint for every provider — Chat Completions plus Responses.",
     attr: "ToLLma · Providers",
+    verified: true,
   },
+  /* DRAFT copy — unverified */
   {
-    stat: String(GUARDRAIL_CATEGORIES.length),
-    caption: "Guardrail categories",
-    ticks: ["Prompt injection", "PII + secrets", "Tool actions"],
+    display: "200+",
+    countTo: 200,
+    suffix: "+",
+    label: "API Providers",
     quote:
-      "Every request is checked before it runs — monitor or block, globally or per key.",
-    attr: "ToLLma · Guardrails",
+      "Every provider behind one OpenAI-compatible shape — swap APIs without rewriting calls.",
+    attr: "ToLLma · Providers",
+    verified: false,
   },
+  /* DRAFT copy — unverified */
   {
-    // A concept count (one gateway endpoint), not a list length — keep literal.
-    stat: "1",
-    caption: "Gateway endpoint",
-    ticks: ["Same keys", "Same shape", "Every model"],
-    quote: "Apps and agents integrate once — swap providers without rewriting.",
-    attr: "ToLLma · Quickstart",
+    display: "9000+",
+    countTo: 9000,
+    suffix: "+",
+    label: "Models",
+    quote:
+      "Every model behind the same gateway — switch by name, never by SDK.",
+    attr: "ToLLma · Models",
+    verified: false,
+  },
+  /* DRAFT copy — unverified */
+  {
+    display: "∞",
+    countTo: null,
+    suffix: "",
+    label: "Endless Integrations",
+    quote:
+      "Wire agents, tools, and pipelines once — every integration speaks the same protocol.",
+    attr: "ToLLma · Integrations",
+    verified: true,
   },
 ];
 
 type Phase = "idle" | "out" | "stat" | "quote";
 
-const REGION_VH = 250;
+const REGION_VH = 350;
 
 /* Number ticker: counts 0→value once visible at 50% (1.2s ease-out).
    SSR/reduced-motion render the final value. */
-function CountStat({ value }: { value: number }) {
+function CountStat({ value, suffix = "" }: { value: number; suffix?: string }) {
   const [ref, seen] = useInViewOnce<HTMLSpanElement>(0.5);
 
   useEffect(() => {
     const el = ref.current;
     if (!el || !seen) return;
     if (prefersReducedMotion()) {
-      el.textContent = String(value);
+      el.textContent = `${value}${suffix}`;
       return;
     }
     const state = { v: 0 };
-    el.textContent = "0";
+    el.textContent = `0${suffix}`;
     const a = animate(state, {
       v: value,
       duration: 1200,
       ease: "outQuad",
       onUpdate: () => {
-        el.textContent = String(Math.round(state.v));
+        el.textContent = `${Math.round(state.v)}${suffix}`;
       },
     });
     return () => {
       a.revert();
-      el.textContent = String(value);
+      el.textContent = `${value}${suffix}`;
     };
-  }, [ref, seen, value]);
+  }, [ref, seen, value, suffix]);
 
-  return <span ref={ref}>{value}</span>;
+  return (
+    <span ref={ref}>
+      {value}
+      {suffix}
+    </span>
+  );
 }
 
-/* Per-card mini-visual: runs once on entry, then idles on CSS.
-   0 → provider dots light in sequence (PROVIDERS.length, derived);
-   1 → shield ticks fill (GUARDRAIL_CATEGORIES.length, derived);
-   2 → endpoint pulse (CSS-only). Static finals under reduced-motion. */
+/* Per-card mini-visual: runs once on entry, then idles on CSS. Abstract and
+   aria-hidden — dot/tick counts illustrate, they are NOT the card figures.
+   1 → provider dots light in sequence (PROVIDERS.length, verified);
+   2 → generic ticks fill; 0 + 3 → endpoint pulse (CSS-only).
+   Static finals under reduced-motion. */
 function SlideVisual({ n }: { n: number }) {
   const [ref, seen] = useInViewOnce<HTMLDivElement>(0.4);
 
   useEffect(() => {
     const root = ref.current;
-    if (!root || !seen || n === 2 || prefersReducedMotion()) return;
+    if (!root || !seen || (n !== 1 && n !== 2) || prefersReducedMotion()) return;
     const items = Array.from(root.querySelectorAll<HTMLElement>(".viz-bit"));
     if (!items.length) return;
     utils.set(items, { opacity: 0, scale: 0.4 });
@@ -117,7 +158,7 @@ function SlideVisual({ n }: { n: number }) {
     };
   }, [ref, seen, n]);
 
-  if (n === 0) {
+  if (n === 1) {
     return (
       <div ref={ref} className="mt-5 flex items-center gap-1.5" aria-hidden="true">
         {PROVIDERS.map((p, i) => (
@@ -131,7 +172,7 @@ function SlideVisual({ n }: { n: number }) {
       </div>
     );
   }
-  if (n === 1) {
+  if (n === 2) {
     return (
       <div ref={ref} className="mt-5 flex items-center gap-1" aria-hidden="true">
         {GUARDRAIL_CATEGORIES.map((c) => (
@@ -152,17 +193,17 @@ function SlideVisual({ n }: { n: number }) {
 
 /* Static slide pane for the mobile stacked list (always settled, no switch). */
 function StaticSlide({ n }: { n: number }) {
-  const s = SLIDES[n];
+  const s = OUTCOME_STATS[n];
   return (
     <div className="outcome-card grid bg-white md:grid-cols-2">
       <div className="flex min-h-[200px] flex-col justify-center px-6 py-8">
         <p className="outcome-stat font-serif text-6xl font-medium tracking-tight text-coal">
-          <CountStat value={Number(s.stat)} />
+          {s.countTo == null ? <span>∞</span> : <CountStat value={s.countTo} suffix={s.suffix} />}
         </p>
-        <p className="mt-3 text-[1.05rem] font-medium text-coal/70">{s.caption}</p>
+        <p className="mt-3 text-[1.05rem] font-medium text-coal/70">{s.label}</p>
         <SlideVisual n={n} />
         <div className="mt-6 flex gap-2" aria-hidden="true">
-          {SLIDES.map((_, i) => (
+          {OUTCOME_STATS.map((_, i) => (
             <span
               key={i}
               className={`h-[3px] w-16 ${i === n ? "bg-[#2f9e6e]" : "bg-coal/15"}`}
@@ -181,7 +222,34 @@ function StaticSlide({ n }: { n: number }) {
   );
 }
 
-const CARD_SPEEDS = [0.9, 1.0, 1.1];
+/* Pinned heading: eyebrow + title shared by sticky/mobile/static branches
+   (only one branch is ever displayed, so a single heading is exposed). */
+function OutcomeHeading() {
+  return (
+    <>
+      <p data-reveal className="text-center text-xs font-medium text-coal/60">
+        Outcomes
+      </p>
+      <h2
+        data-reveal
+        className="mx-auto mt-4 max-w-3xl text-center font-serif text-4xl font-medium tracking-tight text-coal md:text-5xl"
+      >
+        One gateway. Every model. Fully governed.
+      </h2>
+    </>
+  );
+}
+
+/* Subtle unverified-figures flag — keeps draft 200+/9000+ from reading as fact. */
+function DraftNote() {
+  return (
+    <p className="mt-6 text-center text-xs text-coal/45">
+      Draft figures — 200+ providers and 9000+ models are placeholders pending verification.
+    </p>
+  );
+}
+
+const CARD_SPEEDS = [0.9, 1.0, 1.1, 1.0];
 
 export default function Outcomes() {
   const [index, setIndex] = useState(0);
@@ -196,7 +264,7 @@ export default function Outcomes() {
   const revealRef = useRevealOnScroll({ staggerMs: 80 });
   // Infinite viz loops idle unless the section is in view (enter/exit).
   const [vizRef, vizPlaying] = useInViewToggle<HTMLElement>(0);
-  const slide = SLIDES[index];
+  const slide = OUTCOME_STATS[index];
   const indexRef = useRef(index);
   indexRef.current = index;
   const phaseRef = useRef(phase);
@@ -254,7 +322,7 @@ export default function Outcomes() {
       const total = el.offsetHeight - window.innerHeight;
       const rect = el.getBoundingClientRect();
       const v = total > 0 ? Math.min(1, Math.max(0, -rect.top / total)) : 0;
-      const next = v < 1 / 3 ? 0 : v < 2 / 3 ? 1 : 2;
+      const next = v < 1 / 4 ? 0 : v < 2 / 4 ? 1 : v < 3 / 4 ? 2 : 3;
       if (next === indexRef.current) return;
       if (phaseRef.current === "idle") {
         transitionTo(next);
@@ -291,7 +359,7 @@ export default function Outcomes() {
     }
     const top = el.getBoundingClientRect().top + window.scrollY;
     const total = el.offsetHeight - window.innerHeight;
-    const y = top + ((n + 0.5) / SLIDES.length) * total;
+    const y = top + ((n + 0.5) / OUTCOME_STATS.length) * total;
     suppressRef.current = { until: performance.now() + 1600, y };
     transitionTo(n);
     window.scrollTo({ top: y, behavior: "smooth" });
@@ -301,7 +369,7 @@ export default function Outcomes() {
   // instead of `disabled`, so keyboard focus is never lost.
   const go = (dir: 1 | -1) => {
     if (phaseRef.current !== "idle") return;
-    scrollToSlide((index + dir + SLIDES.length) % SLIDES.length);
+    scrollToSlide((index + dir + OUTCOME_STATS.length) % OUTCOME_STATS.length);
   };
   const busy = phase !== "idle";
 
@@ -314,17 +382,21 @@ export default function Outcomes() {
             key={`stat-${index}`}
             className={`outcome-stat font-serif text-7xl font-medium tracking-tight text-coal md:text-8xl ${phase === "out" ? "stat-wipe-out" : phase !== "idle" ? "stat-wipe-enter" : ""}`}
           >
-            <CountStat value={Number(slide.stat)} />
+            {slide.countTo == null ? (
+              <span>∞</span>
+            ) : (
+              <CountStat value={slide.countTo} suffix={slide.suffix} />
+            )}
           </p>
           <p
             key={`cap-${index}`}
             className={`mt-3 text-[1.05rem] font-medium text-coal/70 ${phase === "out" ? "stat-wipe-out" : phase !== "idle" ? "stat-wipe-enter" : ""}`}
           >
-            {slide.caption}
+            {slide.label}
           </p>
           <SlideVisual n={index} />
           <div className="mt-6 flex gap-2" aria-hidden="true">
-            {SLIDES.map((_, i) => (
+            {OUTCOME_STATS.map((_, i) => (
               <span
                 key={i}
                 className={`h-[3px] w-16 transition-colors duration-300 ${i === index ? "bg-[#2f9e6e]" : "bg-coal/15"}`}
@@ -332,7 +404,7 @@ export default function Outcomes() {
             ))}
           </div>
           <p className="sr-only" aria-live="polite">
-            Slide {index + 1} of {SLIDES.length}: {slide.stat} {slide.caption}
+            Slide {index + 1} of {OUTCOME_STATS.length}: {slide.display} {slide.label}
           </p>
         </div>
         {/* Right: quote crossfades after the stat */}
@@ -391,38 +463,42 @@ export default function Outcomes() {
           <div className="outcome-glow h-[130%] w-full" />
         </Parallax>
       </div>
-      <Container width="wide" className="relative pt-20 md:pt-28">
-        <p data-reveal className="text-center text-xs font-medium text-coal/60">
-          Outcomes
-        </p>
-        <h2 data-reveal className="mx-auto mt-4 max-w-3xl text-center font-serif text-4xl font-medium tracking-tight text-coal md:text-5xl">
-          One gateway. Every model. Fully governed.
-        </h2>
-      </Container>
 
       {static_ ? (
-        <Container width="wide" className="relative pb-20 pt-12 md:pb-28">
-          {card}
+        <Container width="wide" className="relative pb-20 pt-20 md:pt-28">
+          <OutcomeHeading />
+          <div className="pt-12">{card}</div>
+          <DraftNote />
         </Container>
       ) : (
         <>
-          {/* Sticky scroll-stage: md+ only — it would trap touch scroll on phones. */}
+          {/* Sticky scroll-stage: md+ only — it would trap touch scroll on phones.
+              Heading rides inside the sticky viewport: pinned the whole time
+              cards show, released when the tall region ends. */}
           <div ref={wrapRef} className="relative hidden md:block" style={{ height: `${REGION_VH}vh` }}>
-            <div className="sticky top-0 flex h-screen items-center justify-center overflow-hidden px-6">
-              {card}
+            <div className="sticky top-0 flex h-screen flex-col items-center justify-center overflow-hidden px-6">
+              <Container width="wide" className="relative">
+                <OutcomeHeading />
+              </Container>
+              <div className="relative mt-8 w-full">
+                {card}
+                <DraftNote />
+              </div>
             </div>
           </div>
-          {/* Mobile: the same slides as a static stacked list. */}
-          <div className="relative px-6 pb-20 pt-12 md:hidden">
-            <div className="mx-auto flex w-full max-w-5xl flex-col gap-10">
-              {SLIDES.map((s, n) => (
-                <Parallax key={s.caption} speed={CARD_SPEEDS[n]}>
-                  <Reveal y={n === 1 ? 36 : 20} delay={n * 110}>
+          {/* Mobile: heading + the same slides as a static stacked list. */}
+          <div className="relative px-6 pb-20 pt-20 md:hidden">
+            <OutcomeHeading />
+            <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 pt-12">
+              {OUTCOME_STATS.map((s, n) => (
+                <Parallax key={s.label} speed={CARD_SPEEDS[n]}>
+                  <Reveal y={n === 1 || n === 2 ? 36 : 20} delay={n * 110}>
                     <StaticSlide n={n} />
                   </Reveal>
                 </Parallax>
               ))}
             </div>
+            <DraftNote />
           </div>
         </>
       )}

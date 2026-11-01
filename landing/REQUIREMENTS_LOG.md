@@ -190,3 +190,64 @@ Change (`landing/src/components/sections/what-we-do.tsx` only, copy/palette unto
 Evidence: `/tmp/opencode/r6/r6-closed-{1440,390}.png`,
 `/tmp/opencode/r6/r6-open-{secure,govern,observe}-{1440,390}.png`
 (8 screenshots), `before-1440.png` baseline.
+
+## R7 — Pinned outcomes heading + 4-card carousel (2026-11-01)
+
+Change (`landing/src/components/sections/outcomes.tsx` only, copy/palette untouched):
+- New exported `OUTCOME_STATS` (4 entries, ordered): `1 / One Proxy`
+  (verified, keeps existing quote + attr verbatim), `200+ / API Providers`
+  (`verified:false`), `9000+ / Models` (`verified:false`), `∞ / Endless
+  Integrations` (symbol, no count-up). Slides 2–4 carry
+  `/* DRAFT copy — unverified */` quotes in the same voice
+  (provider-shape swap / switch-by-name / wire-once lines) with
+  `ToLLma · Providers/Models/Integrations` attributions.
+- Eyebrow ("Outcomes") + h2 ("One gateway. Every model. Fully governed.")
+  moved inside the md+ sticky viewport via shared `OutcomeHeading` — pinned
+  (ScrollTrigger-pin equivalent in CSS `sticky`, no new JS) the whole time
+  cards show, released when the ~350vh region ends. Mobile keeps a static
+  stacked list (pin would trap touch scroll); reduced-motion/no-JS keeps the
+  single static card. Pin choice: CSS sticky reuses the file's existing
+  scroll-stage convention — ScrollTrigger JS pin skipped, add only if a
+  scrubbed pin is ever needed.
+- Scroll driver thresholds thirds → quarters; `REGION_VH` 250 → 350;
+  `CARD_SPEEDS` gains a 4th entry; progress ticks derive from
+  `OUTCOME_STATS` (now 4 steps); ← → arrows unchanged (wrap-around).
+  Removed dead `ticks` text field (never rendered). Mini-visuals remapped
+  (0/3 pulse, 1 provider dots, 2 generic ticks — all `aria-hidden`, not
+  counts). `CountStat` gains `suffix` ("+"); ∞ renders static.
+- Subtle `DraftNote` ("Draft figures — 200+ providers and 9000+ models are
+  placeholders pending verification.", `text-xs text-coal/45`) under the
+  card in all branches so the draft figures never read as verified facts.
+  `site.ts` untouched (verified-facts-only file must not hold draft figures).
+
+### Draft copy (unverified — do not quote as fact)
+
+- Card 2 (200+ API Providers): "Every provider behind one
+  OpenAI-compatible shape — swap APIs without rewriting calls."
+- Card 3 (9000+ Models): "Every model behind the same gateway — switch by
+  name, never by SDK."
+- Card 4 (Endless Integrations): "Wire agents, tools, and pipelines once —
+  every integration speaks the same protocol."
+
+### Flagged stats (unverified)
+
+- `200+` providers — `verified:false` in `OUTCOME_STATS`.
+- `9000+` models — `verified:false` in `OUTCOME_STATS`.
+
+### Acceptance
+
+- [x] PASS — heading pinned at section start/q1/q2/q3/end (1440, h2 rect
+  inside viewport every sample; still pinned on last card).
+- [x] PASS — card order at 1440 + 390: One Proxy → API Providers → Models →
+  Endless Integrations; stats settle to `1`, `200+`, `9000+`, `∞`.
+- [x] PASS — ← → arrows wrap both directions; 4 progress ticks, active tick
+  tracks `Slide N of 4` live region.
+- [x] PASS — count-up runs once per activation at ≥50% visibility
+  (mid-flight samples `8987+`/`8323+` → settle `9000+`; ∞ static;
+  reduced-motion renders finals).
+- [x] PASS — `npx tsc --noEmit` clean, `npm run build` green; vitest N/A
+  (no runner configured in landing).
+- [x] PASS — zero page/console errors at 390 + 1440.
+
+Evidence: `/tmp/opencode/r7/r7-pin-{start,q1,q2,q3,end}-1440.png`,
+`/tmp/opencode/r7/r7-card{0..3}-{1440,390}.png` (13 screenshots).
