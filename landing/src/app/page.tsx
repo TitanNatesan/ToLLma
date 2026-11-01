@@ -28,7 +28,7 @@ export default function Page() {
         <Outcomes />
         <PixelWipe tone="dark" band="bg-sage" />
         <Platform />
-        <PixelWipe tone="light" flip />
+        <PixelWipe tone="light" flip cssDriven />
         <Solutions />
         <PixelWipe tone="dark" />
         <Knowledge />

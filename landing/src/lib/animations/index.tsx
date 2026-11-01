@@ -6,14 +6,14 @@
 //   - `useRevealOnScroll`   fade+rise for [data-reveal] children
 //   - `useStaggerReveal`    staggered children reveal
 //   - `useInViewOnce`       boolean in-view latch (no re-init)
-//   - `drawSvgPath`         SVG stroke-dashoffset line draw
+//   - `useInViewToggle`     enter/exit flag (gates infinite loops)
 //   - `motionPathPackets`   move packets along an SVG path
 //   - `countUp`             number transition
 // All animations respect prefers-reduced-motion and clean up on unmount.
 // ============================================================
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { animate, createTimeline, createScope, stagger, svg, utils, ScrollObserver, type TimelineParams } from "animejs";
+import { animate, createTimeline, createScope, stagger, utils } from "animejs";
 import { prefersReducedMotion } from "./motion-preference";
 
 export { prefersReducedMotion };
@@ -179,30 +179,6 @@ export function useStaggerReveal(threshold = 0.2, staggerMs = 80) {
   return [ref, seen] as const;
 }
 
-// ---------- SVG line drawing ----------
-/** Draws every path matched by `selector` inside `container` once in view. */
-export function drawSvgPaths(
-  container: Element,
-  selector: string,
-  opts: { duration?: number; delay?: number; staggerMs?: number; play?: boolean } = {}
-) {
-  const { duration = 1100, delay = 0, staggerMs = 90, play = true } = opts;
-  const paths = Array.from(container.querySelectorAll<SVGPathElement>(selector));
-  if (!paths.length) return () => {};
-  if (!play || prefersReducedMotion()) return () => {};
-
-  // createDrawable returns an array of drawable proxies (one per path).
-  const drawables = paths.flatMap((p) => svg.createDrawable(p));
-  const tl = createTimeline();
-  tl.add(drawables, {
-    draw: ["0 0", "0 1"],
-    duration,
-    delay: stagger(staggerMs, { start: delay }),
-    ease: "inOutQuad",
-  });
-  return () => tl.revert();
-}
-
 // ---------- motion-path packets ----------
 /**
  * Animates `packet` elements along an SVG path (`path`), sampled via
@@ -282,19 +258,11 @@ export function countUp(
   return () => a.revert();
 }
 
-// ---------- generic timeline helper ----------
-export function makeTimeline(params: TimelineParams) {
-  return createTimeline(params);
-}
-
-export { animate, createScope, createTimeline, stagger, svg, utils, ScrollObserver };
+export { animate, createScope, createTimeline, stagger, utils };
 
 // Shared preset vocabulary + interaction hooks (single import site for sections).
-export * from "./presets";
 export {
-  useParallax,
-  useScrollProgress,
   usePointerTilt,
   useActiveSection,
-  useCountUp,
+  useInViewToggle,
 } from "./interactions";

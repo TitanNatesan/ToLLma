@@ -4,7 +4,14 @@
 // adapter (name + API type from site.ts), hover → white card + teal
 // "Explore →". Last cell is the "Don't see yours?" catch-all pointing at
 // any OpenAI-compatible endpoint (the verified `custom` adapter class).
+//
+// Phase D motion: cells are SpotlightCards (cursor glow, gradient border,
+// 2px lift <300ms); logos render monochrome until hovered (CSS filter on the
+// existing marks — assets untouched); rows reveal with an 80ms stagger; the
+// bottom-row CTA card drifts with foreground parallax (0.92).
 import { Container } from "@/components/ui/layout";
+import { SpotlightCard } from "@/components/ui/spotlight-card";
+import { Parallax } from "@/components/ui/parallax";
 import { DOCS_URL, PROVIDERS } from "@/lib/site";
 import { useRevealOnScroll } from "@/lib/animations";
 import { AnthropicMark, OpenAIMark } from "./brand/provider-marks";
@@ -47,7 +54,7 @@ function TargetCorners() {
 }
 
 export default function Solutions() {
-  const revealRef = useRevealOnScroll({ staggerMs: 90, y: 16 });
+  const revealRef = useRevealOnScroll({ staggerMs: 80, y: 16 });
   return (
     <section id="solutions" ref={revealRef} className="scroll-mt-20 bg-cream">
       <Container width="wide" className="py-20 md:py-28">
@@ -67,44 +74,50 @@ export default function Solutions() {
           className="mx-auto mt-12 grid max-w-5xl scroll-mt-24 grid-cols-1 gap-px border border-cream-line bg-cream-line min-[560px]:grid-cols-2 lg:grid-cols-3"
         >
           {CELLS.map((c) => (
+            <SpotlightCard key={c.name} className="group bg-cream">
+              <a
+                href={DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-reveal
+                className="relative flex min-h-[190px] flex-col bg-cream p-7 transition-colors duration-200 hover:bg-white"
+              >
+                <TargetCorners />
+                {/* Fixed-height mark slot keeps names aligned across cells,
+                    whether or not a vendor kit was supplied. Grayscale until
+                    hover (CSS filter — the artwork itself is untouched). */}
+                <span className="provider-mark flex h-8 items-center" aria-hidden="true">
+                  {MARKS[c.id]}
+                </span>
+                <span className="font-serif text-[1.7rem] font-medium text-coal">{c.name}</span>
+                <span className="mt-1 text-sm font-medium text-coal/55">{c.api}</span>
+                <span className="mt-auto inline-flex items-center gap-1.5 pt-5 text-[0.95rem] font-semibold text-coal transition-colors group-hover:text-[#0e7490]">
+                  Explore
+                  <span aria-hidden="true" className="transition-transform duration-200 group-hover:translate-x-1">→</span>
+                </span>
+              </a>
+            </SpotlightCard>
+          ))}
+          {/* Bottom-row catch-all: dashed CTA card with hover fill. Drifts
+              with foreground parallax (0.92) for depth against the grid. */}
+          <Parallax speed={0.92} className="bg-cream">
             <a
-              key={c.name}
               href={DOCS_URL}
               target="_blank"
               rel="noopener noreferrer"
               data-reveal
-              className="group relative flex min-h-[190px] flex-col bg-cream p-7 transition-colors duration-200 hover:bg-white"
+              className="group relative flex min-h-[190px] flex-col border-2 border-dashed border-coal/25 bg-cream p-7 transition-colors duration-200 hover:border-coal hover:bg-coal"
             >
               <TargetCorners />
-              {/* Fixed-height mark slot keeps names aligned across cells,
-                  whether or not a vendor kit was supplied. */}
-              <span className="flex h-8 items-center" aria-hidden="true">
-                {MARKS[c.id]}
-              </span>
-              <span className="font-serif text-[1.7rem] font-medium text-coal">{c.name}</span>
-              <span className="mt-1 text-sm font-medium text-coal/55">{c.api}</span>
-              <span className="mt-auto inline-flex items-center gap-1.5 pt-5 text-[0.95rem] font-semibold text-coal transition-colors group-hover:text-[#0e7490]">
+              <p className="text-[1.05rem] leading-snug text-coal/80 transition-colors group-hover:text-cream/85">
+                Don&apos;t see yours? ToLLma works with any OpenAI-compatible endpoint.
+              </p>
+              <span className="mt-auto inline-flex items-center gap-1.5 pt-5 text-[0.95rem] font-semibold text-coal transition-colors group-hover:text-cream">
                 Explore
                 <span aria-hidden="true" className="transition-transform duration-200 group-hover:translate-x-1">→</span>
               </span>
             </a>
-          ))}
-          <a
-            href={DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            data-reveal
-            className="group relative flex min-h-[190px] flex-col bg-cream p-7"
-          >
-            <TargetCorners />
-            <p className="text-[1.05rem] leading-snug text-coal/80">
-              Don&apos;t see yours? ToLLma works with any OpenAI-compatible endpoint.
-            </p>
-            <span className="mt-auto inline-flex items-center gap-1.5 pt-5 text-[0.95rem] font-semibold text-coal transition-colors group-hover:text-[#0e7490]">
-              Explore
-              <span aria-hidden="true" className="transition-transform duration-200 group-hover:translate-x-1">→</span>
-            </span>
-          </a>
+          </Parallax>
         </div>
       </Container>
     </section>

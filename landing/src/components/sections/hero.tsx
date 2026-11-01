@@ -1,43 +1,93 @@
 "use client";
 
 // Centered Nominal-style hero: license pill, solid-ink serif headline,
-// exact product sub-copy, black primary CTA. Six sharp pastel pills float
-// absolutely around the copy with blurred ghost pills behind (same hues,
-// out of focus). Single scrolling unit — NO parallax: everything moves 1:1
-// with the page. Below: Request Activity dashboard card (provider rows from
-// site.ts). SSR/no-JS renders the terminal states (Allowed rows, full bars);
-// JS re-arms the scroll-linked enhancement (bars fill on scroll-into-view,
-// status pills flip row-by-row from Pending to terminal) on mount.
+// exact product sub-copy, black primary CTA. Six glass pills float around
+// the copy (parallax layers + idle float), each with a one-line site.ts-
+// derived context tooltip. Below: Request Activity dashboard card —
+// pointer-tilt (max 6°, fine pointers) + cursor glare + scroll flatten
+// (rotateX 14°→0 at viewport middle, slight lift on exit). Black skyline
+// blocks grow scaleY staggered on entry + 0.3 scroll parallax (signature
+// moment). Dotted grid at 0.08 + radial glow at 0.2 behind everything.
+// Hero copy fades/drifts over the first 60vh. SSR/no-JS renders terminal
+// states; JS arms motion only when allowed — reduced-motion shows finals.
 import { useEffect, useRef, useState } from "react";
 import { Container } from "@/components/ui/layout";
 import { BlackButton } from "@/components/ui/primitives";
-import { BRAND, GET_STARTED_URL, PROVIDERS } from "@/lib/site";
-import { useInViewOnce, useReducedMotion } from "@/lib/animations";
+import { SpotlightCard } from "@/components/ui/spotlight-card";
+import { Parallax } from "@/components/ui/parallax";
+import {
+  animate,
+  stagger,
+  useInViewOnce,
+  useInViewToggle,
+  useReducedMotion,
+  usePointerTilt,
+  utils,
+} from "@/lib/animations";
+import { prefersReducedMotion } from "@/lib/animations/motion-preference";
+import {
+  BRAND,
+  GATEWAY_BASE,
+  GET_STARTED_URL,
+  GUARDRAIL_CATEGORIES,
+  POLICY_SCOPE,
+  PROVIDERS,
+} from "@/lib/site";
 
-type Pill = { label: string; bg: string; pos: string; glyph: string; dur: string; delay: string };
+type Pill = {
+  label: string;
+  bg: string;
+  pos: string;
+  glyph: string;
+  dur: string;
+  delay: string;
+  speed: number;
+  tip: string;
+};
+
+const STREAMING_COUNT = PROVIDERS.filter((p) => p.streaming).length;
+const SCOPES = POLICY_SCOPE.map((s) => (s === "api_key" ? "per-key" : s)).join(" or ");
 
 const PILLS: Pill[] = [
-  { label: "Multi-provider", bg: "#72ddb1", pos: "left-[4%] top-[4%]", glyph: "\u25C8", dur: "6.5s", delay: "0s" },
-  { label: "Usage & cost", bg: "#e8b1a2", pos: "right-[4%] top-[8%]", glyph: "\u25CF", dur: "7.5s", delay: "-2s" },
-  { label: "Guardrails", bg: "#f5e6a3", pos: "left-[7%] top-[32%]", glyph: "\u25C6", dur: "6s", delay: "-1s" },
-  { label: "API keys", bg: "#a9bdf4", pos: "right-[7%] top-[30%]", glyph: "\u25A0", dur: "8s", delay: "-3.5s" },
-  { label: "Request logs", bg: "#dde8d0", pos: "left-[5%] top-[52%]", glyph: "\u2261", dur: "7s", delay: "-4s" },
-  { label: "Streaming", bg: "#72ddb1", pos: "right-[10%] bottom-[16%]", glyph: "\u25B2", dur: "6.8s", delay: "-1.8s" },
+  { label: "Multi-provider", bg: "#72ddb1", pos: "left-[4%] top-[4%]", glyph: "\u25C8", dur: "6.5s", delay: "0s", speed: 0.55, tip: `${PROVIDERS.length} adapters · one endpoint` },
+  { label: "Usage & cost", bg: "#e8b1a2", pos: "right-[4%] top-[8%]", glyph: "\u25CF", dur: "7.5s", delay: "-2s", speed: 0.4, tip: "Usage & cost tracked per key" },
+  { label: "Guardrails", bg: "#f5e6a3", pos: "left-[7%] top-[32%]", glyph: "\u25C6", dur: "6s", delay: "-1s", speed: 0.25, tip: `Guardrails: ${GUARDRAIL_CATEGORIES.length} categories active` },
+  { label: "API keys", bg: "#a9bdf4", pos: "right-[7%] top-[30%]", glyph: "\u25A0", dur: "8s", delay: "-3.5s", speed: -0.15, tip: `Keys carry ${SCOPES} scope` },
+  { label: "Request logs", bg: "#dde8d0", pos: "left-[5%] top-[52%]", glyph: "\u2261", dur: "7s", delay: "-4s", speed: 0.4, tip: "Every request leaves a trail" },
+  { label: "Streaming", bg: "#72ddb1", pos: "right-[10%] bottom-[16%]", glyph: "\u25B2", dur: "6.8s", delay: "-1.8s", speed: 0.25, tip: `Streaming on ${STREAMING_COUNT}/${PROVIDERS.length} adapters` },
 ];
 
 /* Blurred ghosts: same hues, out of focus, offset from the sharp pills. */
-const GHOSTS: { label: string; bg: string; pos: string }[] = [
-  { label: "", bg: "#72ddb1", pos: "left-[16%] top-[14%]" },
-  { label: "", bg: "#e8b1a2", pos: "right-[15%] top-[22%]" },
-  { label: "", bg: "#f5e6a3", pos: "left-[2%] top-[44%]" },
-  { label: "", bg: "#a9bdf4", pos: "right-[2%] top-[44%]" },
-  { label: "", bg: "#dde8d0", pos: "left-[20%] bottom-[10%]" },
-  { label: "", bg: "#72ddb1", pos: "right-[22%] bottom-[6%]" },
+const GHOSTS: { bg: string; pos: string }[] = [
+  { bg: "#72ddb1", pos: "left-[16%] top-[14%]" },
+  { bg: "#e8b1a2", pos: "right-[15%] top-[22%]" },
+  { bg: "#f5e6a3", pos: "left-[2%] top-[44%]" },
+  { bg: "#a9bdf4", pos: "right-[2%] top-[44%]" },
+  { bg: "#dde8d0", pos: "left-[20%] bottom-[10%]" },
+  { bg: "#72ddb1", pos: "right-[22%] bottom-[6%]" },
 ];
 
-function HeroPills() {
+/* Dotted grid (0.08) + radial glow (0.2): token colors only, opacity layers. */
+function HeroBackdrop() {
   return (
     <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+      <div className="hero-dots absolute inset-0" />
+      <Parallax speed={0.1} className="absolute inset-0">
+        <div className="hero-glow absolute inset-0" />
+      </Parallax>
+    </div>
+  );
+}
+
+function HeroPills() {
+  const [ref, playing] = useInViewToggle<HTMLDivElement>(0);
+  return (
+    <div
+      ref={ref}
+      data-playing={playing}
+      className="hero-pills pointer-events-none absolute inset-0 z-10"
+      aria-hidden="true"
+    >
       {GHOSTS.map((g, i) => (
         <span
           key={`g-${i}`}
@@ -46,22 +96,111 @@ function HeroPills() {
         />
       ))}
       {PILLS.map((p) => (
-        <div key={p.label} className={`absolute hidden min-[900px]:block ${p.pos}`}>
-          <span
-            className="pill-float flex items-center gap-2 rounded-full border border-coal/10 py-1.5 pl-1.5 pr-4 text-[0.8rem] font-semibold text-coal shadow-[0_10px_28px_-10px_rgba(23,25,20,0.35)]"
-            style={{ backgroundColor: p.bg, animationDuration: p.dur, animationDelay: p.delay }}
-          >
-            <span
-              className="flex size-6 items-center justify-center rounded-[7px] border border-coal/10 bg-white/55 text-[11px] leading-none text-coal"
-              aria-hidden="true"
-            >
-              {p.glyph}
+        <Parallax
+          key={p.label}
+          speed={p.speed}
+          className={`absolute hidden min-[900px]:block ${p.pos}`}
+        >
+          <span className="hero-chipgroup pointer-events-auto">
+            <SpotlightCard className="rounded-full">
+              <span
+                className="hero-chip pill-float flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-4 text-[0.8rem] font-semibold text-coal"
+                style={{ "--chip-bg": p.bg, animationDuration: p.dur, animationDelay: p.delay } as React.CSSProperties}
+              >
+                <span
+                  className="flex size-6 items-center justify-center rounded-[7px] border border-coal/10 bg-white/55 text-xs leading-none text-coal"
+                  aria-hidden="true"
+                >
+                  {p.glyph}
+                </span>
+                {p.label}
+              </span>
+            </SpotlightCard>
+            <span className="hero-tip" aria-hidden="true">
+              {p.tip}
             </span>
-            {p.label}
           </span>
-        </div>
+        </Parallax>
       ))}
     </div>
+  );
+}
+
+/* Word-by-word headline rise on load (60ms stagger). Single h1 kept for
+   a11y (aria-label carries the full line); word spans are presentational. */
+function HeroHeadline() {
+  const ref = useRef<HTMLHeadingElement | null>(null);
+  const words = BRAND.headline.split(" ");
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || prefersReducedMotion()) return;
+    const items = Array.from(el.querySelectorAll<HTMLElement>(".hw-word"));
+    if (!items.length) return;
+    utils.set(items, { y: "112%" });
+    const a = animate(items, {
+      y: ["112%", "0%"],
+      duration: 850,
+      delay: stagger(60, { start: 120 }),
+      ease: "outExpo",
+    });
+    return () => {
+      a.revert();
+    };
+  }, []);
+
+  return (
+    <h1
+      ref={ref}
+      aria-label={`${BRAND.headline}.`}
+      className="mx-auto mt-7 max-w-4xl text-balance font-serif font-medium tracking-tight text-coal"
+      style={{ fontSize: "clamp(2.6rem, 6vw, 4.75rem)", lineHeight: 1.05 }}
+    >
+      {words.map((w, i) => (
+        <span key={i} aria-hidden="true" className="hw-mask">
+          <span className="hw-word">{w}</span>
+          {i === words.length - 1 ? "." : "\u00A0"}
+        </span>
+      ))}
+    </h1>
+  );
+}
+
+/* Black skyline: signature entry — blocks grow scaleY staggered, then drift
+   with 0.3 scroll parallax. Tasteful: short, hairline gaps, coal only. */
+const SKYLINE = [28, 44, 20, 52, 36, 60, 24, 48, 32, 56, 20, 40, 64, 28, 44, 24, 52, 36, 60, 28, 40, 20, 48, 32, 56, 24, 44, 36];
+
+function Skyline() {
+  const [ref, seen] = useInViewOnce<HTMLDivElement>(0.3);
+
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !seen || prefersReducedMotion()) return;
+    const bars = Array.from(root.querySelectorAll<HTMLElement>(".sky-bar"));
+    utils.set(bars, { scaleY: 0 });
+    const a = animate(bars, {
+      scaleY: [0, 1],
+      duration: 700,
+      delay: stagger(45),
+      ease: "outExpo",
+    });
+    return () => {
+      a.revert();
+    };
+  }, [ref, seen]);
+
+  return (
+    <Parallax speed={0.3} className="mt-14 hidden justify-center sm:flex">
+      <div ref={ref} aria-hidden="true" className="flex h-16 items-end gap-1.5">
+        {SKYLINE.map((h, i) => (
+          <span
+            key={i}
+            className="sky-bar block w-3 rounded-t-[3px] bg-coal md:w-3.5"
+            style={{ height: `${h}px`, transformOrigin: "50% 100%" }}
+          />
+        ))}
+      </div>
+    </Parallax>
   );
 }
 
@@ -100,6 +239,8 @@ const SIDEBAR = ["Overview", "Providers", "API Keys", "Guardrails", "Request Log
 
 function DashboardCard() {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const flatRef = useRef<HTMLDivElement | null>(null);
+  const tiltRef = usePointerTilt<HTMLDivElement>(6);
   const [progress, setProgress] = useState(1);
   const [barsRef, barsSeen] = useInViewOnce<HTMLDivElement>(0.4);
   const [jsReady, setJsReady] = useState(false);
@@ -132,7 +273,36 @@ function DashboardCard() {
       window.removeEventListener("resize", onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [reduced ]);
+  }, [reduced]);
+
+  /* Scroll flatten: rotateX 14°→0 as the card reaches viewport middle,
+     slight lift as it exits upward. Transform-only, rAF, no re-render. */
+  useEffect(() => {
+    const el = flatRef.current;
+    if (!el || prefersReducedMotion()) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const rect = el.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      const center = rect.top + rect.height / 2;
+      const t = Math.min(1, Math.max(0, (center - vh * 0.5) / (vh * 0.5)));
+      const lift = -Math.min(10, Math.max(0, (vh * 0.5 - center) * 0.03));
+      el.style.transform = `perspective(1200px) rotateX(${(t * 14).toFixed(2)}deg) translate3d(0, ${lift.toFixed(2)}px, 0)`;
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      el.style.transform = "";
+    };
+  }, []);
 
   const rows = PROVIDERS.map((p, i) => ({
     endpoint: p.endpoints[0],
@@ -142,103 +312,113 @@ function DashboardCard() {
 
   return (
     <div ref={wrapRef} className="mx-auto mt-14 max-w-6xl">
-      <div
-        id="activity"
-        className="scroll-mt-24 overflow-hidden rounded-2xl border border-cream-line bg-white shadow-[0_40px_90px_-28px_rgba(23,25,20,0.35),0_12px_28px_-16px_rgba(23,25,20,0.22)]"
-      >
-        {/* macOS window chrome: traffic lights + centered title, hairline divider below. */}
-        <div className="relative flex items-center border-b border-cream-line/80 px-5 py-3">
-          <div className="flex items-center gap-2" aria-hidden="true">
-            <span className="size-3 rounded-full" style={{ backgroundColor: "#FF5F57" }} />
-            <span className="size-3 rounded-full" style={{ backgroundColor: "#FEBC2E" }} />
-            <span className="size-3 rounded-full" style={{ backgroundColor: "#28C840" }} />
-          </div>
-          <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-[0.83rem] font-medium text-coal/70">
-            ToLLma &mdash; Request Activity
-          </p>
-        </div>
-        <div className="flex items-center justify-between gap-4 border-b border-cream-line px-6 py-4">
-          <p className="font-serif text-lg text-coal">Request Activity</p>
-          <p className="rounded-full bg-cream px-2.5 py-0.5 text-xs font-medium text-coal/55">
-            Sample data for illustration
-          </p>
-        </div>
-        <div className="grid md:grid-cols-[180px_minmax(0,1fr)]">
-          <ul aria-label="Gateway sections" className="hidden border-r border-cream-line py-4 md:block">
-            {SIDEBAR.map((s, i) => (
-              <li
-                key={s}
-                className={`border-l-2 px-5 py-2 text-sm ${i === 4 ? "border-coal font-semibold text-coal" : "border-transparent text-coal/55"}`}
-                aria-current={i === 4 ? "page" : undefined}
+      <div ref={flatRef} style={{ transform: "perspective(1200px) rotateX(0deg)" }}>
+        <div ref={tiltRef}>
+          <div>
+            <SpotlightCard className="rounded-2xl">
+              <div
+                id="activity"
+                className="scroll-mt-24 overflow-hidden rounded-2xl border border-cream-line bg-white shadow-[0_40px_90px_-28px_rgba(23,25,20,0.35),0_12px_28px_-16px_rgba(23,25,20,0.22)]"
               >
-                {s}
-              </li>
-            ))}
-          </ul>
-          <div className="min-w-0">
-            <div ref={barsRef} className="grid gap-6 border-b border-cream-line px-6 py-5 sm:grid-cols-2">
-              <div>
-                <p className="text-sm font-semibold text-coal">
-                  100% <span className="font-normal text-coal/55">Routed</span>
-                </p>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-coal/10" role="img" aria-label="Routed requests: full">
-                  <div
-                    className="h-full w-full origin-left rounded-full bg-mint transition-transform duration-1000 ease-out"
-                    style={{ transform: `scaleX(${!jsReady || barsSeen || reduced ? 1 : 0})` }}
-                  />
+                {/* macOS window chrome: traffic lights + centered title, hairline divider below. */}
+                <div className="relative flex items-center border-b border-cream-line/80 px-5 py-3">
+                  <div className="flex items-center gap-2" aria-hidden="true">
+                    <span className="size-3 rounded-full" style={{ backgroundColor: "#FF5F57" }} />
+                    <span className="size-3 rounded-full" style={{ backgroundColor: "#FEBC2E" }} />
+                    <span className="size-3 rounded-full" style={{ backgroundColor: "#28C840" }} />
+                  </div>
+                  <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-[0.83rem] font-medium text-coal/70">
+                    ToLLma &mdash; Request Activity
+                  </p>
                 </div>
-                <p className="mt-2 font-mono text-xs text-coal/55">{PROVIDERS.length}/{PROVIDERS.length} adapters · monitor or block</p>
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-coal">
-                  0% <span className="font-normal text-coal/55">Blocked</span>
-                </p>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-coal/10" role="img" aria-label="Blocked requests: none in this sample">
-                  <div
-                    className="h-full w-full origin-left rounded-full bg-warm"
-                    style={{ transform: "scaleX(0)" }}
-                  />
+                <div className="flex items-center justify-between gap-4 border-b border-cream-line px-6 py-4">
+                  <p className="font-serif text-lg text-coal">Request Activity</p>
+                  <p className="rounded-full bg-cream px-2.5 py-0.5 text-xs font-medium text-coal/55">
+                    Sample data for illustration
+                  </p>
                 </div>
-                <p className="mt-2 font-mono text-xs text-coal/55">policy checks pass before spend</p>
-              </div>
-            </div>
-            <div className="overflow-x-auto px-2 py-2">
-              <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
-                    {["Status", "Request", "Provider", "Policy"].map((h) => (
-                      <th key={h} scope="col" className="px-4 py-2.5 font-semibold">
-                        {h}
-                      </th>
+                <div className="grid md:grid-cols-[180px_minmax(0,1fr)]">
+                  <ul aria-label="Gateway sections" className="hidden border-r border-cream-line py-4 md:block">
+                    {SIDEBAR.map((s, i) => (
+                      <li
+                        key={s}
+                        className={`border-l-2 px-5 py-2 text-sm ${i === 4 ? "border-coal font-semibold text-coal" : "border-transparent text-coal/55"}`}
+                        aria-current={i === 4 ? "page" : undefined}
+                      >
+                        {s}
+                      </li>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={`${r.provider}-${r.endpoint}`} className="border-t border-cream-line/70">
-                      <td className="px-4 py-2.5">
-                        {reduced ? (
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${r.terminal.cls}`}>
-                            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
-                            {r.terminal.status}
-                          </span>
-                        ) : (
-                          <StatusFlip index={i} progress={progress} terminal={r.terminal} />
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-[0.8rem] text-coal">POST {r.endpoint}</td>
-                      <td className="px-4 py-2.5 font-medium text-coal">{r.provider}</td>
-                      <td className="px-4 py-2.5">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-coal/60">
-                          <span className={`size-1.5 rounded-full ${r.terminal.policy === "block" ? "bg-warm" : "bg-mint"}`} aria-hidden="true" />
-                          {r.terminal.policy}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </ul>
+                  <div className="min-w-0">
+                    <div ref={barsRef} className="grid gap-6 border-b border-cream-line px-6 py-5 sm:grid-cols-2">
+                      <div>
+                        <p className="text-sm font-semibold text-coal">
+                          100% <span className="font-normal text-coal/55">Routed</span>
+                        </p>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-coal/10" role="img" aria-label="Routed requests: full">
+                          <div
+                            className="h-full w-full origin-left rounded-full bg-mint transition-transform duration-1000 ease-out"
+                            style={{ transform: `scaleX(${!jsReady || barsSeen || reduced ? 1 : 0})` }}
+                          />
+                        </div>
+                        <p className="mt-2 font-mono text-xs text-coal/55">{PROVIDERS.length}/{PROVIDERS.length} adapters · monitor or block</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-coal">
+                          0% <span className="font-normal text-coal/55">Blocked</span>
+                        </p>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-coal/10" role="img" aria-label="Blocked requests: none in this sample">
+                          <div
+                            className="h-full w-full origin-left rounded-full bg-warm"
+                            style={{ transform: "scaleX(0)" }}
+                          />
+                        </div>
+                        <p className="mt-2 font-mono text-xs text-coal/55">policy checks pass before spend</p>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto px-2 py-2">
+                      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                        <thead>
+                          <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
+                            {["Status", "Request", "Provider", "Policy"].map((h) => (
+                              <th key={h} scope="col" className="px-4 py-2.5 font-semibold">
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r, i) => (
+                            <tr key={`${r.provider}-${r.endpoint}`} className="dash-row border-t border-cream-line/70">
+                              <td className="px-4 py-2.5">
+                                {reduced ? (
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${r.terminal.cls}`}>
+                                    <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+                                    {r.terminal.status}
+                                  </span>
+                                ) : (
+                                  <StatusFlip index={i} progress={progress} terminal={r.terminal} />
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 font-mono text-[0.8rem] text-coal">
+                                <span title={`POST ${GATEWAY_BASE}${r.endpoint} — full route`}>POST {r.endpoint}</span>
+                              </td>
+                              <td className="px-4 py-2.5 font-medium text-coal">{r.provider}</td>
+                              <td className="px-4 py-2.5">
+                                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-coal/60">
+                                  <span className={`size-1.5 rounded-full ${r.terminal.policy === "block" ? "bg-warm" : "bg-mint"}`} aria-hidden="true" />
+                                  {r.terminal.policy}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SpotlightCard>
           </div>
         </div>
       </div>
@@ -247,36 +427,101 @@ function DashboardCard() {
 }
 
 export default function Hero() {
+  const driftRef = useRef<HTMLDivElement | null>(null);
+
+  /* Hero copy fades + drifts over the first 60vh of scroll. */
+  useEffect(() => {
+    const el = driftRef.current;
+    if (!el || prefersReducedMotion()) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const vh = window.innerHeight || 1;
+      const t = Math.min(1, Math.max(0, window.scrollY / (vh * 0.6)));
+      el.style.opacity = `${(1 - t * 0.9).toFixed(3)}`;
+      el.style.transform = `translate3d(0, ${(t * 56).toFixed(2)}px, 0)`;
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      el.style.opacity = "";
+      el.style.transform = "";
+    };
+  }, []);
+
   return (
     <section className="relative overflow-hidden bg-cream">
+      <HeroBackdrop />
       <HeroPills />
-      <Container width="wide" className="relative pb-20 pt-16 text-center md:pt-24">
-        <p className="inline-flex items-center gap-2.5 rounded-full border border-cream-line bg-white px-4 py-1.5 text-sm font-medium text-coal">
-          <span className="font-bold" aria-hidden="true">
-            ✳
-          </span>
-          <span>Open source · {BRAND.license}</span>
-        </p>
+      <Container width="wide" className="relative pb-20 pt-16 md:pt-24">
+        <div ref={driftRef}>
+          <p className="inline-flex items-center gap-2.5 rounded-full border border-cream-line bg-white px-4 py-1.5 text-sm font-medium text-coal">
+            <span className="font-bold" aria-hidden="true">
+              ✳
+            </span>
+            <span>Open source · {BRAND.license}</span>
+          </p>
 
-        <h1
-          className="mx-auto mt-7 max-w-4xl text-balance font-serif font-medium tracking-tight text-coal"
-          style={{ fontSize: "clamp(2.6rem, 6vw, 4.75rem)", lineHeight: 1.05 }}
-        >
-          {BRAND.headline}.
-        </h1>
+          <HeroHeadline />
 
-        <p className="mx-auto mt-6 max-w-2xl text-pretty text-[1.1rem] leading-relaxed text-coal/70">
-          Connect your applications to multiple AI providers through one unified gateway. Manage credentials, models, usage, and policies from a single control plane.
-        </p>
+          <p className="mx-auto mt-6 max-w-2xl text-pretty text-[1.1rem] leading-relaxed text-coal/70">
+            Connect your applications to multiple AI providers through one unified gateway. Manage credentials, models, usage, and policies from a single control plane.
+          </p>
 
-        <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
-          <BlackButton href={GET_STARTED_URL} ariaLabel="Get started with ToLLma">
-            Get Started <span aria-hidden="true">→</span>
-          </BlackButton>
+          <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
+            <BlackButton href={GET_STARTED_URL} ariaLabel="Get started with ToLLma">
+              Get Started <span aria-hidden="true">→</span>
+            </BlackButton>
+          </div>
         </div>
 
+        <Skyline />
         <DashboardCard />
       </Container>
+      <style>{`
+        .hero-dots {
+          background-image: radial-gradient(circle, var(--color-coal) 1px, transparent 1.4px);
+          background-size: 26px 26px;
+          opacity: 0.08;
+        }
+        .hero-glow {
+          background: radial-gradient(52% 42% at 50% 30%, var(--color-mint), transparent 70%);
+          opacity: 0.2;
+        }
+        .hw-mask { display: inline-block; overflow: hidden; vertical-align: bottom; padding-bottom: 0.08em; margin-bottom: -0.08em; }
+        .hw-word { display: inline-block; will-change: transform; }
+        .hero-chip {
+          background-color: color-mix(in srgb, var(--chip-bg) 72%, white);
+          -webkit-backdrop-filter: blur(10px);
+          backdrop-filter: blur(10px);
+          border: 1px solid color-mix(in srgb, white 60%, var(--chip-bg));
+          box-shadow: 0 10px 28px -10px rgba(23, 25, 20, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+          border-radius: 999px;
+          transition: transform 250ms var(--ease-out-expo);
+        }
+        .hero-chipgroup { position: relative; display: inline-block; border-radius: 999px; transition: transform 250ms var(--ease-out-expo); }
+        .hero-chipgroup:hover, .hero-chipgroup:focus-visible { transform: translateY(-3px); }
+        .hero-tip {
+          position: absolute; left: 50%; top: calc(100% + 8px);
+          transform: translate(-50%, 4px); white-space: nowrap;
+          background: var(--color-coal); color: var(--color-cream);
+          font-size: 0.75rem; font-weight: 500; line-height: 1;
+          padding: 7px 10px; border-radius: 8px;
+          opacity: 0; pointer-events: none;
+          transition: opacity 200ms ease, transform 200ms var(--ease-out-expo);
+        }
+        .hero-chipgroup:hover .hero-tip, .hero-chipgroup:focus-visible .hero-tip { opacity: 1; transform: translate(-50%, 0); }
+        .dash-row { transition: background-color 180ms ease; }
+        .dash-row:hover { background-color: color-mix(in srgb, var(--color-mint) 16%, transparent); }
+        @media (prefers-reduced-motion: reduce) {
+          .hero-tip { display: none; }
+        }
+      `}</style>
     </section>
   );
 }

@@ -1,107 +1,305 @@
 "use client";
 
-// Three capability columns: Secure / Govern / Observe. Batch fade-up on
-// scroll (~80ms stagger), vertical hairline dividers, mint pixel-block
-// icons. Every bullet is a verified site.ts fact.
+// Three capability columns: Secure / Govern / Observe. Heading drifts at
+// 0.5 parallax, columns at 0.85. Each column carries a top rule that draws
+// L→R scrubbed on entry; bullets stagger 60ms at 40% visibility. Icons are
+// single-weight (1.7) strokes in 40px gradient tiles and stroke-draw on
+// hover while the rule brightens. Clicking a title opens ONE detail panel
+// at a time (2 site.ts-derived sentences + 1 link). Every bullet is a
+// verified site.ts fact. SSR/reduced-motion render final states.
+import { useEffect, useRef, useState } from "react";
 import { Container } from "@/components/ui/layout";
-import { GUARDRAIL_CATEGORIES } from "@/lib/site";
-import { useRevealOnScroll } from "@/lib/animations";
+import { Parallax } from "@/components/ui/parallax";
+import {
+  animate,
+  stagger,
+  useInViewOnce,
+  useRevealOnScroll,
+  utils,
+} from "@/lib/animations";
+import { prefersReducedMotion } from "@/lib/animations/motion-preference";
+import {
+  DOCS_URL,
+  ENFORCEMENT,
+  GET_STARTED_URL,
+  GITHUB_URL,
+  GUARDRAIL_CATEGORIES,
+  PROVIDERS,
+} from "@/lib/site";
 
-/* Pixel glyphs: mint square, black stepped rects, no strokes. */
-function PixelIcon({ cells }: { cells: [number, number, number, number][] }) {
+const SCOPES = "global or per-key";
+
+/* 40px gradient tile, single-weight stroke icon inside. */
+function Tile({ children }: { children: React.ReactNode }) {
   return (
-    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
-      <rect width="44" height="44" fill="#72ddb1" />
-      {cells.map(([x, y, w, h], i) => (
-        <rect key={i} x={x} y={y} width={w} height={h} fill="#171914" />
-      ))}
-    </svg>
+    <span className="pillar-tile" aria-hidden="true">
+      <svg
+        width="22"
+        height="22"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {children}
+      </svg>
+    </span>
   );
 }
 
-/* Vault: stepped keyhole + shackle. */
-const VAULT: [number, number, number, number][] = [
-  [14, 8, 16, 4], [14, 8, 4, 10], [26, 8, 4, 10],
-  [18, 20, 8, 8], [20, 28, 4, 8],
-];
-/* Policy gate: request → diamond → allow/block. */
-const GATE: [number, number, number, number][] = [
-  [6, 20, 8, 4], [18, 14, 4, 16], [16, 12, 8, 4], [16, 28, 8, 4],
-  [26, 10, 10, 8], [26, 26, 10, 8],
-];
-/* Usage bars rising to a cost tick. */
-const BARS: [number, number, number, number][] = [
-  [8, 28, 6, 8], [17, 22, 6, 14], [26, 14, 6, 22], [26, 8, 12, 4],
-];
+function BulletList({ bullets }: { bullets: string[] }) {
+  const [ref, seen] = useInViewOnce<HTMLUListElement>(0.4);
+
+  useEffect(() => {
+    const ul = ref.current;
+    if (!ul || !seen || prefersReducedMotion()) return;
+    const items = Array.from(ul.querySelectorAll("li"));
+    if (!items.length) return;
+    utils.set(items, { opacity: 0, y: 12 });
+    const a = animate(items, {
+      opacity: [0, 1],
+      y: [12, 0],
+      duration: 500,
+      delay: stagger(60),
+      ease: "outExpo",
+    });
+    return () => {
+      a.revert();
+    };
+  }, [ref, seen]);
+
+  return (
+    <ul ref={ref} className="mt-auto flex flex-col gap-2.5 pt-2 text-coal/75">
+      {bullets.map((b) => (
+        <li key={b} className="flex items-start gap-2.5">
+          <span aria-hidden="true" className="mt-1 text-[0.75rem] leading-none text-coal">
+            ▷
+          </span>
+          {b}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 const COLS = [
   {
     title: "Secure",
-    icon: <PixelIcon cells={VAULT} />,
+    icon: (
+      <Tile>
+        <circle className="pillar-stroke" cx="8" cy="8" r="4" pathLength={1} />
+        <path className="pillar-stroke" d="M11 11l9 9M17 17l2-2M14 14l1.5-1.5" pathLength={1} />
+      </Tile>
+    ),
     desc: "Store credentials once — every request authenticates without exposing a provider key.",
     bullets: [
       "Central API keys, global or per-key scope",
       "Provider secrets stay on the server",
       "Same keys across every provider",
     ],
+    detail: [
+      `One keyset reaches all ${PROVIDERS.length} provider adapters through a single OpenAI-compatible endpoint.`,
+      `Keys carry ${SCOPES} scope, and provider secrets never leave the server.`,
+    ],
+    link: { href: DOCS_URL, label: "Read the setup docs" },
   },
   {
     title: "Govern",
-    icon: <PixelIcon cells={GATE} />,
+    icon: (
+      <Tile>
+        <path className="pillar-stroke" d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" pathLength={1} />
+        <path className="pillar-stroke" d="M9.5 12l1.8 1.8L15 10" pathLength={1} />
+      </Tile>
+    ),
     desc: "Each request passes policy before it runs — allowed through, or blocked before spend.",
     bullets: [
       `Guardrails across ${GUARDRAIL_CATEGORIES.length} categories`,
       "Monitor or block enforcement modes",
       "Policies scoped globally or per API key",
     ],
+    detail: [
+      `Every request passes ${GUARDRAIL_CATEGORIES.length} guardrail categories — prompt injection, PII, tool actions and more — before any spend.`,
+      `Policies enforce ${ENFORCEMENT.join(" or ")} mode with global or per-key scope.`,
+    ],
+    link: { href: GITHUB_URL, label: "See guardrails on GitHub" },
   },
   {
     title: "Observe",
-    icon: <PixelIcon cells={BARS} />,
+    icon: (
+      <Tile>
+        <path className="pillar-stroke" d="M4 20V4M4 20h16" pathLength={1} />
+        <path className="pillar-stroke" d="M8 20v-6M12 20v-9M16 20v-4M20 20v-8" pathLength={1} />
+      </Tile>
+    ),
     desc: "Every request leaves a trail: usage, cost, and logs you can actually audit.",
     bullets: [
       "Usage & cost visibility per key",
       "Request logs with prompt logging",
       "Analytics and exports for audit",
     ],
+    detail: [
+      "Usage, cost, request logs, analytics and exports are recorded per key for audit.",
+      "Prompt logging and conversation history keep every decision traceable.",
+    ],
+    link: { href: GET_STARTED_URL, label: "Try the quickstart" },
   },
 ];
 
+function DetailPanel({ index }: { index: number }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const col = COLS[index];
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || prefersReducedMotion()) return;
+    const a = animate(el, {
+      opacity: [0, 1],
+      y: [14, 0],
+      duration: 450,
+      ease: "outExpo",
+    });
+    return () => {
+      a.revert();
+    };
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      id="wwd-detail"
+      role="region"
+      aria-label={`${col.title} details`}
+      className="mx-auto mt-10 max-w-3xl border border-cream-line bg-white p-6 md:p-7"
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-coal/50">
+        {col.title}
+      </p>
+      <p className="mt-3 leading-relaxed text-coal">{col.detail[0]}</p>
+      <p className="mt-2 leading-relaxed text-coal">{col.detail[1]}</p>
+      <a
+        href={col.link.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-coal underline decoration-mint decoration-2 underline-offset-4 hover:decoration-coal"
+      >
+        {col.link.label} <span aria-hidden="true">→</span>
+      </a>
+    </div>
+  );
+}
+
 export default function WhatWeDo() {
   const revealRef = useRevealOnScroll({ staggerMs: 80 });
+  const [open, setOpen] = useState<number | null>(null);
+
+  /* Top rules draw L→R scrubbed on entry (transform-only, rAF). */
+  useEffect(() => {
+    const root = revealRef.current;
+    if (!root) return;
+    const rules = Array.from(root.querySelectorAll<HTMLElement>(".pillar-rule"));
+    if (!rules.length) return;
+    if (prefersReducedMotion()) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const vh = window.innerHeight || 1;
+      rules.forEach((rule) => {
+        const rect = rule.getBoundingClientRect();
+        const p = Math.min(1, Math.max(0, (vh * 0.92 - rect.top) / (vh * 0.45)));
+        rule.style.transform = `scaleX(${p.toFixed(3)})`;
+      });
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      rules.forEach((rule) => {
+        rule.style.transform = "";
+      });
+    };
+  }, [revealRef]);
+
   return (
     <section id="what-we-do" ref={revealRef} className="scroll-mt-20 bg-cream">
       <Container width="wide" className="py-20 md:py-28">
-        <p data-reveal className="text-center text-xs font-medium text-coal/60">
-          What We Do
-        </p>
-        <h2 data-reveal className="mx-auto mt-4 max-w-2xl text-center font-serif text-4xl font-medium tracking-tight text-coal md:text-5xl">
-          Introducing Unified Gateway Management
-        </h2>
-        <p data-reveal className="mx-auto mt-5 max-w-xl text-center text-[1.05rem] leading-relaxed text-coal/70">
-          Traditional gateways proxy requests. ToLLma&apos;s gateway runs the work.
-        </p>
+        <Parallax speed={0.5}>
+          <div>
+            <p data-reveal className="text-center text-xs font-medium text-coal/60">
+              What We Do
+            </p>
+            <h2 data-reveal className="mx-auto mt-4 max-w-2xl text-center font-serif text-4xl font-medium tracking-tight text-coal md:text-5xl">
+              Introducing Unified Gateway Management
+            </h2>
+            <p data-reveal className="mx-auto mt-5 max-w-xl text-center text-[1.05rem] leading-relaxed text-coal/70">
+              Traditional gateways proxy requests. ToLLma&apos;s gateway runs the work.
+            </p>
+          </div>
+        </Parallax>
 
-        <div className="mt-14 grid gap-10 md:grid-cols-3 md:gap-0 md:divide-x md:divide-cream-line">
-          {COLS.map((c) => (
-            <div key={c.title} data-reveal className="flex h-full flex-col items-start gap-4 md:px-10 md:first:pl-0 md:last:pr-0">
-              {c.icon}
-              <h3 className="font-serif text-2xl font-medium text-coal">{c.title}</h3>
-              <p className="font-semibold leading-relaxed text-coal">{c.desc}</p>
-              <ul className="mt-auto flex flex-col gap-2.5 pt-2 text-coal/75">
-                {c.bullets.map((b) => (
-                  <li key={b} className="flex items-start gap-2.5">
-                    <span aria-hidden="true" className="mt-1 text-[0.7rem] leading-none text-coal">
-                      ▷
+        <Parallax speed={0.85}>
+          <div className="mt-14 grid gap-10 md:grid-cols-3 md:gap-0 md:divide-x md:divide-cream-line">
+            {COLS.map((c, i) => (
+              <article
+                key={c.title}
+                data-reveal
+                className="pillar flex h-full flex-col items-start gap-4 md:px-10 md:first:pl-0 md:last:pr-0"
+              >
+                <span className="pillar-rule" aria-hidden="true" />
+                {c.icon}
+                <h3 className="font-serif text-2xl font-medium text-coal">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(open === i ? null : i)}
+                    aria-expanded={open === i}
+                    aria-controls="wwd-detail"
+                    className="pillar-toggle inline-flex items-center gap-2"
+                  >
+                    {c.title}
+                    <span aria-hidden="true" className="pillar-caret text-base leading-none text-coal/50">
+                      {open === i ? "−" : "+"}
                     </span>
-                    {b}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
+                  </button>
+                </h3>
+                <p className="font-semibold leading-relaxed text-coal">{c.desc}</p>
+                <BulletList bullets={c.bullets} />
+              </article>
+            ))}
+          </div>
+        </Parallax>
+
+        {open !== null && <DetailPanel key={open} index={open} />}
       </Container>
+      <style>{`
+        .pillar-rule {
+          display: block; width: 100%; height: 2px; border-radius: 2px;
+          background: color-mix(in srgb, var(--color-coal) 18%, transparent);
+          transform: scaleX(1); transform-origin: 0 50%;
+          transition: background-color 250ms ease;
+        }
+        .pillar:hover .pillar-rule { background: var(--color-coal); }
+        .pillar-tile {
+          width: 40px; height: 40px; border-radius: 12px; flex: none;
+          display: grid; place-items: center; color: var(--color-coal);
+          background: linear-gradient(135deg, var(--color-mint), var(--color-peri));
+        }
+        .pillar-stroke { stroke-dasharray: 1; stroke-dashoffset: 0; }
+        .pillar:hover .pillar-stroke { animation: pillar-draw 650ms var(--ease-out-expo); }
+        .pillar:hover .pillar-stroke:nth-child(2) { animation-delay: 120ms; }
+        @keyframes pillar-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+        .pillar-toggle { transition: opacity 200ms ease; }
+        .pillar-toggle:hover { opacity: 0.72; }
+        @media (prefers-reduced-motion: reduce) {
+          .pillar:hover .pillar-stroke { animation: none; }
+        }
+      `}</style>
     </section>
   );
 }

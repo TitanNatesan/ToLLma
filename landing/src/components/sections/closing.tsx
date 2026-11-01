@@ -1,11 +1,18 @@
+"use client";
+
 import Link from "next/link";
 import { Container } from "@/components/ui/layout";
+import { useRevealOnScroll } from "@/lib/animations";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
 import tollmaLight from "./brand/tollma-light-256.png";
 
 // Cream footer with top border: wordmark + 6 link columns (all hrefs are
 // verified site.ts links or in-page anchors), bottom bar with
 // © 2026 ToLLma, Apache-2.0, and Privacy/Terms as plain spans.
+//
+// Phase D motion: link underlines sweep left → right on hover; the wordmark
+// does one small rotation per hover; columns fade up in sequence on entry
+// with the bottom line last; headings share one baseline (min-h-8).
 const COLS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
   {
     title: "Meet Our Gateway",
@@ -63,12 +70,13 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 ];
 
 export function Footer() {
+  const revealRef = useRevealOnScroll({ staggerMs: 90, y: 16 });
   return (
-    <footer id="company" className="scroll-mt-20 border-t border-cream-line bg-cream">
+    <footer id="company" ref={revealRef} className="scroll-mt-20 border-t border-cream-line bg-cream">
       <Container width="wide" className="py-14">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,10fr)]">
-          <div className="flex flex-col items-start gap-3">
-            <Link href="#top" className="flex items-center gap-2" aria-label="ToLLma home">
+          <div data-reveal className="flex flex-col items-start gap-3">
+            <Link href="#top" className="foot-logo flex items-center gap-2" aria-label="ToLLma home">
               <img
                 src={tollmaLight.src}
                 alt=""
@@ -81,11 +89,12 @@ export function Footer() {
             <p className="max-w-xs text-sm leading-relaxed text-coal/60">
               The open source AI gateway for models and agents. Apache 2.0.
             </p>
+            <span className="foot-pill">Apache 2.0 · Self-hosted</span>
           </div>
           <nav className="grid grid-cols-2 gap-8 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
             {COLS.map((c) => (
-              <div key={c.title} className="flex flex-col items-start gap-4">
-                <p className="text-xs font-semibold text-coal/50">{c.title}</p>
+              <div key={c.title} data-reveal className="flex flex-col items-start gap-4">
+                <p className="flex min-h-8 items-start text-xs font-semibold text-coal/50">{c.title}</p>
                 <ul className="flex flex-col items-start gap-2.5">
                   {c.links.map((l) =>
                     l.external ? (
@@ -94,7 +103,7 @@ export function Footer() {
                           href={l.href}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-sm leading-relaxed text-coal/75 transition-opacity hover:opacity-60"
+                          className="foot-link text-sm leading-relaxed text-coal/75"
                         >
                           {l.label}
                         </a>
@@ -103,7 +112,7 @@ export function Footer() {
                       <li key={l.label}>
                         <Link
                           href={l.href}
-                          className="text-sm leading-relaxed text-coal/75 transition-opacity hover:opacity-60"
+                          className="foot-link text-sm leading-relaxed text-coal/75"
                         >
                           {l.label}
                         </Link>
@@ -115,7 +124,7 @@ export function Footer() {
             ))}
           </nav>
         </div>
-        <div className="mt-12 flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
+        <div data-reveal className="mt-12 flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© 2026 ToLLma · Apache-2.0</p>
           <p className="flex gap-5">
             <span>Privacy</span>

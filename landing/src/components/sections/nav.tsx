@@ -2,14 +2,18 @@
 
 // Sticky cream navbar: app-style T-badge wordmark left, application section
 // links center, "API Docs" text link + black square "Get Started" right.
-// Transparent at top; once scrolled it gains opaque cream + blur + hairline
-// border/shadow (fixed h-16, no shift). Active section gets a dot indicator
-// via useActiveSection. Mobile panel is smooth (grid-rows + opacity),
-// focus-trapped, Escape-closable, CTA visible.
-import { useEffect, useRef, useState } from "react";
+// At top: solid cream, full height (var(--nav-h)). Past 24px of scroll the
+// bar frosts (cream/85 + blur + hairline border + soft shadow), shrinks
+// ~10% across the first 120px, and shows a thin page-progress line at its
+// bottom edge (rAF-driven, transform-only — no re-renders on scroll).
+// Desktop links draw an underline left→right on hover; the scrollspy item
+// (useActiveSection) holds it full. Mobile panel staggers links in.
+// Header box height follows the bar, so the shrink is smooth and
+// scroll-linked — no abrupt layout shift. Copy/destinations unchanged.
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Container } from "@/components/ui/layout";
 import { BlackButton } from "@/components/ui/primitives";
+import { MagneticButton } from "@/components/ui/magnetic-button";
 import { IconClose, IconMenu } from "@/components/ui/icons";
 import { useActiveSection } from "@/lib/animations";
 import { DOCS_URL, GET_STARTED_URL } from "@/lib/site";
@@ -32,9 +36,46 @@ const LINKS = [
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const active = useActiveSection(LINKS.map((l) => l.id));
+  const barRef = useRef<HTMLElement | null>(null);
+  const progressRef = useRef<HTMLSpanElement | null>(null);
+  const ids = useMemo(() => LINKS.map((l) => l.id), []);
+  const active = useActiveSection(ids);
+
+  // Frost + shrink + progress: one rAF-throttled scroll listener updating
+  // the DOM directly (no per-frame React renders). Reduced-motion keeps the
+  // scroll-linked bar (informative, not autoplay); magnetic is separate.
+  useEffect(() => {
+    let raf = 0;
+    let lastScrolled: boolean | null = null;
+    const update = () => {
+      raf = 0;
+      const y = window.scrollY || 0;
+      const isScrolled = y > 24;
+      if (isScrolled !== lastScrolled) {
+        lastScrolled = isScrolled;
+        setScrolled(isScrolled);
+      }
+      const t = Math.min(1, y / 120);
+      barRef.current?.style.setProperty("--shrink", t.toFixed(3));
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const p = max > 0 ? Math.min(1, Math.max(0, y / max)) : 0;
+      progressRef.current?.style.setProperty("transform", `scaleX(${p.toFixed(4)})`);
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
 
   // Mobile panel: Escape closes, Tab stays trapped, focus returns on close.
   useEffect(() => {
@@ -72,8 +113,24 @@ export default function Nav() {
   }, [open ]);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-cream-line bg-cream">
-      <Container width="wide" as="nav" className="flex h-16 items-center justify-between gap-6" aria-label="Primary">
+    <header
+      // Single opaque background state (cream) top AND scrolled: a
+      // translucent frosted bar changes appearance over dark sections
+      // (e.g. #platform), reading as a background "flip" while scrolling.
+      // Scoped fix: keep the blur class (no-op on opaque) for the design
+      // language, but never let dark content bleed through. Shrink +
+      // progress line still signal scroll.
+      className={`sticky top-0 z-50 border-b transition-[border-color,box-shadow] duration-300 bg-cream ${
+        scrolled
+          ? "border-cream-line shadow-[var(--shadow-sm)] backdrop-blur-md"
+          : "border-transparent"
+      }`}
+    >
+      <nav
+        ref={barRef}
+        aria-label="Primary"
+        className="nav-bar container-gutter container-wide mx-auto flex items-center justify-between gap-6"
+      >
         <Link href="#top" className="flex items-center gap-2" aria-label="ToLLma home">
           {/* Official ToLLma mark (supplied PNG, light version for cream). */}
           <img
@@ -96,17 +153,12 @@ export default function Nav() {
                 <Link
                   href={l.href}
                   aria-current={isActive ? "true" : undefined}
-                  className={`relative flex items-center gap-1 py-1 text-[0.95rem] font-medium transition-opacity hover:opacity-60 ${
+                  data-active={isActive ? "true" : undefined}
+                  className={`nav-link py-1 text-[0.95rem] font-medium transition-opacity hover:opacity-60 ${
                     isActive ? "text-coal" : "text-coal/80"
                   }`}
                 >
                   {l.label}
-                  <span
-                    aria-hidden="true"
-                    className={`absolute -bottom-0.5 left-1/2 size-1 -translate-x-1/2 rounded-full bg-coal transition-opacity duration-200 ${
-                      isActive ? "opacity-100" : "opacity-0"
-                    }`}
-                  />
                 </Link>
               </li>
             );
@@ -122,15 +174,17 @@ export default function Nav() {
           >
             API Docs
           </a>
-          <BlackButton href={GET_STARTED_URL} className="px-6 py-2.5 text-[0.9rem]">
-            Get Started
-          </BlackButton>
+          <MagneticButton strength={5}>
+            <BlackButton href={GET_STARTED_URL} className="btn-shine px-6 py-2.5 text-[0.9rem]">
+              Get Started
+            </BlackButton>
+          </MagneticButton>
         </div>
 
         <button
           ref={toggleRef}
           type="button"
-          className="inline-flex size-10 items-center justify-center text-coal lg:hidden"
+          className="inline-flex size-11 items-center justify-center text-coal lg:hidden"
           aria-expanded={open}
           aria-controls="nav-mobile-panel"
           aria-label={open ? "Close menu" : "Open menu"}
@@ -138,10 +192,11 @@ export default function Nav() {
         >
           {open ? <IconClose size={22} /> : <IconMenu size={22} />}
         </button>
-      </Container>
+      </nav>
+      <span ref={progressRef} aria-hidden="true" className="nav-progress" />
 
       {/* Always mounted for a smooth open/close (grid-rows + opacity);
-          hidden from AT + inert when closed. */}
+          hidden from AT + inert when closed. Links stagger in on open. */}
       <div
         id="nav-mobile-panel"
         ref={panelRef}
@@ -151,25 +206,19 @@ export default function Nav() {
         }`}
       >
         <div className="overflow-hidden">
-          <Container
-            className={`flex flex-col gap-1 py-4 transition-transform duration-300 ease-out ${
-              open ? "translate-y-0" : "-translate-y-2"
-            }`}
-          >
-            <div
-              aria-hidden={!open}
-              className={open ? undefined : "invisible"}
-            >
-              {LINKS.map((l) => (
+          <div className="container-gutter container-wide mx-auto flex flex-col gap-1 py-4">
+            <div aria-hidden={!open} className={open ? undefined : "invisible"}>
+              {LINKS.map((l, i) => (
                 <Link
                   key={l.label}
                   href={l.href}
                   tabIndex={open ? 0 : -1}
                   onClick={() => setOpen(false)}
                   aria-current={active === l.id ? "true" : undefined}
-                  className={`flex items-center gap-1.5 px-2 py-2.5 text-[0.95rem] font-medium ${
-                    active === l.id ? "text-coal" : "text-coal/80"
-                  }`}
+                  style={{ transitionDelay: open ? `${i * 45}ms` : "0ms" }}
+                  className={`flex items-center gap-1.5 px-2 py-2.5 text-[0.95rem] font-medium transition-[opacity,transform] duration-300 ease-out ${
+                    open ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+                  } ${active === l.id ? "text-coal" : "text-coal/80"}`}
                 >
                   <span
                     aria-hidden="true"
@@ -180,7 +229,12 @@ export default function Nav() {
                   {l.label}
                 </Link>
               ))}
-              <div className="mt-2 flex items-center gap-4 border-t border-cream-line px-2 pt-4">
+              <div
+                style={{ transitionDelay: open ? `${LINKS.length * 45}ms` : "0ms" }}
+                className={`mt-2 flex items-center gap-4 border-t border-cream-line px-2 pt-4 transition-[opacity,transform] duration-300 ease-out ${
+                  open ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+                }`}
+              >
                 <a
                   href={DOCS_URL}
                   target="_blank"
@@ -192,13 +246,13 @@ export default function Nav() {
                 </a>
                 <BlackButton
                   href={GET_STARTED_URL}
-                  className="flex-1 px-6 py-3"
+                  className="btn-shine flex-1 px-6 py-3"
                 >
                   Get Started
                 </BlackButton>
               </div>
             </div>
-          </Container>
+          </div>
         </div>
       </div>
     </header>

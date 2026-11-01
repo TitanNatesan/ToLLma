@@ -1,101 +1,9 @@
 @import "tailwindcss";
+@import "./tokens.css";
 
-/* ============================================================
-   ToLLma design tokens — light theme only.
-   Single source of truth. Section agents consume these via
-   Tailwind theme utilities (text-ink, bg-surface-cool, ...)
-   or the raw CSS vars. Do not hardcode hex values elsewhere.
-   ============================================================ */
-@theme {
-  /* Surfaces: warm white base, cool blue-tinted secondary bands */
-  --color-canvas: #fbfcfe;
-  --color-surface: #ffffff;
-  --color-surface-cool: #f4f7fc;
-  --color-surface-tint: #eef3fb;
+/* Design tokens live in ./tokens.css (single source of truth). */
 
-  /* Brand: confident electric blue + cyan/teal secondary,
-     violet used sparingly for accent marks only */
-  --color-brand: #1f5eff;
-  --color-brand-strong: #1747cc;
-  --color-brand-soft: #e7eeff;
-  --color-teal: #0bb8c8;
-  --color-teal-soft: #e0f7f9;
-  --color-violet: #7c5cff;
-
-  /* Ink: deep navy text, blue-grey muted */
-  --color-ink: #0b1b34;
-  --color-ink-soft: #2b3d5c;
-  --color-muted: #5d7091;
-  /* faint: darkened to meet WCAG AA (4.5:1) for 12px label text on
-     canvas/surface/surface-cool. Was #8aa0bf (2.6:1) — a contrast failure. */
-  --color-faint: #61708c;
-
-  /* -ink variants: AA-safe text colors for small text ON the soft
-     backgrounds (teal-soft / ok-soft). The bright --color-teal / --color-ok
-     stay for graphics, dark code panels, and strokes. */
-  --color-teal-ink: #0e7490; /* 4.8:1 on teal-soft */
-  --color-ok-ink: #0a7a45; /* 4.8:1 on ok-soft */
-  --color-danger-ink: #b91c1c; /* 5.6:1 on danger-soft */
-  --color-warn-ink: #9a5b06; /* 5.4:1 on white / warm tint */
-
-  /* Lines + status */
-  --color-line: #e3eaf4;
-  --color-line-strong: #cfdbeb;
-  --color-ok: #12a150;
-  --color-ok-soft: #e3f7ec;
-  --color-warn: #b7791f;
-  --color-danger: #dc2626;
-  --color-danger-soft: #fdeaea;
-
-  /* Type */
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, sans-serif;
-  --font-mono: var(--font-mono-code), ui-monospace, "SFMono-Regular", Menlo,
-    monospace;
-
-  /* Fluid radii */
-  --radius-card: 1rem;
-  --radius-lg: 1.25rem;
-  --radius-xl: 1.75rem;
-
-  /* Motion tokens (anime.js reads durations from here via JS constants) */
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-fast: 180ms;
-  --dur-base: 320ms;
-  --dur-slow: 700ms;
-
-  /* Depth / elevation (soft, realistic — no neon glows) */
-  --shadow-xs: 0 1px 2px rgba(11, 27, 52, 0.05);
-  --shadow-sm: 0 2px 8px -2px rgba(11, 27, 52, 0.08), 0 1px 2px rgba(11, 27, 52, 0.05);
-  --shadow-md: 0 12px 32px -12px rgba(11, 27, 52, 0.16), 0 2px 8px -4px rgba(11, 27, 52, 0.08);
-  --shadow-lg: 0 24px 64px -24px rgba(11, 27, 52, 0.22), 0 4px 16px -8px rgba(11, 27, 52, 0.1);
-
-  /* 3D / pointer depth */
-  --perspective: 1200px;
-  --tilt-max: 6deg; /* pointer-tilt cap — subtle, never dizzying */
-}
-
-:root {
-  /* Wide layout system: fluid gutters, wide max widths.
-     Desktop compositions may reach 1440–1600px. */
-  --gutter: clamp(1.25rem, 4.5vw, 4.5rem); /* 20px → 72px */
-  --container: 84rem; /* standard sections: 1344px box / ~1200px content */
-  --container-wide: 86rem; /* major sections: 1376px box / ~1230px content */
-  --container-xwide: 109rem; /* full compositions: 1744px box / ~1600px content */
-
-  /* Section rhythm */
-  --section-y: clamp(4.5rem, 9vw, 8rem);
-
-  /* Fluid type scale (Major Third ~1.25) */
-  --t-display: clamp(2.5rem, 5.6vw, 4.25rem);
-  --t-h2: clamp(1.9rem, 3.6vw, 3rem);
-  --t-h3: clamp(1.35rem, 2.2vw, 1.75rem);
-  --t-lead: clamp(1.05rem, 1.4vw, 1.25rem);
-  --t-body: 1rem;
-  --t-sm: 0.9rem;
-  --t-xs: 0.8rem;
-}
+/* Layout rhythm + type scale live in ./tokens.css. */
 
 html {
   scroll-behavior: smooth;
@@ -197,39 +105,7 @@ body {
   }
 }
 
-/* ===== Nominal editorial theme (cream + serif + square black CTAs) ===== */
-/* Spec palette: cream #F7F7EE, secondary #EEF1E6, dark #10130F, ink #171914,
-   muted #74776D, dark-text #F5F4EA, mint #72DDB1, periwinkle #A9BDF4,
-   warm #E8B1A2, border #DCDDD1. Legacy section names (coal, night, cream-line,
-   parchment, peri, blush) are kept as stable aliases of the spec values so
-   sections don't churn; prefer the spec names in new code. */
-@theme {
-  /* Surfaces */
-  --color-cream: #f7f7ee;
-  --color-secondary: #eef1e6;
-  --color-parchment: #eef1e6;
-  --color-border: #dcddd1;
-  --color-cream-line: #dcddd1;
-
-  /* Ink */
-  --color-ink: #171914;
-  --color-coal: #171914;
-  --color-muted: #74776d;
-  --color-dark: #10130f;
-  --color-night: #10130f;
-  --color-night-line: #3a3f3a;
-  --color-dark-text: #f5f4ea;
-
-  /* Accents */
-  --color-mint: #72ddb1;
-  --color-periwinkle: #a9bdf4;
-  --color-peri: #a9bdf4;
-  --color-warm: #e8b1a2;
-  --color-blush: #e8b1a2;
-  --color-butter: #f5e6a3;
-  --color-sage: #dde8d0;
-  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
-}
+/* Nominal editorial palette lives in ./tokens.css. */
 
 body {
   background: var(--color-cream);
@@ -249,6 +125,10 @@ body {
 }
 .pill-float {
   animation: pill-float 7s ease-in-out infinite;
+  animation-play-state: paused;
+}
+.hero-pills[data-playing="true"] .pill-float {
+  animation-play-state: running;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -265,16 +145,8 @@ body {
 .guide-card:focus-within {
   transform: translateY(-4px);
 }
-.guide-card .guide-arrow {
-  transition: transform 300ms var(--ease-out-expo);
-}
-.guide-card:hover .guide-arrow,
-.guide-card:focus-within .guide-arrow {
-  transform: translateX(4px);
-}
 @media (prefers-reduced-motion: reduce) {
-  .guide-card,
-  .guide-card .guide-arrow {
+  .guide-card {
     transition: none;
   }
 }
@@ -290,9 +162,12 @@ body {
 .marquee-track {
   animation: marquee-x 36s linear infinite;
   will-change: transform;
+  animation-play-state: paused;
 }
-.marquee:hover .marquee-track,
-.marquee:focus-within .marquee-track {
+.marquee[data-playing="true"] .marquee-track {
+  animation-play-state: running;
+}
+.marquee[data-playing="true"]:hover .marquee-track {
   animation-play-state: paused;
 }
 
@@ -330,6 +205,9 @@ body {
 .quote-fade-enter {
   animation: quote-fade-in 320ms ease-out both;
 }
+
+/* Outcomes mini-visual loops idle only while the section is in view
+   (data-playing from an enter/exit IntersectionObserver); static otherwise. */
 @keyframes quote-fade-in {
   from {
     opacity: 0;
@@ -361,22 +239,6 @@ body {
   transform: rotateX(180deg);
 }
 
-/* How-it-works smooth step switch (~350ms expo-out): the incoming diagram
-   rises first, the card follows 70ms later. */
-@keyframes step-rise {
-  from {
-    opacity: 0;
-    transform: translateY(14px) scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-.step-rise-delay {
-  animation: step-rise 350ms var(--ease-out-expo) 70ms both;
-}
-
 /* Provider grid target-lock corners: 8–10px L-brackets that scale in from
    their own corners over the existing hover. */
 .target-corner {
@@ -393,29 +255,29 @@ body {
 .target-tl {
   left: 8px;
   top: 8px;
-  border-left: 2px solid #0e7490;
-  border-top: 2px solid #0e7490;
+  border-left: 2px solid var(--color-teal-ink);
+  border-top: 2px solid var(--color-teal-ink);
   transform-origin: top left;
 }
 .target-tr {
   right: 8px;
   top: 8px;
-  border-right: 2px solid #0e7490;
-  border-top: 2px solid #0e7490;
+  border-right: 2px solid var(--color-teal-ink);
+  border-top: 2px solid var(--color-teal-ink);
   transform-origin: top right;
 }
 .target-bl {
   left: 8px;
   bottom: 8px;
-  border-left: 2px solid #0e7490;
-  border-bottom: 2px solid #0e7490;
+  border-left: 2px solid var(--color-teal-ink);
+  border-bottom: 2px solid var(--color-teal-ink);
   transform-origin: bottom left;
 }
 .target-br {
   right: 8px;
   bottom: 8px;
-  border-right: 2px solid #0e7490;
-  border-bottom: 2px solid #0e7490;
+  border-right: 2px solid var(--color-teal-ink);
+  border-bottom: 2px solid var(--color-teal-ink);
   transform-origin: bottom right;
 }
 .group:hover .target-corner,
@@ -423,14 +285,6 @@ body {
 .group:focus-visible .target-corner {
   opacity: 1;
   transform: scale(1);
-}
-
-/* Dark dolly stage: transforms live on these (rAF-driven, transform/opacity only). */
-.dolly-scene {
-  will-change: transform;
-}
-.dolly-fade {
-  will-change: opacity;
 }
 
 /* Pixel block wipe columns scale from the band edge (transform-only). */
@@ -443,7 +297,6 @@ body {
   .stat-wipe-enter,
   .stat-wipe-out,
   .quote-fade-enter,
-  .step-rise-delay,
   .panel-enter,
   .panel-exit,
   .end-fade {
@@ -452,9 +305,7 @@ body {
 }
 
 /* How-it-works cinematic scene: node/packet emphasis is JS-driven
-   (opacity only); bars grow from their base (transform only). The
-   allow/block packet groups share the govern stage gate; the preview
-   toggle picks which one is visible (no layout impact). */
+   (opacity only); bars grow from their base (transform only). */
 .arch-node,
 .arch-pkts {
   transition: opacity 0.4s ease;
@@ -463,9 +314,12 @@ body {
   transform-box: fill-box;
   transform-origin: 50% 100%;
 }
-[data-allow="allow"] [data-pkts="blockP"],
-[data-allow="block"] [data-pkts="allowP"] {
-  visibility: hidden;
+
+/* How-it-works intro build: node pop scales from each element's own center
+   (transform-only, scroll-driven, fully reversible). */
+.arch-build {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
 }
 
 /* How-it-works cinematic scene: node/packet emphasis crossfades in place
@@ -511,24 +365,27 @@ body {
   }
 }
 
-/* Platform → Solutions handoff: the wipe directly after #platform renders as
-   ONE uniform cream sheet (no staggered teeth, no sliver gaps) driven by
-   scroll (fully reversible), then lifts fully off-screen and hides on
-   complete. Cream fill matches the Solutions band exactly, so Providers
-   holds below the fold until the wipe passes, then enters intact. */
-#platform + div {
+/* Platform → Solutions handoff: the wipe flagged `exit` (see pixel-wipe
+   `cssDriven`) renders as ONE uniform cream sheet (no staggered teeth, no
+   sliver gaps) driven by scroll (fully reversible), then lifts fully
+   off-screen and hides on complete. Cream fill matches the Solutions band
+   exactly, so Providers holds below the fold until the wipe passes, then
+   enters intact. Scoped to .wipe-css (set by the component prop), never to
+   DOM order. The rAF driver in pixel-wipe skips this instance — CSS owns
+   its transform, so the two drivers never fight. */
+.wipe-css {
   background: var(--color-cream);
 }
-#platform + div > div {
+.wipe-css > div {
   gap: 0;
 }
 @media (prefers-reduced-motion: no-preference) {
-  #platform + div > div {
+  .wipe-css > div {
     animation: platform-exit-lift linear both;
     animation-timeline: view();
     animation-range: cover 82% cover 100%;
   }
-  #platform + div .wipe-col {
+  .wipe-css .wipe-col {
     transform-origin: bottom;
     animation: platform-exit-cover linear both;
     animation-timeline: view();
@@ -560,4 +417,288 @@ body {
 }
 #platform h2 {
   text-wrap: balance;
+}
+
+/* ===== Phase A shared motion primitives =====
+   All transform/opacity only. Content is visible by default; JS adds
+   hidden states only when motion is allowed, so reduced-motion and
+   no-JS render final states. */
+
+/* Nav link underline: draws left → right on hover/focus, full when active. */
+.nav-link {
+  position: relative;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1.5px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 250ms var(--ease-out-expo);
+}
+.nav-link:hover::after,
+.nav-link:focus-visible::after,
+.nav-link[data-active="true"]::after {
+  transform: scaleX(1);
+}
+
+/* Nav bar: scroll-linked shrink (~10% over the first 120px) via --shrink
+   (0→1, written by one rAF loop). Height stays in CSS — JS never writes
+   style.height, so no per-frame layout property churn from the component. */
+.nav-bar {
+  height: calc(var(--nav-h) - (var(--nav-h) - var(--nav-h-scrolled)) * var(--shrink, 0));
+}
+
+/* Nav scroll-progress line: page 0→1, JS sets scaleX via rAF. */
+.nav-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--color-brand), var(--color-teal));
+  pointer-events: none;
+}
+
+/* Reveal: fade + rise (24px, 700ms, var(--ease-reveal)). JS sets
+   [data-hidden] only when motion is allowed; --reveal-delay staggers
+   siblings (90ms steps); --reveal-y overrides distance. */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    transition:
+      opacity 700ms var(--ease-reveal),
+      transform 700ms var(--ease-reveal);
+    transition-delay: var(--reveal-delay, 0ms);
+  }
+  .reveal[data-hidden] {
+    opacity: 0;
+    transform: translateY(var(--reveal-y, 24px));
+  }
+}
+
+/* SpotlightCard: cursor-following radial glow + 1px gradient border
+   fade-in + 2px lift on hover. All fades <300ms. */
+.spotlight {
+  position: relative;
+  transition: transform 250ms var(--ease-out-expo);
+}
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-brand) 55%, transparent),
+    color-mix(in srgb, var(--color-teal) 45%, transparent)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 220ms ease;
+  pointer-events: none;
+}
+.spotlight::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    220px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, var(--color-brand) 12%, transparent),
+    transparent 70%
+  );
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+.spotlight:hover::before,
+.spotlight:focus-within::before {
+  opacity: 1;
+}
+.spotlight:hover::after {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .spotlight:hover {
+    transform: translateY(-2px);
+  }
+}
+
+/* MagneticButton wrapper: JS translates toward the cursor (no scale).
+   Coarse pointers + reduced-motion render it static. */
+.magnetic {
+  display: inline-flex;
+  will-change: transform;
+}
+
+/* ===== Phase D motion (transform/opacity only; SSR-visible; static under
+   reduced-motion via the global rule + explicit animation: none below) ===== */
+
+/* Provider marks: monochrome until the card is hovered/focused, then ease
+   back to full color with a 1.06 logo scale (artwork itself untouched). */
+.provider-mark {
+  filter: grayscale(1);
+  transition:
+    transform 250ms var(--ease-out-expo),
+    filter 250ms ease;
+}
+.group:hover .provider-mark,
+.group:focus-within .provider-mark {
+  filter: grayscale(0);
+  transform: scale(1.06);
+}
+
+/* Guide cards: illustration zoom on card hover (parallax lives on the
+   wrapper div, so the two transforms never fight). */
+.guide-zoom {
+  transition: transform 300ms var(--ease-out-expo);
+}
+.guide-card:hover .guide-zoom,
+.guide-card:focus-within .guide-zoom {
+  transform: scale(1.04);
+}
+
+/* Read-more underline: draws in left → right on card or link hover. */
+.guide-readmore {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1.5px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  padding-bottom: 2px;
+  transition: background-size 300ms var(--ease-out-expo);
+}
+.guide-card:hover .guide-readmore,
+.guide-readmore:hover,
+.guide-readmore:focus-visible {
+  background-size: 100% 1.5px;
+}
+
+/* Guide SVG scenes: ~6s slow loops, transforms/opacity only. Animations run
+   only while the scene is in view (data-playing from an IO latch); base
+   markup is the composed static state for reduced-motion / no-JS. */
+.guide-scene .scene-dot,
+.guide-scene .scene-packet,
+.guide-scene .scene-drop,
+.guide-scene .scene-row,
+.guide-scene .scene-pulse {
+  animation-play-state: paused;
+}
+.guide-scene[data-playing="true"] .scene-dot,
+.guide-scene[data-playing="true"] .scene-packet,
+.guide-scene[data-playing="true"] .scene-drop,
+.guide-scene[data-playing="true"] .scene-row,
+.guide-scene[data-playing="true"] .scene-pulse {
+  animation-play-state: running;
+}
+.guide-scene .scene-dot {
+  animation: scene-drift 6s ease-in-out infinite;
+}
+@keyframes scene-drift {
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: 1; }
+  80% { transform: translateX(84px); opacity: 1; }
+  94%, 100% { transform: translateX(96px); opacity: 0; }
+}
+.guide-scene .scene-packet {
+  animation: scene-run 6s linear infinite;
+}
+@keyframes scene-run {
+  0% { transform: translateX(0); opacity: 0; }
+  10% { opacity: 1; }
+  72% { transform: translateX(118px); opacity: 1; }
+  88%, 100% { transform: translateX(132px); opacity: 0; }
+}
+.guide-scene .scene-drop {
+  animation: scene-drop 6s ease-in infinite;
+}
+@keyframes scene-drop {
+  0% { transform: translateY(0); opacity: 0; }
+  12% { opacity: 1; }
+  45% { transform: translateY(56px); opacity: 1; }
+  60%, 100% { transform: translateY(64px); opacity: 0; }
+}
+.guide-scene .scene-row {
+  animation: scene-row 6s ease-in-out infinite;
+}
+@keyframes scene-row {
+  0%, 100% { opacity: 0.35; }
+  12% { opacity: 1; }
+  30% { opacity: 0.35; }
+}
+.guide-scene .scene-pulse {
+  animation: scene-breathe 6s ease-in-out infinite;
+}
+@keyframes scene-breathe {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-scene .scene-dot,
+  .guide-scene .scene-packet,
+  .guide-scene .scene-drop,
+  .guide-scene .scene-row,
+  .guide-scene .scene-pulse {
+    animation: none;
+  }
+}
+
+/* Closing CTA: faint brand glow drifting behind the heading (0.1 parallax
+   via [data-parallax]; the gradient itself is static). */
+.cta-glow {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--color-brand) 12%, transparent),
+    transparent 72%
+  );
+  pointer-events: none;
+}
+
+/* Footer links: underline sweeps left → right on hover/focus. */
+.foot-link {
+  position: relative;
+}
+.foot-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 250ms var(--ease-out-expo);
+}
+.foot-link:hover::after,
+.foot-link:focus-visible::after {
+  transform: scaleX(1);
+}
+
+/* Footer wordmark: one small rotation per hover (transition, not a loop). */
+.foot-logo img {
+  transition: transform 500ms var(--ease-out-expo);
+}
+.foot-logo:hover img {
+  transform: rotate(-14deg);
+}
+
+/* Footer license pill: subtle hairline pill (Apache 2.0 + self-host story). */
+.foot-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-cream-line);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--color-coal) 70%, transparent);
 }

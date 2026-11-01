@@ -2,96 +2,14 @@
 
 // ============================================================
 // Scroll + pointer interaction hooks (shared conventions).
-//   - useParallax        layered background/foreground drift on scroll
-//   - useScrollProgress  0→1 progress of an element through viewport
 //   - usePointerTilt     perspective tilt card/object (desktop pointers)
 //   - useActiveSection   which section id is currently in view (scrollspy)
+//   - useInViewToggle    enter/exit visibility flag (gates infinite loops)
 // All: cleanup on unmount, reduced-motion safe.
 // ============================================================
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { animate, utils } from "animejs";
 import { prefersReducedMotion } from "./motion-preference";
-
-// ---------- parallax ----------
-/**
- * Applies a subtle translate to the element as the page scrolls past it.
- * `speed` in px per viewport of travel (positive = moves slower than scroll,
- * negative = foreground drift). Updates via rAF; transform-only (cheap).
- */
-export function useParallax<T extends HTMLElement>(
-  speed = 0.15
-): RefObject<T | null> {
-  const ref = useRef<T | null>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || prefersReducedMotion()) return;
-    let raf = 0;
-
-    const update = () => {
-      raf = 0;
-      const rect = el.getBoundingClientRect();
-      const vh = window.innerHeight || 1;
-      // -1 (below viewport) → 1 (above viewport)
-      const progress = (vh - rect.top) / (vh + rect.height) - 0.5;
-      const offset = progress * speed * 100;
-      el.style.transform = `translate3d(0, ${offset.toFixed(2)}px, 0)`;
-    };
-
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-      el.style.transform = "";
-    };
-  }, [speed]);
-
-  return ref;
-}
-
-// ---------- scroll progress ----------
-/** Returns [ref, progress] where progress is 0→1 while the element crosses the viewport. */
-export function useScrollProgress<T extends HTMLElement>(): [
-  RefObject<T | null>,
-  number,
-] {
-  const ref = useRef<T | null>(null);
-  const [p, setP] = useState(0);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      const rect = el.getBoundingClientRect();
-      const vh = window.innerHeight || 1;
-      const prog = Math.min(1, Math.max(0, (vh - rect.top) / (vh + rect.height)));
-      setP(prog);
-    };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-
-  return [ref, p];
-}
 
 // ---------- pointer tilt ----------
 /**
@@ -204,30 +122,23 @@ export function useActiveSection(sectionIds: string[]): string | null {
     // on purpose — no rAF, so it works even when frames never render.
     const compute = () => {
       const line = window.innerHeight * 0.4;
-      // Outside the tracked range → no active link (before Features, or
-      // past Product where nav has no matching item). Inside gaps between
-      // tracked sections, keep the last passed one lit.
-      const first = document.getElementById(sectionIds[0]);
-      const last = document.getElementById(sectionIds[sectionIds.length - 1]);
-      if (first && first.getBoundingClientRect().top > line) {
-        setActive(null);
-        return;
-      }
-      if (last && last.getBoundingClientRect().bottom < line) {
-        setActive(null);
-        return;
-      }
+      // Outside the tracked range → no active link. Range is derived from
+      // live DOM geometry (not list order): callers may pass ids in an
+      // order (e.g. app taxonomy) that differs from page order. Inside gaps
+      // between tracked sections, keep the last passed one lit.
+      let minTop = Infinity;
+      let maxBottom = -Infinity;
       let found: string | null = null;
       for (const id of sectionIds) {
         const el = document.getElementById(id);
         if (!el) continue;
         const r = el.getBoundingClientRect();
-        if (r.top <= line && r.bottom > line) {
-          found = id;
-          break;
-        }
+        if (r.top < minTop) minTop = r.top;
+        if (r.bottom > maxBottom) maxBottom = r.bottom;
+        if (!found && r.top <= line && r.bottom > line) found = id;
       }
-      if (found) setActive(found);
+      if (minTop > line || maxBottom < line) setActive(null);
+      else if (found) setActive(found);
     };
     window.addEventListener("scroll", compute, { passive: true });
     window.addEventListener("resize", compute, { passive: true });
@@ -244,48 +155,28 @@ export function useActiveSection(sectionIds: string[]): string | null {
   return active;
 }
 
-// ---------- number ticker (scroll-triggered) ----------
-/** Animates a number 0→to when its element first enters view. */
-export function useCountUp(
-  to: number,
-  opts: { duration?: number; decimals?: number; prefix?: string; suffix?: string } = {}
-) {
-  const ref = useRef<HTMLSpanElement | null>(null);
-
+// ---------- in-view toggle ----------
+// Like useInViewOnce, but tracks enter AND exit: true while the element is
+// in the viewport, false when it leaves. Gates infinite CSS/JS loops
+// (marquee, hero pills, guide scenes, outcome viz) so they idle off-screen.
+// Static under reduced-motion via the CSS kill-switches, not here.
+export function useInViewToggle<T extends Element>(
+  threshold = 0
+): [RefObject<T | null>, boolean] {
+  const ref = useRef<T | null>(null);
+  const [inView, setInView] = useState(false);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (prefersReducedMotion()) {
-      el.textContent = `${opts.prefix ?? ""}${to.toFixed(opts.decimals ?? 0)}${opts.suffix ?? ""}`;
-      return;
-    }
-    utils.set(el, { opacity: 0 });
-    const cleanups: Array<() => void> = [];
     const io = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        io.disconnect();
-        animate(el, { opacity: [0, 1], duration: 300, ease: "linear" });
-        const state = { v: 0 };
-        const anim = animate(state, {
-          v: to,
-          duration: opts.duration ?? 1400,
-          ease: "outExpo",
-          onUpdate: () => {
-            el.textContent = `${opts.prefix ?? ""}${state.v.toFixed(opts.decimals ?? 0)}${opts.suffix ?? ""}`;
-          },
-        });
-        cleanups.push(() => anim.revert());
+        const e = entries[0];
+        if (e) setInView(e.isIntersecting);
       },
-      { threshold: 0.4 }
+      { threshold }
     );
     io.observe(el);
-    return () => {
-      io.disconnect();
-      cleanups.forEach((c) => c());
-      utils.set(el, { clear: "all" });
-    };
-  }, [to, opts.duration, opts.decimals, opts.prefix, opts.suffix]);
-
-  return ref;
+    return () => io.disconnect();
+  }, [threshold]);
+  return [ref, inView];
 }

@@ -6,13 +6,29 @@
 // ← → buttons scroll to that slide's position while a suppress flag keeps
 // the scroll driver from hard-cutting the in-flight switch. Below md the
 // sticky stage would trap touch scroll, so the slides render as a static
-// stacked list instead (no sticky, no overflow-hidden clipping). All slide
-// content is verified site.ts facts — no invented metrics or testimonials.
-// Reduced-motion / no-JS: static slide 0, no sticky.
+// stacked list instead (no sticky, no overflow-hidden clipping). Stats
+// count up 0→value (1.2s ease-out) at 50% visibility; stacked cards enter
+// staggered (middle offset lower) and drift at 0.9/1.0/1.1 parallax; a mint
+// gradient shifts behind at 0.1. Each card carries a mini-visual that runs
+// once on entry then idles (6 provider dots / 10 shield ticks / endpoint
+// pulse); cards lift + stat weight shifts on hover. All slide content is
+// verified site.ts facts — no invented metrics or testimonials.
+// Reduced-motion / no-JS: static slide 0, no sticky, final numbers.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Container } from "@/components/ui/layout";
+import { Parallax } from "@/components/ui/parallax";
+import { Reveal } from "@/components/ui/reveal";
 import { GUARDRAIL_CATEGORIES, PROVIDERS } from "@/lib/site";
-import { useReducedMotion, useRevealOnScroll } from "@/lib/animations";
+import {
+  animate,
+  stagger,
+  useInViewOnce,
+  useInViewToggle,
+  useReducedMotion,
+  useRevealOnScroll,
+  utils,
+} from "@/lib/animations";
+import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 
 const SLIDES = [
   {
@@ -45,15 +61,107 @@ type Phase = "idle" | "out" | "stat" | "quote";
 
 const REGION_VH = 250;
 
+/* Number ticker: counts 0→value once visible at 50% (1.2s ease-out).
+   SSR/reduced-motion render the final value. */
+function CountStat({ value }: { value: number }) {
+  const [ref, seen] = useInViewOnce<HTMLSpanElement>(0.5);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !seen) return;
+    if (prefersReducedMotion()) {
+      el.textContent = String(value);
+      return;
+    }
+    const state = { v: 0 };
+    el.textContent = "0";
+    const a = animate(state, {
+      v: value,
+      duration: 1200,
+      ease: "outQuad",
+      onUpdate: () => {
+        el.textContent = String(Math.round(state.v));
+      },
+    });
+    return () => {
+      a.revert();
+      el.textContent = String(value);
+    };
+  }, [ref, seen, value]);
+
+  return <span ref={ref}>{value}</span>;
+}
+
+/* Per-card mini-visual: runs once on entry, then idles on CSS.
+   0 → provider dots light in sequence (PROVIDERS.length, derived);
+   1 → shield ticks fill (GUARDRAIL_CATEGORIES.length, derived);
+   2 → endpoint pulse (CSS-only). Static finals under reduced-motion. */
+function SlideVisual({ n }: { n: number }) {
+  const [ref, seen] = useInViewOnce<HTMLDivElement>(0.4);
+
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !seen || n === 2 || prefersReducedMotion()) return;
+    const items = Array.from(root.querySelectorAll<HTMLElement>(".viz-bit"));
+    if (!items.length) return;
+    utils.set(items, { opacity: 0, scale: 0.4 });
+    const a = animate(items, {
+      opacity: [0, 1],
+      scale: [0.4, 1],
+      duration: 400,
+      delay: stagger(90),
+      ease: "outExpo",
+    });
+    return () => {
+      a.revert();
+    };
+  }, [ref, seen, n]);
+
+  if (n === 0) {
+    return (
+      <div ref={ref} className="mt-5 flex items-center gap-1.5" aria-hidden="true">
+        {PROVIDERS.map((p, i) => (
+          <span
+            key={p.id}
+            title={p.name}
+            className="viz-bit viz-dot"
+            style={{ animationDelay: `${(i * 0.35).toFixed(2)}s` }}
+          />
+        ))}
+      </div>
+    );
+  }
+  if (n === 1) {
+    return (
+      <div ref={ref} className="mt-5 flex items-center gap-1" aria-hidden="true">
+        {GUARDRAIL_CATEGORIES.map((c) => (
+          <span key={c} className="viz-bit viz-tick" />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div ref={ref} className="mt-5 flex items-center" aria-hidden="true">
+      <span className="viz-pulse">
+        <span className="viz-pulse-dot" />
+        <span className="viz-pulse-ring" />
+      </span>
+    </div>
+  );
+}
+
 /* Static slide pane for the mobile stacked list (always settled, no switch). */
 function StaticSlide({ n }: { n: number }) {
   const s = SLIDES[n];
   return (
-    <div data-reveal className="grid bg-white md:grid-cols-2">
-      <div className="flex min-h-[240px] flex-col justify-center px-8 py-10">
-        <p className="font-serif text-6xl font-medium tracking-tight text-coal">{s.stat}</p>
+    <div className="outcome-card grid bg-white md:grid-cols-2">
+      <div className="flex min-h-[200px] flex-col justify-center px-6 py-8">
+        <p className="outcome-stat font-serif text-6xl font-medium tracking-tight text-coal">
+          <CountStat value={Number(s.stat)} />
+        </p>
         <p className="mt-3 text-[1.05rem] font-medium text-coal/70">{s.caption}</p>
-        <div className="mt-8 flex gap-2" aria-hidden="true">
+        <SlideVisual n={n} />
+        <div className="mt-6 flex gap-2" aria-hidden="true">
           {SLIDES.map((_, i) => (
             <span
               key={i}
@@ -62,7 +170,7 @@ function StaticSlide({ n }: { n: number }) {
           ))}
         </div>
       </div>
-      <div className="flex flex-col justify-center border-t border-cream-line px-8 py-10 md:border-l md:border-t-0">
+      <div className="flex flex-col justify-center border-t border-cream-line px-6 py-8 md:border-l md:border-t-0">
         <span aria-hidden="true" className="font-serif text-5xl leading-none text-mint">
           &ldquo;
         </span>
@@ -72,6 +180,8 @@ function StaticSlide({ n }: { n: number }) {
     </div>
   );
 }
+
+const CARD_SPEEDS = [0.9, 1.0, 1.1];
 
 export default function Outcomes() {
   const [index, setIndex] = useState(0);
@@ -84,6 +194,8 @@ export default function Outcomes() {
   const [jsReady, setJsReady] = useState(false);
   const reduced = useReducedMotion();
   const revealRef = useRevealOnScroll({ staggerMs: 80 });
+  // Infinite viz loops idle unless the section is in view (enter/exit).
+  const [vizRef, vizPlaying] = useInViewToggle<HTMLElement>(0);
   const slide = SLIDES[index];
   const indexRef = useRef(index);
   indexRef.current = index;
@@ -195,14 +307,14 @@ export default function Outcomes() {
 
   const card = (
     <div data-reveal className="relative mx-auto w-full max-w-5xl">
-      <div className="grid bg-white md:grid-cols-2">
+      <div className="outcome-card grid bg-white md:grid-cols-2">
         {/* Left: stat wipes first */}
-        <div className="flex min-h-[300px] flex-col justify-center overflow-hidden px-8 py-12 md:px-12">
+        <div className="flex min-h-[240px] flex-col justify-center overflow-hidden px-6 py-8 md:px-10">
           <p
             key={`stat-${index}`}
-            className={`font-serif text-7xl font-medium tracking-tight text-coal md:text-8xl ${phase === "out" ? "stat-wipe-out" : phase !== "idle" ? "stat-wipe-enter" : ""}`}
+            className={`outcome-stat font-serif text-7xl font-medium tracking-tight text-coal md:text-8xl ${phase === "out" ? "stat-wipe-out" : phase !== "idle" ? "stat-wipe-enter" : ""}`}
           >
-            {slide.stat}
+            <CountStat value={Number(slide.stat)} />
           </p>
           <p
             key={`cap-${index}`}
@@ -210,7 +322,8 @@ export default function Outcomes() {
           >
             {slide.caption}
           </p>
-          <div className="mt-8 flex gap-2" aria-hidden="true">
+          <SlideVisual n={index} />
+          <div className="mt-6 flex gap-2" aria-hidden="true">
             {SLIDES.map((_, i) => (
               <span
                 key={i}
@@ -223,7 +336,7 @@ export default function Outcomes() {
           </p>
         </div>
         {/* Right: quote crossfades after the stat */}
-        <div className="flex flex-col justify-center border-t border-cream-line px-8 py-12 md:border-l md:border-t-0 md:px-12">
+        <div className="flex flex-col justify-center border-t border-cream-line px-6 py-8 md:border-l md:border-t-0 md:px-10">
           <div
             key={`quote-${index}`}
             className={phase === "quote" || phase === "idle" ? "quote-fade-enter" : undefined}
@@ -262,8 +375,23 @@ export default function Outcomes() {
   );
 
   return (
-    <section id="outcomes" ref={revealRef} className="scroll-mt-20 bg-sage">
-      <Container width="wide" className="pt-20 md:pt-28">
+    <section
+      id="outcomes"
+      ref={(el) => {
+        revealRef.current = el;
+        vizRef.current = el;
+      }}
+      data-playing={vizPlaying}
+      className="relative scroll-mt-20 bg-sage"
+    >
+      {/* Clip is on this sibling wrapper — never on the section itself, so
+          the md+ sticky scroll-stage keeps working. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+        <Parallax speed={0.1} className="h-full w-full">
+          <div className="outcome-glow h-[130%] w-full" />
+        </Parallax>
+      </div>
+      <Container width="wide" className="relative pt-20 md:pt-28">
         <p data-reveal className="text-center text-xs font-medium text-coal/60">
           Outcomes
         </p>
@@ -273,7 +401,7 @@ export default function Outcomes() {
       </Container>
 
       {static_ ? (
-        <Container width="wide" className="pb-20 pt-12 md:pb-28">
+        <Container width="wide" className="relative pb-20 pt-12 md:pb-28">
           {card}
         </Container>
       ) : (
@@ -285,15 +413,56 @@ export default function Outcomes() {
             </div>
           </div>
           {/* Mobile: the same slides as a static stacked list. */}
-          <div className="px-6 pb-20 pt-12 md:hidden">
+          <div className="relative px-6 pb-20 pt-12 md:hidden">
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-10">
               {SLIDES.map((s, n) => (
-                <StaticSlide key={s.caption} n={n} />
+                <Parallax key={s.caption} speed={CARD_SPEEDS[n]}>
+                  <Reveal y={n === 1 ? 36 : 20} delay={n * 110}>
+                    <StaticSlide n={n} />
+                  </Reveal>
+                </Parallax>
               ))}
             </div>
           </div>
         </>
       )}
+      <style>{`
+        .outcome-glow {
+          background: linear-gradient(180deg, color-mix(in srgb, var(--color-mint) 26%, transparent), transparent 65%);
+        }
+        .outcome-card { transition: transform 300ms var(--ease-out-expo); }
+        .outcome-card:hover { transform: translateY(-4px); }
+        .outcome-stat { transition: font-weight 200ms ease; }
+        .outcome-card:hover .outcome-stat { font-weight: 600; }
+        .viz-dot, .viz-tick, .viz-pulse-ring { animation-play-state: paused; }
+        #outcomes[data-playing="true"] .viz-dot,
+        #outcomes[data-playing="true"] .viz-tick,
+        #outcomes[data-playing="true"] .viz-pulse-ring { animation-play-state: running; }
+        .viz-dot {
+          width: 8px; height: 8px; border-radius: 999px;
+          background: var(--color-mint);
+          border: 1px solid color-mix(in srgb, var(--color-coal) 25%, transparent);
+          animation: viz-breathe 3s ease-in-out infinite;
+        }
+        .viz-tick {
+          width: 14px; height: 6px; border-radius: 3px;
+          background: var(--color-mint);
+          transform-origin: 0 50%;
+          animation: viz-breathe 3.4s ease-in-out infinite;
+        }
+        .viz-pulse { position: relative; display: grid; place-items: center; width: 28px; height: 28px; }
+        .viz-pulse-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--color-coal); }
+        .viz-pulse-ring {
+          position: absolute; inset: 0; border-radius: 999px;
+          border: 2px solid var(--color-mint);
+          animation: viz-ring 2.2s ease-out infinite;
+        }
+        @keyframes viz-ring { from { transform: scale(0.4); opacity: 0.9; } to { transform: scale(1.15); opacity: 0; } }
+        @keyframes viz-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+        @media (prefers-reduced-motion: reduce) {
+          .viz-dot, .viz-tick, .viz-pulse-ring { animation: none; }
+        }
+      `}</style>
     </section>
   );
 }
