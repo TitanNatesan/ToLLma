@@ -474,20 +474,33 @@ export default function DashboardStack() {
 
   const static_ = !jsReady || reduced;
 
-  /* Scroll driver: single rAF loop, passive listeners. Progress v is a
-     pure function of the region rect, so every frame is exactly
-     reversible; only the active index goes through state. */
+  /* Scroll driver: target progress comes from scroll/resize events only
+     (one forced rect read per event); a persistent rAF loop eases a
+     smoothed value toward it — exponential approach, k≈10 — and paints
+     from that. Wheel input can never jump the windows, and reversing
+     mid-transition simply retargets from the current value, so both
+     directions mirror each other. Refs only; zero re-renders on scroll. */
   useEffect(() => {
     if (static_) return;
+    const tgt = { v: 0 };
+    const cur = { v: 0 };
     let raf = 0;
-    const paint = () => {
-      raf = 0;
+    let last = 0;
+    let lastInput = 0;
+    let visible = true;
+    let dirty = true;
+    const readTarget = () => {
       const region = regionRef.current;
-      if (!region) return;
+      if (!region) return 0;
       const vh = window.innerHeight || 1;
       const total = region.offsetHeight - vh;
-      const rect = region.getBoundingClientRect();
-      const v = total > 0 ? Math.min(1, Math.max(0, -rect.top / total)) : 0;
+      if (total <= 0) return 0;
+      const top = region.getBoundingClientRect().top;
+      return Math.min(1, Math.max(0, -top / total));
+    };
+    const paint = (v: number) => {
+      const region = regionRef.current;
+      if (!region) return;
       const next = Math.min(PAGES.length - 1, Math.round(v / SEG));
       // No React state on the scroll path: announce through a ref so the
       // six windows (and their tables) never re-render while scrolling.
@@ -529,15 +542,63 @@ export default function DashboardStack() {
       region.dataset.progress = v.toFixed(4);
       region.dataset.activePage = PAGES[next];
     };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(paint);
+    const tick = (now: number) => {
+      raf = 0;
+      const dt = Math.min(0.1, Math.max(0.001, (now - last) / 1000));
+      last = now;
+      // Target rect is read at most once per frame (dirty flag) — never
+      // per scroll event — so fast scrolls can't force repeated layouts.
+      if (dirty) {
+        tgt.v = readTarget();
+        dirty = false;
+      }
+      // Exponential approach, integrated in fixed 60 Hz substeps so the
+      // curve is identical at 120 fps, 60 fps, or burst-scheduled frames:
+      // wheel flicks/large deltas glide instead of jumping, and reversal
+      // retargets from the current value automatically.
+      let remaining = dt;
+      while (remaining > 0.0001) {
+        const h = Math.min(remaining, 1 / 60);
+        cur.v += (tgt.v - cur.v) * (1 - Math.exp(-h * 10));
+        remaining -= h;
+      }
+      if (Math.abs(tgt.v - cur.v) < 0.0004) cur.v = tgt.v;
+      paint(cur.v);
+      // Idle the loop once converged and input has settled (battery);
+      // any scroll/resize/visibility change kicks it again.
+      const settled = cur.v === tgt.v && performance.now() - lastInput > 600;
+      if (visible && !settled) raf = requestAnimationFrame(tick);
     };
-    paint();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll, { passive: true });
+    const kick = () => {
+      dirty = true;
+      lastInput = performance.now();
+      if (!raf) {
+        last = performance.now();
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        visible = entry.isIntersecting;
+        if (visible) kick();
+        else if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+        }
+      },
+      { rootMargin: "20% 0px" }
+    );
+    const region = regionRef.current;
+    if (region) io.observe(region);
+    tgt.v = readTarget();
+    cur.v = tgt.v;
+    paint(cur.v);
+    window.addEventListener("scroll", kick, { passive: true });
+    window.addEventListener("resize", kick, { passive: true });
     return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
+      io.disconnect();
+      window.removeEventListener("scroll", kick);
+      window.removeEventListener("resize", kick);
       if (raf) cancelAnimationFrame(raf);
     };
   }, [static_]);
