@@ -104,11 +104,14 @@ export default function PixelWipe({
               ref={(el) => {
                 blocks.current[i] = el;
               }}
-              className={`wipe-col absolute inset-0 ${blockCls}`}
+              className={`wipe-col absolute inset-x-0 top-0 bottom-[-4px] ${blockCls}`}
             />
           </div>
         ))}
       </div>
+      {/* Seam seal: guarantees a continuous teeth-color ground line across
+          the boundary so subpixel slot rounding can never show a hairline. */}
+      <div aria-hidden="true" className={`pointer-events-none absolute inset-x-0 bottom-0 h-[4px] ${blockCls}`} />
     </div>
   );
 }
