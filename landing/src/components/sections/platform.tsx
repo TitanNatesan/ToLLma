@@ -1,8 +1,8 @@
 // How-it-works: 8-layer scroll-driven gateway story (L01–L08).
 //
 // ONE module, SINGLE layout config (LAYERS + layoutNodes below: node ids,
-// lane, size, position strategy per mode; peer boxes share one gutter token
-// (GUT). All connectors are computed from
+// lane, size, position strategy per mode; horizontal peer gaps share one
+// gutter token (GUT). All connectors are computed from
 // node bounding boxes (edgeBox/elbow): every path starts and ends exactly
 // on a node edge or another wire (<=2px by construction), orthogonal with
 // rounded joins, labels in reserved gutter slots with OPAQUE pills (never
@@ -156,19 +156,26 @@ const LEDGERS = [
   { id: "tokens", label: "TOKENS LEDGER" },
 ];
 
-const VIEW: Record<Mode, { w: number; h: number }> = {
-  wide: { w: 1648, h: 880 },
-  tall: { w: 660, h: 2440 },
+const VIEW: Record<Mode, { x: number; y: number; w: number; h: number }> = {
+  // Wide base fit: full-flow frame sits ~7% back from the composition
+  // (content 16..1680 x 48..843 centered) for breathing room. Camera zoom
+  // math uses w/h sizes only; x/y recenter the identity frame. Node sizes,
+  // fonts, and row rhythm are untouched — rendered full-view text stays
+  // >=12px (18u at k~0.68).
+  wide: { x: -42, y: -30, w: 1780, h: 950 },
+  tall: { x: 0, y: 0, w: 660, h: 2440 },
 };
 
 /**
- * SINGLE gutter token. Every peer box gap (layer-to-layer, chip-to-chip,
- * ledger-to-ledger, captures-to-ledger) equals GUT exactly, and the camera
- * frames each layer with one GUT margin per side. Larger separations are
- * wire lanes stacked as GUT multiples below the request row (bus, provider
- * block, tap feed, return) so no routed arrow shares a band with box text.
+ * SINGLE gutter token. Every HORIZONTAL peer gap (layer pitch, chip gaps,
+ * ledger gaps, captures-to-ledger) equals GUT exactly. The camera frames
+ * each layer with one GUT margin per side, and wire lanes stack as GUT
+ * multiples below the request row (bus, provider block, tap feed, return)
+ * so no routed arrow shares a band with box text. VERTICAL node-row rhythm
+ * is pinned (provider pitch 80, ledger pitch 64): raising GUT opens peer
+ * gaps sideways without moving rows up or down.
  */
-const GUT = 16;
+const GUT = 24;
 
 /** Position strategy per mode, derived from the single LAYERS config. */
 function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rect[]; ledgers: Record<string, Rect>; captures: Rect; blocked: Rect } {
@@ -178,7 +185,7 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     const setupY = 80; const reqY = 280;
     layers.register = { x: 32, y: setupY, w: LW, h: LH };
     layers.keys = { x: 240, y: setupY, w: LW, h: LH };
-    const xs = [392, 600, 808, 1016, 1224, 1440];
+    const xs = Array.from({ length: 6 }, (_, i) => 392 + i * (LW + GUT));
     ["auth", "ratelimit", "guardrails", "route", "normalize", "observe"].forEach((id, i) => {
       layers[id] = { x: xs[i], y: reqY, w: LW, h: LH };
     });
@@ -186,12 +193,12 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     // openai sits col0-bottom (receiving family: the return leg starts at
     // its left edge).
     const slots = [{ c: 0, r: 2 }, { c: 1, r: 0 }, { c: 0, r: 0 }, { c: 1, r: 1 }, { c: 0, r: 1 }, { c: 1, r: 2 }];
-    const PX0 = 1016; const PY0 = 444; const PP = 64 + GUT;
+    const PX0 = xs[3]; const PY0 = 444; const PP = 80; // pinned row rhythm (was 64+GUT at 16)
     const providers = slots.map((s) => ({
       x: s.c === 0 ? PX0 : PX0 + 176 + GUT, y: PY0 + s.r * PP, w: 176, h: 64,
     }));
     // Ledger row on the GUT pitch (also fixes a 4u cost/tokens overlap).
-    const LED_Y = 762; const LX0 = 276;
+    const LED_Y = 762; const LX0 = 284; // captures-to-ledger gap = GUT
     const ledgers: Record<string, Rect> = {
       meta: { x: LX0, y: LED_Y, w: 210, h: 48 },
       cost: { x: LX0 + 210 + GUT, y: LED_Y, w: 210, h: 48 },
@@ -211,7 +218,7 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
   order.forEach((id) => {
     if (id === "__prov__") {
       y += 58 - (STEP - H);
-      for (let i = 0; i < 6; i++) { provY.push(y); y += 64 + GUT; }
+      for (let i = 0; i < 6; i++) { provY.push(y); y += 80; } // pinned (was 64+GUT at 16)
       y += 58 - 8;
       return;
     }
@@ -222,10 +229,10 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
   const providers = provY.map((py) => ({ x: 120, y: py, w: 280, h: 64 }));
   const ledgers: Record<string, Rect> = {
     meta: { x: X, y: y + 58 - (STEP - H), w: W, h: 48 },
-    cost: { x: X, y: y + 58 - (STEP - H) + 48 + GUT, w: W, h: 48 },
-    tokens: { x: X, y: y + 58 - (STEP - H) + 2 * (48 + GUT), w: W, h: 48 },
+    cost: { x: X, y: y + 58 - (STEP - H) + 64, w: W, h: 48 },
+    tokens: { x: X, y: y + 58 - (STEP - H) + 2 * (64), w: W, h: 48 },
   };
-  const captures: Rect = { x: X, y: y + 58 - (STEP - H) + 2 * (48 + GUT) + 48 + GUT, w: W, h: 60 };
+  const captures: Rect = { x: X, y: y + 58 - (STEP - H) + 2 * (64) + 64, w: W, h: 60 };
   // Blocked terminus: side chip off guardrails' right edge (stops at L05).
   const blocked: Rect = { x: 440 + GUT, y: layers.guardrails.y + 33, w: 150, h: 66 };
   return { layers, providers, ledgers, captures, blocked };
@@ -272,7 +279,8 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     // Drop enters Anthropic's top edge off-center (mirrors the spine) so
     // the arrowhead keeps >=8px from the centered chip name at 1280w.
     const col1dx = L.providers[1].x + 24;
-    c.push({ name: "fan", d: `M1040,${R.route.y + R.route.h} L1040,${L.providers[2].y}`, x1: 1040, y1: R.route.y + R.route.h, x2: 1040, y2: L.providers[2].y });
+    const SPX = R.route.x + 24; // spine 24u off route's left edge into gemini's top
+    c.push({ name: "fan", d: `M${SPX},${R.route.y + R.route.h} L${SPX},${L.providers[2].y}`, x1: SPX, y1: R.route.y + R.route.h, x2: SPX, y2: L.providers[2].y });
     c.push({ name: "fan-bus", d: `M${PC0X},${BUS_Y} L${col1dx},${BUS_Y}`, x1: PC0X, y1: BUS_Y, x2: col1dx, y2: BUS_Y, label: "FAN-OUT", lx: 922, ly: 476 });
     c.push({ name: "fan-d1", d: `M${col1dx},${BUS_Y} L${col1dx},${L.providers[1].y}`, x1: col1dx, y1: BUS_Y, x2: col1dx, y2: L.providers[1].y });
     // col0 middle/bottom rows via the left corridor into left edges.
@@ -290,29 +298,32 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     // violate the <=2px joint rule (see R9 log).
     const FEED_Y = L.providers[0].y + L.providers[0].h + GUT;
     const RET_Y = FEED_Y + GUT;
-    const RET_X = 1400; // 16u off Custom's right edge and the tap riser
+    const RET_X = 1440; // one GUT off Custom's right edge (1416)
     const retMid = L.providers[0].y + L.providers[0].h / 2;
-    c.push({ name: "return", d: `M${L.providers[0].x},${retMid} L960,${retMid} L960,${RET_Y} L${RET_X},${RET_Y} L${RET_X},${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: retMid, x2: RET_X, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 1300, ly: RET_Y + GUT + 15 });
+    const RET_WX = L.providers[0].x - 56; // west corridor leg (was the 960 lane)
+    c.push({ name: "return", d: `M${L.providers[0].x},${retMid} L${RET_WX},${retMid} L${RET_WX},${RET_Y} L${RET_X},${RET_Y} L${RET_X},${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: retMid, x2: RET_X, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 1300, ly: RET_Y + GUT + 15 });
     // Response along reserved top slot into keys top (crosses nothing).
-    c.push({ name: "response", d: `M1320,${R.normalize.y} L1320,56 L${dropX},56 L${dropX},${R.keys.y}`, x1: 1320, y1: R.normalize.y, x2: dropX, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 82 });
+    const RESP_X = R.normalize.x + R.normalize.w / 2; // drops from normalize's center
+    c.push({ name: "response", d: `M${RESP_X},${R.normalize.y} L${RESP_X},56 L${dropX},56 L${dropX},${R.keys.y}`, x1: RESP_X, y1: R.normalize.y, x2: dropX, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 82 });
     // Coral blocked branch: guardrails bottom -> terminus top (stops at L05).
-    c.push({ name: "blocked", coral: true, d: `M840,${R.guardrails.y + R.guardrails.h} L840,${L.blocked.y}`, x1: 840, y1: R.guardrails.y + R.guardrails.h, x2: 840, y2: L.blocked.y });
+    const BLK_X = R.guardrails.x + 16;
+    c.push({ name: "blocked", coral: true, d: `M${BLK_X},${R.guardrails.y + R.guardrails.h} L${BLK_X},${L.blocked.y}`, x1: BLK_X, y1: R.guardrails.y + R.guardrails.h, x2: BLK_X, y2: L.blocked.y });
     // Dashed workspace tap: L01 bottom -> captures top (never L05).
     c.push({ name: "tap-captures", dashed: true, d: `M128,${R.register.y + R.register.h} L128,${L.captures.y}`, x1: 128, y1: R.register.y + R.register.h, x2: 128, y2: L.captures.y, label: "PROMPT LOG TAP", lx: 250, ly: 490 });
     // Per-layer taps join a short bus + down-feed (never the guardrail node).
     const tapY = (r: Rect) => r.y + r.h;
-    [[R.ratelimit, 612], [R.guardrails, 820]].forEach(([r, x]) => {
+    [[R.ratelimit, 612], [R.guardrails, 836]].forEach(([r, x]) => {
       const rr = r as Rect; const xx = x as number;
       c.push({ name: `tap-${xx}`, dashed: true, d: `M${xx},${tapY(rr)} L${xx},${BUS_Y}`, x1: xx, y1: tapY(rr), x2: xx, y2: BUS_Y });
     });
     // Auth tap runs down to feed the meta ledger top (T-joint with the bus).
     c.push({ name: "tap-404", dashed: true, d: `M404,${tapY(R.auth)} L404,${L.ledgers.meta.y}`, x1: 404, y1: tapY(R.auth), x2: 404, y2: L.ledgers.meta.y });
-    c.push({ name: "tap-bus", dashed: true, d: `M404,${BUS_Y} L820,${BUS_Y}`, x1: 404, y1: BUS_Y, x2: 820, y2: BUS_Y, label: "LOG TAPS", lx: 520, ly: 482 });
+    c.push({ name: "tap-bus", dashed: true, d: `M404,${BUS_Y} L836,${BUS_Y}`, x1: 404, y1: BUS_Y, x2: 836, y2: BUS_Y, label: "LOG TAPS", lx: 520, ly: 482 });
     c.push({ name: "tap-down", dashed: true, d: `M600,${BUS_Y} L600,${FEED_Y}`, x1: 600, y1: BUS_Y, x2: 600, y2: FEED_Y });
     // Normalize tap joins from the right edge; the shared feed lane runs
     // west below the providers and branches down into each ledger top
     // (T-joints, never through nodes).
-    const TAPN_X = 1416; // right gutter: 16u off the riser, 24u off observe
+    const TAPN_X = R.observe.x - GUT; // right gutter lane, one GUT off observe
     c.push({ name: "tap-n", dashed: true, d: `M${R.normalize.x + R.normalize.w},380 L${TAPN_X},380 L${TAPN_X},${FEED_Y} L600,${FEED_Y}`, x1: R.normalize.x + R.normalize.w, y1: 380, x2: 600, y2: FEED_Y });
     c.push({ name: "tap-f1", dashed: true, d: `M${L.ledgers.cost.x + 105},${FEED_Y} L${L.ledgers.cost.x + 105},${L.ledgers.cost.y}`, x1: L.ledgers.cost.x + 105, y1: FEED_Y, x2: L.ledgers.cost.x + 105, y2: L.ledgers.cost.y });
     c.push({ name: "tap-f2", dashed: true, d: `M${L.ledgers.tokens.x + 105},${FEED_Y} L${L.ledgers.tokens.x + 105},${L.ledgers.tokens.y}`, x1: L.ledgers.tokens.x + 105, y1: FEED_Y, x2: L.ledgers.tokens.x + 105, y2: L.ledgers.tokens.y });
@@ -320,7 +331,8 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     // right corridor, and enters the tokens ledger's right edge at
     // mid-height — the caption row below stays wire-free.
     const AN_Y = L.ledgers.tokens.y + 24;
-    c.push({ name: "analytics", dashed: true, d: `M1536,${R.observe.y + R.observe.h} L1568,${R.observe.y + R.observe.h} L1568,${AN_Y} L${L.ledgers.tokens.x + L.ledgers.tokens.w},${AN_Y}`, x1: 1536, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: AN_Y, label: "ANALYTICS", lx: 1500, ly: 843 });
+    const AN_X0 = R.observe.x + 96; const AN_X1 = R.observe.x + 128; // exits/enters inside observe's span
+    c.push({ name: "analytics", dashed: true, d: `M${AN_X0},${R.observe.y + R.observe.h} L${AN_X1},${R.observe.y + R.observe.h} L${AN_X1},${AN_Y} L${L.ledgers.tokens.x + L.ledgers.tokens.w},${AN_Y}`, x1: AN_X0, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: AN_Y, label: "ANALYTICS", lx: 1500, ly: 843 });
     return c;
   }
   // Tall: vertical pipeline, providers inline between route and normalize.
@@ -394,7 +406,7 @@ function activeAt(p: number): number {
   return Math.min(7, Math.floor(((p - PH.B) / (PH.C - PH.B)) * 8));
 }
 /** Camera keyframe for layer i (L05+injection unions the blocked badge). */
-function camFor(L: Layout, V: { w: number; h: number }, i: number, inj: boolean): Cam {
+function camFor(L: Layout, V: { x: number; y: number; w: number; h: number }, i: number, inj: boolean): Cam {
   let r = L.layers[LAYERS[i].id];
   if (inj && LAYERS[i].id === "guardrails") {
     const b = L.blocked;
@@ -405,8 +417,8 @@ function camFor(L: Layout, V: { w: number; h: number }, i: number, inj: boolean)
   return { x: r.x + r.w / 2, y: r.y + r.h / 2, s: Math.min(V.w / ew, V.h / eh) };
 }
 /** Camera as a pure function of progress (identity outside C blends). */
-function camAt(L: Layout, V: { w: number; h: number }, p: number, inj: boolean): Cam {
-  const ident: Cam = { x: V.w / 2, y: V.h / 2, s: 1 };
+function camAt(L: Layout, V: { x: number; y: number; w: number; h: number }, p: number, inj: boolean): Cam {
+  const ident: Cam = { x: V.x + V.w / 2, y: V.y + V.h / 2, s: 1 };
   if (p < PH.B || p >= PH.C) return ident;
   const u = ((p - PH.B) / (PH.C - PH.B)) * 8;
   const i = Math.min(7, Math.floor(u));
@@ -559,7 +571,7 @@ export default function Platform() {
       }
       const st = stageAt(p);
       const cam = camAt(L, V, p, inj);
-      if (camG) camG.setAttribute("transform", `translate(${(V.w / 2).toFixed(1)} ${(V.h / 2).toFixed(1)}) scale(${(st.sc * cam.s).toFixed(4)}) translate(${(-cam.x).toFixed(1)} ${(-cam.y).toFixed(1)})`);
+      if (camG) camG.setAttribute("transform", `translate(${(V.x + V.w / 2).toFixed(1)} ${(V.y + V.h / 2).toFixed(1)}) scale(${(st.sc * cam.s).toFixed(4)}) translate(${(-cam.x).toFixed(1)} ${(-cam.y).toFixed(1)})`);
       svg.style.opacity = st.op.toFixed(3);
       // R9 phases: a layer is spotlighted only during phase C.
       const act = activeAt(p);
@@ -762,7 +774,7 @@ export default function Platform() {
           <div className={pinned ? "relative mx-auto min-h-0 w-full flex-1" : "relative mx-auto w-full"}>
               <svg
                 ref={svgRef}
-                viewBox={`0 0 ${V.w} ${V.h}`}
+                viewBox={`${V.x} ${V.y} ${V.w} ${V.h}`}
                 data-zoomfade="0"
                 className={pinned ? "h-full w-full select-none" : "h-auto w-full select-none"}
                 role="img"
@@ -786,14 +798,14 @@ export default function Platform() {
 
                 {/* Background grid/glow: parallax ONLY here. */}
                 <g data-bg>
-                  <rect x={0} y={0} width={V.w} height={V.h} fill="url(#hiw-grid)" />
-                  <rect x={0} y={0} width={V.w} height={V.h} fill="url(#hiw-glow)" />
+                  <rect x={V.x} y={V.y} width={V.w} height={V.h} fill="url(#hiw-grid)" />
+                  <rect x={V.x} y={V.y} width={V.w} height={V.h} fill="url(#hiw-glow)" />
                 </g>
                 <g data-camera>
                   {mode === "wide" && (
                     <>
                       <rect x={16} y={48} width={432} height={180} fill="none" stroke={LINE} strokeDasharray="5 5" />
-                      <rect x={368} y={248} width={1280} height={196} fill="none" stroke={LINE} strokeDasharray="5 5" />
+                      <rect x={368} y={248} width={1312} height={196} fill="none" stroke={LINE} strokeDasharray="5 5" />
                     </>
                   )}
                   {/* Connectors (computed from bounding boxes). */}
@@ -863,7 +875,7 @@ export default function Platform() {
                     </g>
                     );
                   })}
-                  <text data-caption="providers" data-dim x={mode === "wide" ? 1200 : 120} y={mode === "wide" ? 843 : L.providers[5].y + 88} fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">
+                  <text data-caption="providers" data-dim x={mode === "wide" ? 1228 : 120} y={mode === "wide" ? 843 : L.providers[5].y + 88} fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">
                     {mode === "wide" ? "PROVIDERS · 6 FAMILIES" : "6 FAMILIES · GEMINI STREAM-ONLY"}
                   </text>
 

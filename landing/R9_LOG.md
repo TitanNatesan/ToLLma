@@ -133,3 +133,40 @@ tsc + build green; frontend vitest 36 files / 311 tests pass; no new libs; copy/
   unpinned/hiwshot rendering stays true full-bleed.
 - Orthogonal wire-wire crossings (return x tap feed, spine x bus) are
   intentional bare crosses, not bridges (joint-rule rationale above).
+
+## R9d — wider gutters + pulled-back base fit (2026-11-02; platform.tsx only)
+
+Change (screenshot review): (1) full-view frame sits ~7% further back for
+breathing room — wide viewBox `0 0 1648x880` -> `-42 -30 1780x950`, content
+(16..1680 x 48..843) centered with ~58u side / ~78u top-bottom margins.
+Camera transform untouched (identity still s=1; zoom math uses w/h sizes
+only, x/y recenter the frame), node rects/fonts/rows unchanged. (2) GUT
+16 -> 24: layer pitch, chip gaps, ledger gaps, captures-to-ledger gap now
+24u (xs derived as 392+i*(LW+GUT); PX0=route.x; LX0=284). Hardcoded
+grid-tied x's now node-derived (spine=route.x+24, TAPN_X=observe.x-GUT,
+RET_X=customRight+GUT=1440, west leg=openai.x-56, RESP_X=normalize center,
+analytics x0/x1=observe.x+96/+128, BLK_X=guardrails.x+16, guardrail tap
+x=836, request-lane box w=1312, providers caption x=1228). Vertical node
+rhythm pinned (PP=80, tall pitches 80/64 literals, LED_Y/reqY/setupY
+unchanged); only GUT-multiple wire lanes shift (BUS 428->436, FEED
+684->692, RET 700->716 — all clear of boxes per c2b/gallery).
+
+Suite: same `/tmp/opencode/r9b/r9check.cjs` (41 assertions) + r9c-check,
+same origin `landing/out/` @ `http://localhost:8931`. Gallery:
+`/tmp/opencode/r9b/gallery/r9d-{1280,1440,1920}-{full,layer04zoom,l05inj}.png`.
+tsc + build green; no new libs; copy/order/palette untouched.
+
+Validation: r9check 41/41 @1280/1440/1920, twice consecutively (c1 101
+steps, c2/c2b clean, c3 pad, c4 k=0.683/0.773/1.043, c5 arrows, c6 joints,
+c7 dimming, c8 exact reverse, c9 continuity, c10 toggle+park, c11 shots,
+c10b 10 buttons, c12 reduced-motion, c13 zero console). r9c 7/7:
+connectivity (8 layers + 6 fan-in + return from prov0 + ledgers/captures/
+blocked), softedge honest (30 states), fullbleed text 12.3/13.9/18.8px
+(@1280/1440/1920), zoom fill 71.7% every layer (>=55%), zoom text 64.9px+.
+Gallery reviewed: breathing room all sides, 24u peer gaps, L04 zoom crisp,
+L05-inj frames guardrails+blocked with lead parked at badge.
+
+Remaining limitations (carried): L05-inj union framing; tall/mobile type
+<12px rendered on phones; c9 r9af-based. Full-view text floor now 12.3px @
+1280 (was ~12.7) — passes with ~0.3px margin; do not widen the base fit
+further without growing node type.
