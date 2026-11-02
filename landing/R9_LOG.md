@@ -63,3 +63,8 @@ Gallery: `/tmp/opencode/r9b/gallery/r9b-{1280,1440,1920}-{entry,pass1,l05-safe,l
   (desktop >=1280 meets >=12px rendered); tall geometry still passes layout-unit checks.
 - c9 measures paint continuity via 110 rAF-driven setP steps (max 1 identical frame), not a
   captured-video consecutive-frame diff.
+
+## Close-out
+- Final code (tsc + build green): two consecutive full runs 41/41 at 1280/1440/1920
+  (41 assertions = 13 spec checks + wire-vs-node + controls; gallery 18 PNGs reviewed).
+- Commits: rebuild -> validation closed. No other sections touched.
