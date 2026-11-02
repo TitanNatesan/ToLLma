@@ -85,9 +85,9 @@ type Layer = {
  * reads ledgers. Prompt logging is a SEPARATE workspace setting (global vs
  * keys allow-list) — its tap leaves L01, never L05.
  *
- * Node copy is sized to fit: titles + subs + two <=15-char detail lines
- * (widened nodes first; shortened only where the lane breaks — see
- * R9_LOG.md for the verbatim originals).
+ * Node copy is sized to fit: titles + subs + two <=15-char detail lines.
+ * Route (348u) and normalize (288u) are widened past the 252u standard so
+ * their full titles + the "WIRE → UNIFIED → NATIVE" sub sit in-box.
  */
 const LAYERS: Layer[] = [
   {
@@ -121,13 +121,13 @@ const LAYERS: Layer[] = [
     lines: ["Warn by default", "Global/key scope"],
   },
   {
-    id: "route", n: "06", lane: "request", title: "Route",
-    sub: "WIRE→NATIVE",
+    id: "route", n: "06", lane: "request", title: "Route / translate",
+    sub: "WIRE \u2192 UNIFIED \u2192 NATIVE",
     desc: "Provider/model hint resolution; unified shape translated to native.",
     lines: ["Hint resolution", "6 families"],
   },
   {
-    id: "normalize", n: "07", lane: "request", title: "Normalize",
+    id: "normalize", n: "07", lane: "request", title: "Provider / normalize",
     sub: "UNIFIED RESULT",
     desc: "Normalized to unified result, re-emitted in the requested wire shape.",
     lines: ["Unified result", "Requested wire"],
@@ -192,9 +192,14 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     const setupY = 72; const reqY = 260; // setup<->request gap = 56u
     layers.register = { x: 16, y: setupY, w: LW, h: LH };
     layers.keys = { x: 284, y: setupY, w: LW, h: LH };
-    const X0 = 40; const PITCH = LW + GAP; // request peer gap = 44u
+    // Request peer gap stays 44u; route/normalize are widened (RW/NW) to carry
+    // their full titles + sub in-box, shifting normalize/observe east.
+    const RW = 364; const NW = 288;
+    const W6 = [LW, LW, LW, RW, NW, LW];
+    let xx = 40;
     ["auth", "ratelimit", "guardrails", "route", "normalize", "observe"].forEach((id, i) => {
-      layers[id] = { x: X0 + i * PITCH, y: reqY, w: LW, h: LH };
+      layers[id] = { x: xx, y: reqY, w: W6[i], h: LH };
+      xx += W6[i] + GAP;
     });
     // Providers fan out below route, indexed by PROVIDERS order. openai
     // sits col0-bottom: the single return leg starts at its left edge.
@@ -290,10 +295,12 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     const FEED_Y = L.providers[0].y + L.providers[0].h + GUT;
     const RET_Y = FEED_Y - 16;
     const retMid = L.providers[0].y + L.providers[0].h / 2;
-    c.push({ name: "return", d: `M${L.providers[0].x},${retMid} L900,${retMid} L900,${RET_Y} L1468,${RET_Y} L1468,${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: retMid, x2: 1468, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 916, ly: 726 });
+    const retX = R.normalize.x + R.normalize.w - 8;
+    c.push({ name: "return", d: `M${L.providers[0].x},${retMid} L900,${retMid} L900,${RET_Y} L${retX},${RET_Y} L${retX},${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: retMid, x2: retX, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 916, ly: 726 });
     // Response along the reserved top slot into keys top (crosses nothing),
     // entering normalize from above.
-    c.push({ name: "response", d: `M1350,${R.normalize.y} L1350,56 L480,56 L480,${R.keys.y}`, x1: 1350, y1: R.normalize.y, x2: 480, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 94 });
+    const respX = cx(R.normalize);
+    c.push({ name: "response", d: `M${respX},${R.normalize.y} L${respX},56 L480,56 L480,${R.keys.y}`, x1: respX, y1: R.normalize.y, x2: 480, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 94 });
     // Coral blocked branch: guardrails bottom -> terminus top (stops at L05).
     c.push({ name: "blocked", coral: true, d: `M648,${R.guardrails.y + R.guardrails.h} L648,${L.blocked.y}`, x1: 648, y1: R.guardrails.y + R.guardrails.h, x2: 648, y2: L.blocked.y });
     // Dashed workspace tap: register bottom -> captures top via the
@@ -306,12 +313,14 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     c.push({ name: "tap-g", dashed: true, d: `M880,${R.guardrails.y + R.guardrails.h} L880,${FEED_Y}`, x1: 880, y1: R.guardrails.y + R.guardrails.h, x2: 880, y2: FEED_Y });
     // Normalize tap joins from the right edge; the shared feed lane runs
     // west below the providers and branches down into cost/tokens tops.
-    c.push({ name: "tap-n", dashed: true, d: `M${R.normalize.x + R.normalize.w},355 L1504,355 L1504,${FEED_Y} L1400,${FEED_Y}`, x1: R.normalize.x + R.normalize.w, y1: 355, x2: 1400, y2: FEED_Y });
+    const tapNx = R.normalize.x + R.normalize.w + 28;
+    c.push({ name: "tap-n", dashed: true, d: `M${R.normalize.x + R.normalize.w},355 L${tapNx},355 L${tapNx},${FEED_Y} L1400,${FEED_Y}`, x1: R.normalize.x + R.normalize.w, y1: 355, x2: 1400, y2: FEED_Y });
     c.push({ name: "tap-f0", dashed: true, d: `M768,${FEED_Y} L768,${L.ledgers.cost.y}`, x1: 768, y1: FEED_Y, x2: 768, y2: L.ledgers.cost.y });
     c.push({ name: "tap-f1", dashed: true, d: `M1064,${FEED_Y} L1064,${L.ledgers.tokens.y}`, x1: 1064, y1: FEED_Y, x2: 1064, y2: L.ledgers.tokens.y });
     // Analytics reads the ledgers: observe bottom exits south and enters
     // the tokens ledger's right edge at mid-height.
-    c.push({ name: "analytics", dashed: true, d: `M1646,${R.observe.y + R.observe.h} L1646,794 L${L.ledgers.tokens.x + L.ledgers.tokens.w},794`, x1: 1646, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: 794, label: "ANALYTICS", lx: 1250, ly: 858 });
+    const obsX = cx(R.observe);
+    c.push({ name: "analytics", dashed: true, d: `M${obsX},${R.observe.y + R.observe.h} L${obsX},794 L${L.ledgers.tokens.x + L.ledgers.tokens.w},794`, x1: obsX, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: 794, label: "ANALYTICS", lx: 1250, ly: 858 });
     return c;
   }
     // Tall: vertical pipeline, providers inline between route and normalize.
@@ -784,7 +793,7 @@ export default function Platform() {
                   {mode === "wide" && (
                     <>
                       <rect x={16} y={48} width={536} height={180} fill="none" stroke={LINE} strokeDasharray="5 5" />
-                      <rect x={16} y={248} width={1780} height={168} fill="none" stroke={LINE} strokeDasharray="5 5" />
+                      <rect x={16} y={248} width={L.layers.observe.x + L.layers.observe.w + 24 - 16} height={168} fill="none" stroke={LINE} strokeDasharray="5 5" />
                     </>
                   )}
                   {/* Connectors (computed from bounding boxes). */}

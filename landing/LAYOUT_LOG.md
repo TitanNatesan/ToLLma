@@ -101,3 +101,34 @@ new layout (current-code evidence; historic R9 numbers live in R9_LOG.md).
   separately as required; geometry checks still pass in tall mode.
 - "≥70% mobile height" active fill: no pinned camera exists on mobile by design
   (R9 rule kept); tall diagram renders full-flow and scrolls.
+
+## Follow-up: restore full route/normalize wording (no-impossibility path)
+- Restored all three: L06 title "Route / translate" (ink 176.6u), L06 sub
+  "WIRE → UNIFIED → NATIVE" (ink ~332u per C3 client-rect, vs 315.9u
+  getBBox estimate — trailing arrow fallback shaping; sized to the harness
+  number), L07 title "Provider / normalize" (ink 224.6u). Nothing proven
+  impossible; no open wording items remain from this round.
+- Config 1 tried: RW=348/NW=288 → c3@1280 FAIL (pad 8.9px on the sub;
+  needed boxW >= 332 + 12/0.560 = 353.5u). Config 2 (shipped): RW=364/
+  NW=288 → full green. viewBox untouched (2170): k = 0.560/0.634/0.855,
+  font floor 12.3/14.0/18.8px, shafts 44k = 24.7/27.9/37.6px.
+- Final wide geometry: route 928..1292, normalize 1336..1624 (center 1480),
+  observe 1668..1920; peer gaps 44/44/44/44/44u; widths min 252u (>=170u);
+  return riser x=normRight-8 (1604...1612), response riser x=normCenter,
+  tap-n elbow x=normRight+28, analytics start x=observeCenter — all computed
+  from bboxes. Dashed request frame extended to 16..1944 (w=1928, computed
+  from observe). Right margin 47u (~26px @1280, >=24px); left untouched.
+- Scale note: layers-union/vbW = 1880/2170 = 0.866 (frame-union 0.888) —
+  both inside 0.86–0.90. (Prior log's 0.883 does not reproduce from the
+  layers-union definition — pre-change layers-union was 1756/2170 = 0.809;
+  recorded here as measured.)
+- Detail lines: no restorable originals exist — R9_LOG.md is deleted from
+  the repo and git history shows the current short lines since the rebuild;
+  kept as-is.
+- Validation: r9check 41/41 PASS @1280/1440/1920 (run twice: config-1
+  40/41 with the single c3@1280 pad fail, config-2 41/41); r9new all PASS
+  (N1 gaps/shafts/widths, N2, N4, N5 zero crossings, N6, N7, N9 route fill
+  72.8% formula / 100% real, N10); r9c 7/7; `tsc --noEmit` clean; frontend
+  vitest 311/311. Shots: /tmp/opencode/layout/r9e-{1280,1440,1920}-full.png
+  (?hiwshot=0.12 full-view). Gallery r9b-*-shots re-saved by c11 with the
+  new layout (expected).
