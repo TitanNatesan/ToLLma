@@ -111,7 +111,7 @@ const LAYERS: Layer[] = [
   {
     id: "ratelimit", n: "04", lane: "request", title: "Rate limit",
     sub: "RPM·RPH·RPD",
-    desc: "RPM/RPH/RPD and token caps with over-limit DENY and Retry-After.",
+    desc: "RPM/RPH/RPD plus token caps. Over-limit is DENY with Retry-After — nothing waits.",
     lines: ["Over-limit DENY", "Retry-After"],
   },
   {
@@ -144,9 +144,9 @@ const LAYERS: Layer[] = [
 const PROVIDERS: { id: string; name: string; note: string }[] = [
   { id: "openai", name: "OpenAI", note: "+7 ADAPTERS" },
   { id: "anthropic", name: "Anthropic", note: "TOOLS · STREAM" },
-  { id: "gemini", name: "Gemini", note: "STREAM-ONLY" },
-  { id: "vertex", name: "Vertex AI", note: "TOOLS · STREAM" },
-  { id: "bedrock", name: "Bedrock", note: "TOOLS · STREAM" },
+  { id: "gemini", name: "Google Gemini", note: "STREAM-ONLY" },
+  { id: "vertex", name: "Vertex AI", note: "STREAM-ONLY" },
+  { id: "bedrock", name: "AWS Bedrock", note: "TOOLS · STREAM" },
   { id: "custom", name: "Custom", note: "OPENAI-COMPAT" },
 ];
 
@@ -162,7 +162,7 @@ const VIEW: Record<Mode, { x: number; y: number; w: number; h: number }> = {
   // math uses w/h sizes only; x/y recenter the identity frame. Node sizes,
   // fonts, and row rhythm are untouched — rendered full-view text stays
   // >=12px (18u at k~0.68).
-  wide: { x: -42, y: -30, w: 1780, h: 950 },
+  wide: { x: -179, y: -20, w: 2170, h: 1000 },
   tall: { x: 0, y: 0, w: 660, h: 2440 },
 };
 
@@ -176,36 +176,42 @@ const VIEW: Record<Mode, { x: number; y: number; w: number; h: number }> = {
  * gaps sideways without moving rows up or down.
  */
 const GUT = 24;
+const GAP = 44;
+const LW = 252;
+const LH = 132;
+const CHIP_W = 240;
+const CHIP_H = 64;
+const LED_W = 272;
+const LED_H = 52;
+const FU = 22;
 
 /** Position strategy per mode, derived from the single LAYERS config. */
 function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rect[]; ledgers: Record<string, Rect>; captures: Rect; blocked: Rect } {
   if (mode === "wide") {
-    const LW = 192; const LH = 132;
     const layers: Record<string, Rect> = {};
-    const setupY = 80; const reqY = 280;
-    layers.register = { x: 32, y: setupY, w: LW, h: LH };
-    layers.keys = { x: 240, y: setupY, w: LW, h: LH };
-    const xs = Array.from({ length: 6 }, (_, i) => 392 + i * (LW + GUT));
+    const setupY = 72; const reqY = 260; // setup<->request gap = 56u
+    layers.register = { x: 16, y: setupY, w: LW, h: LH };
+    layers.keys = { x: 284, y: setupY, w: LW, h: LH };
+    const X0 = 40; const PITCH = LW + GAP; // request peer gap = 44u
     ["auth", "ratelimit", "guardrails", "route", "normalize", "observe"].forEach((id, i) => {
-      layers[id] = { x: xs[i], y: reqY, w: LW, h: LH };
+      layers[id] = { x: X0 + i * PITCH, y: reqY, w: LW, h: LH };
     });
-    // Providers fan out below route/normalize, indexed by PROVIDERS order.
-    // openai sits col0-bottom (receiving family: the return leg starts at
-    // its left edge).
+    // Providers fan out below route, indexed by PROVIDERS order. openai
+    // sits col0-bottom: the single return leg starts at its left edge.
     const slots = [{ c: 0, r: 2 }, { c: 1, r: 0 }, { c: 0, r: 0 }, { c: 1, r: 1 }, { c: 0, r: 1 }, { c: 1, r: 2 }];
-    const PX0 = xs[3]; const PY0 = 444; const PP = 80; // pinned row rhythm (was 64+GUT at 16)
+    const PX0 = layers.route.x; const PY0 = 444; const PP = 76; // pinned row rhythm
     const providers = slots.map((s) => ({
-      x: s.c === 0 ? PX0 : PX0 + 176 + GUT, y: PY0 + s.r * PP, w: 176, h: 64,
+      x: s.c === 0 ? PX0 : PX0 + CHIP_W + GAP, y: PY0 + s.r * PP, w: CHIP_W, h: CHIP_H,
     }));
-    // Ledger row on the GUT pitch (also fixes a 4u cost/tokens overlap).
-    const LED_Y = 762; const LX0 = 284; // captures-to-ledger gap = GUT
+    // Ledger row on the GUT pitch.
+    const LED_Y = 768; const LX0 = 336; // captures-to-ledger gap = GUT
     const ledgers: Record<string, Rect> = {
-      meta: { x: LX0, y: LED_Y, w: 210, h: 48 },
-      cost: { x: LX0 + 210 + GUT, y: LED_Y, w: 210, h: 48 },
-      tokens: { x: LX0 + 2 * (210 + GUT), y: LED_Y, w: 210, h: 48 },
+      meta: { x: LX0, y: LED_Y, w: LED_W, h: LED_H },
+      cost: { x: LX0 + LED_W + GUT, y: LED_Y, w: LED_W, h: LED_H },
+      tokens: { x: LX0 + 2 * (LED_W + GUT), y: LED_Y, w: LED_W, h: LED_H },
     };
-    const captures: Rect = { x: 40, y: LED_Y, w: 220, h: 60 };
-    const blocked: Rect = { x: 700, y: 470, w: 148, h: 78 };
+    const captures: Rect = { x: 40, y: LED_Y, w: 272, h: 52 };
+    const blocked: Rect = { x: 632, y: 470, w: 148, h: 96 };
     return { layers, providers, ledgers, captures, blocked };
   }
   const W = 400; const H = 132; const X = 40; const Y0 = 120; const STEP = 190; // 58u gaps hold 30u pills with 14u margins
@@ -256,86 +262,59 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
   const c: Conn[] = [];
   const R = L.layers;
   if (mode === "wide") {
-    const setupMid = R.register.y + R.register.h / 2; // 146
+    const setupMid = R.register.y + R.register.h / 2; // 138
     c.push({ name: "setup", d: `M${R.register.x + R.register.w},${setupMid} L${R.keys.x},${setupMid}`, x1: R.register.x + R.register.w, y1: setupMid, x2: R.keys.x, y2: setupMid });
-    // Drop: keys bottom -> auth top, elbowed low so the pill clears keys.
-    const dropX = cx(R.keys);
-    c.push({ name: "drop", d: elbow(dropX, R.keys.y + R.keys.h, cx(R.auth), R.auth.y, 260), x1: dropX, y1: R.keys.y + R.keys.h, x2: cx(R.auth), y2: R.auth.y, label: "REQUEST", lx: 430, ly: 239 });
-    const reqMid = R.auth.y + R.auth.h / 2; // 346
+    // Drop: keys bottom -> auth top, elbowed east of the REQUEST pill slot.
+    c.push({ name: "drop", d: `M410,${R.keys.y + R.keys.h} L410,232 L260,232 L260,${R.auth.y}`, x1: 410, y1: R.keys.y + R.keys.h, x2: 260, y2: R.auth.y, label: "REQUEST", lx: 512, ly: 232 });
+    const reqMid = R.auth.y + R.auth.h / 2; // 326
     const seq: [string, string][] = [["auth", "ratelimit"], ["ratelimit", "guardrails"], ["guardrails", "route"], ["route", "normalize"], ["normalize", "observe"]];
     seq.forEach(([a, b]) => {
       c.push({ name: `${a}-${b}`, d: `M${R[a].x + R[a].w},${reqMid} L${R[b].x},${reqMid}`, x1: R[a].x + R[a].w, y1: reqMid, x2: R[b].x, y2: reqMid });
     });
-    c.push({ name: "lbl-setup", d: "", x1: 40, y1: 64, x2: 40, y2: 64, label: "SETUP LANE · 01–02", lx: 40, ly: 64 });
-    c.push({ name: "lbl-request", d: "", x1: 556, y1: 250, x2: 556, y2: 250, label: "REQUEST LANE · 03–08", lx: 556, ly: 250 });
-    // Fan: spine drops from route's bottom edge into Gemini's top edge; a
-    // bus lane (one GUT below the request row) feeds Anthropic's top plus
-    // two side corridors (one GUT left of each chip column) that stub into
-    // the middle/bottom-row left edges. Every vertical sits in an x-gap, so
-    // no arrow shares a band with chip text.
-    const BUS_Y = R.route.y + R.route.h + GUT;
-    const PC0X = L.providers[2].x - GUT; // corridor left of col0
-    const PC1X = L.providers[1].x - GUT; // corridor left of col1
-    // Drop enters Anthropic's top edge off-center (mirrors the spine) so
-    // the arrowhead keeps >=8px from the centered chip name at 1280w.
-    const col1dx = L.providers[1].x + 24;
-    const SPX = R.route.x + 24; // spine 24u off route's left edge into gemini's top
-    c.push({ name: "fan", d: `M${SPX},${R.route.y + R.route.h} L${SPX},${L.providers[2].y}`, x1: SPX, y1: R.route.y + R.route.h, x2: SPX, y2: L.providers[2].y });
-    c.push({ name: "fan-bus", d: `M${PC0X},${BUS_Y} L${col1dx},${BUS_Y}`, x1: PC0X, y1: BUS_Y, x2: col1dx, y2: BUS_Y, label: "FAN-OUT", lx: 922, ly: 476 });
-    c.push({ name: "fan-d1", d: `M${col1dx},${BUS_Y} L${col1dx},${L.providers[1].y}`, x1: col1dx, y1: BUS_Y, x2: col1dx, y2: L.providers[1].y });
-    // col0 middle/bottom rows via the left corridor into left edges.
-    c.push({ name: "fan-c0", d: `M${PC0X},${BUS_Y} L${PC0X},${L.providers[0].y + 16}`, x1: PC0X, y1: BUS_Y, x2: PC0X, y2: L.providers[0].y + 16 });
-    c.push({ name: "fan-c0b1", d: `M${PC0X},${L.providers[4].y + 16} L${L.providers[4].x},${L.providers[4].y + 16}`, x1: PC0X, y1: L.providers[4].y + 16, x2: L.providers[4].x, y2: L.providers[4].y + 16 });
-    c.push({ name: "fan-c0b2", d: `M${PC0X},${L.providers[0].y + 16} L${L.providers[0].x},${L.providers[0].y + 16}`, x1: PC0X, y1: L.providers[0].y + 16, x2: L.providers[0].x, y2: L.providers[0].y + 16 });
-    // col1 middle/bottom rows via the inter-column gutter into left edges.
-    c.push({ name: "fan-c1", d: `M${PC1X},${BUS_Y} L${PC1X},${L.providers[5].y + 16}`, x1: PC1X, y1: BUS_Y, x2: PC1X, y2: L.providers[5].y + 16 });
-    c.push({ name: "fan-c1b1", d: `M${PC1X},${L.providers[3].y + 16} L${L.providers[3].x},${L.providers[3].y + 16}`, x1: PC1X, y1: L.providers[3].y + 16, x2: L.providers[3].x, y2: L.providers[3].y + 16 });
-    c.push({ name: "fan-c1b2", d: `M${PC1X},${L.providers[5].y + 16} L${L.providers[5].x},${L.providers[5].y + 16}`, x1: PC1X, y1: L.providers[5].y + 16, x2: L.providers[5].x, y2: L.providers[5].y + 16 });
-    // Return: openai's left edge exits west, drops in the x-gap corridor to
-    // a dedicated lane (one GUT below the tap feed, crossing no box/text),
-    // then rises into normalize's bottom edge. Orthogonal wire-wire
-    // crossings stay bare: a bridge gap would leave mid-air endpoints and
-    // violate the <=2px joint rule (see R9 log).
+    c.push({ name: "lbl-setup", d: "", x1: 40, y1: 64, x2: 40, y2: 64, label: "SETUP LANE \u00b7 01\u201302", lx: 40, ly: 64 });
+    c.push({ name: "lbl-request", d: "", x1: 940, y1: 250, x2: 940, y2: 250, label: "REQUEST LANE \u00b7 03\u201308", lx: 940, ly: 250 });
+    // Fan: one dedicated vertical inbound lane per provider chip. Col0 runs
+    // a spine from route's bottom edge into gemini's top, then chains down
+    // gemini->bedrock->openai bottom-to-top; col1 elbows from route into
+    // anthropic's top, then chains down. Every endpoint lands on a chip
+    // edge; parallels sit >=20u apart with zero crossings.
+    c.push({ name: "fan", d: `M940,${R.route.y + R.route.h} L940,${L.providers[2].y}`, x1: 940, y1: R.route.y + R.route.h, x2: 940, y2: L.providers[2].y, label: "FAN-OUT", lx: 764, ly: 418 });
+    c.push({ name: "fan-p4", d: `M1150,${R.route.y + R.route.h} L1150,400 L1225,400 L1225,${L.providers[1].y}`, x1: 1150, y1: R.route.y + R.route.h, x2: 1225, y2: L.providers[1].y });
+    c.push({ name: "fan-c0a", d: `M940,${L.providers[2].y + L.providers[2].h} L940,${L.providers[4].y}`, x1: 940, y1: L.providers[2].y + L.providers[2].h, x2: 940, y2: L.providers[4].y });
+    c.push({ name: "fan-c0b", d: `M940,${L.providers[4].y + L.providers[4].h} L940,${L.providers[0].y}`, x1: 940, y1: L.providers[4].y + L.providers[4].h, x2: 940, y2: L.providers[0].y });
+    c.push({ name: "fan-c1a", d: `M1225,${L.providers[1].y + L.providers[1].h} L1225,${L.providers[3].y}`, x1: 1225, y1: L.providers[1].y + L.providers[1].h, x2: 1225, y2: L.providers[3].y });
+    c.push({ name: "fan-c1b", d: `M1225,${L.providers[3].y + L.providers[3].h} L1225,${L.providers[5].y}`, x1: 1225, y1: L.providers[3].y + L.providers[3].h, x2: 1225, y2: L.providers[5].y });
+    // Return: openai's left edge exits west, runs a dedicated lane between
+    // the tap feed and the ledger row (crosses nothing), then rises into
+    // normalize's bottom edge.
     const FEED_Y = L.providers[0].y + L.providers[0].h + GUT;
-    const RET_Y = FEED_Y + GUT;
-    const RET_X = 1440; // one GUT off Custom's right edge (1416)
+    const RET_Y = FEED_Y - 16;
     const retMid = L.providers[0].y + L.providers[0].h / 2;
-    const RET_WX = L.providers[0].x - 56; // west corridor leg (was the 960 lane)
-    c.push({ name: "return", d: `M${L.providers[0].x},${retMid} L${RET_WX},${retMid} L${RET_WX},${RET_Y} L${RET_X},${RET_Y} L${RET_X},${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: retMid, x2: RET_X, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 1300, ly: RET_Y + GUT + 15 });
-    // Response along reserved top slot into keys top (crosses nothing).
-    const RESP_X = R.normalize.x + R.normalize.w / 2; // drops from normalize's center
-    c.push({ name: "response", d: `M${RESP_X},${R.normalize.y} L${RESP_X},56 L${dropX},56 L${dropX},${R.keys.y}`, x1: RESP_X, y1: R.normalize.y, x2: dropX, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 82 });
+    c.push({ name: "return", d: `M${L.providers[0].x},${retMid} L900,${retMid} L900,${RET_Y} L1468,${RET_Y} L1468,${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: retMid, x2: 1468, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 916, ly: 726 });
+    // Response along the reserved top slot into keys top (crosses nothing),
+    // entering normalize from above.
+    c.push({ name: "response", d: `M1350,${R.normalize.y} L1350,56 L480,56 L480,${R.keys.y}`, x1: 1350, y1: R.normalize.y, x2: 480, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 94 });
     // Coral blocked branch: guardrails bottom -> terminus top (stops at L05).
-    const BLK_X = R.guardrails.x + 16;
-    c.push({ name: "blocked", coral: true, d: `M${BLK_X},${R.guardrails.y + R.guardrails.h} L${BLK_X},${L.blocked.y}`, x1: BLK_X, y1: R.guardrails.y + R.guardrails.h, x2: BLK_X, y2: L.blocked.y });
-    // Dashed workspace tap: L01 bottom -> captures top (never L05).
-    c.push({ name: "tap-captures", dashed: true, d: `M128,${R.register.y + R.register.h} L128,${L.captures.y}`, x1: 128, y1: R.register.y + R.register.h, x2: 128, y2: L.captures.y, label: "PROMPT LOG TAP", lx: 250, ly: 490 });
-    // Per-layer taps join a short bus + down-feed (never the guardrail node).
-    const tapY = (r: Rect) => r.y + r.h;
-    [[R.ratelimit, 612], [R.guardrails, 836]].forEach(([r, x]) => {
-      const rr = r as Rect; const xx = x as number;
-      c.push({ name: `tap-${xx}`, dashed: true, d: `M${xx},${tapY(rr)} L${xx},${BUS_Y}`, x1: xx, y1: tapY(rr), x2: xx, y2: BUS_Y });
-    });
-    // Auth tap runs down to feed the meta ledger top (T-joint with the bus).
-    c.push({ name: "tap-404", dashed: true, d: `M404,${tapY(R.auth)} L404,${L.ledgers.meta.y}`, x1: 404, y1: tapY(R.auth), x2: 404, y2: L.ledgers.meta.y });
-    c.push({ name: "tap-bus", dashed: true, d: `M404,${BUS_Y} L836,${BUS_Y}`, x1: 404, y1: BUS_Y, x2: 836, y2: BUS_Y, label: "LOG TAPS", lx: 520, ly: 482 });
-    c.push({ name: "tap-down", dashed: true, d: `M600,${BUS_Y} L600,${FEED_Y}`, x1: 600, y1: BUS_Y, x2: 600, y2: FEED_Y });
+    c.push({ name: "blocked", coral: true, d: `M648,${R.guardrails.y + R.guardrails.h} L648,${L.blocked.y}`, x1: 648, y1: R.guardrails.y + R.guardrails.h, x2: 648, y2: L.blocked.y });
+    // Dashed workspace tap: register bottom -> captures top via the
+    // request-lane gap corridor (never through a node).
+    c.push({ name: "tap-captures", dashed: true, d: `M200,${R.register.y + R.register.h} L200,246 L314,246 L314,730 L200,730 L200,${L.captures.y}`, x1: 200, y1: R.register.y + R.register.h, x2: 200, y2: L.captures.y, label: "PROMPT LOG TAP", lx: 172, ly: 858 });
+    // Per-layer taps join the shared feed lane (T-joints, never nodes).
+    // Auth runs south then east into the meta ledger top.
+    c.push({ name: "tap-auth", dashed: true, d: `M90,${R.auth.y + R.auth.h} L90,746 L472,746 L472,${L.ledgers.meta.y}`, x1: 90, y1: R.auth.y + R.auth.h, x2: 472, y2: L.ledgers.meta.y });
+    c.push({ name: "tap-r", dashed: true, d: `M470,${R.ratelimit.y + R.ratelimit.h} L470,${FEED_Y} L1400,${FEED_Y}`, x1: 470, y1: R.ratelimit.y + R.ratelimit.h, x2: 1400, y2: FEED_Y, label: "LOG TAPS", lx: 202, ly: 418 });
+    c.push({ name: "tap-g", dashed: true, d: `M880,${R.guardrails.y + R.guardrails.h} L880,${FEED_Y}`, x1: 880, y1: R.guardrails.y + R.guardrails.h, x2: 880, y2: FEED_Y });
     // Normalize tap joins from the right edge; the shared feed lane runs
-    // west below the providers and branches down into each ledger top
-    // (T-joints, never through nodes).
-    const TAPN_X = R.observe.x - GUT; // right gutter lane, one GUT off observe
-    c.push({ name: "tap-n", dashed: true, d: `M${R.normalize.x + R.normalize.w},380 L${TAPN_X},380 L${TAPN_X},${FEED_Y} L600,${FEED_Y}`, x1: R.normalize.x + R.normalize.w, y1: 380, x2: 600, y2: FEED_Y });
-    c.push({ name: "tap-f1", dashed: true, d: `M${L.ledgers.cost.x + 105},${FEED_Y} L${L.ledgers.cost.x + 105},${L.ledgers.cost.y}`, x1: L.ledgers.cost.x + 105, y1: FEED_Y, x2: L.ledgers.cost.x + 105, y2: L.ledgers.cost.y });
-    c.push({ name: "tap-f2", dashed: true, d: `M${L.ledgers.tokens.x + 105},${FEED_Y} L${L.ledgers.tokens.x + 105},${L.ledgers.tokens.y}`, x1: L.ledgers.tokens.x + 105, y1: FEED_Y, x2: L.ledgers.tokens.x + 105, y2: L.ledgers.tokens.y });
-    // Analytics reads the ledgers: observe bottom exits east, drops in the
-    // right corridor, and enters the tokens ledger's right edge at
-    // mid-height — the caption row below stays wire-free.
-    const AN_Y = L.ledgers.tokens.y + 24;
-    const AN_X0 = R.observe.x + 96; const AN_X1 = R.observe.x + 128; // exits/enters inside observe's span
-    c.push({ name: "analytics", dashed: true, d: `M${AN_X0},${R.observe.y + R.observe.h} L${AN_X1},${R.observe.y + R.observe.h} L${AN_X1},${AN_Y} L${L.ledgers.tokens.x + L.ledgers.tokens.w},${AN_Y}`, x1: AN_X0, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: AN_Y, label: "ANALYTICS", lx: 1500, ly: 843 });
+    // west below the providers and branches down into cost/tokens tops.
+    c.push({ name: "tap-n", dashed: true, d: `M${R.normalize.x + R.normalize.w},355 L1504,355 L1504,${FEED_Y} L1400,${FEED_Y}`, x1: R.normalize.x + R.normalize.w, y1: 355, x2: 1400, y2: FEED_Y });
+    c.push({ name: "tap-f0", dashed: true, d: `M768,${FEED_Y} L768,${L.ledgers.cost.y}`, x1: 768, y1: FEED_Y, x2: 768, y2: L.ledgers.cost.y });
+    c.push({ name: "tap-f1", dashed: true, d: `M1064,${FEED_Y} L1064,${L.ledgers.tokens.y}`, x1: 1064, y1: FEED_Y, x2: 1064, y2: L.ledgers.tokens.y });
+    // Analytics reads the ledgers: observe bottom exits south and enters
+    // the tokens ledger's right edge at mid-height.
+    c.push({ name: "analytics", dashed: true, d: `M1646,${R.observe.y + R.observe.h} L1646,794 L${L.ledgers.tokens.x + L.ledgers.tokens.w},794`, x1: 1646, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: 794, label: "ANALYTICS", lx: 1250, ly: 858 });
     return c;
   }
-  // Tall: vertical pipeline, providers inline between route and normalize.
+    // Tall: vertical pipeline, providers inline between route and normalize.
   const seqT: [string, string][] = [["register", "keys"], ["keys", "auth"], ["auth", "ratelimit"], ["ratelimit", "guardrails"], ["guardrails", "route"]];
   seqT.forEach(([a, b]) => {
     c.push({ name: `${a}-${b}`, d: `M${cx(R[a])},${R[a].y + R[a].h} L${cx(R[b])},${R[b].y}`, x1: cx(R[a]), y1: R[a].y + R[a].h, x2: cx(R[b]), y2: R[b].y });
@@ -387,13 +366,13 @@ const power2inOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) * (-
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 type Cam = { x: number; y: number; s: number };
 /** Connectors downstream of the L05 block (dimmed to 0.35 on injection). */
-const DOWNSTREAM_WIDE = new Set(["route-normalize", "normalize-observe", "fan", "fan-bus", "fan-d1", "fan-c0", "fan-c0b1", "fan-c0b2", "fan-c1", "fan-c1b1", "fan-c1b2", "return", "response", "tap-n", "tap-f1", "tap-f2", "analytics"]);
+const DOWNSTREAM_WIDE = new Set(["route-normalize", "normalize-observe", "fan", "fan-p4", "fan-c0a", "fan-c0b", "fan-c1a", "fan-c1b", "return", "response", "tap-n", "tap-f0", "tap-f1", "analytics"]);
 const DOWNSTREAM_TALL = new Set(["prov-0", "prov-1", "prov-2", "prov-3", "prov-4", "prov-norm", "normalize-observe", "response", "analytics"]);
 /** Lead-packet pass route: existing connector names forming one visual pass. */
 const PASS_WIDE = ["setup", "drop", "auth-ratelimit", "ratelimit-guardrails", "guardrails-route", "route-normalize", "normalize-observe", "response"];
 const PASS_TALL = ["register-keys", "keys-auth", "auth-ratelimit", "ratelimit-guardrails", "guardrails-route", "route-prov", "prov-0", "prov-1", "prov-2", "prov-3", "prov-4", "prov-norm", "normalize-observe", "response"];
 /** Pill labels: opaque pills in gutter slots. Headers + ANALYTICS stay plain. */
-const PILL_LABELS = new Set(["REQUEST", "RESPONSE", "RETURN", "FAN-OUT", "LOG TAPS", "PROMPT LOG TAP"]);
+const PILL_LABELS = new Set(["REQUEST", "RESPONSE", "RETURN", "FAN-OUT", "LOG TAPS", "PROMPT LOG TAP", "ANALYTICS"]);
 /** Stage envelope (entry fade/scale, exit scale/fade) — pure function of p. */
 function stageAt(p: number): { op: number; sc: number } {
   if (p < PH.A) { const t = p / PH.A; return { op: t, sc: 0.92 + 0.08 * t }; }
@@ -776,7 +755,7 @@ export default function Platform() {
                 ref={svgRef}
                 viewBox={`${V.x} ${V.y} ${V.w} ${V.h}`}
                 data-zoomfade="0"
-                className={pinned ? "h-full w-full select-none" : "h-auto w-full select-none"}
+                className={pinned ? "absolute inset-0 h-full w-full select-none" : "h-auto w-full select-none"}
                 role="img"
                 aria-label="ToLLma gateway: eight layers from register to observe"
               >
@@ -804,8 +783,8 @@ export default function Platform() {
                 <g data-camera>
                   {mode === "wide" && (
                     <>
-                      <rect x={16} y={48} width={432} height={180} fill="none" stroke={LINE} strokeDasharray="5 5" />
-                      <rect x={368} y={248} width={1312} height={196} fill="none" stroke={LINE} strokeDasharray="5 5" />
+                      <rect x={16} y={48} width={536} height={180} fill="none" stroke={LINE} strokeDasharray="5 5" />
+                      <rect x={16} y={248} width={1780} height={168} fill="none" stroke={LINE} strokeDasharray="5 5" />
                     </>
                   )}
                   {/* Connectors (computed from bounding boxes). */}
@@ -831,14 +810,14 @@ export default function Platform() {
                   {conns.filter((cn) => cn.label).map((cn) => (
                     PILL_LABELS.has(cn.label ?? "") ? (
                       <g key={`lbl-${cn.name}`} data-lbl={cn.name} data-pill={cn.name} opacity={0.95}>
-                        <rect x={(cn.lx ?? 0) - ((cn.label ?? "").length * 14.5 + 26) / 2} y={(cn.ly ?? 0) - 15} width={(cn.label ?? "").length * 14.5 + 26} height={30} rx={11} fill={CARD} stroke={LINE} />
-                        <text x={cn.lx} y={(cn.ly ?? 0) + 6.5} textAnchor="middle" fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">
+                        <rect x={(cn.lx ?? 0) - ((cn.label ?? "").length * 17.7 + 30) / 2} y={(cn.ly ?? 0) - 15} width={(cn.label ?? "").length * 17.7 + 30} height={30} rx={11} fill={CARD} stroke={LINE} />
+                        <text x={cn.lx} y={(cn.ly ?? 0) + 8} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
                           {cn.label}
                         </text>
                       </g>
                     ) : (
                       <g key={`lbl-${cn.name}`} data-lbl={cn.name} data-caption={cn.name} data-dim opacity={0.95}>
-                        <text x={cn.lx} y={cn.ly} fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">
+                        <text x={cn.lx} y={cn.ly} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
                           {cn.label}
                         </text>
                       </g>
@@ -851,11 +830,11 @@ export default function Platform() {
                     return (
                       <g key={l.id} data-layer={l.id} data-idx={i} id={`hiw-layer-${l.id}`} opacity={0.35}>
                         <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={FILL} stroke={l.lane === "setup" ? BLUE : MINT} strokeWidth={1.5} />
-                        <text x={r.x + 18} y={r.y + 34} fill={l.lane === "setup" ? BLUE : MINT} fontSize={18} fontFamily={MONO} letterSpacing="0.1em">{l.n}</text>
-                        <text x={r.x + 58} y={r.y + 34} fill={INK} fontSize={20} fontWeight={600} fontFamily={SANS}>{l.title}</text>
-                        <text x={r.x + 18} y={r.y + 62} fill={SUB} fontSize={18} fontWeight={500} fontFamily={MONO} letterSpacing="0.08em">{l.sub}</text>
-                        <text x={r.x + 18} y={r.y + 90} fill={SUB} fontSize={18} fontFamily={MONO}>{l.lines[0]}</text>
-                        <text x={r.x + 18} y={r.y + 114} fill={SUB} fontSize={18} fontFamily={MONO}>{l.lines[1]}</text>
+                        <text x={r.x + 18} y={r.y + 34} fill={l.lane === "setup" ? BLUE : MINT} fontSize={FU} fontFamily={MONO} letterSpacing="0.1em">{l.n}</text>
+                        <text x={r.x + 58} y={r.y + 34} fill={INK} fontSize={FU} fontWeight={600} fontFamily={SANS}>{l.title}</text>
+                        <text x={r.x + 18} y={r.y + 62} fill={SUB} fontSize={FU} fontWeight={500} fontFamily={MONO} letterSpacing="0.08em">{l.sub}</text>
+                        <text x={r.x + 24} y={r.y + 90} fill={SUB} fontSize={FU} fontFamily={MONO}>{l.lines[0]}</text>
+                        <text x={r.x + 24} y={r.y + 114} fill={SUB} fontSize={FU} fontFamily={MONO}>{l.lines[1]}</text>
                       </g>
                     );
                   })}
@@ -866,18 +845,30 @@ export default function Platform() {
                     return (
                     <g key={fam.id} data-prov={fam.id} data-dim data-down={mode === "wide" ? "fan" : "prov-0"} opacity={0.9}>
                       <rect x={p.x} y={p.y} width={p.w} height={p.h} fill={FILL} stroke={LINE} strokeWidth={1.5} />
-                      <text x={p.x + p.w / 2} y={p.y + 30} textAnchor="middle" fill={INK} fontSize={18} fontWeight={600} fontFamily={SANS}>
+                      <text x={p.x + p.w / 2} y={p.y + 30} textAnchor="middle" fill={INK} fontSize={FU} fontWeight={600} fontFamily={SANS}>
                         {fam.name}
                       </text>
-                      <text x={p.x + p.w / 2} y={p.y + 52} textAnchor="middle" fill={SUB} fontSize={18} fontFamily={MONO} letterSpacing="0.08em">
+                      <text x={p.x + p.w / 2} y={p.y + 52} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={MONO} letterSpacing="0.08em">
                         {fam.note}
                       </text>
                     </g>
                     );
                   })}
-                  <text data-caption="providers" data-dim x={mode === "wide" ? 1228 : 120} y={mode === "wide" ? 843 : L.providers[5].y + 88} fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">
-                    {mode === "wide" ? "PROVIDERS · 6 FAMILIES" : "6 FAMILIES · GEMINI STREAM-ONLY"}
-                  </text>
+                  {mode === "wide" ? (
+                    <>
+                      <text data-caption="providers" data-dim x={1400} y={842} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
+                        PROVIDERS · 6 FAMILIES
+                      </text>
+                      <line x1={1400} y1={874} x2={1700} y2={874} stroke={LINE} strokeWidth={1.5} />
+                      <text data-caption="analytics-cap" data-dim x={1400} y={928} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
+                        ANALYTICS READS LEDGERS
+                      </text>
+                    </>
+                  ) : (
+                    <text data-caption="providers" data-dim x={120} y={L.providers[5].y + 88} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
+                      6 FAMILIES · GEMINI STREAM-ONLY
+                    </text>
+                  )}
 
                   {/* Ledgers + captures */}
                   {LEDGERS.map((lg) => {
@@ -885,26 +876,26 @@ export default function Platform() {
                     return (
                       <g key={lg.id} data-ledger={lg.id} data-dim opacity={0.9}>
                         <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={FILL} stroke={LINE} strokeWidth={1.5} />
-                        <text x={r.x + r.w / 2} y={r.y + 30} textAnchor="middle" fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">{lg.label}</text>
+                        <text x={r.x + r.w / 2} y={r.y + 30} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">{lg.label}</text>
                       </g>
                     );
                   })}
                   <g data-captures data-dim opacity={0.9}>
                     <rect x={L.captures.x} y={L.captures.y} width={L.captures.w} height={L.captures.h} fill={FILL} stroke={BLUE} strokeWidth={1.5} strokeDasharray="7 6" />
-                    <text x={L.captures.x + L.captures.w / 2} y={L.captures.y + 26} textAnchor="middle" fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.08em">
+                    <text x={L.captures.x + L.captures.w / 2} y={L.captures.y + 26} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.08em">
                       {mode === "wide" ? "CAPTURES" : "PROMPT / RESPONSE CAPTURES"}
                     </text>
-                    <text x={L.captures.x + L.captures.w / 2} y={L.captures.y + 48} textAnchor="middle" fill={SUB} fontSize={18} fontFamily={MONO}>
+                    <text x={L.captures.x + L.captures.w / 2} y={L.captures.y + 45} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={MONO}>
                       {mode === "wide" ? "ENCRYPTED·BOUNDED" : "ENCRYPTED · BOUNDED"}
                     </text>
                   </g>
                   {/* Coral blocked terminus (stops at L05, never reaches providers). */}
                   <g data-blocked-badge data-coral-ui opacity={0.35}>
-                    <rect x={L.blocked.x} y={L.blocked.y} width={L.blocked.w} height={L.blocked.h} fill={FILL} stroke={CORAL} strokeWidth={2} />
-                    <text x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 32 : 28)} textAnchor="middle" fill={CORAL} fontSize={18} fontWeight={700} fontFamily={SANS} letterSpacing="0.06em">
+                    <rect x={L.blocked.x} y={L.blocked.y} width={L.blocked.w} height={L.blocked.h} fill={CARD} stroke={CORAL} strokeWidth={2} />
+                    <text x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 44 : 28)} textAnchor="middle" fill={CORAL} fontSize={FU} fontWeight={700} fontFamily={SANS} letterSpacing="0.06em">
                       REQUEST
                     </text>
-                    <text x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 58 : 50)} textAnchor="middle" fill={CORAL} fontSize={18} fontFamily={SANS} letterSpacing="0.06em">
+                    <text x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 70 : 50)} textAnchor="middle" fill={CORAL} fontSize={FU} fontFamily={SANS} letterSpacing="0.06em">
                       BLOCKED
                     </text>
                   </g>
@@ -929,7 +920,7 @@ export default function Platform() {
             </div>
 
             {/* SINGLE stepper instance (desktop + mobile share it). */}
-            <div className={pinned ? "mx-auto mt-6 w-full shrink-0" : "mx-auto mt-6 w-full"}>
+            <div className={pinned ? "mx-auto mt-6 w-full shrink-0 pb-12" : "mx-auto mt-6 w-full pb-12"}>
               <div className="flex items-center gap-4">
                 <span className="relative h-[3px] flex-1 bg-white/10" aria-hidden="true">
                   <span ref={railRef} data-rail className="absolute inset-0 origin-left bg-gradient-to-r from-[#a9bdf4] to-[#72ddb1]" style={{ transform: "scaleX(0)" }} />
