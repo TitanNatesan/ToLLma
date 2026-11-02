@@ -1,7 +1,8 @@
 // How-it-works: 8-layer scroll-driven gateway story (L01–L08).
 //
 // ONE module, SINGLE layout config (LAYERS + layoutNodes below: node ids,
-// lane, size, position strategy per mode). All connectors are computed from
+// lane, size, position strategy per mode; peer boxes share one gutter token
+// (GUT). All connectors are computed from
 // node bounding boxes (edgeBox/elbow): every path starts and ends exactly
 // on a node edge or another wire (<=2px by construction), orthogonal with
 // rounded joins, labels in reserved gutter slots with OPAQUE pills (never
@@ -156,12 +157,18 @@ const LEDGERS = [
 ];
 
 const VIEW: Record<Mode, { w: number; h: number }> = {
-  wide: { w: 1648, h: 820 },
+  wide: { w: 1648, h: 880 },
   tall: { w: 660, h: 2440 },
 };
 
-/** Camera margin: one inter-node gutter per side (layout units). */
-const LANE_M = 18;
+/**
+ * SINGLE gutter token. Every peer box gap (layer-to-layer, chip-to-chip,
+ * ledger-to-ledger, captures-to-ledger) equals GUT exactly, and the camera
+ * frames each layer with one GUT margin per side. Larger separations are
+ * wire lanes stacked as GUT multiples below the request row (bus, provider
+ * block, tap feed, return) so no routed arrow shares a band with box text.
+ */
+const GUT = 16;
 
 /** Position strategy per mode, derived from the single LAYERS config. */
 function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rect[]; ledgers: Record<string, Rect>; captures: Rect; blocked: Rect } {
@@ -179,15 +186,18 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     // openai sits col0-bottom (receiving family: the return leg starts at
     // its left edge).
     const slots = [{ c: 0, r: 2 }, { c: 1, r: 0 }, { c: 0, r: 0 }, { c: 1, r: 1 }, { c: 0, r: 1 }, { c: 1, r: 2 }];
+    const PX0 = 1016; const PY0 = 444; const PP = 64 + GUT;
     const providers = slots.map((s) => ({
-      x: s.c === 0 ? 1020 : 1220, y: 468 + s.r * 72, w: 176, h: 64,
+      x: s.c === 0 ? PX0 : PX0 + 176 + GUT, y: PY0 + s.r * PP, w: 176, h: 64,
     }));
+    // Ledger row on the GUT pitch (also fixes a 4u cost/tokens overlap).
+    const LED_Y = 762; const LX0 = 276;
     const ledgers: Record<string, Rect> = {
-      meta: { x: 380, y: 724, w: 210, h: 48 },
-      cost: { x: 606, y: 724, w: 210, h: 48 },
-      tokens: { x: 812, y: 724, w: 210, h: 48 },
+      meta: { x: LX0, y: LED_Y, w: 210, h: 48 },
+      cost: { x: LX0 + 210 + GUT, y: LED_Y, w: 210, h: 48 },
+      tokens: { x: LX0 + 2 * (210 + GUT), y: LED_Y, w: 210, h: 48 },
     };
-    const captures: Rect = { x: 40, y: 724, w: 220, h: 60 };
+    const captures: Rect = { x: 40, y: LED_Y, w: 220, h: 60 };
     const blocked: Rect = { x: 700, y: 470, w: 148, h: 78 };
     return { layers, providers, ledgers, captures, blocked };
   }
@@ -201,7 +211,7 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
   order.forEach((id) => {
     if (id === "__prov__") {
       y += 58 - (STEP - H);
-      for (let i = 0; i < 6; i++) { provY.push(y); y += 72; }
+      for (let i = 0; i < 6; i++) { provY.push(y); y += 64 + GUT; }
       y += 58 - 8;
       return;
     }
@@ -212,12 +222,12 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
   const providers = provY.map((py) => ({ x: 120, y: py, w: 280, h: 64 }));
   const ledgers: Record<string, Rect> = {
     meta: { x: X, y: y + 58 - (STEP - H), w: W, h: 48 },
-    cost: { x: X, y: y + 58 - (STEP - H) + 68, w: W, h: 48 },
-    tokens: { x: X, y: y + 58 - (STEP - H) + 136, w: W, h: 48 },
+    cost: { x: X, y: y + 58 - (STEP - H) + 48 + GUT, w: W, h: 48 },
+    tokens: { x: X, y: y + 58 - (STEP - H) + 2 * (48 + GUT), w: W, h: 48 },
   };
-  const captures: Rect = { x: X, y: y + 58 - (STEP - H) + 204 + 40, w: W, h: 60 };
+  const captures: Rect = { x: X, y: y + 58 - (STEP - H) + 2 * (48 + GUT) + 48 + GUT, w: W, h: 60 };
   // Blocked terminus: side chip off guardrails' right edge (stops at L05).
-  const blocked: Rect = { x: 470, y: layers.guardrails.y + 33, w: 150, h: 66 };
+  const blocked: Rect = { x: 440 + GUT, y: layers.guardrails.y + 33, w: 150, h: 66 };
   return { layers, providers, ledgers, captures, blocked };
 }
 
@@ -251,22 +261,38 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     });
     c.push({ name: "lbl-setup", d: "", x1: 40, y1: 64, x2: 40, y2: 64, label: "SETUP LANE · 01–02", lx: 40, ly: 64 });
     c.push({ name: "lbl-request", d: "", x1: 556, y1: 250, x2: 556, y2: 250, label: "REQUEST LANE · 03–08", lx: 556, ly: 250 });
-    // Fan: route bottom -> spine -> col0r0 top; bus feeds col1 + col0 r1/r2.
-    const busY = 442;
-c.push({ name: "fan", d: `M1040,${R.route.y + R.route.h} L1040,${L.providers[2].y}`, x1: 1040, y1: R.route.y + R.route.h, x2: 1040, y2: L.providers[2].y });
-    c.push({ name: "fan-bus", d: `M990,${busY} L${cx(L.providers[1])},${busY}`, x1: 990, y1: busY, x2: cx(L.providers[1]), y2: busY, label: "FAN-OUT", lx: 922, ly: 476 });
-    c.push({ name: "fan-d1", d: `M1240,${busY} L1240,${L.providers[1].y}`, x1: 1240, y1: busY, x2: 1240, y2: L.providers[1].y });
-    // col0 r1/r2 via left drops into left edges (text sits +18 inside).
-    c.push({ name: "fan-c0", d: `M990,${busY} L990,${L.providers[0].y + 16}`, x1: 990, y1: busY, x2: 990, y2: L.providers[0].y + 16 });
-    c.push({ name: "fan-c0b1", d: `M990,${L.providers[4].y + 16} L${L.providers[4].x},${L.providers[4].y + 16}`, x1: 990, y1: L.providers[4].y + 16, x2: L.providers[4].x, y2: L.providers[4].y + 16 });
-    c.push({ name: "fan-c0b2", d: `M990,${L.providers[0].y + 16} L${L.providers[0].x},${L.providers[0].y + 16}`, x1: 990, y1: L.providers[0].y + 16, x2: L.providers[0].x, y2: L.providers[0].y + 16 });
-    // col1 r1/r2 via the inter-column gutter into left edges.
-    c.push({ name: "fan-c1", d: `M1208,${busY} L1208,${L.providers[5].y + 16}`, x1: 1208, y1: busY, x2: 1208, y2: L.providers[5].y + 16 });
-    c.push({ name: "fan-c1b1", d: `M1208,${L.providers[3].y + 16} L${L.providers[3].x},${L.providers[3].y + 16}`, x1: 1208, y1: L.providers[3].y + 16, x2: L.providers[3].x, y2: L.providers[3].y + 16 });
-    c.push({ name: "fan-c1b2", d: `M1208,${L.providers[5].y + 16} L${L.providers[5].x},${L.providers[5].y + 16}`, x1: 1208, y1: L.providers[5].y + 16, x2: L.providers[5].x, y2: L.providers[5].y + 16 });
-    // Return: openai left edge -> corridor -> normalize bottom.
-    const retY = 690;
-    c.push({ name: "return", d: `M${L.providers[0].x},${L.providers[0].y + L.providers[0].h / 2} L960,${L.providers[0].y + L.providers[0].h / 2} L960,${retY} L1404,${retY} L1404,${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: L.providers[0].y + L.providers[0].h / 2, x2: 1404, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 1300, ly: 716 });
+    // Fan: spine drops from route's bottom edge into Gemini's top edge; a
+    // bus lane (one GUT below the request row) feeds Anthropic's top plus
+    // two side corridors (one GUT left of each chip column) that stub into
+    // the middle/bottom-row left edges. Every vertical sits in an x-gap, so
+    // no arrow shares a band with chip text.
+    const BUS_Y = R.route.y + R.route.h + GUT;
+    const PC0X = L.providers[2].x - GUT; // corridor left of col0
+    const PC1X = L.providers[1].x - GUT; // corridor left of col1
+    // Drop enters Anthropic's top edge off-center (mirrors the spine) so
+    // the arrowhead keeps >=8px from the centered chip name at 1280w.
+    const col1dx = L.providers[1].x + 24;
+    c.push({ name: "fan", d: `M1040,${R.route.y + R.route.h} L1040,${L.providers[2].y}`, x1: 1040, y1: R.route.y + R.route.h, x2: 1040, y2: L.providers[2].y });
+    c.push({ name: "fan-bus", d: `M${PC0X},${BUS_Y} L${col1dx},${BUS_Y}`, x1: PC0X, y1: BUS_Y, x2: col1dx, y2: BUS_Y, label: "FAN-OUT", lx: 922, ly: 476 });
+    c.push({ name: "fan-d1", d: `M${col1dx},${BUS_Y} L${col1dx},${L.providers[1].y}`, x1: col1dx, y1: BUS_Y, x2: col1dx, y2: L.providers[1].y });
+    // col0 middle/bottom rows via the left corridor into left edges.
+    c.push({ name: "fan-c0", d: `M${PC0X},${BUS_Y} L${PC0X},${L.providers[0].y + 16}`, x1: PC0X, y1: BUS_Y, x2: PC0X, y2: L.providers[0].y + 16 });
+    c.push({ name: "fan-c0b1", d: `M${PC0X},${L.providers[4].y + 16} L${L.providers[4].x},${L.providers[4].y + 16}`, x1: PC0X, y1: L.providers[4].y + 16, x2: L.providers[4].x, y2: L.providers[4].y + 16 });
+    c.push({ name: "fan-c0b2", d: `M${PC0X},${L.providers[0].y + 16} L${L.providers[0].x},${L.providers[0].y + 16}`, x1: PC0X, y1: L.providers[0].y + 16, x2: L.providers[0].x, y2: L.providers[0].y + 16 });
+    // col1 middle/bottom rows via the inter-column gutter into left edges.
+    c.push({ name: "fan-c1", d: `M${PC1X},${BUS_Y} L${PC1X},${L.providers[5].y + 16}`, x1: PC1X, y1: BUS_Y, x2: PC1X, y2: L.providers[5].y + 16 });
+    c.push({ name: "fan-c1b1", d: `M${PC1X},${L.providers[3].y + 16} L${L.providers[3].x},${L.providers[3].y + 16}`, x1: PC1X, y1: L.providers[3].y + 16, x2: L.providers[3].x, y2: L.providers[3].y + 16 });
+    c.push({ name: "fan-c1b2", d: `M${PC1X},${L.providers[5].y + 16} L${L.providers[5].x},${L.providers[5].y + 16}`, x1: PC1X, y1: L.providers[5].y + 16, x2: L.providers[5].x, y2: L.providers[5].y + 16 });
+    // Return: openai's left edge exits west, drops in the x-gap corridor to
+    // a dedicated lane (one GUT below the tap feed, crossing no box/text),
+    // then rises into normalize's bottom edge. Orthogonal wire-wire
+    // crossings stay bare: a bridge gap would leave mid-air endpoints and
+    // violate the <=2px joint rule (see R9 log).
+    const FEED_Y = L.providers[0].y + L.providers[0].h + GUT;
+    const RET_Y = FEED_Y + GUT;
+    const RET_X = 1400; // 16u off Custom's right edge and the tap riser
+    const retMid = L.providers[0].y + L.providers[0].h / 2;
+    c.push({ name: "return", d: `M${L.providers[0].x},${retMid} L960,${retMid} L960,${RET_Y} L${RET_X},${RET_Y} L${RET_X},${R.normalize.y + R.normalize.h}`, x1: L.providers[0].x, y1: retMid, x2: RET_X, y2: R.normalize.y + R.normalize.h, label: "RETURN", lx: 1300, ly: RET_Y + GUT + 15 });
     // Response along reserved top slot into keys top (crosses nothing).
     c.push({ name: "response", d: `M1320,${R.normalize.y} L1320,56 L${dropX},56 L${dropX},${R.keys.y}`, x1: 1320, y1: R.normalize.y, x2: dropX, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 82 });
     // Coral blocked branch: guardrails bottom -> terminus top (stops at L05).
@@ -277,19 +303,24 @@ c.push({ name: "fan", d: `M1040,${R.route.y + R.route.h} L1040,${L.providers[2].
     const tapY = (r: Rect) => r.y + r.h;
     [[R.ratelimit, 612], [R.guardrails, 820]].forEach(([r, x]) => {
       const rr = r as Rect; const xx = x as number;
-      c.push({ name: `tap-${xx}`, dashed: true, d: `M${xx},${tapY(rr)} L${xx},452`, x1: xx, y1: tapY(rr), x2: xx, y2: 452 });
+      c.push({ name: `tap-${xx}`, dashed: true, d: `M${xx},${tapY(rr)} L${xx},${BUS_Y}`, x1: xx, y1: tapY(rr), x2: xx, y2: BUS_Y });
     });
     // Auth tap runs down to feed the meta ledger top (T-joint with the bus).
     c.push({ name: "tap-404", dashed: true, d: `M404,${tapY(R.auth)} L404,${L.ledgers.meta.y}`, x1: 404, y1: tapY(R.auth), x2: 404, y2: L.ledgers.meta.y });
-    c.push({ name: "tap-bus", dashed: true, d: `M404,452 L820,452`, x1: 404, y1: 452, x2: 820, y2: 452, label: "LOG TAPS", lx: 520, ly: 482 });
-    c.push({ name: "tap-down", dashed: true, d: `M600,452 L600,684`, x1: 600, y1: 452, x2: 600, y2: 684 });
-    // Normalize tap joins from the right edge; the shared feed branches
-    // down into each ledger top (T-joints, never through nodes).
-    c.push({ name: "tap-n", dashed: true, d: `M${R.normalize.x + R.normalize.w},380 L1424,380 L1424,684 L600,684`, x1: R.normalize.x + R.normalize.w, y1: 380, x2: 600, y2: 684 });
-    c.push({ name: "tap-f1", dashed: true, d: `M701,684 L701,${L.ledgers.cost.y}`, x1: 701, y1: 684, x2: 701, y2: L.ledgers.cost.y });
-    c.push({ name: "tap-f2", dashed: true, d: `M907,684 L907,${L.ledgers.tokens.y}`, x1: 907, y1: 684, x2: 907, y2: L.ledgers.tokens.y });
-    // Analytics reads ledgers -> observe bottom via the right corridor.
-    c.push({ name: "analytics", dashed: true, d: `M1536,${R.observe.y + R.observe.h} L1568,${R.observe.y + R.observe.h} L1568,748 L${L.ledgers.tokens.x + L.ledgers.tokens.w},748`, x1: 1536, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: 748, label: "ANALYTICS", lx: 1150, ly: 788 });
+    c.push({ name: "tap-bus", dashed: true, d: `M404,${BUS_Y} L820,${BUS_Y}`, x1: 404, y1: BUS_Y, x2: 820, y2: BUS_Y, label: "LOG TAPS", lx: 520, ly: 482 });
+    c.push({ name: "tap-down", dashed: true, d: `M600,${BUS_Y} L600,${FEED_Y}`, x1: 600, y1: BUS_Y, x2: 600, y2: FEED_Y });
+    // Normalize tap joins from the right edge; the shared feed lane runs
+    // west below the providers and branches down into each ledger top
+    // (T-joints, never through nodes).
+    const TAPN_X = 1416; // right gutter: 16u off the riser, 24u off observe
+    c.push({ name: "tap-n", dashed: true, d: `M${R.normalize.x + R.normalize.w},380 L${TAPN_X},380 L${TAPN_X},${FEED_Y} L600,${FEED_Y}`, x1: R.normalize.x + R.normalize.w, y1: 380, x2: 600, y2: FEED_Y });
+    c.push({ name: "tap-f1", dashed: true, d: `M${L.ledgers.cost.x + 105},${FEED_Y} L${L.ledgers.cost.x + 105},${L.ledgers.cost.y}`, x1: L.ledgers.cost.x + 105, y1: FEED_Y, x2: L.ledgers.cost.x + 105, y2: L.ledgers.cost.y });
+    c.push({ name: "tap-f2", dashed: true, d: `M${L.ledgers.tokens.x + 105},${FEED_Y} L${L.ledgers.tokens.x + 105},${L.ledgers.tokens.y}`, x1: L.ledgers.tokens.x + 105, y1: FEED_Y, x2: L.ledgers.tokens.x + 105, y2: L.ledgers.tokens.y });
+    // Analytics reads the ledgers: observe bottom exits east, drops in the
+    // right corridor, and enters the tokens ledger's right edge at
+    // mid-height — the caption row below stays wire-free.
+    const AN_Y = L.ledgers.tokens.y + 24;
+    c.push({ name: "analytics", dashed: true, d: `M1536,${R.observe.y + R.observe.h} L1568,${R.observe.y + R.observe.h} L1568,${AN_Y} L${L.ledgers.tokens.x + L.ledgers.tokens.w},${AN_Y}`, x1: 1536, y1: R.observe.y + R.observe.h, x2: L.ledgers.tokens.x + L.ledgers.tokens.w, y2: AN_Y, label: "ANALYTICS", lx: 1500, ly: 843 });
     return c;
   }
   // Tall: vertical pipeline, providers inline between route and normalize.
@@ -370,7 +401,7 @@ function camFor(L: Layout, V: { w: number; h: number }, i: number, inj: boolean)
     const x0 = Math.min(r.x, b.x); const y0 = Math.min(r.y, b.y);
     r = { x: x0, y: y0, w: Math.max(r.x + r.w, b.x + b.w) - x0, h: Math.max(r.y + r.h, b.y + b.h) - y0 };
   }
-  const ew = r.w + LANE_M * 2; const eh = r.h + LANE_M * 2;
+  const ew = r.w + GUT * 2; const eh = r.h + GUT * 2;
   return { x: r.x + r.w / 2, y: r.y + r.h / 2, s: Math.min(V.w / ew, V.h / eh) };
 }
 /** Camera as a pure function of progress (identity outside C blends). */
@@ -499,6 +530,7 @@ export default function Platform() {
       // diagram, no camera, no fades — stepper clicks dim to static 0.35.
       if (!camOn) {
         if (camG) camG.setAttribute("transform", "translate(0 0) scale(1)");
+        svg.setAttribute("data-zoomfade", "0");
         svg.style.opacity = "1";
         const sel = staticSelRef.current;
         layerEls.forEach((g) => { g.style.opacity = sel < 0 || Number(g.getAttribute("data-idx")) === sel ? "1" : "0.35"; });
@@ -549,6 +581,11 @@ export default function Platform() {
         }
       }
       const inC = act >= 0;
+      // Feathered edge fades only while zoomed: hard-clipped neighbors
+      // dissolve instead of slicing mid-glyph. Pure function of progress
+      // (reverses exactly); never set when camOn is false, so reduced
+      // motion / tall / static never fade.
+      svg.setAttribute("data-zoomfade", camOn && inC ? "1" : "0");
       layerEls.forEach((g) => {
         const i = Number(g.getAttribute("data-idx"));
         g.style.opacity = !inC || i === act ? "1" : "0.35";
@@ -690,7 +727,7 @@ export default function Platform() {
   return (
     <section id="platform" className="scroll-mt-16 overflow-clip bg-night text-white">
       <style>{SCOPED_CSS}</style>
-      <Container width="wide" className="pb-10 pt-20 md:pt-28">
+      <Container width="wide" className="pt-20 md:pt-28">
         {/* SINGLE heading: one eyebrow + title + tagline, never duplicated. */}
         <p className="text-center text-xs font-medium uppercase tracking-[0.14em] text-white/50">Platform</p>
         <h2 className="mx-auto mt-4 max-w-2xl text-center font-serif text-4xl font-medium tracking-tight md:text-5xl">
@@ -719,13 +756,15 @@ export default function Platform() {
           ))}
         </div>
 
-        <div ref={wrapRef} className={pinned ? "relative" : "relative mt-8"}>
-          <div className={pinned ? "flex h-screen flex-col justify-center" : ""} style={pinned ? { paddingTop: 80 } : undefined}>
-            <div className="relative mx-auto w-full max-w-[1500px]">
+      </Container>
+      <div ref={wrapRef} className="relative mt-8">
+        <div className={pinned ? "flex h-screen flex-col px-6 md:px-8" : "px-6 md:px-8"} style={pinned ? { paddingTop: 80 } : undefined}>
+          <div className={pinned ? "relative mx-auto min-h-0 w-full flex-1" : "relative mx-auto w-full"}>
               <svg
                 ref={svgRef}
                 viewBox={`0 0 ${V.w} ${V.h}`}
-                className="h-auto w-full select-none"
+                data-zoomfade="0"
+                className={pinned ? "h-full w-full select-none" : "h-auto w-full select-none"}
                 role="img"
                 aria-label="ToLLma gateway: eight layers from register to observe"
               >
@@ -824,7 +863,7 @@ export default function Platform() {
                     </g>
                     );
                   })}
-                  <text data-caption="providers" data-dim x={mode === "wide" ? 972 : 120} y={mode === "wide" ? 708 : L.providers[5].y + 88} fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">
+                  <text data-caption="providers" data-dim x={mode === "wide" ? 1200 : 120} y={mode === "wide" ? 843 : L.providers[5].y + 88} fill={SUB} fontSize={18} fontFamily={SANS} letterSpacing="0.1em">
                     {mode === "wide" ? "PROVIDERS · 6 FAMILIES" : "6 FAMILIES · GEMINI STREAM-ONLY"}
                   </text>
 
@@ -878,7 +917,7 @@ export default function Platform() {
             </div>
 
             {/* SINGLE stepper instance (desktop + mobile share it). */}
-            <div className="mx-auto mt-6 w-full max-w-[1500px]">
+            <div className={pinned ? "mx-auto mt-6 w-full shrink-0" : "mx-auto mt-6 w-full"}>
               <div className="flex items-center gap-4">
                 <span className="relative h-[3px] flex-1 bg-white/10" aria-hidden="true">
                   <span ref={railRef} data-rail className="absolute inset-0 origin-left bg-gradient-to-r from-[#a9bdf4] to-[#72ddb1]" style={{ transform: "scaleX(0)" }} />
@@ -914,14 +953,15 @@ export default function Platform() {
           </div>
         </div>
 
+    <Container width="wide" className="pb-10">
         {/* Legend */}
-        <div className="mx-auto mt-8 flex max-w-[1500px] flex-wrap gap-x-6 gap-y-2 font-mono text-xs tracking-wider text-white/60" aria-label="Diagram legend">
+        <div className="mx-auto mt-8 flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs tracking-wider text-white/60" aria-label="Diagram legend">
           <span><span aria-hidden="true" className="mr-2 inline-block h-0 w-6 border-t-2 border-white/70 align-middle" />SOLID · REQUEST / RESPONSE</span>
           <span><span aria-hidden="true" className="mr-2 inline-block h-0 w-6 border-t-2 border-dashed border-white/50 align-middle" />DASHED · OBSERVABILITY TAPS</span>
           <span><span aria-hidden="true" className="mr-2 inline-block h-0 w-6 border-t-2 align-middle" style={{ borderColor: CORAL }} />CORAL · BLOCKED (STOPS AT 05)</span>
         </div>
 
-        <div className="mx-auto mt-8 max-w-[1500px]">
+        <div className="mx-auto mt-8">
           <a
             href={GET_STARTED_URL}
             className="inline-flex min-h-[44px] items-center gap-2 border border-white/40 px-6 py-3 text-[0.95rem] font-medium text-white transition-colors hover:border-white hover:bg-white/10"
@@ -1056,6 +1096,15 @@ const SCOPED_CSS = `
 #platform [data-layer] { transition: opacity 0.4s ease; transform-box: fill-box; transform-origin: 50% 50%; }
 #platform [data-stepper][data-on] { border-color: var(--color-mint); }
 #platform svg text { user-select: none; }
+#platform svg[data-zoomfade="1"] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%), linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%), linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  mask-composite: intersect;
+}
+@media (prefers-reduced-motion: reduce) {
+  #platform svg[data-zoomfade] { -webkit-mask-image: none; mask-image: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   #platform [data-layer] { transition: none; }
 }

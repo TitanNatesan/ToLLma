@@ -68,3 +68,68 @@ Gallery: `/tmp/opencode/r9b/gallery/r9b-{1280,1440,1920}-{entry,pass1,l05-safe,l
 - Final code (tsc + build green): two consecutive full runs 41/41 at 1280/1440/1920
   (41 assertions = 13 spec checks + wire-vs-node + controls; gallery 18 PNGs reviewed).
 - Commits: rebuild -> validation closed. No other sections touched.
+
+## R9c — five-item follow-up (2026-11-02; platform.tsx only)
+
+Suite: same `/tmp/opencode/r9b/r9check.cjs` (41 assertions), same origin
+`landing/out/` @ `http://localhost:8931`. Extra probes:
+`/tmp/opencode/r9b/r9c-check.cjs` (connectivity audit + soft-edge honesty +
+full-bleed metrics). Gallery: `/tmp/opencode/r9b/gallery/r9c-{1280,1440,1920}-{full,layer04zoom}.png`.
+tsc + build green; frontend vitest 36 files / 311 tests pass; no new libs; copy/palette/order unchanged.
+
+1. ARROWS OVER WBOXES (fixed defect): probe found the solid `return` lane
+   (y690) grazing the "PROVIDERS · 6 FAMILIES" caption box top (1u), and the
+   tap-feed dashed lane 7u above it. Rerouted: return exits OpenAI's left
+   edge west into an x-gap corridor, runs a dedicated lane between the tap
+   feed and the ledger row (crosses nothing), and rises into normalize's
+   bottom edge; tap feed runs its own lane below the providers and branches
+   into ledger tops via T-joints. Fan redrawn on x-gap corridors (one GUT
+   left of each chip column, stubs into left edges +16) with off-center top
+   entries (spine x1040, drop col1+24). Post-fix probe: zero wire-vs-text
+   hits. Orthogonal wire-wire crossings kept bare on purpose: a bridge gap
+   would leave mid-air endpoints and violate the <=2px joint rule (c6).
+2. CONNECTIVITY AUDIT (fixed defect): DOM audit (endpoint within node
+   bbox+2.5) confirms every specified edge — setup 01→02→lane; request lane
+   03→04→05→06→07→08; fan-out to all 6 chips (each >=1 inbound; drop fixed
+   off-center so fan-d1 tip keeps >=8px from chip text); single return from
+   OpenAI (prov0) into 07; per-layer log taps into all 3 ledger tops +
+   workspace tap into captures; coral blocked 05→REQUEST BLOCKED; response
+   07→02; analytics observe→tokens. Fixed in this pass: ledger cost/tokens
+   4u overlap (now 16u), return/caption crossing, fan-d1 7.9px clearance.
+   The 5 non-receiving providers are fan-out leaves by design; the single
+   return leg is the specified provider→07 edge.
+3. UNIFORM SPACING: single `GUT=16` token drives all peer gaps
+   (layer-layer 16, chip-chip 16x16, ledger-ledger 16x16, captures-ledger 16)
+   and the camera margin; larger separations are wire lanes stacked as GUT
+   multiples below the request row (bus +16, providers +16, tap feed +16,
+   return +16, caption row, ledgers). Tall mode pitches aligned to GUT
+   (provider rows 80, ledger stack 64).
+4. FULL-BLEED: diagram + stepper break out of the 1376px Container to full
+   viewport width with px-6 (24px) / md:px-8 (32px) margins (legend/CTA stay
+   contained). Pinned stage height-fits the svg (flex-1 + w/h 100%, ratio
+   preserved via meet) so the taller full-bleed figure never overlaps the
+   toggle — this also fixed a real c10 click interception at 1920. Camera
+   math untouched (bbox-derived): zoom fill 72.9% every layer (>=55%);
+   rendered 18u text 13.3/15.0/20.3px @1280/1440/1920 (>=12px).
+5. SOFT EDGES: screen-space CSS mask (28px feather, all four sides) toggled
+   via `data-zoomfade` as a pure function of progress — on only while camOn
+   and zoomed, never in reduced-motion/tall/static (plus a
+   prefers-reduced-motion guard). No layout change; checks unaffected (mask
+   != opacity/geometry). Honesty probe over 30 states (8 layer windows x
+   safe + L05 injection + full, x3 widths): zero hard clips (no text bbox
+   crossing the viewport edge with opacity >0.6 unless the fade is on).
+
+## Validation table (runs 1+2 consecutive, post-fix)
+- r9check: 41/41 PASS @1280/1440/1920, twice consecutively (run stamps 3, 4).
+- r9c-check: 7/7 PASS (audit x3, softedge, fullbleed-text, zoom-fill, zoom-text).
+- c5 note: first post-reroute run flagged fan-d1 7.9px @1280; fixed by the
+  off-center drop; clean since.
+
+## Remaining limitations (carried + new)
+- Previous R9 limitations still hold (L05+inj union framing; tall/mobile
+  type <12px rendered on phones; c9 rAF-based).
+- Pinned live stage height-fits the svg, so at very wide/short viewports
+  the diagram letterboxes with side gutters (ratio preserved, no crop);
+  unpinned/hiwshot rendering stays true full-bleed.
+- Orthogonal wire-wire crossings (return x tap feed, spine x bus) are
+  intentional bare crosses, not bridges (joint-rule rationale above).
