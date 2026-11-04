@@ -1,50 +1,39 @@
-"""Laya: standalone guardrail evaluation service (CPU-only heuristics, v1).
+"""Laya AI guardrail evaluation service (model-driven, v2).
 
-Separately deployable; the backend calls POST /evaluate over HTTP and never
-sends credentials here (there are none). Swap path: replace `score()` with a
-real model behind the same envelope and bump MODEL_VERSION — the backend keys
-versioning off the `model_version` field, never off rule internals.
+The Laya checkpoint makes every content-safety decision via typed decisions
+(noul per category, choice for the overall action, score for severity).
+Python only validates input, invokes the model, and normalizes probabilities
+into the backend's {verdict, confidence, matched_categories} envelope.
+
+Contract (unchanged for the ToLLma backend):
+- GET  /health   -> {status, model_loaded, model_version, checkpoint,
+                     device, uptime_s, ...}              (never runs inference)
+- GET  /ready    -> {ready, model_loaded, model_version} (true only after a
+                     successful warmup inference)
+- POST /evaluate {text, categories[]} -> {verdict, confidence,
+  matched_categories, reason, latency_ms, model_version}
+  413 on oversize input; 503 when the model is not ready or inference fails
+  (failures never become `allow` — the backend's failure_action decides).
 """
 
-import asyncio
 import logging
-import re
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from config import get_settings
+from engine import InferenceError, ModelEngine, NotReadyError, PayloadTooLargeError
+from mapping import normalize
+
+logging.basicConfig(level=logging.INFO,
+                      format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = (Path(__file__).parent / "MODEL_VERSION").read_text().strip()
 STARTED_AT = time.monotonic()
-
-MAX_TEXT_CHARS = 64 * 1024
-SEMAPHORE = asyncio.Semaphore(20)
-
-_TOXIC = frozenset({
-    "kill you", "hurt you", "bomb", "malware", "ransomware", "phishing",
-    "credit card dump", "ssn list",
-})
-_INJECTION_RES = [
-    re.compile(r"(?i)ignore\s+(all\s+)?(previous|prior|above)\s+instructions"),
-    re.compile(r"(?i)jailbreak|DAN\s+mode|do anything now"),
-    re.compile(r"(?i)reveal\s+(your|the)\s+(system\s+)?(prompt|instructions)"),
-]
-_SECRET_RES = [
-    re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
-    re.compile(r"gh[pousr]_[A-Za-z0-9]{8,}"),
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-]
-_PII_RES = [
-    re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
-    re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
-]
-
-app = FastAPI(title="Laya", version=MODEL_VERSION)
 
 
 class EvaluateIn(BaseModel):
@@ -52,50 +41,86 @@ class EvaluateIn(BaseModel):
     categories: list[str] = Field(default_factory=list)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    engine = ModelEngine(settings)
+    app.state.engine = engine
+    app.state.settings = settings
+    try:
+        engine.startup()  # loads the checkpoint once; reused for all requests
+    except Exception:
+        logger.error("laya startup: model unavailable, serving 503s", exc_info=True)
+    yield
+    engine.shutdown()
+
+
+app = FastAPI(title="Laya", lifespan=lifespan, version=Path(__file__).parent.joinpath(
+    "MODEL_VERSION").read_text().strip())
+
+
+def _engine(request: Request) -> ModelEngine:
+    engine = getattr(request.app.state, "engine", None)
+    if engine is None:  # TestClient without lifespan, or startup path skipped
+        engine = ModelEngine(getattr(request.app.state, "settings", None)
+                             or get_settings())
+        request.app.state.engine = engine
+    return engine
+
+
 @app.get("/health")
-def health() -> dict:
-    """Liveness + version. The backend caches this for 30s."""
-    return {"status": "ok", "model_version": MODEL_VERSION,
-            "uptime_s": round(time.monotonic() - STARTED_AT, 1)}
+def health(request: Request) -> dict:
+    """Liveness + model info. The backend caches this for 30s; no inference."""
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    engine = getattr(request.app.state, "engine", None)
+    body = {
+        "status": "ok",
+        "model_loaded": bool(engine and engine.loaded),
+        "model_version": settings.model_version,
+        "checkpoint": (engine.checkpoint if engine else settings.model),
+        "device": (engine.device_actual if engine else settings.device),
+        "uptime_s": round(time.monotonic() - STARTED_AT, 1),
+    }
+    if engine is not None:
+        body["load_ms"] = round(engine.load_ms, 1)
+        if engine.load_error:
+            body["load_error"] = engine.load_error[:300]
+    return body
 
 
 @app.get("/ready")
-def ready() -> dict:
-    return {"ready": True, "model_version": MODEL_VERSION}
+def ready(request: Request) -> dict:
+    """True only after the checkpoint loaded AND warmup inference succeeded."""
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    engine = getattr(request.app.state, "engine", None)
+    ok = bool(engine and engine.loaded)
+    return {"ready": ok, "model_loaded": ok,
+            "model_version": settings.model_version}
 
 
 @app.post("/evaluate")
 async def evaluate(data: EvaluateIn, request: Request) -> JSONResponse:
-    if len(data.text or "") > MAX_TEXT_CHARS:
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    text = data.text or ""
+    # Input validation is not inference: oversize is 413 in every server state.
+    if len(text) > settings.max_text_chars:
         return JSONResponse(status_code=413, content={"error": "payload too large"})
-    started = time.monotonic()
-    async with SEMAPHORE:
-        verdict, confidence, matched = score(data.text or "", data.categories)
-    reason = f"laya {verdict}: {', '.join(matched[:5])}" if matched else ""
+    engine = _engine(request)
+    try:
+        raw = await engine.evaluate(text, data.categories or [])
+    except PayloadTooLargeError as exc:
+        return JSONResponse(status_code=413, content={"error": str(exc)})
+    except (NotReadyError, InferenceError) as exc:
+        return JSONResponse(status_code=503, content={"error": str(exc)[:300]})
+    except Exception:  # never leak internals; never fail open with allow
+        logger.exception("laya evaluate failed")
+        return JSONResponse(status_code=503, content={"error": "evaluation failed"})
+    verdict = normalize(raw, settings)
     return JSONResponse({
-        "verdict": verdict, "confidence": confidence,
-        "matched_categories": matched, "reason": reason,
-        "latency_ms": (time.monotonic() - started) * 1000,
-        "model_version": MODEL_VERSION,
+        "verdict": verdict["verdict"],
+        "confidence": verdict["confidence"],
+        "matched_categories": verdict["matched_categories"],
+        "reason": verdict["reason"],
+        "latency_ms": round(raw.latency_ms, 1),
+        "model_version": f"{settings.model_version}/{raw.routing_model}",
     })
-
-
-def score(text: str, categories: list[str]) -> tuple[str, float, list[str]]:
-    """Heuristic verdict. Pure function (testable without the app)."""
-    lowered = text.lower()
-    matched: list[str] = []
-    if any(t in lowered for t in _TOXIC):
-        matched.append("harmful_content")
-    if any(r.search(text) for r in _INJECTION_RES):
-        matched.append("prompt_injection")
-    if any(r.search(text) for r in _SECRET_RES):
-        matched.append("secret_leakage")
-    if any(r.search(text) for r in _PII_RES):
-        matched.append("pii")
-    if categories:
-        matched = [c for c in matched if c in set(categories)]
-    if not matched:
-        return "allow", 0.9, []
-    if "harmful_content" in matched or "secret_leakage" in matched:
-        return "block", 0.8, matched
-    return "warn", 0.7, matched
