@@ -4853,3 +4853,6 @@ Frame upgraded: fixed inset-0 12px solid black ring, rounded 28px, html bg-black
 
 ## 2026-11-06 - Scroll-away frame on black + tighter footer gap
 Reworked per ask: fixed ring replaced with a page wrapper (m-3, rounded 28px, overflow:clip, print-plain) that scrolls with the page; body forced black via unlayered end-of-file rule (cascade layers: utilities lose to unlayered, so the body class alone couldn't do it) — margins/corners probe as BODY/black mid-scroll, wrapper scrolls off (-2988 at scroll 3000), ox=0. overflow:clip (not hidden) keeps sticky/fixed working. Footer gap: aspect 3.2/1 (bound: fs hits heuristic max contentW/3, so ratio must stay under ~3.26) — wordmark-to-divider gap now 25px, no overlap, zero errors. tsc clean, build green.
+
+## 2026-11-06 - Per-letter footer wordmark parallax (from 76b8e1e)
+Referred commit 76b8e1e (per-letter speeds, full-bleed wordmark): reimplemented as useWordmarkParallax in closing.tsx, adapted to TextPressure — speeds T->a [-0.45..-0.08] via the independent CSS `translate` property (TextPressure writes only fontVariationSettings/opacity on spans, transform on the h1 — no clobbering, fit backstop unaffected). rAF-throttled scroll/resize, pure function of scroll, static under reduced-motion. Measured shear gradient 43.6px->7.8px at entry decaying reversibly, ox=0, zero errors. tsc clean, build green.
