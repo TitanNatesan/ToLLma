@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Container } from "@/components/ui/layout";
 import { IconChat, IconGitHub } from "@/components/ui/icons";
 import StickerPeel from "@/components/ui/sticker-peel";
+import GradientASCII from "@/components/ui/gradient-ascii";
 import TextPressure from "@/components/ui/text-pressure";
 import { useReducedMotion, useRevealOnScroll } from "@/lib/animations";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
@@ -97,8 +98,31 @@ export function Footer() {
     }
   }, []);
   return (
-    <footer id="company" ref={revealRef} className="scroll-mt-20 overflow-x-clip border-t border-cream-line bg-cream">
-      <Container width="wide" className="pt-16 md:pt-20">
+    <footer id="company" ref={revealRef} className="relative scroll-mt-20 overflow-x-clip border-t border-cream-line bg-cream">
+      {/* Ambient ASCII wash behind the whole footer: faint light-mode
+          glow rising from the bottom edge. Decorative only (aria-hidden,
+          pointer-transparent); content paints above. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.55]">
+        <GradientASCII
+          colors={["#d9e2d4", "#f4f6ec", "#b9d9c9", "#7fd6b2"]}
+          shape="rise"
+          characters=" =+xX0S8#@"
+          cellSize={20}
+          density={0.65}
+          glyphOpacity={0.55}
+          gradientOpacity={0.6}
+          glow={0.1}
+          flicker={0.1}
+          speed={0.6}
+          flow={0.4}
+          grain={0.05}
+          mouseInteraction={true}
+          clickEffect="wave"
+          intro={true}
+          lightMode={true}
+        />
+      </div>
+      <Container width="wide" className="relative pt-16 md:pt-20">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,10fr)]">
           <div data-reveal className="flex flex-col items-start gap-3">
             {/* Brand block: peelable logo sticker spans the full column
@@ -211,7 +235,7 @@ export function Footer() {
             line box (font fills width, 1em tall) so the word always
             spans edge to edge. */}
       </Container>
-      <div data-reveal className="foot-pressure">
+      <div data-reveal className="foot-pressure relative">
         <TextPressure
           text="ToLLma"
           flex={true}
@@ -227,7 +251,7 @@ export function Footer() {
           minFontSize={36}
         />
       </div>
-      <Container width="wide" className="pb-10 pt-4">
+      <Container width="wide" className="relative pb-10 pt-4">
         <div data-reveal className="flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} ToLLma · Apache-2.0</p>
           {/* Privacy/Terms are plain text: no such pages exist, and fake
