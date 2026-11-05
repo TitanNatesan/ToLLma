@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Newsreader, Tiny5 } from "next/font/google";
+import { Inter, Newsreader } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -16,15 +16,6 @@ const newsreader = Newsreader({
   display: "optional",
 });
 
-// Pixel-duo voice for the giant footer wordmark (single 400 weight;
-// hover emphasis uses synthetic bold + opacity falloff. System-sans
-// fallback keeps the layout if the webfont fetch fails).
-const tiny5Duo = Tiny5({
-  subsets: ["latin"],
-  weight: "400",
-  variable: "--font-tiny5",
-  display: "optional",
-});
 const mono = {
   variable: "--font-mono-code",
 };
@@ -109,7 +100,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${tiny5Duo.variable} ${mono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable}`}>
       <body className="antialiased">{children}</body>
     </html>
   );

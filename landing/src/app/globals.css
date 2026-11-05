@@ -823,49 +823,17 @@ body {
   transform: rotate(-14deg);
 }
 
-/* R11 giant footer wordmark: display type scaled with clamp()+vw to span
-   almost the full container at every width. The clip cuts it at the footer
-   bottom while the (negative-speed) parallax drift rises from below on
-   scroll — transform-only, fully reversible, inert under reduced-motion. */
-.foot-wordmark-clip {
-  overflow: hidden;
-  /* Breathing room so the parallax drift never clips glyphs: padding
-     extends the clip box while the negative margins keep page layout
-     identical. Inline room covers the trailing letter-spacing overhang. */
-  padding: 140px 0.12em 100px;
-  /* Editorial negative space: navigation-to-wordmark breathes
-     (100–160px), padding extends the clip box while the negative
-     margins keep page layout identical. Sized for the doubled
-     per-letter drift (T peaks ~110px). */
-  margin: calc(clamp(6rem, 10vw, 10rem) - 140px) 0 -100px;
-}
-.foot-wordmark-drift {
-  will-change: transform;
-}
-.foot-wordmark {
-  display: block;
+/* Footer TextPressure wordmark: container aspect matches the line box
+   (font fills the width at 1em tall), so the word always spans edge to
+   edge. Letters keep the coal-to-cream melt; TextPressure writes inline
+   fontVariationSettings + opacity only, and leaves color empty (no
+   pressureColor), so this gradient applies. */
+.foot-pressure {
+  position: relative;
   width: 100%;
-  text-align: center;
-  white-space: nowrap;
-  /* Pixel-duo voice (Tiny5 Duo, system-sans fallback); sized to fill
-     the viewport edge to edge at every width. */
-  font-family: var(--font-tiny5), var(--font-sans);
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  line-height: 0.9;
-  /* Full-bleed for the pixel face (~3.5px ink per px of font size):
-     27vw spans the screen edge to edge at every width. */
-  font-size: clamp(3.5rem, 30vw, 34rem);
-  color: var(--color-coal);
-  user-select: none;
+  aspect-ratio: 3 / 1;
 }
-.foot-letter {
-  display: inline-block;
-  will-change: transform;
-  transition: opacity 200ms ease;
-  /* Top-to-bottom fade: solid coal/black at the cap line dissolving
-     into the cream footer at the baseline, so the wordmark melts into
-     the page bottom. Painted per letter so it rides the parallax drift. */
+.foot-pressure .text-pressure-title span {
   background: linear-gradient(to top, var(--color-cream) 0%, var(--color-coal) 55%);
   -webkit-background-clip: text;
   background-clip: text;

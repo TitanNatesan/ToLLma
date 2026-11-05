@@ -1,24 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Container } from "@/components/ui/layout";
 import { IconChat, IconGitHub } from "@/components/ui/icons";
+import TextPressure from "@/components/ui/text-pressure";
 import { useRevealOnScroll } from "@/lib/animations";
-import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
 import tollmaLight from "./brand/tollma-light-256.png";
 
 // Cream footer (CrewAI-inspired composition on ToLLma cream): brand +
-// Stay-connected community column, 6 nav columns (all hrefs verified
-// site.ts links or in-page anchors), giant parallax wordmark, divider +
-// bottom bar (dynamic year, Privacy/Terms as plain spans, GitHub +
-// Discussions icons).
+// Stay-connected community strip, 6 nav columns (all hrefs verified
+// site.ts links or in-page anchors), giant TextPressure wordmark
+// (free React Bits: cursor pressure + click ripple, idle static),
+// divider + bottom bar (dynamic year, Privacy/Terms as plain spans,
+// GitHub + Discussions icons).
 //
-// Motion: link underlines sweep left → right; wordmark letters ride
-// per-letter scroll parallax (transform-only, reversible, inert under
-// reduced-motion); columns fade up in sequence; headings share one
-// baseline (min-h-8).
+// Motion: link underlines sweep left → right; wordmark letters swell
+// under cursor pressure and ripple on click (TextPressure rAF, only
+// while animating/visible, inert under reduced-motion); columns fade
+// up in sequence; headings share one baseline (min-h-8).
 const COLS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
   {
     title: "Meet Our Gateway",
@@ -81,72 +81,8 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 // untransformed clip parent (never self-measured), so every offset is a
 // pure function of scroll position and exactly reversible. Transform-only,
 // rAF-throttled, inert under prefers-reduced-motion (static full word).
-const LETTERS = [
-  { ch: "t", speed: -1.6 },
-  { ch: "O", speed: -4.6 },
-  { ch: "l", speed: -5.6 },
-  { ch: "l", speed: -4.6 },
-  { ch: "M", speed: -1.8 },
-  { ch: "A", speed: -1.0 },
-];
-
-function useWordmarkRise(
-  clipRef: React.RefObject<HTMLDivElement | null>,
-  driftRef: React.RefObject<HTMLDivElement | null>
-) {
-  useEffect(() => {
-    const clip = clipRef.current;
-    const drift = driftRef.current;
-    if (!clip || !drift || prefersReducedMotion()) return;
-    const spans = Array.from(drift.querySelectorAll<HTMLElement>("[data-letter]"));
-    if (!spans.length) return;
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      const rect = clip.getBoundingClientRect();
-      const vh = window.innerHeight || 1;
-      const progress = (vh - rect.top) / (vh + rect.height) - 0.5;
-      // Settle: as the page reaches its very bottom, ease every offset
-      // to exactly 0 so the wordmark sits straight at rest. Pure
-      // function of scroll position — fully reversible on scroll-up.
-      const max = document.documentElement.scrollHeight - vh;
-      const remaining = Math.max(0, max - (window.scrollY || 0));
-      const settle = Math.min(1, remaining / (vh * 0.6));
-      for (const s of spans) {
-        const sp = parseFloat(s.dataset.speed || "-1");
-        if (settle <= 0) { s.style.transform = ""; continue; }
-        s.style.transform = `translate3d(0, ${(progress * sp * 100 * settle).toFixed(2)}px, 0)`;
-      }
-    };
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-      if (raf) cancelAnimationFrame(raf);
-      for (const s of spans) s.style.transform = "";
-    };
-  }, [clipRef, driftRef]);
-}
-
 export function Footer() {
   const revealRef = useRevealOnScroll({ staggerMs: 90, y: 16 });
-  const clipRef = useRef<HTMLDivElement | null>(null);
-  const driftRef = useRef<HTMLDivElement | null>(null);
-  useWordmarkRise(clipRef, driftRef);
-  // Hovered-letter emphasis: the hovered letter goes synthetic-bold
-  // (single-weight pixel face) at full opacity; the rest fall off
-  // character by character with distance. -1 = none hovered, uniform.
-  const [hoverIdx, setHoverIdx] = useState(-1);
-  const onWordOver = (e: React.MouseEvent) => {
-    const t = (e.target as HTMLElement).closest?.("[data-letter]") as HTMLElement | null;
-    const idx = t ? Number(t.dataset.idx) : -1;
-    setHoverIdx((prev) => (prev === idx ? prev : idx));
-  };
   return (
     <footer id="company" ref={revealRef} className="scroll-mt-20 border-t border-cream-line bg-cream">
       <Container width="wide" className="pt-16 md:pt-20">
@@ -241,40 +177,27 @@ export function Footer() {
             </a>
           </div>
         </div>
-        {/* R11 giant wordmark: full-bleed below the link columns, copyright
-            bar after it. Each letter rides its own parallax speed (outer
-            letters fastest) rising from below the footer edge as the footer
-            scrolls in (fully reversible); the clip cuts it at the footer
-            bottom. Decorative duplicate of the logo wordmark. */}
+        {/* Giant wordmark: free React Bits TextPressure. Letters swell
+            under cursor pressure (variable width/weight/italic), click
+            sends a ripple, idle static. The aspect ratio matches the
+            line box (font fills width, 1em tall) so the word always
+            spans edge to edge. */}
       </Container>
-      <div data-reveal aria-hidden="true" ref={clipRef} className="foot-wordmark-clip">
-        <div
-          ref={driftRef}
-          className="foot-wordmark-drift"
-          onMouseOver={onWordOver}
-          onMouseLeave={() => setHoverIdx(-1)}
-        >
-          <span className="foot-wordmark">
-            {LETTERS.map((l, i) => {
-              const dist = hoverIdx < 0 ? 0 : Math.abs(i - hoverIdx);
-              return (
-                <span
-                  key={i}
-                  data-letter=""
-                  data-idx={i}
-                  data-speed={l.speed}
-                  className="foot-letter"
-                  style={{
-                    fontWeight: hoverIdx >= 0 && i === hoverIdx ? 700 : 400,
-                    opacity: hoverIdx < 0 ? 1 : Math.max(0.3, 1 - 0.16 * dist),
-                  }}
-                >
-                  {l.ch}
-                </span>
-              );
-            })}
-          </span>
-        </div>
+      <div data-reveal className="foot-pressure">
+        <TextPressure
+          text="ToLLma"
+          flex={true}
+          alpha={false}
+          stroke={false}
+          width={true}
+          weight={true}
+          italic={true}
+          radius={0.5}
+          smoothing={0.5}
+          idle="none"
+          clickRipple={true}
+          minFontSize={36}
+        />
       </div>
       <Container width="wide" className="pb-10 pt-4">
         <div data-reveal className="flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
