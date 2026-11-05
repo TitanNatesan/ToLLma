@@ -8,7 +8,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "sync:providers": "node scripts/sync-models-dev.mjs"
   },
   "dependencies": {
     "animejs": "^4.5.0",

@@ -15,6 +15,7 @@ import DriftWall, { type DriftItem } from "@/components/ui/drift-wall";
 import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { useRevealOnScroll } from "@/lib/animations";
 import { DOCS_URL, PROVIDERS } from "@/lib/site";
+import modelsDev from "@/data/models-dev.json";
 import { AnthropicMark, OpenAIMark } from "./brand/provider-marks";
 import googleG from "./brand/providers-google-g.png";
 import vertexPng from "./brand/providers-vertex.png";
@@ -53,28 +54,53 @@ const MARKS: Record<string, React.ReactNode> = {
   bedrock: <img src={bedrockPng.src} alt="" width={28} height={28} className="h-7 w-7 rounded-md object-cover" />,
 };
 
-// Ambient backdrop: provider names + API surfaces as self-contained
-// SVG tiles (no external image requests). Rendered faint behind the
-// grid (decorative: non-focusable, pointer-transparent, masked at the
-// edges). Grayscale + dim keep it whisper-quiet on cream.
-const wallTile = (label: string) =>
-  `data:image/svg+xml,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="none"/><text x="300" y="212" font-family="Inter, system-ui, sans-serif" font-size="56" font-weight="600" fill="#171914" text-anchor="middle">${label}</text></svg>`
-  )}`;
-const WALL_ITEMS: DriftItem[] = [
-  "OpenAI",
-  "Anthropic",
-  "Gemini",
-  "Vertex AI",
-  "Bedrock",
-  "Custom",
-  "Chat Completions",
-  "Messages",
-  "Streaming",
-  "Tools",
-  "Embeddings",
-  "One endpoint",
-].map((label) => ({ image: wallTile(label), title: label }));
+// Ambient backdrop: one brand tile per verified adapter. Roster + names
+// come from the models.dev endpoint (scripts/sync-models-dev.mjs writes
+// src/data/models-dev.json; re-run to refresh). Each tile shows the real
+// provider mark + the adapter's API surface (same labels as the grid).
+// Decorative: non-focusable, pointer-transparent, masked at the edges.
+// Grayscale + dim keep it quiet on cream at full opacity.
+type MDProvider = {
+  mdId: string;
+  tollmaId: string | null;
+  name: string;
+  models: number;
+  api: string | null;
+  logo: string | null;
+};
+const WALL_ITEMS: DriftItem[] = (modelsDev.providers as MDProvider[]).map((p) => {
+  const adapter = p.tollmaId ? PROVIDERS.find((a) => a.id === p.tollmaId) : undefined;
+  const display = adapter?.name ?? p.name;
+  // Endpoint line: our adapter surface for verified providers ("as like
+  // now"), the models.dev endpoint host for the rest, model count when
+  // neither exists.
+  const sub = adapter?.api ?? p.api ?? `${p.models} models`;
+  return {
+    title: display,
+    node: (
+      <span className="wall-brand">
+        {p.logo ? (
+          <img
+            src={p.logo}
+            alt=""
+            width={28}
+            height={28}
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+            className="h-7 w-7 object-contain"
+          />
+        ) : (
+          <span className="wall-mark-fallback" aria-hidden="true">
+            {display.charAt(0)}
+          </span>
+        )}
+        <span className="wall-brand-name">{display}</span>
+        <span className="wall-brand-api">{sub}</span>
+      </span>
+    ),
+  };
+});
 /* Target-lock corners: 4 L-brackets that scale in from their corners on
    cell hover / focus-within / focus-visible (see globals.css). */
 function TargetCorners() {
@@ -97,16 +123,18 @@ export default function Solutions() {
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-100">
         <DriftWall
           items={WALL_ITEMS}
-          columns={8}
-          tileWidth={200}
-          tileHeight={132}
+          columns={10}
+          tileWidth={160}
+          tileHeight={106}
           gap={18}
           speed={28}
           direction="up"
           variance={0.45}
           parallax={0}
-          fade={0.15}
-          dim={0.85}
+          fade={0}
+          tilt={0}
+          turn={0}
+          dim={0.7}
           grayscale={true}
           overlayColor="#e5e0d2"
           decorative={true}
@@ -179,6 +207,18 @@ export default function Solutions() {
             </a>
           </SpotlightCard>
         </div>
+        <p data-reveal className="mx-auto mt-6 max-w-5xl text-center text-xs text-coal/45">
+          Provider roster: {(modelsDev.providers as MDProvider[]).length} providers ·{" "}
+          <a
+            href="https://models.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="foot-link"
+          >
+            models.dev
+          </a>{" "}
+          · synced {modelsDev.syncedAt}
+        </p>
       </Container>
     </section>
   );

@@ -12,11 +12,18 @@
 // - IntersectionObserver visibility gate so the loop sleeps offscreen
 //   (same pattern as the vendored TextPressure/SwarmCursor).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, HTMLAttributes } from "react";
+import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 
 const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
-export type DriftItem = { image: string; title?: string; href?: string };
+export type DriftItem = {
+  image?: string;
+  title?: string;
+  href?: string;
+  // Optional DOM tile (brand lockup, etc.) rendered in place of the img.
+  // Same box + grayscale treatment; the overlay still applies on top.
+  node?: ReactNode;
+};
 
 export type DriftWallProps = {
   items?: DriftItem[];
@@ -291,7 +298,13 @@ const DriftWall = ({
   const renderTile = (item: DriftItem, id: string, colIndex: number) => {
     const inner = (
       <span className="drift-wall__inner">
-        <img src={item.image} alt={item.title ?? ""} loading="lazy" decoding="async" draggable={false} />
+        {item.node ? (
+          <span className="drift-wall__node" aria-hidden="true">
+            {item.node}
+          </span>
+        ) : item.image ? (
+          <img src={item.image} alt={item.title ?? ""} loading="lazy" decoding="async" draggable={false} />
+        ) : null}
         <span className="drift-wall__overlay" aria-hidden="true" />
       </span>
     );
