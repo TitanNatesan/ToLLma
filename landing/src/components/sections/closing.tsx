@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Container } from "@/components/ui/layout";
 import { IconChat, IconGitHub } from "@/components/ui/icons";
@@ -82,12 +82,12 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 // pure function of scroll position and exactly reversible. Transform-only,
 // rAF-throttled, inert under prefers-reduced-motion (static full word).
 const LETTERS = [
-  { ch: "T", speed: -1.6 },
-  { ch: "o", speed: -4.6 },
-  { ch: "L", speed: -5.6 },
-  { ch: "L", speed: -4.6 },
-  { ch: "m", speed: -1.8 },
-  { ch: "a", speed: -1.0 },
+  { ch: "t", speed: -1.6 },
+  { ch: "O", speed: -4.6 },
+  { ch: "l", speed: -5.6 },
+  { ch: "l", speed: -4.6 },
+  { ch: "M", speed: -1.8 },
+  { ch: "A", speed: -1.0 },
 ];
 
 function useWordmarkRise(
@@ -138,6 +138,15 @@ export function Footer() {
   const clipRef = useRef<HTMLDivElement | null>(null);
   const driftRef = useRef<HTMLDivElement | null>(null);
   useWordmarkRise(clipRef, driftRef);
+  // Hovered-letter emphasis: the hovered letter goes synthetic-bold
+  // (single-weight pixel face) at full opacity; the rest fall off
+  // character by character with distance. -1 = none hovered, uniform.
+  const [hoverIdx, setHoverIdx] = useState(-1);
+  const onWordOver = (e: React.MouseEvent) => {
+    const t = (e.target as HTMLElement).closest?.("[data-letter]") as HTMLElement | null;
+    const idx = t ? Number(t.dataset.idx) : -1;
+    setHoverIdx((prev) => (prev === idx ? prev : idx));
+  };
   return (
     <footer id="company" ref={revealRef} className="scroll-mt-20 border-t border-cream-line bg-cream">
       <Container width="wide" className="pt-16 md:pt-20">
@@ -239,13 +248,31 @@ export function Footer() {
             bottom. Decorative duplicate of the logo wordmark. */}
       </Container>
       <div data-reveal aria-hidden="true" ref={clipRef} className="foot-wordmark-clip">
-        <div ref={driftRef} className="foot-wordmark-drift">
+        <div
+          ref={driftRef}
+          className="foot-wordmark-drift"
+          onMouseOver={onWordOver}
+          onMouseLeave={() => setHoverIdx(-1)}
+        >
           <span className="foot-wordmark">
-            {LETTERS.map((l, i) => (
-              <span key={i} data-letter="" data-speed={l.speed} className="foot-letter">
-                {l.ch}
-              </span>
-            ))}
+            {LETTERS.map((l, i) => {
+              const dist = hoverIdx < 0 ? 0 : Math.abs(i - hoverIdx);
+              return (
+                <span
+                  key={i}
+                  data-letter=""
+                  data-idx={i}
+                  data-speed={l.speed}
+                  className="foot-letter"
+                  style={{
+                    fontWeight: hoverIdx >= 0 && i === hoverIdx ? 700 : 400,
+                    opacity: hoverIdx < 0 ? 1 : Math.max(0.3, 1 - 0.16 * dist),
+                  }}
+                >
+                  {l.ch}
+                </span>
+              );
+            })}
           </span>
         </div>
       </div>

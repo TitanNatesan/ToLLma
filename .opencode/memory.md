@@ -4761,3 +4761,8 @@ Verified: computed font is Archivo, rect 2..1438, 0 h-overflow; tsc clean; next 
 Requirement: at full scroll, all letters align straight (no residual shear).
 Change (closing.tsx only): settle factor = clamp(scrollRemaining / 0.6vh) multiplies every per-letter offset; hits exactly 0 at page bottom (transforms cleared), pure function of scrollY so scroll-up restores shear reversibly. Compatible with the concurrently retuned speed arc (middle-led) — untouched.
 Verified: full scroll -> 6x empty transforms, bottoms 799 x6, screenshot straight; mid-scroll shear intact (earlier probe).
+
+## 2026-11-05 - Footer wordmark: Tiny5 Duo + hover weight falloff
+Requirement: Tiny5 Duo font; hover a letter -> it goes bold, neighbors step down character by character; uniform when none hovered.
+Implementation: next/font Tiny5 (400, display optional, --font-tiny5; note: export is Tiny5 not Tiny5_Duo). .foot-wordmark 400/0.02em, size recalibrated for the narrow pixel face (ink 3.48px/px -> clamp(3.5rem, 30vw, 34rem) = 90% coverage, 0 overflow 320-1920). Hover: Footer hoverIdx state via delegated mouseover (re-render only on change), per-letter inline style weight 700 on hovered + opacity 1-0.16*dist (floor 0.3), 200ms opacity transition; no transform involvement so parallax untouched; touch = uniform default.
+Verified: real-font probe (document.fonts.load) — default 400/1 x6, hover-o 700/1 + 0.84/0.84 + 0.68/0.52/0.36, leave restores uniform; rect/ink fits all widths; screenshot confirms pixel face + emphasis; tsc clean; next build green.

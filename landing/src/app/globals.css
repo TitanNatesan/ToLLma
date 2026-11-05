@@ -847,21 +847,22 @@ body {
   width: 100%;
   text-align: center;
   white-space: nowrap;
-  /* Boxy grotesque voice (Archivo 900, system-sans fallback keeps the
-     same stance offline); tracked slightly out for even rhythm. */
-  font-family: var(--font-archivo), var(--font-sans);
-  font-weight: 900;
-  letter-spacing: 0.01em;
+  /* Pixel-duo voice (Tiny5 Duo, system-sans fallback); sized to fill
+     the viewport edge to edge at every width. */
+  font-family: var(--font-tiny5), var(--font-sans);
+  font-weight: 400;
+  letter-spacing: 0.02em;
   line-height: 0.9;
-  /* Full-bleed: sized in viewport units so the word spans ~96% of the
-     screen at every width, edge to edge. */
-  font-size: clamp(6rem, 23.5vw, 40rem);
+  /* Full-bleed for the pixel face (~3.5px ink per px of font size):
+     27vw spans the screen edge to edge at every width. */
+  font-size: clamp(3.5rem, 30vw, 34rem);
   color: var(--color-coal);
   user-select: none;
 }
 .foot-letter {
   display: inline-block;
   will-change: transform;
+  transition: opacity 200ms ease;
   /* Top-to-bottom fade: solid coal/black at the cap line dissolving
      into the cream footer at the baseline, so the wordmark melts into
      the page bottom. Painted per letter so it rides the parallax drift. */

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Archivo, Inter, Newsreader } from "next/font/google";
+import { Inter, Newsreader, Tiny5 } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -16,13 +16,13 @@ const newsreader = Newsreader({
   display: "optional",
 });
 
-// Boxy grotesque for the giant footer wordmark (single heavy weight;
-// Georgia/system fallback covers offline/static-export builds the same
-// way the serif fallback does).
-const archivo = Archivo({
+// Pixel-duo voice for the giant footer wordmark (single 400 weight;
+// hover emphasis uses synthetic bold + opacity falloff. System-sans
+// fallback keeps the layout if the webfont fetch fails).
+const tiny5Duo = Tiny5({
   subsets: ["latin"],
-  weight: "900",
-  variable: "--font-archivo",
+  weight: "400",
+  variable: "--font-tiny5",
   display: "optional",
 });
 const mono = {
@@ -109,7 +109,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${archivo.variable} ${mono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${tiny5Duo.variable} ${mono.variable}`}>
       <body className="antialiased">{children}</body>
     </html>
   );
