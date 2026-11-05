@@ -4847,3 +4847,6 @@ Testing: 470 tiles, 0 broken imgs, caption counts 235; ox=0 at 390/1440/1920; ts
 ## 2026-11-06 - Site frame + footer wordmark centering
 Frame: fixed inset-3 (12px) hairline border-coal/20, pointer-events-none, z-90, print:hidden — one aria-hidden div in RootLayout, utilities only, no layout shift. Verified on cream hero + dark platform section, persists mid-scroll, zero errors, tsc clean.
 Wordmark centering: foot-pressure gains padding-inline clamp(16px,4vw,72px); backstop is clientWidth-based so stays padding-aware. Measured symmetric margins L/R at 390 (16/16), 1440 (58/58), 1920 (72/72), ox=0, zero errors.
+
+## 2026-11-06 - Black curvy viewport ring
+Frame upgraded: fixed inset-0 12px solid black ring, rounded 28px, html bg-black so corner triangles read black; pointer-events-none, z-90, print-hidden. Verified on hero + footer, zero errors, tsc clean.
