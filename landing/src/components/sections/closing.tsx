@@ -136,16 +136,19 @@ export function Footer() {
       <Container width="wide" className="pt-16 md:pt-20">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,10fr)]">
           <div data-reveal className="flex flex-col items-start gap-3">
-            <Link href="#top" className="foot-logo flex items-center gap-2" aria-label="ToLLma home">
+            {/* Brand block: logo spans the full column width, wordmark
+                sits below it. Capped on small screens where the column
+                itself goes full width. */}
+            <Link href="#top" className="block w-full max-w-56 lg:max-w-none" aria-label="ToLLma home">
               <img
                 src={tollmaLight.src}
                 alt=""
-                width={28}
-                height={28}
-                className="size-7"
+                width={256}
+                height={256}
+                className="h-auto w-full"
               />
-              <span className="text-[1.1rem] font-semibold tracking-tight text-coal">ToLLma</span>
             </Link>
+            <span className="text-xl font-semibold tracking-tight text-coal">ToLLma</span>
             <p className="max-w-xs text-sm leading-relaxed text-coal/60">
               The open source AI gateway for models and agents. One unified
               interface to connect, route, govern, and observe your AI

@@ -4731,3 +4731,8 @@ Requirement: coal/black top fading to cream at bottom, bottom-aligned, per-lette
 Trials (live screenshots @1440): A Inter 800 ls .01 (status quo, good), B Inter 900 ls -.04 (heaviest, most confident), C Newsreader 700 serif (elegant but LL feet collide at giant size — rejected), D Inter 800 tight (good, lighter than B). Winner: B.
 Changes (globals.css only): .foot-wordmark Inter 900 / ls -.04em (explicit font-sans); .foot-letter gradient transparent->cream stop (melts into footer bg instead of hard transparent cut).
 Verified: per-letter offsets differ by strength (T +55/+41 vs a +10/+7 across scroll positions, pure-function reversible, transform-only, reduced-motion static); wordmark fits 2px-inset at all widths 320-1920, 0 h-overflow; tsc clean; next build green.
+
+## 2026-11-05 - Footer brand block: full-width logo, wordmark below
+Requirement: logo occupies full grid-column width with ToLLma text beneath.
+Change (closing.tsx only): brand row replaced by stacked block — Link wraps img at w-full h-auto (256px asset), wordmark text-xl below; max-w-56 cap under lg where the column goes full width (prevents 350px+ logo on mobile); dropped foot-logo spin class (a -14deg rotation on a 200px mark would read broken).
+Verified: 1440 logo 201x201 = column width, wordmark below; 390 capped 224px, below; 0 h-overflow; tsc clean; next build green.
