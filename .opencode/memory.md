@@ -4862,3 +4862,6 @@ User: delete the component entirely, use only what came before with this font. R
 
 ## 2026-11-06 - Compressed footer rhythm, baseline wordmark
 Top pt-16/20->pt-10/12, nav gap-y-12->8, meta mt-12->8, bottom Container pb-10/pt-4->pb-3/pt-2, bar inner pt-6->pt-3/gap-3->2. Aspect 3.4->3.2 (bound ~3.26 from fs heuristic max) + overflow:clip on .foot-pressure so parallax dips clip at the box instead of crossing the divider. Final: text->divider 12px, bar->footer-end 12px, footer 882px tall at 1440, ox=0, zero errors. tsc clean.
+
+## 2026-11-06 - Cream wash, rounded footer top, clear border
+Wash: black ramp -> sand/taupe cream ramp (deeper pass for legibility) + glyphOpacity 0.55->0.7, spread held at 2.2 (verified full-width top coverage raining to the meta strip, zero errors). Footer: rounded-t-[28px] + overflow-clip (clips wash canvas to the curve) + border-t-2 border-coal/25 following the curve. tsc clean. Commit 261ec46.
