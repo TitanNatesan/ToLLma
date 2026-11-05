@@ -8,6 +8,7 @@ import StickerPeel from "@/components/ui/sticker-peel";
 import GradientASCII from "@/components/ui/gradient-ascii";
 import TextPressure from "@/components/ui/text-pressure";
 import { useReducedMotion, useRevealOnScroll } from "@/lib/animations";
+import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
 import tollmaLight from "./brand/tollma-light-256.png";
 
@@ -78,6 +79,48 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
   },
 ];
 
+// Per-letter scroll parallax (from 76b8e1e, adapted to the TextPressure
+// wordmark): T rides fastest, a slowest, so the word shears gently while
+// the footer scrolls through — fully reversible. Uses the independent
+// `translate` property, which composes with TextPressure's own per-span
+// fontVariationSettings/opacity (never clobbered) and never affects the
+// horizontal fit backstop. Measured off .foot-pressure (never
+// self-measured). Static when reduced-motion is preferred.
+const LETTER_SPEEDS = [-0.45, -0.37, -0.29, -0.21, -0.14, -0.08];
+function useWordmarkParallax() {
+  useEffect(() => {
+    const title = document.querySelector<HTMLElement>("#company .text-pressure-title");
+    if (!title || prefersReducedMotion()) return;
+    const spans = Array.from(title.querySelectorAll<HTMLElement>("span"));
+    if (!spans.length) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const block = title.parentElement;
+      if (!block) return;
+      const rect = block.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      const progress = (vh - rect.top) / (vh + rect.height) - 0.5;
+      spans.forEach((s, i) => {
+        const sp = LETTER_SPEEDS[i % LETTER_SPEEDS.length];
+        s.style.translate = `0 ${(progress * sp * 100).toFixed(2)}px`;
+      });
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      if (raf) cancelAnimationFrame(raf);
+      for (const s of spans) s.style.translate = "";
+    };
+  }, []);
+}
+
 // R11 wordmark rise: per-letter scroll-linked translate. Each letter has
 // its own speed (outer letters travel fastest, inner slowest) so the word
 // shears gently as it rises from below the footer edge. Measured off the
@@ -86,6 +129,7 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 // rAF-throttled, inert under prefers-reduced-motion (static full word).
 export function Footer() {
   const revealRef = useRevealOnScroll({ staggerMs: 90, y: 16 });
+  useWordmarkParallax();
   // Static blended mark for reduced-motion (no WebGL sticker).
   const reduced = useReducedMotion();
   // Static mark when WebGL2 is unavailable (sticker needs it to draw).
