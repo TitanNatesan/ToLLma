@@ -403,20 +403,46 @@ body {
 /* Island nav link underline is defined on .nav-link; the -light variant
    keeps the same currentColor rule on the glass island. */
 
-/* Premium liquid-glass island: thin ivory translucency, 2px blur max so
-   the background stays recognizable, layered hairline borders, a delicate
-   top reflection clipped to the capsule, and soft ambient depth. Fallback
-   below for engines without backdrop-filter. */
+/* Premium liquid-glass island: layered ivory translucency + faint
+   cool-blue lighting, 2px blur max so the background stays recognizable.
+   Layered hairline borders, delicate top reflection + diagonal blue sheen
+   clipped to the capsule, pointer-driven glare (::after, --mx/--my),
+   soft ambient depth. Fallback below for engines without
+   backdrop-filter. Blue stays a lighting accent — the island reads cream. */
 .navbar-glass {
   position: relative;
-  background: rgba(247, 247, 238, 0.58);
+  isolation: isolate;
+  overflow: hidden;
+  --mx: 50%;
+  --my: 0%;
+  background-color: rgba(247, 247, 238, 0.58);
+  background-image:
+    linear-gradient(
+      120deg,
+      rgba(255, 255, 255, 0.34),
+      rgba(255, 255, 255, 0) 32%,
+      rgba(160, 195, 245, 0.1) 68%,
+      rgba(160, 195, 245, 0) 88%
+    ),
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.5),
+      rgba(247, 247, 238, 0.12) 45%,
+      rgba(235, 242, 250, 0.22)
+    );
   -webkit-backdrop-filter: blur(2px) saturate(1.15);
   backdrop-filter: blur(2px) saturate(1.15);
-  border: 1px solid rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.8) inset,
-    0 -1px 0 rgba(23, 25, 20, 0.035) inset,
-    0 8px 28px rgba(23, 25, 20, 0.1);
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 -1px 0 rgba(75, 110, 155, 0.09) inset,
+    0 0 0 1px rgba(23, 25, 20, 0.04),
+    0 8px 28px rgba(23, 25, 20, 0.1),
+    0 2px 6px rgba(30, 45, 70, 0.05);
+}
+.navbar-glass > * {
+  position: relative;
+  z-index: 1;
 }
 .navbar-glass::before {
   content: "";
@@ -426,14 +452,44 @@ body {
   border-radius: inherit;
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0));
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0));
   pointer-events: none;
+  z-index: 0;
+}
+/* Pointer glare: soft white-blue light that drifts toward the cursor.
+   Decorative only — opacity-only change, content stays crisp above it. */
+.navbar-glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    140px 70px at var(--mx, 50%) var(--my, 0%),
+    rgba(255, 255, 255, 0.32),
+    rgba(170, 200, 245, 0.12) 48%,
+    rgba(170, 200, 245, 0) 72%
+  );
+  opacity: 0.55;
+  transition: opacity 300ms ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.navbar-glass:hover::after {
+  opacity: 0.85;
 }
 @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
   .navbar-glass {
-    background: rgba(247, 247, 238, 0.96);
+    background-color: rgba(247, 247, 238, 0.96);
+    background-image: linear-gradient(
+      120deg,
+      rgba(255, 255, 255, 0.5),
+      rgba(235, 242, 250, 0.25)
+    );
   }
   .navbar-glass::before {
+    display: none;
+  }
+  .navbar-glass::after {
     display: none;
   }
 }
@@ -465,6 +521,10 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .nav-link-glass {
     transition: none;
+  }
+  .navbar-glass::after {
+    transition: none;
+    opacity: 0.55;
   }
 }
 

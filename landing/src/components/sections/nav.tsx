@@ -164,6 +164,19 @@ export default function Nav() {
           onMouseLeave={() => setHovered(false)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
+          onMouseMove={(e) => {
+            // Pointer glare: drift the ::after highlight toward the
+            // cursor. Mouse only, motion-safe only — touch and
+            // reduced-motion keep the static centered sheen.
+            if (reduced) return;
+            const pe = e as unknown as { pointerType?: string };
+            if (pe.pointerType && pe.pointerType !== "mouse") return;
+            const el = e.currentTarget;
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return;
+            el.style.setProperty("--mx", `${(((e.clientX - r.left) / r.width) * 100).toFixed(1)}%`);
+            el.style.setProperty("--my", `${(((e.clientY - r.top) / r.height) * 100).toFixed(1)}%`);
+          }}
           onClick={() => {
             // Touch: tapping the collapsed island expands it.
             if (!expanded) setTouchOpen(true);
@@ -185,9 +198,9 @@ export default function Nav() {
             <img
               src={tollmaInk.src}
               alt=""
-              width={26}
-              height={26}
-              className="size-[26px]"
+              width={28}
+              height={28}
+              className="size-[28px]"
             />
             <span className="hidden text-[1.05rem] font-semibold tracking-tight min-[400px]:inline">
               ToLLma
