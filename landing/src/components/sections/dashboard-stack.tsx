@@ -1,25 +1,20 @@
 "use client";
 
-// R5 — six-window stacked dashboard (replaces the single Request
-// Activity window). One compact region (~480vh) pins a centered sticky
-// viewport; scroll progress v in [0,1] is the ONLY driver (pure
-// function — scroll-up reverses exactly). Overview (i=0) sits at
-// vertical center; each following window slides up from below
-// (translateY 110vh → 0, transform-only) and lands opaque on top of
-// the previous ones, which sink, shrink and dim continuously with
-// successor progress (scale/sink/dim/shadow all interpolate — no
-// boundary flips; cards themselves stay fully opaque, dim via an
-// overlay's opacity, no bleed). The last window holds for v in
-// [0.86, 1]. Every window is the SAME fixed size (w × h per
-// breakpoint) with content condensed to fit — no scrollable content
-// inside. The sticky stage is overflow-visible with breathing room so
-// the layered window shadows never crop at the edges. The sidebar in
-// the top window highlights that window's page; the region mirrors it
-// in data-active-page. Reduced-motion / no-JS: all six windows render
-// as a plain static list (complete final state, no transforms).
+// Six-window stacked dashboard. The stacking engine is the free React
+// Bits ScrollStack (vendored, no deps) in useWindowScroll mode: each
+// window pins in turn while covered windows shrink + dim, exactly like
+// the previous hand-rolled scrub region but driven by native scroll.
+// All six windows share one fixed size (w × h per breakpoint) with
+// content condensed to fit — no scrollable content inside. The sidebar
+// in each window highlights that window's page; an IntersectionObserver
+// mirrors the topmost card into data-active-page + the aria-live line
+// (refs only, zero re-renders on scroll). Reduced-motion / no-JS: all
+// six windows render as a plain static list (complete final state,
+// no transforms). Native page scroll is preserved (smoothScroll off —
+// the upstream default would hijack the wheel and fight GSAP pins).
 import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "@/lib/animations";
-import { prefersReducedMotion } from "@/lib/animations/motion-preference";
+import ScrollStack, { ScrollStackItem } from "@/components/ui/scroll-stack";
 import {
   API_KEYS,
   KPIS,
@@ -38,23 +33,6 @@ import {
   type LogStatus,
   type PageId,
 } from "@/data/dashboard";
-
-const REGION_VH = 480;
-/** Transitions occupy v in [0, TRANS_END]; the rest holds Analytics. */
-const TRANS_END = 0.86;
-const SEG = TRANS_END / (PAGES.length - 1);
-const OFFSCREEN_VH = 110;
-/** Scrub glide rate (1/s): lower glides slower. Region + rate together
-    set the felt speed — 480vh at k=5 is ~2.7× slower than 300vh at k=10. */
-const EASE_K = 5;
-
-const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
-/** Smootherstep: zero 1st + 2nd derivatives at both ends, so windows
-    leave and land with no velocity or acceleration kink. */
-const smoother = (x: number) => {
-  const t = clamp01(x);
-  return t * t * t * (t * (t * 6 - 15) + 10);
-};
 
 const SIDEBAR: PageId[] = [...PAGES];
 
@@ -111,23 +89,17 @@ function Sidebar({ page }: { page: PageId }) {
 function Window({
   page,
   heading,
-  stacked,
   children,
 }: {
   page: PageId;
   heading: string;
-  stacked?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div
       data-page={page}
       data-allow-overlap=""
-      className={`dash-window dash-glass-window relative flex h-[740px] w-[min(70rem,92vw)] flex-col overflow-hidden md:h-[600px] ${
-        stacked
-          ? "dash-window--stacked"
-          : "shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)]"
-      }`}
+      className="dash-window dash-glass-window relative flex h-[740px] w-[min(70rem,92vw)] flex-col overflow-hidden md:h-[600px] shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)]"
     >
       <div className="dash-glass-title relative flex shrink-0 items-center border-b border-cream-line/60 px-5 py-3">
         <div className="flex items-center gap-2" aria-hidden="true">
@@ -149,13 +121,6 @@ function Window({
         <Sidebar page={page} />
         <div className="min-w-0 min-h-0 overflow-hidden">{children}</div>
       </div>
-      {/* Dim veil for covered windows (opacity-only; card stays opaque). */}
-      <div
-        data-dim=""
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 rounded-2xl bg-night"
-        style={{ opacity: 0 }}
-      />
     </div>
   );
 }
@@ -474,187 +439,61 @@ const HEADINGS: Record<PageId, string> = {
 
 export default function DashboardStack() {
   const regionRef = useRef<HTMLDivElement | null>(null);
-  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const liveRef = useRef<HTMLSpanElement | null>(null);
   const livePage = useRef<string>(PAGES[0]);
   const [jsReady, setJsReady] = useState(false);
   const reduced = useReducedMotion();
-  const reducedRef = useRef(reduced);
-  reducedRef.current = reduced;
 
   useEffect(() => {
     setJsReady(true);
   }, []);
 
-  // No-JS gets the complete static list. Reduced-motion keeps the pinned
-  // stack but crossfades opacity only (see paint + CSS 150 ms transition).
-  const static_ = !jsReady;
+  // No-JS gets the complete static list. Reduced-motion with JS gets
+  // the same list (ScrollStack below always animates, so it stays out
+  // of that path) — identical final content, zero transforms.
+  const static_ = !jsReady || reduced;
 
-  /* Scroll driver: target progress comes from scroll/resize events only
-     (one forced rect read per event); a persistent rAF loop eases a
-     smoothed value toward it — exponential approach, k=EASE_K — and paints
-     from that. Wheel input can never jump the windows, and reversing
-     mid-transition simply retargets from the current value, so both
-     directions mirror each other. Refs only; zero re-renders on scroll. */
+  /* Active-card mirror: which window sits on top. Slots pin at
+     stackTop + i * itemStackDistance (must match the ScrollStack
+     props below: 15% / 24px). One rAF-throttled scroll/resize
+     listener, refs only — zero re-renders on scroll. Feeds
+     data-active-page + the aria-live line. */
   useEffect(() => {
     if (static_) return;
-    const tgt = { v: 0 };
-    const cur = { v: 0 };
-    let raf = 0;
-    let last = 0;
-    let lastInput = 0;
-    let visible = true;
-    let dirty = true;
-    const readTarget = () => {
-      const region = regionRef.current;
-      if (!region) return 0;
-      const vh = window.innerHeight || 1;
-      const total = region.offsetHeight - vh;
-      if (total <= 0) return 0;
-      const top = region.getBoundingClientRect().top;
-      return Math.min(1, Math.max(0, -top / total));
-    };
-    const paint = (v: number) => {
-      const region = regionRef.current;
-      if (!region) return;
-      const next = Math.min(PAGES.length - 1, Math.round(v / SEG));
-      // No React state on the scroll path: announce through a ref so the
-      // six windows (and their tables) never re-render while scrolling.
-      if (livePage.current !== PAGES[next]) {
-        livePage.current = PAGES[next];
-        if (liveRef.current) liveRef.current.textContent = `${PAGES[next]} window on top.`;
-      }
-      // Reduced motion: opacity crossfade only — no transform, no scale,
-      // no blur, no dim (the 150 ms ease lives in CSS).
-      const rm = reducedRef.current;
-      cardRefs.current.forEach((el, i) => {
-        if (!el) return;
-        const raw = i === 0 ? 1 : clamp01((v - (i - 1) * SEG) / SEG);
-        const win = el.querySelector<HTMLElement>("[data-page]");
-        if (rm) {
-          el.style.transform = "";
-          el.style.willChange = "auto";
-          if (win) win.style.opacity = i <= next ? "1" : "0";
-          const dim = el.querySelector<HTMLElement>("[data-dim]");
-          if (dim) dim.style.opacity = "0";
-          const sh = el.querySelector<HTMLElement>("[data-shadow]");
-          if (sh) sh.style.opacity = i === next ? "1" : "0";
-          el.style.pointerEvents = i === next ? "auto" : "none";
-          el.style.visibility = raw <= 0 ? "hidden" : "visible";
-          return;
-        }
-        // Smootherstep eases each window's rise with a feathered landing;
-        // still a pure function of v, so scroll-up reverses it exactly.
-        const t = smoother(raw);
-        const y = ((1 - t) * OFFSCREEN_VH).toFixed(2);
-        // Successor-driven cover: window i sinks/dims exactly as far as
-        // window i+1 has arrived (continuous 0→1), plus a second, deeper
-        // tier as further windows pile on (capped at 2). No discrete
-        // covered/top flips anywhere in the transform path.
-        const succRaw = i < PAGES.length - 1 ? clamp01((v - i * SEG) / SEG) : 0;
-        const cover1 = smoother(succRaw);
-        let deeper = 0;
-        for (let j = i + 2; j < PAGES.length; j++) {
-          deeper = Math.max(deeper, smoother(clamp01((v - (j - 1) * SEG) / SEG)));
-        }
-        const totalCover = Math.min(2, cover1 + deeper);
-        // Covered windows sink (negative elevation) and shrink per cover —
-        // nearer cover at -12px/0.975, deeper at -24px/0.95. Top stays flat.
-        const sink = totalCover * 12;
-        const scale = 1 - totalCover * 0.025;
-        // Centering lives in CSS classes (see the wrapper markup), so React
-        // never writes `transform` and paint fully owns it — otherwise each
-        // commit resets the inline motion back to the prop value and the
-        // windows pop instead of sliding.
-        el.style.transform = `translate3d(0, calc(${y}vh + ${sink.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`;
-        // will-change while the window itself moves OR is being covered —
-        // never a permanent giant layer.
-        el.style.willChange = (raw > 0 && raw < 1) || (cover1 > 0 && cover1 < 1) ? "transform" : "auto";
-        // Veil deepens with cover (0.10 nearest, +0.06 deeper) — opacity
-        // only; the card stays fully opaque, no bleed.
-        const dim = el.querySelector<HTMLElement>("[data-dim]");
-        if (dim) {
-          dim.style.opacity =
-            totalCover > 0
-              ? (0.1 * Math.min(totalCover, 1) + 0.06 * Math.max(0, Math.min(totalCover - 1, 1))).toFixed(3)
-              : "0";
-        }
-        // Shadow lives on a dedicated layer faded by opacity (compositor
-        // only): own arrival × uncovered. The outgoing top fades 1→0 while
-        // the incoming fades 0→1, so total elevation light stays ~1 through
-        // every handoff and covered windows pool no darker.
-        const sh = el.querySelector<HTMLElement>("[data-shadow]");
-        if (sh) sh.style.opacity = (t * (1 - Math.min(cover1, 1))).toFixed(3);
-        el.style.pointerEvents = i === next ? "auto" : "none";
-        el.style.visibility = raw <= 0 ? "hidden" : "visible";
-      });
-      region.dataset.progress = v.toFixed(4);
-      region.dataset.activePage = PAGES[next];
-    };
-    const tick = (now: number) => {
-      raf = 0;
-      const dt = Math.min(0.1, Math.max(0.001, (now - last) / 1000));
-      last = now;
-      // Target rect is read at most once per frame (dirty flag) — never
-      // per scroll event — so fast scrolls can't force repeated layouts.
-      if (dirty) {
-        tgt.v = readTarget();
-        dirty = false;
-      }
-      // Exponential approach, integrated in fixed 60 Hz substeps so the
-      // curve is identical at 120 fps, 60 fps, or burst-scheduled frames:
-      // wheel flicks/large deltas glide instead of jumping, and reversal
-      // retargets from the current value automatically.
-      let remaining = dt;
-      while (remaining > 0.0001) {
-        const h = Math.min(remaining, 1 / 60);
-        cur.v += (tgt.v - cur.v) * (1 - Math.exp(-h * EASE_K));
-        remaining -= h;
-      }
-      if (Math.abs(tgt.v - cur.v) < 0.0004) cur.v = tgt.v;
-      paint(cur.v);
-      // Idle the loop once converged and input has settled (battery);
-      // any scroll/resize/visibility change kicks it again.
-      const settled = cur.v === tgt.v && performance.now() - lastInput > 600;
-      if (visible && !settled) raf = requestAnimationFrame(tick);
-    };
-    const kick = () => {
-      dirty = true;
-      lastInput = performance.now();
-      if (!raf) {
-        last = performance.now();
-        raf = requestAnimationFrame(tick);
-      }
-    };
-    const io = new IntersectionObserver(
-      ([entry]) => {
-        visible = entry.isIntersecting;
-        if (visible) kick();
-        else if (raf) {
-          cancelAnimationFrame(raf);
-          raf = 0;
-        }
-      },
-      { rootMargin: "20% 0px" }
-    );
     const region = regionRef.current;
-    if (region) io.observe(region);
-    tgt.v = readTarget();
-    cur.v = tgt.v;
-    paint(cur.v);
-    window.addEventListener("scroll", kick, { passive: true });
-    window.addEventListener("resize", kick, { passive: true });
+    if (!region) return;
+    let raf = 0;
+    const read = () => {
+      raf = 0;
+      const slots = region.querySelectorAll<HTMLElement>("[data-stack-slot]");
+      if (!slots.length) return;
+      const stackTop = window.innerHeight * 0.15;
+      let top = 0;
+      slots.forEach((el, i) => {
+        if (el.getBoundingClientRect().top <= stackTop + i * 24 + 4) top = i;
+      });
+      const page = PAGES[Math.min(top, PAGES.length - 1)];
+      if (livePage.current !== page) {
+        livePage.current = page;
+        if (liveRef.current) liveRef.current.textContent = `${page} window on top.`;
+      }
+      if (region.dataset.activePage !== page) region.dataset.activePage = page;
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(read);
+    };
+    read();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
     return () => {
-      io.disconnect();
-      window.removeEventListener("scroll", kick);
-      window.removeEventListener("resize", kick);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
       if (raf) cancelAnimationFrame(raf);
     };
   }, [static_]);
 
   if (static_) {
-    // No-JS: complete final state, plain vertical list. (Reduced-motion
-    // with JS keeps the pinned stack but crossfades opacity only.)
+    // No-JS / reduced-motion: complete final state, plain vertical list.
     return (
       <div ref={regionRef} id="activity" data-active-page="Overview" className="mx-auto mt-14 flex max-w-6xl flex-col gap-8 scroll-mt-24">
         {PAGES.map((p) => {
@@ -676,40 +515,35 @@ export default function DashboardStack() {
       ref={regionRef}
       id="activity"
       data-active-page="Overview"
-      className="relative -mt-8 scroll-mt-24"
-      style={{ height: `${REGION_VH}vh` }}
+      className="relative mt-12 scroll-mt-24 md:mt-16"
     >
-      <div className="sticky top-0 flex h-screen items-start justify-center px-6 pb-12 pt-20 md:pt-24">
-        {PAGES.map((p, i) => {
+      {/* Free React Bits ScrollStack drives the stacking (native page
+          scroll; smoothScroll stays off so the wheel is never hijacked).
+          Tune here: stackPosition pins the pile, itemScale/baseScale +
+          dimAmount mirror the old cover tiers (0.975/0.95, veil ~0.1). */}
+      <ScrollStack
+        useWindowScroll
+        stackPosition="15%"
+        itemScale={0.025}
+        baseScale={0.95}
+        dimAmount={0.1}
+        holdDistance={400}
+        smoothScroll={false}
+      >
+        {PAGES.map((p) => {
           const Body = BODIES[p];
           return (
-            <div
-              key={p}
-              ref={(el) => {
-                cardRefs.current[i] = el;
-              }}
-              data-page-wrap={p}
-              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
-              style={{ zIndex: i, pointerEvents: i === 0 ? "auto" : "none" }}
-            >
-              {/* Dedicated shadow layer: faded by opacity only, so the
-                  stack keeps exactly one shadow with zero repaints. */}
-              <div
-                aria-hidden="true"
-                data-shadow=""
-                className="dash-shadow pointer-events-none absolute inset-0 rounded-2xl shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)]"
-                style={{ opacity: i === 0 ? 1 : 0 }}
-              />
-              <Window page={p} heading={HEADINGS[p]} stacked>
+            <ScrollStackItem key={p} itemClassName="dash-stack-card">
+              <Window page={p} heading={HEADINGS[p]}>
                 <Body />
               </Window>
-            </div>
+            </ScrollStackItem>
           );
         })}
-        <span ref={liveRef} className="sr-only" aria-live="polite">
-          Overview window on top.
-        </span>
-      </div>
+      </ScrollStack>
+      <span ref={liveRef} className="sr-only" aria-live="polite">
+        Overview window on top.
+      </span>
     </div>
   );
 }
