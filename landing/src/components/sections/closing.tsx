@@ -82,12 +82,12 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 // pure function of scroll position and exactly reversible. Transform-only,
 // rAF-throttled, inert under prefers-reduced-motion (static full word).
 const LETTERS = [
-  { ch: "T", speed: -2.8 },
-  { ch: "o", speed: -2.3 },
-  { ch: "L", speed: -1.8 },
-  { ch: "L", speed: -1.3 },
-  { ch: "m", speed: -0.9 },
-  { ch: "a", speed: -0.5 },
+  { ch: "T", speed: -1.6 },
+  { ch: "o", speed: -4.6 },
+  { ch: "L", speed: -5.6 },
+  { ch: "L", speed: -4.6 },
+  { ch: "m", speed: -1.8 },
+  { ch: "a", speed: -1.0 },
 ];
 
 function useWordmarkRise(

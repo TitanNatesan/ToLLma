@@ -832,11 +832,12 @@ body {
   /* Breathing room so the parallax drift never clips glyphs: padding
      extends the clip box while the negative margins keep page layout
      identical. Inline room covers the trailing letter-spacing overhang. */
-  padding: 100px 0.12em 80px;
+  padding: 140px 0.12em 100px;
   /* Editorial negative space: navigation-to-wordmark breathes
      (100–160px), padding extends the clip box while the negative
-     margins keep page layout identical. */
-  margin: calc(clamp(6rem, 10vw, 10rem) - 100px) 0 -80px;
+     margins keep page layout identical. Sized for the doubled
+     per-letter drift (T peaks ~110px). */
+  margin: calc(clamp(6rem, 10vw, 10rem) - 140px) 0 -100px;
 }
 .foot-wordmark-drift {
   will-change: transform;

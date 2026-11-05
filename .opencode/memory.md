@@ -4747,3 +4747,8 @@ Feedback: change giant wordmark font; brand column left a void under nav — mov
 Font: trialed Newsreader 700 at ls .01/.02/.045 — picked .045em (L feet clear, fits 2px-inset full-bleed). Serif matches site headline voice.
 Layout (closing.tsx): brand cell now logo + spread wordmark only; description, license pill, Stay-connected moved to a full-width wrapping strip below the grid (desc max-w-md, pill, inline community links with lg:ml-auto). Kills the tall-column void; all 29 links preserved.
 Verified: 1440 + 390 screenshots, 0 h-overflow both, 29 links, 0 errors, tsc clean, next build green.
+
+## 2026-11-05 - Footer wordmark parallax doubled
+Requirement: increase parallax strength for all characters.
+Change: LETTERS speeds x2 (T -5.6, o -4.6, L -3.6, L -2.6, m -1.8, a -1.0 — outer-fastest shear kept); clip breathing room grown to match (140px top / 100px bottom, margins compensated so page layout identical).
+Verified: T +100px / a +18px mid-scroll vs +69/+12px at bottom (6-way spread, reversible pure function); word (494-799) inside clip (354-899); screenshot shows cascade shear, no clipping; build green.
