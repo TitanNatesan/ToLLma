@@ -846,8 +846,9 @@ body {
   width: 100%;
   text-align: center;
   white-space: nowrap;
-  font-weight: 800;
-  letter-spacing: 0.01em;
+  font-family: var(--font-sans);
+  font-weight: 900;
+  letter-spacing: -0.04em;
   line-height: 0.9;
   /* Full-bleed: sized in viewport units so the word spans ~96% of the
      screen at every width, edge to edge. */
@@ -858,9 +859,10 @@ body {
 .foot-letter {
   display: inline-block;
   will-change: transform;
-  /* Bottom-to-top gradient, solid coal at the top fading out toward the
-     bottom edge. Painted per letter so it rides the parallax drift. */
-  background: linear-gradient(to top, transparent 0%, var(--color-coal) 55%);
+  /* Top-to-bottom fade: solid coal/black at the cap line dissolving
+     into the cream footer at the baseline, so the wordmark melts into
+     the page bottom. Painted per letter so it rides the parallax drift. */
+  background: linear-gradient(to top, var(--color-cream) 0%, var(--color-coal) 55%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
