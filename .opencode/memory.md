@@ -4865,3 +4865,6 @@ Top pt-16/20->pt-10/12, nav gap-y-12->8, meta mt-12->8, bottom Container pb-10/p
 
 ## 2026-11-06 - Cream wash, rounded footer top, clear border
 Wash: black ramp -> sand/taupe cream ramp (deeper pass for legibility) + glyphOpacity 0.55->0.7, spread held at 2.2 (verified full-width top coverage raining to the meta strip, zero errors). Footer: rounded-t-[28px] + overflow-clip (clips wash canvas to the curve) + border-t-2 border-coal/25 following the curve. tsc clean. Commit 261ec46.
+
+## 2026-11-06 - Navbar: page sections in order + scroll-spy
+Replaced app-taxonomy links with the 6 landing sections in page order (Overview/Manage/Outcomes/Platform/Providers/Guides); dropped the off-page API Docs item (Get Started CTA kept). #top excluded from tracking (whole <main> would pin the spy); reading-line fallback resolves Overview at top, last-passed at tail. Validated: spy trail ordered across full scroll, Providers aria-highlighted in-section, collapsed label follows, mobile panel lists 6, fits at 1280, ox=0, zero errors, tsc clean. Commit 787fd47.
