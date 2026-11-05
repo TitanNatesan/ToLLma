@@ -139,7 +139,8 @@ export function Footer() {
             {/* Brand block: logo spans the full column width, wordmark
                 sits below it. Capped on small screens where the column
                 itself goes full width. */}
-            <Link href="#top" className="block w-full max-w-56 lg:max-w-none" aria-label="ToLLma home">
+            <div className="w-full max-w-56 lg:max-w-none">
+            <Link href="#top" className="block w-full" aria-label="ToLLma home">
               <img
                 src={tollmaLight.src}
                 alt=""
@@ -148,7 +149,8 @@ export function Footer() {
                 className="h-auto w-full"
               />
             </Link>
-            <span className="text-xl font-semibold tracking-tight text-coal">ToLLma</span>
+            <span className="block w-full text-justify text-3xl font-bold tracking-tight text-coal [text-align-last:justify] [text-justify:inter-character]">ToLLma</span>
+            </div>
             <p className="max-w-xs text-sm leading-relaxed text-coal/60">
               The open source AI gateway for models and agents. One unified
               interface to connect, route, govern, and observe your AI

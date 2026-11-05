@@ -4736,3 +4736,8 @@ Verified: per-letter offsets differ by strength (T +55/+41 vs a +10/+7 across sc
 Requirement: logo occupies full grid-column width with ToLLma text beneath.
 Change (closing.tsx only): brand row replaced by stacked block — Link wraps img at w-full h-auto (256px asset), wordmark text-xl below; max-w-56 cap under lg where the column goes full width (prevents 350px+ logo on mobile); dropped foot-logo spin class (a -14deg rotation on a 200px mark would read broken).
 Verified: 1440 logo 201x201 = column width, wordmark below; 390 capped 224px, below; 0 h-overflow; tsc clean; next build green.
+
+## 2026-11-05 - Footer brand: blended logo, full-width wordmark
+Feedback: logo white box clashed with cream; wordmark should match logo width.
+Root cause: tollma-light-256.png is opaque white — and mix-blend-multiply can't fix it because reveal ancestors isolate the stacking context. Fixed at the asset: white->transparent with feathered AA edges (PIL), so the mark sits directly on cream everywhere it's used. Wordmark span is now block w-full with inter-character justification + text-align-last (verified pixel-exact: 201/201 desktop, 224/224 mobile), text-3xl bold; logo+word share a max-w-56 lg:max-w-none wrapper so the pair stays aligned on mobile.
+Verified: 390 + 1440 aligned, 0 h-overflow, tsc clean, next build green.
