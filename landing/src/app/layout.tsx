@@ -100,14 +100,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable} bg-black`}>
       <body className="antialiased">
-        {/* Site frame: hairline border around the whole viewport.
-            Fixed + pointer-transparent, so it never intercepts clicks
-            or shifts layout; hidden in print. */}
+        {/* Site frame: thick black ring with curvy corners around the whole
+            viewport. Fixed + pointer-transparent, so it never intercepts
+            clicks or shifts layout; body/html stay black so the corners
+            outside the curve read black too. Hidden in print. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed inset-3 z-[90] border border-coal/20 print:hidden"
+          className="pointer-events-none fixed inset-0 z-[90] rounded-[28px] border-[12px] border-black print:hidden"
         />
         {children}
       </body>
