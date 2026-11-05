@@ -10,7 +10,7 @@
 // - useIsomorphicLayoutEffect for the ResizeObserver (same SSR-safe
 //   pattern the repo already uses elsewhere).
 // - IntersectionObserver visibility gate so the loop sleeps offscreen
-//   (same pattern as the vendored TextPressure/SwarmCursor).
+//   (same pattern used by the other vendored components).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 
@@ -44,10 +44,6 @@ export type DriftWallProps = {
   pauseOnHover?: boolean;
   lift?: number;
   fade?: number;
-  // Uniform sheet: all columns share direction, speed and phase, so the
-  // wall reads as one aligned grid instead of staggered columns. Pairs
-  // with speed={0} for a perfectly static, aligned backdrop.
-  uniform?: boolean;
   dim?: number;
   grayscale?: boolean;
   overlayColor?: string;
@@ -92,7 +88,6 @@ const DriftWall = ({
   pauseOnHover = false,
   lift = 64,
   fade = 0.6,
-  uniform = false,
   dim = 0.55,
   grayscale = false,
   overlayColor = "#060010",
@@ -155,16 +150,15 @@ const DriftWall = ({
   const baseVelocities = useMemo(() => {
     const dirSign = direction === "up" ? 1 : -1;
     return columnItems.map((_, c) => {
-      if (uniform) return speed * dirSign;
       const altSign = c % 2 === 0 ? 1 : -1;
       return speed * columnFactor(c, variance) * dirSign * altSign;
     });
-  }, [columnItems, speed, direction, variance, uniform]);
+  }, [columnItems, speed, direction, variance]);
 
   useEffect(() => {
-    offsetsRef.current = columnMeta.map((meta, c) => (uniform ? 0 : meta.copyHeight * ((c * 0.37) % 1)));
+    offsetsRef.current = columnMeta.map((meta, c) => meta.copyHeight * ((c * 0.37) % 1));
     velocitiesRef.current = columnItems.map(() => 0);
-  }, [columnMeta, columnItems, uniform]);
+  }, [columnMeta, columnItems]);
 
   const applyPlaneTransform = useCallback(
     (px: number, py: number) => {

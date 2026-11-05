@@ -6,7 +6,6 @@ import { Container } from "@/components/ui/layout";
 import { IconChat, IconGitHub } from "@/components/ui/icons";
 import StickerPeel from "@/components/ui/sticker-peel";
 import GradientASCII from "@/components/ui/gradient-ascii";
-import TextPressure from "@/components/ui/text-pressure";
 import { useReducedMotion, useRevealOnScroll } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
@@ -15,13 +14,13 @@ import tollmaLight from "./brand/tollma-light-256.png";
 // Cream footer (CrewAI-inspired composition on ToLLma cream): brand +
 // Stay-connected community strip, 6 nav columns (all hrefs verified
 // site.ts links or in-page anchors), giant Jersey 10 wordmark
-// (free React Bits TextPressure: static pixel face, click ripple),
+// (static pixel face, per-letter scroll parallax),
 // divider + bottom bar (dynamic year, Privacy/Terms as plain spans,
 // GitHub + Discussions icons).
 //
-// Motion: link underlines sweep left → right; wordmark ripple on click
-// (TextPressure rAF, only while animating/visible, inert under
-// reduced-motion); columns fade
+// Motion: link underlines sweep left → right; wordmark letters shear
+// on scroll (per-letter speeds, rAF, inert under reduced-motion);
+// columns fade
 // up in sequence; headings share one baseline (min-h-8).
 const COLS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
   {
@@ -79,31 +78,37 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
   },
 ];
 
-// Per-letter scroll parallax (from 76b8e1e, adapted to the TextPressure
-// wordmark): T rides fastest, a slowest, so the word shears gently while
-// the footer scrolls through — fully reversible. Uses the independent
-// `translate` property, which composes with TextPressure's own per-span
-// fontVariationSettings/opacity (never clobbered) and never affects the
-// horizontal fit backstop. Measured off .foot-pressure (never
-// self-measured). Static when reduced-motion is preferred.
-const LETTER_SPEEDS = [-0.45, -0.37, -0.29, -0.21, -0.14, -0.08];
+// Per-letter scroll parallax (from 76b8e1e): T rides fastest, a
+// slowest, so the word shears gently while the footer scrolls through —
+// fully reversible. Uses the independent `translate` property on static
+// spans, so nothing fights over styles. Measured off .foot-pressure
+// (never self-measured). Static when reduced-motion is preferred.
+const LETTER_SPEEDS = [-3, -1.5, -2, -3, -0.4, -0.2];
 function useWordmarkParallax() {
   useEffect(() => {
-    const title = document.querySelector<HTMLElement>("#company .text-pressure-title");
-    if (!title || prefersReducedMotion()) return;
-    const spans = Array.from(title.querySelectorAll<HTMLElement>("span"));
+    const word = document.querySelector<HTMLElement>("#company .foot-wordmark");
+    if (!word || prefersReducedMotion()) return;
+    const spans = Array.from(word.querySelectorAll<HTMLElement>("span"));
     if (!spans.length) return;
     let raf = 0;
     const update = () => {
       raf = 0;
-      const block = title.parentElement;
+      const block = word.parentElement;
       if (!block) return;
       const rect = block.getBoundingClientRect();
       const vh = window.innerHeight || 1;
       const progress = (vh - rect.top) / (vh + rect.height) - 0.5;
+      // Anchor to the end state (footer can't scroll past page bottom,
+      // so the word would otherwise rest sheared). Zero at max scroll,
+      // alive mid-passage, still a pure function of scroll position.
+      const docH = document.documentElement.scrollHeight;
+      const maxScroll = Math.max(1, docH - vh);
+      const rectTopAtEnd = rect.top + window.scrollY - maxScroll;
+      const endP = (vh - rectTopAtEnd) / (vh + rect.height) - 0.5;
+      const p = progress - endP;
       spans.forEach((s, i) => {
         const sp = LETTER_SPEEDS[i % LETTER_SPEEDS.length];
-        s.style.translate = `0 ${(progress * sp * 100).toFixed(2)}px`;
+        s.style.translate = `0 ${(p * sp * 100).toFixed(2)}px`;
       });
     };
     const schedule = () => {
@@ -279,29 +284,20 @@ export function Footer() {
             </a>
           </div>
         </div>
-        {/* Giant wordmark: free React Bits TextPressure in Jersey 10
-            (pixel display face, static 400 — pressure swell is inert,
-            letters render crisp blocks). Click ripple still fires;
-            the line box (font fills width, 1em tall) keeps the word
-            spanning edge to edge via the transform backstop. */}
+        {/* Giant wordmark: plain Jersey 10 pixel face (no engine).
+            Static per-letter spans ride the scroll parallax below;
+            flex spreads the line edge to edge, clamp() sizes it, so it
+            can never overflow by construction. Decorative duplicate of
+            the logo wordmark (aria-hidden, the nav link names it). */}
       </Container>
       <div data-reveal className="foot-pressure relative">
-        <TextPressure
-          text="ToLLma"
-          fontFamily="Jersey 10"
-          fontUrl="https://fonts.googleapis.com/css2?family=Jersey+10&display=swap"
-          flex={true}
-          alpha={false}
-          stroke={false}
-          width={true}
-          weight={true}
-          italic={true}
-          radius={0.5}
-          smoothing={0.5}
-          idle="none"
-          clickRipple={true}
-          minFontSize={36}
-        />
+        <div aria-hidden="true" className="foot-wordmark">
+          {"tOllMA".split("").map((ch, i) => (
+            <span key={i} data-letter="" className="foot-letter">
+              {ch}
+            </span>
+          ))}
+        </div>
       </div>
       <Container width="wide" className="relative pb-3 pt-2">
         <div data-reveal className="flex flex-col gap-2 border-t border-cream-line pt-3 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">

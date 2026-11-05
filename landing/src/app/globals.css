@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Jersey+10&display=swap");
 @import "tailwindcss";
 @import "./tokens.css";
 
@@ -880,31 +881,30 @@ body {
   transform: rotate(-14deg);
 }
 
-/* Footer TextPressure wordmark: container aspect matches the line box
-   (font fills the width at 1em tall), so the word always spans edge to
-   edge. Solid coal via the rule below; TextPressure writes inline
-   fontVariationSettings + opacity only, and leaves color empty (no
-   pressureColor), so this color applies. */
+/* Footer wordmark: plain Jersey 10, static. Flex spreads the line edge
+   to edge; clamp() sizes it (deterministic, no measuring), so it can
+   never overflow. Parallax dips clip at the box edge instead of
+   crossing the divider below. */
 .foot-pressure {
   position: relative;
   width: 100%;
-  aspect-ratio: 3.2 / 1;
-  /* Clip the parallax dip at the box edge so descending letters can
-     never cross the divider below (static text always fits inside
-     with room to spare — only overshoot frames are cut). */
   overflow: clip;
-  /* Centered with breathing room: the wordmark fits the padded box
-     (the TextPressure backstop measures clientWidth, so it stays
-     padding-aware) instead of touching the viewport edges. */
   padding-inline: clamp(16px, 4vw, 72px);
 }
-.foot-pressure .text-pressure-title {
-  /* Jersey 10 pixel face for the footer brand (wired here, not only
-     inline, so the face survives component refactors). Solid coal —
-     TextPressure writes inline fontVariationSettings + opacity only,
-     and leaves color empty (no pressureColor), so this applies. */
+.foot-wordmark {
+  display: flex;
+  justify-content: center;
+  column-gap: 0.1em;
   font-family: "Jersey 10", "Arial Black", sans-serif;
   color: var(--color-coal);
+  font-size: clamp(88px, 28vw, 480px);
+  line-height: 1;
+  white-space: nowrap;
+  margin-top: clamp(2px, 0.8vw, 12px);
+}
+.foot-letter {
+  display: inline-block;
+  will-change: transform;
 }
 
 /* Free React Bits DriftWall (vendored, no deps): drifting tile wall.
