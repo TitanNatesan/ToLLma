@@ -4844,7 +4844,6 @@ Aspect-ratio bug root-caused: unlayered `.drift-wall__tile img{width:100%;height
 Full-bleed: fade=0 (no edge mask) + tilt/turn=0 (flat plane, drift preserved) — wall rect == section rect at 1440/1920, confined to section via overflow-hidden.
 Testing: 470 tiles, 0 broken imgs, caption counts 235; ox=0 at 390/1440/1920; tsc clean; build green; zero console errors.
 
-## 2026-11-06 - Provider backdrop: static + aligned + full viewport height
-User: backdrop stays absolute/static while content parallaxes above; every box aligned; bg covers full screen height within its section.
-Findings: misalignment came from alternating column directions + variance + per-column phases; speed=0 alone keeps the phase offsets. Fix: new `uniform` prop on DriftWall (shared direction/speed/phase; speed 0 -> frozen sheet) + solutions passes speed={0} uniform fade={0} tilt/turn 0. Section gains min-h-[100svh] + vertical centering so the wall always spans at least the viewport.
-Verified: rowSpread=0 (pixel-aligned rows), drift STATIC across frames, wallH==sectionH>=viewport (900/900 desktop, 1680 mobile stacked), ox=0, zero errors, tsc clean, build green.
+## 2026-11-06 - Site frame + footer wordmark centering
+Frame: fixed inset-3 (12px) hairline border-coal/20, pointer-events-none, z-90, print:hidden — one aria-hidden div in RootLayout, utilities only, no layout shift. Verified on cream hero + dark platform section, persists mid-scroll, zero errors, tsc clean.
+Wordmark centering: foot-pressure gains padding-inline clamp(16px,4vw,72px); backstop is clientWidth-based so stays padding-aware. Measured symmetric margins L/R at 390 (16/16), 1440 (58/58), 1920 (72/72), ox=0, zero errors.
