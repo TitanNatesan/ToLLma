@@ -11,6 +11,7 @@
 // bottom-row CTA card drifts with foreground parallax (0.92).
 import type { CSSProperties } from "react";
 import { Container } from "@/components/ui/layout";
+import DriftWall, { type DriftItem } from "@/components/ui/drift-wall";
 import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { useRevealOnScroll } from "@/lib/animations";
 import { DOCS_URL, PROVIDERS } from "@/lib/site";
@@ -52,6 +53,28 @@ const MARKS: Record<string, React.ReactNode> = {
   bedrock: <img src={bedrockPng.src} alt="" width={28} height={28} className="h-7 w-7 rounded-md object-cover" />,
 };
 
+// Ambient backdrop: provider names + API surfaces as self-contained
+// SVG tiles (no external image requests). Rendered faint behind the
+// grid (decorative: non-focusable, pointer-transparent, masked at the
+// edges). Grayscale + dim keep it whisper-quiet on cream.
+const wallTile = (label: string) =>
+  `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="none"/><text x="300" y="212" font-family="Inter, system-ui, sans-serif" font-size="56" font-weight="600" fill="#171914" text-anchor="middle">${label}</text></svg>`
+  )}`;
+const WALL_ITEMS: DriftItem[] = [
+  "OpenAI",
+  "Anthropic",
+  "Gemini",
+  "Vertex AI",
+  "Bedrock",
+  "Custom",
+  "Chat Completions",
+  "Messages",
+  "Streaming",
+  "Tools",
+  "Embeddings",
+  "One endpoint",
+].map((label) => ({ image: wallTile(label), title: label }));
 /* Target-lock corners: 4 L-brackets that scale in from their corners on
    cell hover / focus-within / focus-visible (see globals.css). */
 function TargetCorners() {
@@ -68,8 +91,27 @@ function TargetCorners() {
 export default function Solutions() {
   const revealRef = useRevealOnScroll({ staggerMs: 80, y: 16 });
   return (
-    <section id="solutions" ref={revealRef} className="scroll-mt-20 bg-cream">
-      <Container width="wide" className="py-20 md:py-28">
+    <section id="solutions" ref={revealRef} className="relative scroll-mt-20 overflow-hidden bg-cream">
+      {/* Ambient drifting provider wall: very faint (opacity + dim +
+          grayscale), non-interactive background. Content paints above. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.14]">
+        <DriftWall
+          items={WALL_ITEMS}
+          columns={5}
+          tileWidth={200}
+          tileHeight={132}
+          gap={18}
+          speed={28}
+          direction="up"
+          variance={0.45}
+          parallax={0}
+          dim={0.6}
+          grayscale={true}
+          overlayColor="#e5e0d2"
+          decorative={true}
+        />
+      </div>
+      <Container width="wide" className="relative py-20 md:py-28">
         <p data-reveal className="text-center text-xs font-medium text-coal/60">
           Our Solutions
         </p>
