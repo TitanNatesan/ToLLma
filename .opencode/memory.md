@@ -4835,3 +4835,11 @@ Testing: tsc clean; next build green (static export); zero console errors throug
 
 ## 2026-11-06 - Provider backdrop: full opacity + full screen width
 Follow-ups: wrapper opacity 0.35 -> 1 (verified computed 1, tiles strong); then full-bleed — root cause of the narrow look was the 5-column plane (~1090px + 1.18 tilt scale, centered) plus the default fade=0.6 mask dissolving from 40% outward. Fix in solutions.tsx only: columns 5->8 (plane 2353px, covers 1920) + fade 0.6->0.15 (mask holds to 85%). Verified at 1440 + 1920: tiles cut at both viewport edges, ox=0, zero errors, tsc clean. Tiles now drift behind the heading copy too — legible (light tiles under dark text), matches the DriftWall aesthetic.
+
+## 2026-11-06 - models.dev full catalog: all 235 providers with logos + endpoints
+User expanded scope: every models.dev provider (not just our 5) with logo in the backdrop.
+Findings: api.json has no logo fields — but the models.dev repo ships providers/<id>/logo.svg (default branch `dev`; `main` 404s). First-party api fields are null (only aggregators list base URLs); provider ids map: google->gemini, google-vertex->vertex, amazon-bedrock->bedrock.
+Implementation: scripts/sync-models-dev.mjs (npm run sync:providers) fetches catalog + all logos -> src/data/models-dev.json + public/models-dev/*.svg (223/235 have logos; 12 null -> lettermark fallback tile). Static import at runtime: zero client network, no 6MB download, offline-safe. solutions.tsx tiles: logo + name + endpoint (our adapter surface for mapped 5, models.dev api host otherwise, model count fallback). DriftWall forked with optional node tiles.
+Aspect-ratio bug root-caused: unlayered `.drift-wall__tile img{width:100%;height:100%}` beats Tailwind's layered h-7/w-7, stretching logos to tile box. Scoped fill rule to `.drift-wall__inner > img`; all 446 logos now uniform 28px undistorted (measured).
+Full-bleed: fade=0 (no edge mask) + tilt/turn=0 (flat plane, drift preserved) — wall rect == section rect at 1440/1920, confined to section via overflow-hidden.
+Testing: 470 tiles, 0 broken imgs, caption counts 235; ox=0 at 390/1440/1920; tsc clean; build green; zero console errors.
