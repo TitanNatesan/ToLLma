@@ -83,7 +83,7 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 // fully reversible. Uses the independent `translate` property on static
 // spans, so nothing fights over styles. Measured off .foot-pressure
 // (never self-measured). Static when reduced-motion is preferred.
-const LETTER_SPEEDS = [-3, -1.5, -2, -3, -0.4, -0.2];
+const LETTER_SPEEDS = [-3, -1.5, -2, -0.1, -1, -0.2];
 function useWordmarkParallax() {
   useEffect(() => {
     const word = document.querySelector<HTMLElement>("#company .foot-wordmark");
@@ -147,20 +147,21 @@ export function Footer() {
     }
   }, []);
   return (
-    <footer id="company" ref={revealRef} className="relative scroll-mt-20 overflow-x-clip border-t border-cream-line bg-cream">
-      {/* Ambient ASCII wash behind the whole footer: black-to-coal glyph
+    <footer id="company" ref={revealRef} className="relative scroll-mt-20 overflow-clip rounded-t-[28px] border-t-2 border-coal/25 bg-cream">
+      {/* Ambient ASCII wash behind the whole footer: cream/sand glyph
           field drifting behind the footer content (lightMode on).
           Decorative only (aria-hidden, pointer-transparent); content
           paints above. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.55]">
         <GradientASCII
-          colors={["#0b0d0b", "#171914", "#3a3f35", "#6f7a70"]}
+          colors={["#d8d0b8", "#e6e0cd", "#bfb59c", "#9d937a"]}
           shape="rise"
           characters=" =+xX0S8#@"
           cellSize={20}
           density={0.65}
-          glyphOpacity={0.55}
+          glyphOpacity={0.7}
           gradientOpacity={0.6}
+          scale={2.2}
           glow={0.1}
           flicker={0.1}
           speed={0.6}
