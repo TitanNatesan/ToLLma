@@ -83,151 +83,23 @@ Sub-agents should execute in parallel whenever dependencies allow.
 
 # Available Sub-Agents
 
-## Architecture Agent
+Real agents live in `.opencode/agents/`. Spawn only these names (plus builtins `build`, `plan`, `general`, `explore`). Never invent agent names.
 
-Responsibilities:
+| Agent | File | Responsibilities | Produces |
+|---|---|---|---|
+| backend | `.opencode/agents/backend.md` | FastAPI implementation, business logic, service layer, providers, workers, APIs | Endpoints, services, schemas, tests |
+| frontend | `.opencode/agents/frontend.md` | Next.js implementation, shadcn/ui integration, state management, accessibility, responsive layouts | Components, pages, hooks, UI tests |
+| db | `.opencode/agents/db.md` | Schema design, migration safety, index strategy, live schema inspection | Migration reviews, ERD notes |
+| reviewer | `.opencode/agents/reviewer.md` | Correctness, security, and regression review (read-only) | Findings in severity order |
+| tester | `.opencode/agents/tester.md` | pytest, vitest, Playwright e2e (tests-only edits) | Unit tests, integration tests, E2E tests |
+| debugger | `.opencode/agents/debugger.md` | Root-cause diagnosis from logs, containers, DB state (read-only) | Root cause + minimal fix proposal |
 
-* Architecture validation
-* Domain modeling
-* Boundary definitions
-* API contracts
-* Dependency planning
-* Scalability review
+Rules:
 
-Produces:
-
-* Architecture decisions
-* Component diagrams
-* Data flow decisions
-
----
-
-## Database Agent
-
-Responsibilities:
-
-* Schema design
-* Migrations
-* Index strategy
-* Constraints
-* Data integrity
-* Query optimization
-
-Produces:
-
-* Models
-* Migrations
-* ERD updates
-
----
-
-## Backend Agent
-
-Responsibilities:
-
-* FastAPI implementation
-* Business logic
-* Service layer
-* Providers
-* Workers
-* APIs
-
-Produces:
-
-* Endpoints
-* Services
-* Schemas
-* Tests
-
----
-
-## Frontend Agent
-
-Responsibilities:
-
-* Next.js implementation
-* shadcn/ui integration
-* State management
-* Accessibility
-* Responsive layouts
-* UX improvements
-
-Produces:
-
-* Components
-* Pages
-* Hooks
-* UI tests
-
----
-
-## Security Agent
-
-Responsibilities:
-
-* Authentication review
-* Authorization review
-* Secrets handling
-* Rate limiting
-* Input validation
-* Security audit
-
-Produces:
-
-* Security findings
-* Remediation changes
-
----
-
-## QA Agent
-
-Responsibilities:
-
-* Test generation
-* Edge case analysis
-* Integration validation
-* Regression validation
-
-Produces:
-
-* Unit tests
-* Integration tests
-* E2E tests
-
----
-
-## DevOps Agent
-
-Responsibilities:
-
-* Docker
-* CI/CD
-* Environment variables
-* Infrastructure
-* Deployment validation
-
-Produces:
-
-* Docker updates
-* Workflow updates
-* Infrastructure changes
-
----
-
-## Documentation Agent
-
-Responsibilities:
-
-* Memory updates
-* API docs
-* Technical docs
-* Migration notes
-
-Produces:
-
-* Documentation
-* Changelog entries
-* Memory updates
+* backend edits `backend/**` only; frontend edits `frontend/**` only.
+* reviewer, db, and debugger never edit — they report, the orchestrator applies fixes via backend/frontend.
+* tester edits tests only — never source files to make tests pass.
+* Spawn the minimum number required; run independent agents in parallel.
 
 ---
 
@@ -256,13 +128,12 @@ Example:
 
 Feature Request
 
-├── Architecture Agent
-├── Database Agent
-├── Backend Agent
-├── Frontend Agent
-└── QA Agent
+├── db
+├── backend
+├── frontend
+└── tester
 
-Run all independent agents in parallel.
+Run all independent agents in parallel, then reviewer before finishing.
 
 ---
 
@@ -345,16 +216,85 @@ Otherwise continue autonomously.
 
 ---
 
+# Skills & MCP Routing — On Trigger Only
+
+Default to built-in tools. Load a skill or query an MCP server only when the task matches its trigger below. Never preload everything; each one costs context.
+
+## Skills (.agents/skills/)
+
+| Trigger | Skill |
+|---|---|
+| FastAPI endpoints, Pydantic models, dependencies, SSE, serving frontend | fastapi |
+| Layered FastAPI architecture (API/Service/CRUD/Model), RBAC, pagination, plugin review | fba |
+| React perf: waterfalls, bundle size, re-renders, memoization | vercel-react-best-practices |
+| Boolean-prop sprawl, compound components, reusable component APIs | vercel-composition-patterns |
+| New UI or visual direction | frontend-design |
+| Anti-slop art direction, landing-page redesign/polish | design-taste-frontend |
+| Design taste, critique, "make it premium/awwwards-level" | taste-skill (taste-skill) |
+| UI audit: accessibility, spacing, typography, UX compliance | web-design-guidelines |
+| Visual design review of a live site + fix | web-design-reviewer |
+| Generate a design system from a brief before coding | ui-ux-pro-max |
+| Full-stack design AI (wireframes → tokens → audits) | design-studio |
+| Extract design tokens/system from a live site or screenshot | extract-design-system, design-dna |
+| Apple-style motion/materials/typography on web | apple-design |
+| Emil Kowalski-style UI polish and animation decisions | emil-design-eng |
+| Fast UI cleanup pass (spacing, hierarchy, type) | baseline-ui |
+| Read-only UI audit producing implementation plans | improve-ui |
+| Micro-interactions, hover states, "feels off" details | make-interfaces-feel-better, interaction-design |
+| Find where motion is missing (read-only proposals) | find-animation-opportunities |
+| Build/sequence web animation from scratch | animate |
+| GSAP core/timelines/scroll/animation in React/Vue/vanilla | gsap-core, gsap-timeline, gsap-scrolltrigger, gsap-react, gsap-frameworks, gsap-plugins, gsap-utils, gsap-performance (+ MengTo gsap) |
+| Anime.js v4 timelines, SVG/scroll/stagger | animejs |
+| High-conversion landing or SaaS pricing page | landing-page, pricing-page, product-proof-saas |
+| Scroll storytelling, pinned/sticky narratives, reveals | cinematic-scroll-storytelling, scroll-world-storytelling, gsap-scrolltrigger-storytelling, scroll-scrubbed-word-reveal, scroll-scrubbed-visual-sequence, scroll-progress-timeline, animation-on-scroll, staggered-word-reveal, masked-reveal |
+| Cinematic GSAP+Lenis motion system | cinematic-gsap-lenis-motion-system |
+| Three.js scenes, R3F, shaders, WebGL effects | threejs, threejs-animation + threejs-* family |
+| WebGL backgrounds (Vanta, particles, grids, globes) | vantajs, background-grid-webgl, globe-particles, globe-gl, cobejs, ambient-section-particles, webgl-3d-object, webgl-landing-steering, webgl-laser |
+| 2D physics interactions on canvas | matterjs |
+| Glassmorphism, gradient borders, shadows, masking | glass-dark-ui, css-border-gradient, beautiful-shadows, css-alpha-masking, progressive-blur |
+| Geometric details (chamfers, grids, containers) | corner-diagonals, framed-grid-layout, container-lines, gooey-blob-system |
+| Ready-made visual systems (dark/light/brutalist/editorial/SaaS) | tech-green-dark-mode-modern, clean-minimal-beige-light-mode, dither-laser-dark-mode, dark-blue-contrasting-clean, blue-cloudy-clean-modern, documentary-brutalist-agency, editorial-portfolio-chapters, editorial-service-booking, agency-grid-layout-minimal, nested-container-clean-agency, framed-tech-dark-border-gradient, funky-purple-container-tech, split-layout-technical, light-mode-paper-technical, technical-wireframe-info-layout, high-contrast-skeuomorphic-clean, mesh-gradient-dark-blue-clean, bright-green-tech-system-webgl, orange-clean-paper-saas, book-serif-index, image-first-grid-layout, skeuomorphic-ui, glass-dark-mode-clock |
+| Tailwind CSS v4 systems, tokens, responsive | tailwind-design-system, tailwindcss, responsive-design |
+| Mobile PWA feel, touch, viewport/notch issues | mobile-native |
+| Stock imagery for mockups | aura-asset-images, unsplash-asset-images |
+| Unicorn Studio embeds | unicorn-studio |
+| Switchable design-token categories | modular-design-system |
+| Complex Claude artifacts with shadcn/state/routing | artifacts-builder |
+| Cache Components adoption or instant-navigation performance | next-cache-components-adoption, next-cache-components-optimizer |
+| shadcn component usage or customization | shadcn |
+| AI SDK: generateText, streamText, useChat, tool calling | ai-sdk |
+| Unit, integration, or e2e test patterns | webapp-testing |
+| Browser-driven testing, screenshots, form automation | agent-browser (skill) |
+| "Is there a skill for X?" | find-skills |
+
+## MCP Servers (.opencode/opencode.json)
+
+| Trigger | Server |
+|---|---|
+| Codebase structure, callers, dependency questions | graphify |
+| Current library docs (Next.js, FastAPI, SQLAlchemy, Pydantic) | context7 |
+| Live Postgres schema inspection | postgres (read-only by design, local dev DB only — never prod) |
+| Git history, blame, diff beyond what shell needs | git |
+| Container inspection beyond docker compose shell | docker (always pass `service` explicitly; prefer compose shell for ps/logs) |
+| Real-browser verification, screenshots, interaction | agent-browser |
+| Multi-step reflective problem-solving | sequential-thinking |
+
+Rules:
+
+* If no trigger matches, use no skill and no MCP.
+* Skills and MCP servers stack only when each one independently matches.
+
+---
+
 # Parallel Execution Examples
 
 ## New API Feature
 
 Spawn:
 
-* Architecture Agent
-* Database Agent
-* Backend Agent
-* QA Agent
+* db
+* backend
+* tester
 
 Parallelism allowed.
 
@@ -364,9 +304,10 @@ Parallelism allowed.
 
 Spawn:
 
-* Architecture Agent
-* Frontend Agent
-* QA Agent
+* frontend
+* tester
+
+Add reviewer for visual or a11y sign-off.
 
 Parallelism allowed.
 
@@ -376,13 +317,13 @@ Parallelism allowed.
 
 Spawn:
 
-* Architecture Agent
-* Database Agent
-* Backend Agent
-* Frontend Agent
-* Security Agent
-* QA Agent
-* Documentation Agent
+* db
+* backend
+* frontend
+* tester
+* reviewer
+
+Add debugger only on failure.
 
 Run concurrently where dependencies permit.
 
@@ -392,10 +333,9 @@ Run concurrently where dependencies permit.
 
 Spawn:
 
-* Architecture Agent
-* DevOps Agent
-* Security Agent
-* QA Agent
+* debugger
+* reviewer
+* tester
 
 Run concurrently.
 

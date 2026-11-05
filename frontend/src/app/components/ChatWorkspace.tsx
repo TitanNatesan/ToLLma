@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
-import { toast } from "sonner";
+import { Button, ErrorState, LoadingState, Logo } from "@/components/ui";
+import { toast } from "@/lib/notify";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChatComposer, type ChatSendPayload } from "@/app/components/chat/ChatComposer";
 import { IntelligencePanel } from "@/app/components/ChatSettingsPanel";
@@ -12,17 +13,23 @@ import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
 import { deriveSources } from "@/app/components/chat/sources/Sources";
 import { useConversation } from "@/hooks/useChat";
+import { useProviders } from "@/hooks/useRegistry";
+import { useChatKeys } from "@/hooks/useChatKeys";
 import {
+  ApiError,
   cancelGeneration,
+  classifyChatKeyProblem,
   createConversation,
   getActiveGeneration,
   getConversation,
   getGeneration,
   getGenerationByClientKey,
+  policyDenialCopy,
   streamChat,
   streamGeneration,
   type StreamCallbacks,
 } from "@/services/api";
+import { useChatKeyStore } from "@/app/components/chat/chatKeyStore";
 import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
 import { useSettingsStore } from "@/store/settings";
@@ -41,8 +48,15 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Sparkles } from "lucide-react";
-import type { ActiveGeneration, ChatMessage, MessageStatus, SearchResult } from "@/types";
+import type { ActiveGeneration, ChatMessage, Conversation as ConversationData, MessageStatus, SearchResult, StreamDone } from "@/types";
+
+/** Sample prompts on the empty state: one click fills the composer via the
+ *  draft store + the existing focus event — no new plumbing. */
+const SAMPLE_PROMPTS = [
+  "Explain quantum computing in simple terms",
+  "Write a haiku about the ocean",
+  "Draft a friendly follow-up email",
+];
 
 const PENDING_SEND_KEY = "tollma-pending-send";
 
@@ -102,6 +116,24 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
+ * Ownership of one in-flight generation. Captured at submission so every
+ * chunk routes to the originating conversation/generation — never to
+ * whatever conversation is currently selected. `routeAtSend` is the route
+ * the tab showed when the send started; store adoption only happens when the
+ * tab hasn't moved on since.
+ */
+interface StreamOwner {
+  convId: string | null;
+  msgId: string | null;
+  genId: string | null;
+  routeAtSend: string | null;
+}
+
+function ownerFor(target: string | null, routeAtSend: string | null): StreamOwner {
+  return { convId: target, msgId: null, genId: null, routeAtSend };
+}
+
+/**
  * Chat workspace bound to a route conversation. The URL owns identity: the
  * store is synced from `conversationId` (so header/panel/composer hooks stay
  * aligned), and every action that switches conversations navigates to
@@ -124,10 +156,18 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     setActiveGeneration,
   } = useChatStore();
 
-  const { data: conversation, error: convError } = useConversation(conversationId);
+  const {
+    data: conversation,
+    error: convError,
+    isLoading: convLoading,
+    refetch: refetchConversation,
+  } = useConversation(conversationId);
   // A 404 on the route id falls back to the empty state (store id null) at the
   // same URL — no redirect, so a bad id can never loop through `/`.
-  const activeId = isNotFound(convError) ? null : conversationId;
+  const notFound = isNotFound(convError);
+  const activeId = notFound ? null : conversationId;
+  // Non-404 fetch failure: error panel with retry instead of the empty state.
+  const convFailed = !!conversationId && !!convError && !notFound;
   const routeIdRef = useRef(conversationId);
   useEffect(() => {
     routeIdRef.current = conversationId;
@@ -149,6 +189,10 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     void qc.invalidateQueries({ queryKey: ["conversation", id] });
     void qc.invalidateQueries({ queryKey: ["usage", id] });
     void qc.invalidateQueries({ queryKey: ["conversations"] });
+    // Spend/eligibility changed with the generation: refresh key availability
+    // too (same pattern — the composer's keyProblem effect also refreshes on
+    // denial, so both paths converge without switching keys).
+    void qc.invalidateQueries({ queryKey: ["chat-keys"] });
   }, [qc]);
   const abortRef = useRef<AbortController | null>(null);
   // Draft-send probe: adopts the conversation id by idempotency key when the
@@ -165,14 +209,33 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     () => conversation?.messages ?? [],
     [conversation?.messages],
   );
-  // Optimistic entries carry backend-issued ids: they replace (never duplicate)
-  // the persisted rows. History itself always comes from the backend.
+  // Optimistic entries carry backend-issued ids: they overlay (never
+  // duplicate) the persisted rows. History itself always comes from the
+  // backend. While the overlay is still streaming it wins; once it settles
+  // the persisted row (server truth) wins. Either way each id renders
+  // exactly once — no duplicate-key crash on refresh-recovery double-invoke.
   const allMessages = useMemo(() => {
-    const optimisticIds = new Set(optimisticMessages.map((m) => m.id));
-    return [
-      ...persistedMessages.filter((m) => !optimisticIds.has(m.id)),
-      ...optimisticMessages,
-    ] as ChatMessage[];
+    const winner = new Map<string, ChatMessage>();
+    for (const m of persistedMessages) winner.set(m.id, m);
+    for (const m of optimisticMessages) {
+      if (!winner.has(m.id) || m.isStreaming) winner.set(m.id, m as ChatMessage);
+    }
+    const emitted = new Set<string>();
+    const ordered: ChatMessage[] = [];
+    for (const m of persistedMessages) {
+      const w = winner.get(m.id);
+      if (w && !emitted.has(m.id)) {
+        emitted.add(m.id);
+        ordered.push(w);
+      }
+    }
+    for (const m of optimisticMessages) {
+      if (!emitted.has(m.id)) {
+        emitted.add(m.id);
+        ordered.push(winner.get(m.id) as ChatMessage);
+      }
+    }
+    return ordered;
   }, [persistedMessages, optimisticMessages]);
   // Reply sources derived from the turn's attachments (stable identities so
   // MessageView memoization survives streaming re-renders).
@@ -181,6 +244,39 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   // Follow-new-messages preference: AI Elements Conversation (stick-to-bottom)
   // when on, a plain scroll container when the user opted out.
   const autoScroll = useSettingsStore((s) => s.autoScroll);
+
+  /**
+   * Merge the done-envelope into the cached conversation so generated media
+   * appears immediately. The message may be absent from cache (draft sends
+   * never fetched it) — then this is a no-op and the refetch below provides
+   * it. The refetch always overwrites with server truth, so a stale merge can
+   * never win over persistence.
+   */
+  const mergeDoneIntoCache = useCallback((convId: string | null, done: StreamDone) => {
+    if (!convId || !done.message_id) return;
+    // Assistant attachments are append-only: an empty envelope list carries
+    // no information, so only a non-empty list merges (never clobbers).
+    const attachments = (done.attachments?.length ?? 0) > 0 ? done.attachments : undefined;
+    if (attachments === undefined && done.content === undefined && done.status === undefined) return;
+    qc.setQueryData<ConversationData>(["conversation", convId], (cached) => {
+      if (!cached) return cached;
+      const idx = cached.messages.findIndex((m) => m.id === done.message_id);
+      if (idx === -1) return cached;
+      const prev = cached.messages[idx];
+      const next: ChatMessage = {
+        ...prev,
+        ...(done.content !== undefined ? { content: done.content } : null),
+        ...(done.status !== undefined ? { status: done.status } : null),
+        ...(attachments !== undefined ? { attachments } : null),
+      };
+      if (next.content === prev.content && next.status === prev.status && next.attachments === prev.attachments) {
+        return cached;
+      }
+      const messages = [...cached.messages];
+      messages[idx] = next;
+      return { ...cached, messages };
+    });
+  }, [qc]);
 
   /** Terminal state for any watched stream: drop local overlays, reload truth. */
   const finishGeneration = useCallback((convId: string | null, status?: MessageStatus | null, error?: string | null) => {
@@ -192,7 +288,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     refreshAll(convId);
     perfDone(status);
     if (status === "failed") {
-      toast.error("Generation failed", { description: error ?? undefined });
+      toast.error("Generation failed", { description: error ?? undefined, contrast: true });
     }
   }, [
     setStreaming,
@@ -201,8 +297,12 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     refreshAll,
   ]);
 
-  /** Callbacks shared by fresh sends and refresh-reattach subscriptions. */
-  const streamCallbacks = useCallback((ctrl: AbortController): StreamCallbacks => ({
+  /** Callbacks shared by fresh sends and refresh-reattach subscriptions.
+   *  Every chunk routes by the captured owner — never by the currently
+   *  selected conversation, so navigating mid-stream can't misroute deltas
+   *  into the wrong chat. Navigating away never aborts: only an explicit
+   *  cancel (stop) drops the subscription. */
+  const streamCallbacks = useCallback((ctrl: AbortController, owner: StreamOwner): StreamCallbacks => ({
     signal: ctrl.signal,
     onMeta: (meta) => {
       // Adopted an already-terminal generation (same-key retry race):
@@ -211,11 +311,17 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         finishGeneration(meta.conversation_id, meta.status);
         return;
       }
+      owner.convId = meta.conversation_id;
+      owner.genId = meta.generation_id ?? owner.genId;
+      owner.msgId = meta.message_id ?? meta.generation_id ?? owner.msgId;
+      // The tab moved on (or a draft send raced a navigation): record the
+      // ids for routing, but don't yank the store back to this conversation.
+      if (routeIdRef.current !== owner.routeAtSend) return;
       setConversation(meta.conversation_id);
       setPendingConversation(meta.conversation_id);
-      const genId = meta.generation_id;
-      const msgId = meta.message_id ?? genId;
-      if (genId && msgId) {
+      const genId = owner.genId;
+      const msgId = owner.msgId;
+      if (genId && msgId && !useChatStore.getState().optimisticMessages.some((m) => m.id === msgId)) {
         setActiveGeneration({ id: genId, messageId: msgId });
         addOptimistic({
           id: msgId,
@@ -228,25 +334,49 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     },
     onSnapshot: (content) => {
       perfSnapshot(content.length);
-      const mid = useChatStore.getState().activeGeneration?.messageId;
+      const mid = owner.msgId ?? useChatStore.getState().activeGeneration?.messageId;
       if (mid) setOptimisticContent(mid, content);
     },
     onDelta: (d) => {
       perfDelta();
-      const mid = useChatStore.getState().activeGeneration?.messageId;
+      const mid = owner.msgId ?? useChatStore.getState().activeGeneration?.messageId;
       if (mid) updateOptimisticStreaming(mid, d);
     },
     onDone: (done) => {
-      finishGeneration(useChatStore.getState().activeConversationId, done.status, done.error);
+      // Late/duplicate terminal for a conversation this send doesn't own:
+      // ignore (the owning tab/owner already settled it).
+      const runtimeConv = (done as unknown as { conversation_id?: string }).conversation_id;
+      if (owner.convId && runtimeConv && runtimeConv !== owner.convId) return;
+      // Inline attachments land in the live message immediately (no reload);
+      // the refetch inside finishGeneration then confirms server truth. The
+      // merge and the overlay clear batch in one tick, so the text-only
+      // optimistic row can never render over the merged persisted row.
+      const convId = runtimeConv ?? owner.convId ?? useChatStore.getState().activeConversationId;
+      mergeDoneIntoCache(convId, done);
+      finishGeneration(convId, done.status, done.error);
+      // Finished while looking at another conversation: toast with a jump
+      // action. Suppressed when already viewing it (normal flow needs no
+      // noise) — done carries no secret, only the conversation id.
+      // NOTE: compare against the live global store, not routeIdRef: this
+      // closure may belong to an instance unmounted by navigation, whose
+      // ref is frozen at the send-time route and would wrongly suppress.
+      const viewing = useChatStore.getState().activeConversationId;
+      if (convId && viewing !== convId) {
+        toast.success("Response ready", {
+          description: "The generation finished in another conversation.",
+          action: { label: "Open conversation", onClick: () => router.push(`/c/${convId}`) },
+          contrast: true,
+        });
+      }
     },
     onError: (m) => {
-      const convId = useChatStore.getState().activeConversationId;
+      const convId = owner.convId ?? useChatStore.getState().activeConversationId;
       setStreaming(false);
       setActiveGeneration(null);
       clearOptimistic();
       clearPendingSend();
       perfDone("error");
-      toast.error("Chat failed", { description: m });
+      toast.error("Chat failed", { description: m, contrast: true });
       refreshAll(convId);
     },
   }), [
@@ -255,10 +385,12 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     addOptimistic,
     setOptimisticContent,
     updateOptimisticStreaming,
+    mergeDoneIntoCache,
     finishGeneration,
     setStreaming,
     clearOptimistic,
     refreshAll,
+    router,
   ]);
 
   /**
@@ -274,6 +406,10 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     ctrl: AbortController,
     onSettled?: () => void,
   ) => {
+    // Idempotent: refresh recovery can double-invoke (effect re-run races
+    // the first subscribe). The live overlay already exists — subscribing
+    // again would double-apply deltas and duplicate the React key.
+    if (useChatStore.getState().optimisticMessages.some((m) => m.id === active.message_id)) return;
     setConversation(convId);
     setStreaming(true);
     setActiveGeneration({ id: active.generation_id, messageId: active.message_id });
@@ -285,7 +421,10 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       created_at: new Date().toISOString(),
     });
     perfSend();
-    const cbs = streamCallbacks(ctrl);
+    const owner = ownerFor(convId, routeIdRef.current);
+    owner.msgId = active.message_id;
+    owner.genId = active.generation_id;
+    const cbs = streamCallbacks(ctrl, owner);
     const prevDone = cbs.onDone;
     const prevError = cbs.onError;
     void streamGeneration(active.generation_id, {
@@ -386,7 +525,8 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         if (tries >= 12) stopDraftProbe();
       }, 700);
     }
-    const cbs = streamCallbacks(ctrl);
+    const owner = ownerFor(target, routeAtSend);
+    const cbs = streamCallbacks(ctrl, owner);
     void streamChat(
       {
         provider_id: providerId,
@@ -429,6 +569,17 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
               refreshAll(convId);
             }
           })();
+        },
+        onError: (m) => {
+          // Base handler clears overlays and toasts the (already friendly)
+          // message. Policy denial flagged by the api layer means the backend
+          // created no rows, so the unpersisted echo is gone — restore it to
+          // the draft so nothing is lost and history is preserved. Key/model
+          // selection is untouched: no fallback key, no personal<->org switch.
+          cbs.onError(m);
+          if (useChatKeyStore.getState().problem) {
+            useChatStore.getState().setDraft(text);
+          }
         },
       },
     );
@@ -487,8 +638,21 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   );
 
   const lastUser = [...persistedMessages].reverse().find((m) => m.role === "user");
+  // Image continuity: only the conversation's LAST assistant message counts.
+  // If it carries a generated image/video, the composer shows an informational
+  // chip (backend auto-resolves the edit reference — no payload change).
+  const continuityKind = useMemo<"image" | "video" | null>(() => {
+    for (let i = persistedMessages.length - 1; i >= 0; i--) {
+      const m = persistedMessages[i];
+      if (m.role !== "assistant") continue;
+      const kinds = (m.attachments ?? []).map((a) => a.kind);
+      if (kinds.includes("video")) return "video";
+      if (kinds.includes("image")) return "image";
+      return null;
+    }
+    return null;
+  }, [persistedMessages]);
   const lastAssistantId = [...persistedMessages].reverse().find((m) => m.role === "assistant")?.id;
-  const ready = !!providerId && !!modelId;
 
   /** User stop: cancel the backend generation, then reload truth.
    *  Cancel is fired before the local abort so it reaches the provider even
@@ -630,8 +794,42 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const { data: providers = [], isPending: providersPending } = useProviders();
+  const { data: chatKeys = [], isPending: keysPending } = useChatKeys();
+  const statusLoaded = !providersPending && !keysPending;
   const intelligence = useIntelligenceMutations(activeId);
   const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation } = intelligence;
+
+  /**
+   * Unified policy denials (403/429 with reason strings) on edit/regenerate:
+   * friendly copy + key-list refresh via the composer's keyProblem effect —
+   * never an assistant success, never a key fallback or scope switch. The
+   * conversation stays intact; the user corrects the policy (Manage API keys
+   * when the fix lives in the key console). Returns true when handled.
+   */
+  const handlePolicyDenial = useCallback(
+    (error: unknown): boolean => {
+      const status =
+        error instanceof ApiError ? error.status : ((error as { status?: number } | null)?.status ?? 0);
+      const data = error instanceof ApiError ? error.data : null;
+      const text = error instanceof Error ? error.message : "";
+      const problem = classifyChatKeyProblem(status, data ?? text);
+      if (!problem) return false;
+      useChatKeyStore.getState().flagProblem(problem);
+      const copy = policyDenialCopy(
+        problem,
+        error instanceof ApiError ? error.retryAfterSeconds : null,
+      );
+      toast.error(copy.title, {
+        description: copy.description,
+        action: copy.manageKeys
+          ? { label: "Manage API keys", onClick: () => router.push("/api-keys") }
+          : undefined,
+      });
+      return true;
+    },
+    [router],
+  );
 
   const attachRegeneration = useCallback(
     (convId: string, messageId: string, generationId: string) => {
@@ -670,15 +868,17 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         { messageId, content },
         {
           onSuccess,
-          onError: (error) =>
+          onError: (error) => {
+            if (handlePolicyDenial(error)) return;
             toastApiError(error, {
               title: "Edit failed",
               onRetry: () => editMutation.mutate({ messageId, content }, { onSuccess }),
-            }),
+            });
+          },
         },
       );
     },
-    [activeId, attachRegeneration, editMutation, refreshAll],
+    [activeId, attachRegeneration, editMutation, refreshAll, handlePolicyDenial],
   );
 
   const handleRegenerate = useCallback(
@@ -689,14 +889,16 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       };
       regenerateMutation.mutate(messageId, {
         onSuccess,
-        onError: (error) =>
+        onError: (error) => {
+          if (handlePolicyDenial(error)) return;
           toastApiError(error, {
             title: "Regenerate failed",
             onRetry: () => regenerateMutation.mutate(messageId, { onSuccess }),
-          }),
+          });
+        },
       });
     },
-    [attachRegeneration, regenerateMutation],
+    [attachRegeneration, regenerateMutation, handlePolicyDenial],
   );
 
   const handleBranch = useCallback(
@@ -760,26 +962,72 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
   const messageList = (
     <>
-      {allMessages.length === 0 && !streaming && (
-        <div className="m-auto flex max-w-md flex-col items-center gap-4 text-center">
-          <div className="flex size-14 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-            <Sparkles className="size-7" />
-          </div>
+      {conversationId && convLoading && allMessages.length === 0 && !streaming && (
+        <div className="m-auto w-full max-w-md" data-testid="conversation-loading">
+          <LoadingState message="Loading conversation…" />
+        </div>
+      )}
+
+      {convFailed && allMessages.length === 0 && !streaming && (
+        <div className="m-auto w-full max-w-md" data-testid="conversation-error">
+          <ErrorState
+            title="Could not load conversation"
+            message={convError instanceof Error ? convError.message : undefined}
+            onRetry={() => void refetchConversation()}
+          />
+        </div>
+      )}
+
+      {allMessages.length === 0 && !streaming && !convLoading && !convFailed && (
+        <div
+          className="m-auto flex w-full max-w-md flex-col items-center gap-3 px-4 py-8 text-center"
+          data-testid="empty-state"
+        >
+          <Logo size="lg" hideText />
           <h1 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200">
             Start a conversation
           </h1>
-          <p className="text-sm text-zinc-500">
-            Select a provider and model in the composer below, then type your message.
-            {!ready && (
-              <span>
-                {" "}
-                <Link href="/providers" className="text-tollma-600 underline hover:text-tollma-700 dark:text-tollma-400 dark:hover:text-tollma-300">
-                  Set up a provider
-                </Link>{" "}
-                to get started.
-              </span>
-            )}
-          </p>
+          {statusLoaded && providers.length === 0 ? (
+            <>
+              <p className="text-sm text-zinc-500">
+                Connect a provider to register your first model, then start chatting.
+              </p>
+              <Button asChild data-testid="empty-state-cta">
+                <Link href="/providers">Set up a provider</Link>
+              </Button>
+            </>
+          ) : statusLoaded && chatKeys.length === 0 ? (
+            <>
+              <p className="text-sm text-zinc-500">
+                Your provider is ready — create an API key to start chatting.
+              </p>
+              <Button asChild data-testid="empty-state-cta">
+                <Link href="/api-keys">Create an API key</Link>
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-zinc-500">
+                Pick a model in the composer below, then ask anything — or try one of these.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {SAMPLE_PROMPTS.map((prompt, i) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    data-testid={`sample-prompt-${i}`}
+                    onClick={() => {
+                      useChatStore.getState().setDraft(prompt);
+                      window.dispatchEvent(new Event("tollma:focus-input"));
+                    }}
+                    className="max-w-full truncate rounded-full border border-zinc-200 px-3 py-1 text-xs text-zinc-600 transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-800"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <p className="text-xs text-zinc-400">
             Press <kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">Ctrl+K</kbd> to open the command palette
           </p>
@@ -816,7 +1064,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   return (
     <div className="flex h-full flex-1 overflow-hidden">
       {/* Center Chat Panel */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950">
+      <main id="main-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950">
         {/* Chat Header */}
         <ChatHeader />
 
@@ -842,6 +1090,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
         <div className="mx-auto w-full max-w-[960px] px-4">
         <ChatComposer
           streaming={streaming}
+          continuityKind={continuityKind}
           onSend={(t) => send(t, routeIdRef.current ?? activeId)}
           onStop={stop}
         />

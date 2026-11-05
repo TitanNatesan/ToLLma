@@ -1,11 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import type { ComponentType, MouseEvent } from "react";
 import {
   AlertTriangle,
+  Building2,
   KeyRound,
   MonitorSmartphone,
   Palette,
+  ScrollText,
   Server,
   SlidersHorizontal,
   UserRound,
@@ -29,6 +32,8 @@ export const SETTINGS_SECTIONS = [
   { hash: "account", label: "Account", icon: KeyRound },
   { hash: "sessions", label: "Sessions", icon: MonitorSmartphone },
   { hash: "providers", label: "Providers", icon: Server },
+  { hash: "logging", label: "Logging", icon: ScrollText },
+  { hash: "organizations", label: "Organizations", icon: Building2 },
   { hash: "danger-zone", label: "Danger zone", icon: AlertTriangle },
 ] as const satisfies readonly SettingsSectionDef[];
 
@@ -39,15 +44,17 @@ export const SETTINGS_SECTION_IDS: readonly SettingsSectionId[] = SETTINGS_SECTI
 );
 
 /**
- * Same-document anchors: the browser sets the hash and the `scroll-smooth`
- * scroll container performs the smooth scroll (scroll-margin on the cards
- * keeps the sticky header clear). Repeat clicks on the current section are a
- * browser no-op, so scroll manually in that case.
+ * Same-document anchors, driven natively: Next.js <Link> same-page hash
+ * navigation uses history.pushState, which does NOT fire `hashchange` — so
+ * every section subscriber would go stale. Assigning window.location.hash
+ * directly fires the event and keeps highlights and content in sync.
  */
 function navigate(event: MouseEvent<HTMLAnchorElement>, hash: SettingsSectionId) {
+  event.preventDefault();
   if (window.location.hash === `#${hash}`) {
-    event.preventDefault();
     document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else {
+    window.location.hash = hash;
   }
 }
 
@@ -68,27 +75,27 @@ export function SidebarSettings({ activeId }: { activeId: SettingsSectionId }) {
               const Icon = s.icon;
               const active = s.hash === activeId;
               return (
-                <a
+                <Link
                   key={s.hash}
                   href={`/settings#${s.hash}`}
-                  aria-current={active ? "location" : undefined}
+                  aria-current={active ? "page" : undefined}
                   onClick={(event) => navigate(event, s.hash)}
                   data-testid={`sidebar-settings-${s.hash}`}
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
                     active
-                      ? "bg-tollma-50 text-tollma-800 dark:bg-tollma-950/50 dark:text-tollma-200"
+                      ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                       : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
                   )}
                 >
                   <Icon
                     className={cn(
                       "size-3.5 shrink-0",
-                      active ? "text-tollma-600 dark:text-tollma-400" : "text-zinc-400",
+                      active ? "text-white dark:text-zinc-900" : "text-zinc-400",
                     )}
                   />
                   <span>{s.label}</span>
-                </a>
+                </Link>
               );
             })}
           </div>

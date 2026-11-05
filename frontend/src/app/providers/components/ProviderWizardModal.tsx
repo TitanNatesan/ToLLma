@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Badge,
   Button,
@@ -10,8 +11,8 @@ import {
   Dialog,
   DialogContent,
   Field,
-  GhostButton,
   Input,
+  ProviderLogo,
   Select,
   Textarea,
 } from "@/components/ui";
@@ -29,12 +30,18 @@ import {
   type EndpointCategory,
 } from "@/app/providers/fields";
 import { useProviders, useProviderMutations } from "@/hooks/useRegistry";
+import { useOrgMutations } from "@/hooks/useOrgs";
+import { useConnectionTemplate } from "@/hooks/useCatalog";
+import { useEffectiveGuardrails } from "@/hooks/useGuardrails";
+import { templateCredentials } from "@/services/catalog";
 import { useChatStore } from "@/store/chat";
 import {
+  ApiError,
   draftValidateProvider,
   mapDiscoveredModels,
   registerProvider,
 } from "@/services/api";
+import { createOrgProviderWithModels } from "@/services/orgs";
 import type {
   DraftValidation,
   MappedModel,
@@ -43,6 +50,9 @@ import type {
   ProviderType,
 } from "@/types";
 import { EMPTY_MODEL_FORM, ModelForm, fromSuggested, toPayload, type ModelFormState } from "./ModelForm";
+import { ConnectionTemplateFields } from "./ConnectionTemplateFields";
+import { CatalogBrowserDialog } from "./CatalogBrowser";
+import type { CatalogProvider } from "@/types/catalog";
 import {
   Check,
   CheckCircle2,
@@ -66,6 +76,28 @@ interface ProviderWizardModalProps {
   onClose: () => void;
   editingProvider?: Provider | null;
   onSaved?: (provider: Provider, discoveryMessage?: string) => void;
+  /** Prefill the gateway family when launched from the provider catalog. */
+  initialType?: ProviderType | null;
+  /** Prefill the connection name when launched from the provider catalog. */
+  initialName?: string | null;
+  /** Catalog slug: loads the connection template (family + base URL + expected fields). */
+  catalogSlug?: string | null;
+  /** Base URL prefill for catalog-only entries configured via Custom. */
+  initialBaseUrl?: string | null;
+  /**
+   * Ownership scope. Defaults to personal (existing callers untouched).
+   * Org mode switches only the register transport + name-taken list; the
+   * validation gate, mapping, and model forms stay scope-agnostic.
+   */
+  ownership?: { type: "personal" } | { type: "org"; orgId: string };
+  /**
+   * Known provider names for the duplicate-name check. Org callers pass the
+   * org provider names so the wizard stays decoupled from org hooks; when
+   * omitted the personal provider list is used.
+   */
+  existingNames?: string[];
+  /** Org display name for the header scope line (org runs only). */
+  orgName?: string | null;
 }
 
 const PROVIDER_METAS: Record<
@@ -116,8 +148,24 @@ const PROVIDER_METAS: Record<
   },
 };
 
-const STEP_LABELS = ["1. Provider Type", "2. Credentials", "3. Validation", "4. Models", "5. Finish"];
+/** Step-1 platform cards. VERTEX_AI keeps backend/step-2+ support but has no card. */
+const VISIBLE_PROVIDER_TYPES: ProviderType[] = PROVIDER_TYPES.filter((t) => t !== "VERTEX_AI");
+
+const STEP_LABELS = ["1. Provider Type", "2. Credentials & Validation", "3. Models", "4. Finish"];
 const DRAFT_KEY = "tollma-wizard-draft";
+
+/** Credential rotation needs Providers.Update + Providers.RotateCredentials. */
+function isRotatePermError(e: unknown): boolean {
+  if (!(e instanceof ApiError) || e.status !== 403) return false;
+  try {
+    return JSON.stringify(e.data).toLowerCase().includes("rotate");
+  } catch {
+    return false;
+  }
+}
+
+const ROTATE_PERM_COPY =
+  "Credential rotation also requires the Providers.RotateCredentials permission. Ask an organization admin to grant it.";
 
 export type ModelScope = "US" | "EU" | "APAC" | "global";
 
@@ -255,7 +303,8 @@ interface Draft {
 
 function loadDraft(): Draft | null {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    // sessionStorage: draft creds never survive past the tab session.
+    const raw = sessionStorage.getItem(DRAFT_KEY);
     return raw ? (JSON.parse(raw) as Draft) : null;
   } catch {
     return null;
@@ -361,31 +410,62 @@ export function ProviderWizardModal({
   onClose,
   editingProvider,
   onSaved,
+  initialType,
+  initialName,
+  catalogSlug,
+  initialBaseUrl,
+  ownership,
+  existingNames,
+  orgName,
 }: ProviderWizardModalProps) {
   const { data: providers = [] } = useProviders();
   const pm = useProviderMutations();
   const queryClient = useQueryClient();
   const { setSelectedProviderId } = useChatStore();
   const isEditing = !!editingProvider;
+  // Org runs never touch the personal draft (shared sessionStorage key) or the
+  // personal provider list — scope switches transport + names only.
+  const orgId = ownership?.type === "org" ? ownership.orgId : null;
+  const orgMut = useOrgMutations(orgId ?? undefined);
 
   // Fresh mount per open (parent remounts via key): initializers restore the draft.
   const [step, setStep] = useState(() => {
-    if (isEditing) return 1;
+    if (isEditing || orgId) return 1;
     const d = loadDraft();
     return d?.step && d.step <= 2 ? d.step : 1;
   });
-  const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (loadDraft()?.name ?? "")));
-  const [type, setType] = useState<ProviderType>(() =>
-    isEditing ? (editingProvider?.provider_type ?? "OPENAI") : (loadDraft()?.type ?? "OPENAI"),
-  );
-  const [description, setDescription] = useState(() => (isEditing ? "" : (loadDraft()?.description ?? "")));
-  const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing ? {} : (loadDraft()?.creds ?? {})));
+  const [name, setName] = useState(() => (isEditing ? (editingProvider?.name ?? "") : (initialName ?? (orgId ? "" : (loadDraft()?.name ?? "")))));
+  const [type, setType] = useState<ProviderType>(() => {
+    if (isEditing) return editingProvider?.provider_type ?? "OPENAI";
+    if (initialType) return initialType;
+    if (orgId) return "OPENAI";
+    // VERTEX_AI has no platform card: never restore it as a dead selection.
+    const draftType = loadDraft()?.type;
+    return draftType && draftType !== "VERTEX_AI" ? draftType : "OPENAI";
+  });
+  const [description, setDescription] = useState(() => (isEditing || orgId ? "" : (loadDraft()?.description ?? "")));
+  const [creds, setCreds] = useState<Record<string, string>>(() => (isEditing || orgId ? {} : (loadDraft()?.creds ?? {})));
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState<DraftValidation | null>(null);
   const [mapped, setMapped] = useState<MappedModel[] | null>(null);
   const [mapping, setMapping] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Validation is bound to the exact credentials + type it ran against:
+  // any edit invalidates it so Next/registration can never ship new creds
+  // with an old validation result.
+  const updateCreds = useCallback(
+    (updater: React.SetStateAction<Record<string, string>>) => {
+      setValidation(null);
+      setCreds(updater);
+    },
+    [],
+  );
+  const updateType = useCallback((next: ProviderType) => {
+    setValidation(null);
+    setType(next);
+  }, []);
   const [forms, setForms] = useState<Record<string, ModelFormState>>({});
   const [search, setSearch] = useState("");
   const [matchFilter, setMatchFilter] = useState<"ALL" | MatchType | "US" | "EU" | "APAC">("ALL");
@@ -394,15 +474,45 @@ export function ProviderWizardModal({
   const [endpointFilter, setEndpointFilter] = useState("ALL");
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
 
+  // In-wizard catalog picks (Search providers card) behave like a catalog
+  // launch: template prefill for step 2 with the platform preselected on step 1.
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogPick, setCatalogPick] = useState<{ slug: string; baseUrl: string | null; name: string | null; logoUrl: string | null } | null>(null);
+
+  // Catalog-launched runs load the connection template (backend endpoint with
+  // a catalog-row-derived fallback) to prefill family + base URL + fields.
+  const activeCatalogSlug = catalogPick?.slug ?? catalogSlug ?? null;
+  const templateQuery = useConnectionTemplate(!isEditing && open ? activeCatalogSlug : null);
+  const template = templateQuery.data ?? null;
+
+  // Prefill base_url from the catalog base URL (derived, never clobbers user input).
+  const suggestedBaseUrl = initialBaseUrl ?? catalogPick?.baseUrl ?? template?.suggested_base_url ?? null;
+
+  // Search-providers pick: a visible family wins, anything else (incl. VERTEX_AI)
+  // goes through CUSTOM with the catalog base URL, mirroring page.tsx.
+  function handleCatalogConfigure(p: CatalogProvider, family: ProviderType | null, opts?: { viaCustom: boolean }) {
+    if (!family) return;
+    updateType(VISIBLE_PROVIDER_TYPES.includes(family) ? family : "CUSTOM");
+    setCatalogPick({ slug: p.slug, baseUrl: opts?.viaCustom ? (p.api_base_url ?? null) : null, name: p.name, logoUrl: p.logo_url });
+    setName((prev) => (prev.trim() ? prev : p.name));
+    setCatalogOpen(false);
+    setStep(1);
+  }
+  const effectiveCreds = useMemo(() => {
+    if (!template || !suggestedBaseUrl) return creds;
+    return creds.base_url ? creds : { ...creds, base_url: suggestedBaseUrl };
+  }, [creds, template, suggestedBaseUrl]);
+
   // Auto-save draft progress (steps 1-2 carry the draft; nothing persisted server-side).
+  // Personal only: org runs must not read or write the shared draft key.
   useEffect(() => {
-    if (!open || isEditing || step > 2) return;
+    if (!open || isEditing || orgId || step > 2) return;
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ name, type, description, creds, step }));
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ name, type, description, creds, step }));
     } catch {
       /* storage full/blocked: draft stays in memory */
     }
-  }, [open, isEditing, name, type, description, creds, step]);
+  }, [open, isEditing, orgId, name, type, description, creds, step]);
 
   async function runMapping() {
     if (!validation?.valid || mapping) return;
@@ -447,14 +557,23 @@ export function ProviderWizardModal({
       setSelected(new Set(res.mapped.map((m) => m.model_id)));
     } catch (e) {
       toast.error("Model mapping failed", { description: e instanceof Error ? e.message : "Error" });
+      // Drop the previous selection: stale ids missing from the new
+      // mapping crash the finish summary lookup.
+      setSelected(new Set());
+      setMapped(null);
     } finally {
       setMapping(false);
     }
   }
 
-  const nameTaken = providers.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+  const knownNames = existingNames ?? providers.map((p) => p.name);
+  const nameTaken = knownNames.some((p) => p.toLowerCase() === name.trim().toLowerCase());
   const requiredCreds = (CREDENTIAL_FIELDS[type] ?? []).filter(([, spec]) => !spec.optional);
-  const credsReady = requiredCreds.every(([key]) => (creds[key] ?? "").trim() !== "");
+  const staticCredsReady = requiredCreds.every(([key]) => (creds[key] ?? "").trim() !== "");
+  const templateCredsReady = (template?.credential_fields ?? [])
+    .filter((f) => f.required)
+    .every((f) => (effectiveCreds[f.key] ?? "").trim() !== "");
+  const credsReady = template ? templateCredsReady : staticCredsReady;
 
   const filtered = useMemo(() => {
     if (!mapped) return [];
@@ -552,7 +671,9 @@ export function ProviderWizardModal({
   async function runValidation() {
     setBusy(true);
     try {
-      const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      // Template path: raw env-name keys -> adapter credential keys.
+      const source = template ? templateCredentials(template, effectiveCreds) : creds;
+      const credentials = Object.fromEntries(Object.entries(source).filter(([, v]) => v !== ""));
       const res = await draftValidateProvider({ provider_type: type, credentials });
       setValidation(res);
       if (res.valid) toast.success(`Credentials valid — ${res.discovered.length} models found`);
@@ -568,7 +689,9 @@ export function ProviderWizardModal({
     if (!mapped) return;
     setBusy(true);
     try {
-      const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      // Template path: raw env-name keys -> adapter credential keys.
+      const source = template ? templateCredentials(template, effectiveCreds) : creds;
+      const credentials = Object.fromEntries(Object.entries(source).filter(([, v]) => v !== ""));
       const matchById = Object.fromEntries(mapped.map((m) => [m.model_id, m]));
       const defaultEndpoint = PROVIDER_DEFAULT_ENDPOINTS[type] || "chat_completions";
       const models = [...selected].map((id) => {
@@ -597,7 +720,7 @@ export function ProviderWizardModal({
         );
         return { ...rest, repository_match: matchById[id].repository_match };
       });
-      const res = await registerProvider({
+      const payload = {
         name: name.trim(),
         provider_type: type,
         description: description.trim() || undefined,
@@ -605,20 +728,51 @@ export function ProviderWizardModal({
         validation_status: "valid",
         validation_message: validation?.message ?? "validated in wizard",
         models,
-      });
+        ...(catalogSlug ? { catalog_slug: catalogSlug } : {}),
+      };
+      // Same payload both scopes; only the transport differs (org_id from URL).
+      // No silent fallback: a 404 on the org endpoint surfaces honestly below.
+      let savedProvider: Provider;
+      let modelsCreated: number;
+      if (orgId) {
+        // Org endpoint returns the provider read directly (not the
+        // RegisterResult envelope); single-commit means the sent models all
+        // persisted or nothing did, so the local count is exact.
+        const r = await createOrgProviderWithModels(orgId, payload);
+        savedProvider = r as unknown as Provider;
+        modelsCreated = models.length;
+      } else {
+        const r = await registerProvider(payload);
+        savedProvider = r.provider;
+        modelsCreated = r.models_created;
+      }
       try {
-        localStorage.removeItem(DRAFT_KEY);
+        sessionStorage.removeItem(DRAFT_KEY);
       } catch {
         /* ignore */
       }
-      await queryClient.invalidateQueries({ queryKey: ["providers"] });
-      await queryClient.invalidateQueries({ queryKey: ["models"] });
-      setSelectedProviderId(res.provider.id);
-      toast.success(`Provider registered with ${res.models_created} models`);
-      onSaved?.(res.provider, `${res.models_created} models registered`);
+      if (orgId) {
+        await queryClient.invalidateQueries({ queryKey: ["orgs", orgId, "providers"] });
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ["providers"] });
+        await queryClient.invalidateQueries({ queryKey: ["models"] });
+        setSelectedProviderId(savedProvider.id);
+      }
+      toast.success(
+        orgId
+          ? `Provider connected with ${modelsCreated} models`
+          : `Provider registered with ${modelsCreated} models`,
+      );
+      onSaved?.(savedProvider, `${modelsCreated} models registered`);
       onClose();
     } catch (e) {
-      toast.error("Registration failed", { description: e instanceof Error ? e.message : "Error" });
+      if (e instanceof ApiError && e.status === 404 && orgId) {
+        toast.error("Organization registration unavailable", {
+          description: "The organization provider service is still rolling out. Personal providers keep working.",
+        });
+      } else {
+        toast.error("Registration failed", { description: e instanceof Error ? e.message : "Error" });
+      }
     } finally {
       setBusy(false);
     }
@@ -630,14 +784,15 @@ export function ProviderWizardModal({
   }
 
   const canNext1 = name.trim() !== "" && !nameTaken;
-  const canNext2 = credsReady;
+  // Single gate: mapping runs only on valid credentials. Validation results stay in memory, never in the draft.
+  const canNext2 = credsReady && validation?.valid;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="max-w-3xl p-0 overflow-hidden shadow-2xl">
+      <DialogContent className="max-w-2xl max-h-[92dvh]! p-0 overflow-hidden shadow-2xl">
         <form
           data-testid="provider-form"
-          className="flex flex-col"
+          className="flex flex-col max-h-[92dvh] min-h-0"
           autoComplete="off"
           onSubmit={(e) => e.preventDefault()}
           data-1p-ignore="true"
@@ -645,21 +800,33 @@ export function ProviderWizardModal({
           data-bwignore="true"
           data-form-type="other"
         >
-          <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60">
+          <div className="shrink-0 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60">
             <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                   {isEditing ? "Edit Provider" : "Add Provider Connection"}
                 </h2>
-                <p className="text-xs text-zinc-500 mt-0.5">
+                <p className="text-xs text-zinc-500">
                   {isEditing
                     ? "Update provider settings"
-                    : "Provider is only registered after step 5 — nothing is saved before that"}
+                    : orgId
+                      ? "Provider is only connected after step 4 — nothing is saved before that"
+                      : "Provider is only registered after step 4 — nothing is saved before that"}
                 </p>
+                {orgId && (
+                  <p
+                    className="text-xs font-medium text-zinc-600 dark:text-zinc-300"
+                    data-testid="wizard-org-scope"
+                  >
+                    {orgName
+                      ? `Organization: ${orgName} \u2014 credentials and models are org-scoped`
+                      : "Organization \u2014 credentials and models are org-scoped"}
+                  </p>
+                )}
               </div>
               {!isEditing && (
                 <Badge variant="outline" className="text-xs font-mono shrink-0 whitespace-nowrap px-2.5 py-1">
-                  Step {step} of 5
+                  Step {step} of 4
                 </Badge>
               )}
             </div>
@@ -677,21 +844,29 @@ export function ProviderWizardModal({
             )}
           </div>
 
-          <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto" data-testid="wizard-step-body">
+          <div
+            className={cn(
+              "min-h-0 px-6 py-4",
+              step === 1 ? "overflow-hidden" : "max-h-[65vh] overflow-y-auto",
+            )}
+            data-testid="wizard-step-body"
+          >
             {isEditing ? (
               <EditBody
                 name={name}
                 setName={setName}
                 type={type}
                 creds={creds}
-                setCreds={setCreds}
+                setCreds={updateCreds}
                 busy={busy}
+                orgScoped={orgId !== null}
+                providerId={editingProvider.id}
                 onSave={() => void handleEditSave()}
               />
             ) : (
               <>
                 {step === 1 && (
-                  <div className="space-y-4" data-testid="wizard-step-1">
+                  <div className="space-y-3" data-testid="wizard-step-1">
                     <Field label="Provider Name">
                       <Input
                         value={name}
@@ -709,20 +884,6 @@ export function ProviderWizardModal({
                         data-form-type="other"
                       />
                     </Field>
-                    <select
-                      value={type}
-                      onChange={(e) => setType(e.target.value as ProviderType)}
-                      data-testid="provider-type"
-                      className="sr-only"
-                      tabIndex={-1}
-                      aria-hidden="true"
-                    >
-                      {PROVIDER_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {PROVIDER_METAS[t]?.name ?? t}
-                        </option>
-                      ))}
-                    </select>
                     {nameTaken && name.trim() && (
                       <p className="text-xs text-red-500">A provider with this name already exists.</p>
                     )}
@@ -746,18 +907,18 @@ export function ProviderWizardModal({
                       <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                         Select Provider Platform
                       </label>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {PROVIDER_TYPES.map((t) => {
+                      <div className="grid grid-cols-2 sm:grid-cols-3 items-stretch gap-2">
+                        {VISIBLE_PROVIDER_TYPES.map((t) => {
                           const meta = PROVIDER_METAS[t];
                           const isSelected = type === t;
                           return (
                             <button
                               key={t}
                               type="button"
-                              onClick={() => setType(t)}
+                              onClick={() => updateType(t)}
                               data-testid={`provider-platform-${t}`}
                               className={cn(
-                                "flex flex-col items-start p-3 rounded-lg border text-left transition-all",
+                                "flex flex-col items-start p-2 rounded-lg border text-left transition-all",
                                 isSelected
                                   ? "border-tollma-600 bg-tollma-600 text-white dark:border-tollma-500 dark:bg-tollma-600 dark:text-white shadow-sm"
                                   : "border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700",
@@ -780,7 +941,7 @@ export function ProviderWizardModal({
                               <span className={cn("text-[10px] mt-1 line-clamp-2", isSelected ? "text-zinc-300 dark:text-zinc-600" : "text-zinc-500")}>
                                 {meta.subtitle}
                               </span>
-                              <span className="mt-1.5 flex flex-wrap gap-1">
+                              <span className="mt-auto flex flex-wrap gap-1 pt-1.5">
                                 {meta.endpoints.map((endpoint) => (
                                   <span
                                     key={endpoint}
@@ -798,6 +959,40 @@ export function ProviderWizardModal({
                             </button>
                           );
                         })}
+                        <button
+                          type="button"
+                          onClick={() => setCatalogOpen(true)}
+                          data-testid="provider-platform-SEARCH"
+                          aria-label={catalogPick ? `Change catalog provider (currently ${catalogPick.name ?? catalogPick.slug})` : "Search providers"}
+                          className="flex flex-col items-start p-2 rounded-lg border border-dashed border-zinc-300 text-left transition-all hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-600"
+                        >
+                          {catalogPick ? (
+                            <>
+                              <div className="flex items-center gap-1.5 w-full">
+                                <ProviderLogo logoUrl={catalogPick.logoUrl} name={catalogPick.name ?? catalogPick.slug} size="sm" />
+                                <span className="font-semibold text-xs truncate">{catalogPick.name ?? catalogPick.slug}</span>
+                              </div>
+                              <span className="mt-1 break-all font-mono text-[10px] text-zinc-500">
+                                /{catalogPick.slug}
+                              </span>
+                              <span className="mt-auto pt-1.5 text-[10px] font-medium text-tollma-600 dark:text-tollma-400">
+                                Change — search again
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2 w-full">
+                                <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                  <Search className="size-3.5" />
+                                </span>
+                                <span className="font-semibold text-xs truncate">Search providers</span>
+                              </div>
+                              <span className="text-[10px] mt-1.5 line-clamp-2 text-zinc-500">
+                                Browse the catalog — 100+ providers with prefilled endpoints and auth fields
+                              </span>
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -811,371 +1006,385 @@ export function ProviderWizardModal({
                       </span>
                       <span className="text-[11px] text-zinc-400">Keys are stored encrypted on your server</span>
                     </div>
-                    {CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
-                      <CredentialField
-                        key={fieldKey}
-                        fieldKey={fieldKey}
-                        spec={spec}
-                        value={creds[fieldKey] ?? ""}
-                        onChange={(v) => setCreds((prev) => ({ ...prev, [fieldKey]: v }))}
-                        showSecret={showSecrets[fieldKey]}
-                        onToggleSecret={() =>
-                          setShowSecrets((prev) => ({
-                            ...prev,
-                            [fieldKey]: !prev[fieldKey],
-                          }))
-                        }
+                    {catalogSlug && templateQuery.isLoading && (
+                      <p className="flex items-center gap-2 text-xs text-zinc-500">
+                        <Loader2 className="size-3.5 animate-spin" /> Loading connection template…
+                      </p>
+                    )}
+                    {template ? (
+                      <ConnectionTemplateFields
+                        template={template}
+                        creds={effectiveCreds}
+                        onChange={(k, v) => updateCreds((prev) => ({ ...prev, [k]: v }))}
                       />
-                    ))}
+                    ) : (
+                      CREDENTIAL_FIELDS[type]?.map(([fieldKey, spec]) => (
+                        <CredentialField
+                          key={fieldKey}
+                          fieldKey={fieldKey}
+                          spec={spec}
+                          value={creds[fieldKey] ?? ""}
+                          onChange={(v) => updateCreds((prev) => ({ ...prev, [fieldKey]: v }))}
+                          showSecret={showSecrets[fieldKey]}
+                          onToggleSecret={() =>
+                            setShowSecrets((prev) => ({
+                              ...prev,
+                              [fieldKey]: !prev[fieldKey],
+                            }))
+                          }
+                        />
+                      ))
+                    )}
+                    <div className="space-y-3 border-t border-zinc-200 pt-3 dark:border-zinc-800" data-testid="wizard-step-3">
+                      <p className="text-xs text-zinc-500">
+                        Credentials are tested with a temporary adapter — nothing is saved yet.
+                      </p>
+                      <Button onClick={() => void runValidation()} disabled={busy} data-testid="wiz-validate">
+                        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
+                        <span className="ml-1.5">Validate credentials</span>
+                      </Button>
+                      {validation && (
+                        <div
+                          className={cn(
+                            "p-3 rounded-lg border text-xs flex items-start gap-2.5",
+                            validation.valid
+                              ? "border-tollma-200 bg-tollma-50 text-tollma-900 dark:border-tollma-900/50 dark:bg-tollma-950/20 dark:text-tollma-200"
+                              : "border-red-200 bg-red-50 text-red-900 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200",
+                          )}
+                          data-testid="wiz-validation-result"
+                        >
+                          {validation.valid ? <CheckCircle2 className="size-4 text-tollma-600 shrink-0 mt-0.5" /> : <XCircle className="size-4 text-red-600 shrink-0 mt-0.5" />}
+                          <div>
+                            <div className="font-semibold">
+                              {validation.valid
+                                ? `Validation successful — ${validation.discovered.length} models discovered (${validation.latency_ms.toFixed(0)}ms)`
+                                : "Validation failed"}
+                            </div>
+                            {validation.message && <div className="text-[11px] opacity-80 mt-0.5">{validation.message}</div>}
+                          </div>
+                        </div>
+                      )}
+                      {validationSummary && (
+                        <div
+                          className="grid grid-cols-2 gap-2 sm:grid-cols-3"
+                          data-testid="wiz-validation-summary"
+                        >
+                          {(
+                            [
+                              ["Chat models", validationSummary.chat, "chat"],
+                              ["Reasoning models", validationSummary.reasoning, "reasoning"],
+                              ["Embedding models", validationSummary.embeddings, "embeddings"],
+                              ["Image models", validationSummary.image, "image"],
+                              ["Audio models", validationSummary.audio, "audio"],
+                              ["Total", validationSummary.total, "total"],
+                            ] as Array<[string, number, string]>
+                          ).map(([label, count, key]) => (
+                            <div
+                              key={key}
+                              className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30"
+                              data-testid={`wiz-summary-${key}`}
+                            >
+                              <div className="text-[10px] uppercase tracking-wider text-zinc-400">
+                                {label}
+                              </div>
+                              <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                {count}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 {step === 3 && (
                   <div className="space-y-3" data-testid="wizard-step-3">
-                    <p className="text-xs text-zinc-500">
-                      Credentials are tested with a temporary adapter — nothing is saved yet.
-                    </p>
-                    <Button onClick={() => void runValidation()} disabled={busy} data-testid="wiz-validate">
-                      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
-                      <span className="ml-1.5">Validate credentials</span>
-                    </Button>
-                    {validation && (
-                      <div
-                        className={cn(
-                          "p-3 rounded-lg border text-xs flex items-start gap-2.5",
-                          validation.valid
-                            ? "border-tollma-200 bg-tollma-50 text-tollma-900 dark:border-tollma-900/50 dark:bg-tollma-950/20 dark:text-tollma-200"
-                            : "border-red-200 bg-red-50 text-red-900 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200",
-                        )}
-                        data-testid="wiz-validation-result"
-                      >
-                        {validation.valid ? <CheckCircle2 className="size-4 text-tollma-600 shrink-0 mt-0.5" /> : <XCircle className="size-4 text-red-600 shrink-0 mt-0.5" />}
-                        <div>
-                          <div className="font-semibold">
-                            {validation.valid
-                              ? `Validation successful — ${validation.discovered.length} models discovered (${validation.latency_ms.toFixed(0)}ms)`
-                              : "Validation failed"}
-                          </div>
-                          {validation.message && <div className="text-[11px] opacity-80 mt-0.5">{validation.message}</div>}
-                        </div>
-                      </div>
-                    )}
-                    {validationSummary && (
-                      <div
-                        className="grid grid-cols-2 gap-2 sm:grid-cols-3"
-                        data-testid="wiz-validation-summary"
-                      >
-                        {(
-                          [
-                            ["Chat models", validationSummary.chat, "chat"],
-                            ["Reasoning models", validationSummary.reasoning, "reasoning"],
-                            ["Embedding models", validationSummary.embeddings, "embeddings"],
-                            ["Image models", validationSummary.image, "image"],
-                            ["Audio models", validationSummary.audio, "audio"],
-                            ["Total", validationSummary.total, "total"],
-                          ] as Array<[string, number, string]>
-                        ).map(([label, count, key]) => (
-                          <div
-                            key={key}
-                            className="rounded-lg border border-zinc-200 bg-zinc-50/50 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30"
-                            data-testid={`wiz-summary-${key}`}
-                          >
-                            <div className="text-[10px] uppercase tracking-wider text-zinc-400">
-                              {label}
+                    <div data-testid="wizard-step-4">
+                      {mapping || !mapped ? (
+                        <p className="text-xs text-zinc-500 flex items-center gap-2">
+                          <Loader2 className="size-3.5 animate-spin" /> Mapping discovered models against the repository…
+                        </p>
+                      ) : (
+                        <>
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="relative flex-1 min-w-[150px]">
+                                <Search className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-zinc-400" />
+                                <Input
+                                  placeholder="Search models…"
+                                  value={search}
+                                  onChange={(e) => setSearch(e.target.value)}
+                                  data-testid="wiz-model-search"
+                                  className="h-9 pl-8 text-xs w-full"
+                                />
+                              </div>
+                              <Select
+                                value={matchFilter}
+                                onChange={(e) => setMatchFilter(e.target.value as typeof matchFilter)}
+                                data-testid="wiz-match-filter"
+                                sizeVariant="sm"
+                                className="h-9 w-32 text-xs"
+                              >
+                                <option value="ALL">All matches</option>
+                                <option value="US">US specific</option>
+                                <option value="global">Global</option>
+                                <option value="EU">EU specific</option>
+                                <option value="APAC">APAC specific</option>
+                                <option value="provider_specific">Provider-specific</option>
+                                <option value="fallback">Unknown</option>
+                              </Select>
+                              <Select
+                                value={capFilter}
+                                onChange={(e) => setCapFilter(e.target.value)}
+                                data-testid="wiz-cap-filter"
+                                sizeVariant="sm"
+                                className="w-28 text-xs"
+                              >
+                                <option value="ALL">All caps</option>
+                                {CAP_FILTERS.map(([k, label]) => (
+                                  <option key={k} value={k}>{label}</option>
+                                ))}
+                              </Select>
+                              <Select
+                                value={priceFilter}
+                                onChange={(e) => setPriceFilter(e.target.value as typeof priceFilter)}
+                                data-testid="wiz-price-filter"
+                                sizeVariant="sm"
+                                className="w-28 text-xs"
+                              >
+                                <option value="ALL">Any price</option>
+                                <option value="PRICED">Priced</option>
+                                <option value="FREE">Free</option>
+                              </Select>
+                              <Select
+                                value={endpointFilter}
+                                onChange={(e) => setEndpointFilter(e.target.value)}
+                                data-testid="wiz-endpoint-filter"
+                                sizeVariant="sm"
+                                className="h-9 w-32 text-xs"
+                              >
+                                <option value="ALL">All endpoints</option>
+                                {endpointChoices.map((o) => (
+                                  <option key={o.value} value={o.value}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                              </Select>
                             </div>
-                            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                              {count}
+
+                            <div className="flex items-center justify-between text-xs text-zinc-500 pt-0.5">
+                              <span data-testid="wiz-selection-count">
+                                {selected.size} of {mapped.length} models selected
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setSelected(new Set(filtered.map((m) => m.model_id)))}
+                                  data-testid="wiz-select-filtered"
+                                  className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                                >
+                                  Select filtered ({filtered.length})
+                                </Button>
+                                <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setSelected((s) => {
+                                      const n = new Set(s);
+                                      for (const m of filtered) n.delete(m.model_id);
+                                      return n;
+                                    })
+                                  }
+                                  data-testid="wiz-deselect-filtered"
+                                  className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                                >
+                                  Deselect filtered
+                                </Button>
+                              </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                          <div className="flex max-h-72 min-h-[200px] flex-col gap-2 overflow-y-auto pr-1">
+                            {grouped.map(({ category, items }) => (
+                              <div
+                                key={category}
+                                className="flex flex-col gap-1.5"
+                                data-testid={`wiz-group-${category}`}
+                              >
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                                  {ENDPOINT_CATEGORY_LABELS[category]} ({items.length})
+                                </p>
+                                {items.map((m) => {
+                                  const f = forms[m.model_id];
+                                  const checked = selected.has(m.model_id);
+                                  const displayName = String(f?.name || m.suggested.name || m.model_id);
+                                  const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
+                                  return (
+                                    <div
+                                      key={m.model_id}
+                                      className={cn("flex items-start gap-2 rounded-lg border p-2 text-xs", checked ? "border-zinc-300 dark:border-zinc-600" : "border-zinc-200 opacity-70 dark:border-zinc-800")}
+                                      data-testid={`wiz-model-${m.model_id}`}
+                                    >
+                                      <Checkbox
+                                        checked={checked}
+                                        onChange={() => toggle(m.model_id)}
+                                        data-testid={`wiz-select-${m.model_id}`}
+                                        className="mt-0.5"
+                                        aria-label={`Select ${m.model_id}`}
+                                      />
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <Cpu className="size-3.5 shrink-0 text-zinc-400" />
+                                          <span className="min-w-0 flex-1 truncate font-medium">{displayName}</span>
+                                          {scopeInfo && (
+                                            <span
+                                              className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
+                                              data-testid={`wiz-match-${m.model_id}`}
+                                              title={`${scopeInfo.label} region`}
+                                            >
+                                              {scopeInfo.label}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
+                                          {m.model_id}
+                                          {f?.context_window ? ` · ctx ${Number(f.context_window).toLocaleString()}` : ""}
+                                          {f?.max_output_tokens ? ` · max ${Number(f.max_output_tokens).toLocaleString()}` : ""}
+                                          {` · in ${fmtPrice(f?.input_price)}/1M · out ${fmtPrice(f?.output_price)}/1M`}
+                                        </div>
+                                      </div>
+                                      <Button size="sm" variant="ghost" onClick={() => setEditingModelId(m.model_id)} data-testid={`wiz-edit-${m.model_id}`} title="Edit model" className="h-7 w-7 p-0">
+                                        <Pencil className="size-3.5" />
+                                      </Button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                            {filtered.length === 0 && <p className="text-xs text-zinc-400">No models match the filters.</p>}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 {step === 4 && (
-                  <div className="space-y-3" data-testid="wizard-step-4">
-                    {mapping || !mapped ? (
-                      <p className="text-xs text-zinc-500 flex items-center gap-2">
-                        <Loader2 className="size-3.5 animate-spin" /> Mapping discovered models against the repository…
-                      </p>
-                    ) : (
-                      <>
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="relative flex-1 min-w-[150px]">
-                              <Search className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-zinc-400" />
-                              <Input
-                                placeholder="Search models…"
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                data-testid="wiz-model-search"
-                                className="h-8 pl-8 text-xs w-full"
-                              />
-                            </div>
-                            <Select
-                              value={matchFilter}
-                              onChange={(e) => setMatchFilter(e.target.value as typeof matchFilter)}
-                              data-testid="wiz-match-filter"
-                              sizeVariant="sm"
-                              className="w-32 text-xs"
-                            >
-                              <option value="ALL">All matches</option>
-                              <option value="US">US specific</option>
-                              <option value="global">Global</option>
-                              <option value="EU">EU specific</option>
-                              <option value="APAC">APAC specific</option>
-                              <option value="provider_specific">Provider-specific</option>
-                              <option value="fallback">Unknown</option>
-                            </Select>
-                            <Select
-                              value={capFilter}
-                              onChange={(e) => setCapFilter(e.target.value)}
-                              data-testid="wiz-cap-filter"
-                              sizeVariant="sm"
-                              className="w-28 text-xs"
-                            >
-                              <option value="ALL">All caps</option>
-                              {CAP_FILTERS.map(([k, label]) => (
-                                <option key={k} value={k}>{label}</option>
-                              ))}
-                            </Select>
-                            <Select
-                              value={priceFilter}
-                              onChange={(e) => setPriceFilter(e.target.value as typeof priceFilter)}
-                              data-testid="wiz-price-filter"
-                              sizeVariant="sm"
-                              className="w-28 text-xs"
-                            >
-                              <option value="ALL">Any price</option>
-                              <option value="PRICED">Priced</option>
-                              <option value="FREE">Free</option>
-                            </Select>
-                            <Select
-                              value={endpointFilter}
-                              onChange={(e) => setEndpointFilter(e.target.value)}
-                              data-testid="wiz-endpoint-filter"
-                              sizeVariant="sm"
-                              className="w-32 text-xs"
-                            >
-                              <option value="ALL">All endpoints</option>
-                              {endpointChoices.map((o) => (
-                                <option key={o.value} value={o.value}>
-                                  {o.label}
-                                </option>
-                              ))}
-                            </Select>
-                          </div>
+                  <div className="space-y-3 text-xs" data-testid="wizard-step-4">
+                    <div data-testid="wizard-step-5">
+                      <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                        <p className="font-semibold text-sm">{name || "(unnamed)"} <span className="font-normal text-zinc-500">· {providerTypeLabel(type)}</span></p>
+                        <p className="mt-1 text-zinc-500">
+                          Validation: {validation?.valid ? `valid (${validation.latency_ms.toFixed(0)}ms)` : "not validated"}
+                        </p>
+                      </div>
 
-                          <div className="flex items-center justify-between text-xs text-zinc-500 pt-0.5">
-                            <span data-testid="wiz-selection-count">
-                              {selected.size} of {mapped.length} models selected
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setSelected(new Set(filtered.map((m) => m.model_id)))}
-                                data-testid="wiz-select-filtered"
-                                className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-                              >
-                                Select filtered ({filtered.length})
-                              </Button>
-                              <span className="text-zinc-300 dark:text-zinc-700">·</span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  setSelected((s) => {
-                                    const n = new Set(s);
-                                    for (const m of filtered) n.delete(m.model_id);
-                                    return n;
-                                  })
-                                }
-                                data-testid="wiz-deselect-filtered"
-                                className="h-6 px-2 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-                              >
-                                Deselect filtered
-                              </Button>
-                            </div>
-                          </div>
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                            Selected Models & Configurations ({selectedModels.length})
+                          </span>
+                          <span className="text-[11px] text-zinc-400">Review before registration</span>
                         </div>
-                        <div className="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
-                          {grouped.map(({ category, items }) => (
-                            <div
-                              key={category}
-                              className="flex flex-col gap-1.5"
-                              data-testid={`wiz-group-${category}`}
-                            >
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                                {ENDPOINT_CATEGORY_LABELS[category]} ({items.length})
-                              </p>
-                              {items.map((m) => {
-                                const f = forms[m.model_id];
-                                const checked = selected.has(m.model_id);
-                                const displayName = String(f?.name || m.suggested.name || m.model_id);
-                                const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
-                                return (
-                                  <div
-                                    key={m.model_id}
-                                    className={cn("flex items-start gap-2 rounded-lg border p-2 text-xs", checked ? "border-zinc-300 dark:border-zinc-600" : "border-zinc-200 opacity-70 dark:border-zinc-800")}
-                                    data-testid={`wiz-model-${m.model_id}`}
-                                  >
-                                    <Checkbox
-                                      checked={checked}
-                                      onChange={() => toggle(m.model_id)}
-                                      data-testid={`wiz-select-${m.model_id}`}
-                                      className="mt-0.5"
-                                      aria-label={`Select ${m.model_id}`}
-                                    />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-1.5">
-                                        <Cpu className="size-3.5 shrink-0 text-zinc-400" />
-                                        <span className="truncate font-medium">{displayName}</span>
-                                        {scopeInfo && (
-                                          <span
-                                            className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", scopeInfo.badgeClass)}
-                                            data-testid={`wiz-match-${m.model_id}`}
-                                            title={`${scopeInfo.label} region`}
-                                          >
-                                            {scopeInfo.label}
-                                          </span>
+                        <div
+                          className="min-h-[200px] max-h-72 overflow-y-auto space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-900/30"
+                          data-testid="wiz-finish-models-list"
+                        >
+                          {selectedModels.length === 0 ? (
+                            <p className="text-xs text-zinc-400 text-center py-8">No models selected.</p>
+                          ) : (
+                            selectedModels.map((m) => {
+                              const f = forms[m.model_id];
+                              const displayName = String(f?.name || m.suggested.name || m.model_id);
+                              const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
+                              const activeCaps = f?.caps
+                                ? Object.entries(f.caps)
+                                    .filter(([, v]) => v)
+                                    .map(([k]) => k.replace("supports_", "").replace("_", " "))
+                                : [];
+                              return (
+                                <div
+                                  key={m.model_id}
+                                  className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/90 p-2.5 flex flex-col gap-1.5 shadow-sm"
+                                  data-testid={`wiz-finish-model-${m.model_id}`}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <Cpu className="size-3.5 shrink-0 text-zinc-400" />
+                                      <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100 truncate">
+                                        {displayName}
+                                      </span>
+                                      {scopeInfo && (
+                                        <span
+                                          className={cn(
+                                            "rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
+                                            scopeInfo.badgeClass,
+                                          )}
+                                          title={`${scopeInfo.label} region`}
+                                        >
+                                          {scopeInfo.label}
+                                        </span>
+                                      )}
+                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
+                                        {endpointLabel(
+                                          f?.primary_endpoint ??
+                                            PROVIDER_DEFAULT_ENDPOINTS[type] ??
+                                            "chat_completions",
                                         )}
-                                      </div>
-                                      <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
-                                        {m.model_id}
-                                        {f?.context_window ? ` · ctx ${Number(f.context_window).toLocaleString()}` : ""}
-                                        {f?.max_output_tokens ? ` · max ${Number(f.max_output_tokens).toLocaleString()}` : ""}
-                                        {` · in ${fmtPrice(f?.input_price)}/1M · out ${fmtPrice(f?.output_price)}/1M`}
-                                      </div>
+                                      </Badge>
                                     </div>
-                                    <Button size="sm" variant="ghost" onClick={() => setEditingModelId(m.model_id)} data-testid={`wiz-edit-${m.model_id}`} title="Edit model" className="h-7 w-7 p-0">
-                                      <Pencil className="size-3.5" />
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => setEditingModelId(m.model_id)}
+                                      title="Edit model configuration"
+                                      className="h-6 w-6 p-0 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 shrink-0"
+                                    >
+                                      <Pencil className="size-3" />
                                     </Button>
                                   </div>
-                                );
-                              })}
-                            </div>
-                          ))}
-                          {filtered.length === 0 && <p className="text-xs text-zinc-400">No models match the filters.</p>}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
 
-                {step === 5 && (
-                  <div className="space-y-3 text-xs" data-testid="wizard-step-5">
-                    <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-                      <p className="font-semibold text-sm">{name || "(unnamed)"} <span className="font-normal text-zinc-500">· {providerTypeLabel(type)}</span></p>
-                      <p className="mt-1 text-zinc-500">
-                        Validation: {validation?.valid ? `valid (${validation.latency_ms.toFixed(0)}ms)` : "not validated"}
-                      </p>
-                    </div>
-
-                    <div className="space-y-1.5 pt-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                          Selected Models & Configurations ({selectedModels.length})
-                        </span>
-                        <span className="text-[11px] text-zinc-400">Review before registration</span>
-                      </div>
-                      <div
-                        className="min-h-[200px] max-h-[280px] overflow-y-auto space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-2.5 bg-zinc-50/50 dark:bg-zinc-900/30"
-                        data-testid="wiz-finish-models-list"
-                      >
-                        {selectedModels.length === 0 ? (
-                          <p className="text-xs text-zinc-400 text-center py-8">No models selected.</p>
-                        ) : (
-                          selectedModels.map((m) => {
-                            const f = forms[m.model_id];
-                            const displayName = String(f?.name || m.suggested.name || m.model_id);
-                            const scopeInfo = getModelScope(m.model_id, m.match_type, displayName);
-                            const activeCaps = f?.caps
-                              ? Object.entries(f.caps)
-                                  .filter(([, v]) => v)
-                                  .map(([k]) => k.replace("supports_", "").replace("_", " "))
-                              : [];
-                            return (
-                              <div
-                                key={m.model_id}
-                                className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/90 p-2.5 flex flex-col gap-1.5 shadow-sm"
-                                data-testid={`wiz-finish-model-${m.model_id}`}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                                    <Cpu className="size-3.5 shrink-0 text-zinc-400" />
-                                    <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100 truncate">
-                                      {displayName}
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-zinc-500">
+                                    <span className="min-w-0 flex-1 truncate text-zinc-400 dark:text-zinc-500">
+                                      {m.model_id}
                                     </span>
-                                    {scopeInfo && (
-                                      <span
-                                        className={cn(
-                                          "rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-                                          scopeInfo.badgeClass,
-                                        )}
-                                        title={`${scopeInfo.label} region`}
-                                      >
-                                        {scopeInfo.label}
+                                    {f?.context_window && (
+                                      <span>
+                                        ctx: <strong className="text-zinc-700 dark:text-zinc-300">{Number(f.context_window).toLocaleString()}</strong>
                                       </span>
                                     )}
-                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
-                                      {endpointLabel(
-                                        f?.primary_endpoint ??
-                                          PROVIDER_DEFAULT_ENDPOINTS[type] ??
-                                          "chat_completions",
-                                      )}
-                                    </Badge>
-                                  </div>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => setEditingModelId(m.model_id)}
-                                    title="Edit model configuration"
-                                    className="h-6 w-6 p-0 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 shrink-0"
-                                  >
-                                    <Pencil className="size-3" />
-                                  </Button>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-zinc-500">
-                                  <span className="text-zinc-400 dark:text-zinc-500 truncate max-w-[220px]">
-                                    {m.model_id}
-                                  </span>
-                                  {f?.context_window && (
-                                    <span>
-                                      ctx: <strong className="text-zinc-700 dark:text-zinc-300">{Number(f.context_window).toLocaleString()}</strong>
-                                    </span>
-                                  )}
-                                  {f?.max_output_tokens && (
-                                    <span>
-                                      max: <strong className="text-zinc-700 dark:text-zinc-300">{Number(f.max_output_tokens).toLocaleString()}</strong>
-                                    </span>
-                                  )}
-                                  <span>
-                                    in: <strong className="text-zinc-700 dark:text-zinc-300">{fmtPrice(f?.input_price)}/1M</strong>
-                                  </span>
-                                  <span>
-                                    out: <strong className="text-zinc-700 dark:text-zinc-300">{fmtPrice(f?.output_price)}/1M</strong>
-                                  </span>
-                                </div>
-
-                                {activeCaps.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 pt-0.5">
-                                    {activeCaps.map((cap) => (
-                                      <span
-                                        key={cap}
-                                        className="rounded bg-zinc-100 dark:bg-zinc-800/80 px-1.5 py-0.2 text-[10px] font-medium text-zinc-600 dark:text-zinc-400 capitalize"
-                                      >
-                                        {cap}
+                                    {f?.max_output_tokens && (
+                                      <span>
+                                        max: <strong className="text-zinc-700 dark:text-zinc-300">{Number(f.max_output_tokens).toLocaleString()}</strong>
                                       </span>
-                                    ))}
+                                    )}
+                                    <span>
+                                      in: <strong className="text-zinc-700 dark:text-zinc-300">{fmtPrice(f?.input_price)}/1M</strong>
+                                    </span>
+                                    <span>
+                                      out: <strong className="text-zinc-700 dark:text-zinc-300">{fmtPrice(f?.output_price)}/1M</strong>
+                                    </span>
                                   </div>
-                                )}
-                              </div>
-                            );
-                          })
-                        )}
+
+                                  {activeCaps.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 pt-0.5">
+                                      {activeCaps.map((cap) => (
+                                        <span
+                                          key={cap}
+                                          className="rounded bg-zinc-100 dark:bg-zinc-800/80 px-1.5 py-0.2 text-[10px] font-medium text-zinc-600 dark:text-zinc-400 capitalize"
+                                        >
+                                          {cap}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1184,10 +1393,10 @@ export function ProviderWizardModal({
             )}
           </div>
 
-          <div className="border-t border-zinc-200 px-6 py-3 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-between">
-            <GhostButton onClick={close} type="button">
-              {step === 5 && !isEditing ? "Close" : "Cancel"}
-            </GhostButton>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-zinc-200 bg-zinc-50 px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+            <Button variant="outline" onClick={close} type="button">
+              {step === 4 && !isEditing ? "Close" : "Cancel"}
+            </Button>
             <div className="flex items-center gap-2">
               {!isEditing && step > 1 && (
                 <Button variant="ghost" onClick={() => setStep((s) => Math.max(1, s - 1))} data-testid="wiz-back" className="gap-1">
@@ -1200,30 +1409,33 @@ export function ProviderWizardModal({
                 </Button>
               )}
               {!isEditing && step === 2 && (
-                <Button onClick={() => { setValidation(null); setStep(3); }} disabled={!canNext2} data-testid="wiz-next" className="gap-1">
+                <Button onClick={() => { setMapped(null); setStep(3); void runMapping(); }} disabled={!canNext2 || busy} data-testid="wiz-next" className="gap-1">
                   Next <ChevronRight className="size-3.5" />
                 </Button>
               )}
               {!isEditing && step === 3 && (
-                <Button onClick={() => { setMapped(null); setStep(4); void runMapping(); }} disabled={!validation?.valid || busy} data-testid="wiz-next" className="gap-1">
-                  Next <ChevronRight className="size-3.5" />
-                </Button>
-              )}
-              {!isEditing && step === 4 && (
-                <Button onClick={() => setStep(5)} disabled={selected.size === 0 || mapping} data-testid="wiz-next" className="gap-1">
+                <Button onClick={() => setStep(4)} disabled={selected.size === 0 || mapping} data-testid="wiz-next" className="gap-1">
                   Review <ChevronRight className="size-3.5" />
                 </Button>
               )}
-              {!isEditing && step === 5 && (
+              {!isEditing && step === 4 && (
                 <Button onClick={() => void handleRegister()} disabled={busy || selected.size === 0} data-testid="wiz-register" className="gap-1.5">
                   {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Layers className="size-3.5" />}
-                  Register {selected.size} model{selected.size === 1 ? "" : "s"}
+                  {orgId ? "Connect" : "Register"} {selected.size} model{selected.size === 1 ? "" : "s"}
                 </Button>
               )}
             </div>
           </div>
         </form>
       </DialogContent>
+
+      {catalogOpen && (
+        <CatalogBrowserDialog
+          open={catalogOpen}
+          onClose={() => setCatalogOpen(false)}
+          onConfigure={handleCatalogConfigure}
+        />
+      )}
 
       {editingModelId && (
         <Dialog open onOpenChange={(o) => !o && setEditingModelId(null)}>
@@ -1244,11 +1456,25 @@ export function ProviderWizardModal({
   );
 
   async function handleEditSave() {
-    // Edit mode keeps the direct-save path (provider already exists).
+    // Edit mode keeps the direct-save path (provider already exists); org runs
+    // route through the org endpoint so membership permissions apply.
     if (!editingProvider) return;
     setBusy(true);
     try {
       const credentials = Object.fromEntries(Object.entries(creds).filter(([, v]) => v !== ""));
+      if (orgId) {
+        const saved = await orgMut.updateOrgProvider.mutateAsync({
+          providerId: editingProvider.id,
+          payload: {
+            name: name.trim(),
+            ...(Object.keys(credentials).length ? { credentials } : {}),
+          },
+        });
+        toast.success(`Provider "${name.trim()}" updated.`);
+        onSaved?.(saved as unknown as Provider);
+        onClose();
+        return;
+      }
       const saved = await pm.update.mutateAsync({
         id: editingProvider.id,
         body: { name, ...(Object.keys(credentials).length ? { credentials } : {}) },
@@ -1257,11 +1483,46 @@ export function ProviderWizardModal({
       onSaved?.(saved);
       onClose();
     } catch (e) {
-      toast.error("Save failed", { description: e instanceof Error ? e.message : "Error" });
+      toast.error("Save failed", {
+        description: isRotatePermError(e) ? ROTATE_PERM_COPY : e instanceof Error ? e.message : "Error",
+      });
     } finally {
       setBusy(false);
     }
   }
+}
+
+/**
+ * Read-only effective guardrails for this provider (global + provider-scoped
+ * policies). Assignment lives on the guardrails page — this never invents a
+ * parallel provider policy system. The provider here is the *generation*
+ * provider; evaluator providers are chosen per-policy on the guardrails page.
+ */
+function ProviderGuardrails({ providerId }: { providerId?: string }) {
+  const q = useEffectiveGuardrails({ provider_id: providerId }, !!providerId);
+  const rows = q.data?.policies ?? [];
+  return (
+    <div className="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800" data-testid="provider-guardrails">
+      <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">Guardrails</p>
+      <p className="text-[11px] text-zinc-500">
+        Effective policies for generation through this provider. Evaluator providers are configured per policy.
+      </p>
+      {q.isPending ? (
+        <p className="mt-1 text-[11px] text-zinc-400">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="mt-1 text-[11px] text-zinc-400">No policies apply. <Link href="/guardrails" className="underline">Manage guardrails</Link></p>
+      ) : (
+        <ul className="mt-1 space-y-0.5">
+          {rows.map((r) => (
+            <li key={r.id} className="text-[11px] text-zinc-600 dark:text-zinc-400">
+              {r.name} <span className="text-zinc-400">· {r.enforcement} · {r.is_enabled ? "on" : "off"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {rows.length > 0 && <Link href="/guardrails" className="text-[11px] text-tollma-600 hover:underline dark:text-tollma-400">Manage guardrails →</Link>}
+    </div>
+  );
 }
 
 function EditBody({
@@ -1271,6 +1532,8 @@ function EditBody({
   creds,
   setCreds,
   busy,
+  orgScoped,
+  providerId,
   onSave,
 }: {
   name: string;
@@ -1279,12 +1542,17 @@ function EditBody({
   creds: Record<string, string>;
   setCreds: (v: Record<string, string>) => void;
   busy: boolean;
+  orgScoped?: boolean;
+  providerId?: string;
   onSave: () => void;
 }) {
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
 
   return (
     <div className="space-y-3" data-testid="wizard-edit-body">
+      {orgScoped && (
+        <p className="text-xs text-zinc-500">Leave credential fields empty to keep the stored values.</p>
+      )}
       <Field label="Provider Name">
         <Input
           value={name}
@@ -1316,6 +1584,7 @@ function EditBody({
           }
         />
       ))}
+      <ProviderGuardrails providerId={providerId} />
       <Button onClick={onSave} disabled={!name.trim() || busy} data-testid="save-provider">
         Save Provider
       </Button>

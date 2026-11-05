@@ -39,12 +39,24 @@ class RequestLog(TimestampedModel):
     model_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("models.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Org attribution for the org usage ledger (NULL = personal traffic).
+    # No cascade: retention purge is app-level, never FK-driven.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True
+    )
+    # Gateway key that served the request, when applicable.
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
+    )
     request_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     request_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     input_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
     output_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
     total_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
@@ -52,12 +64,18 @@ class RequestLog(TimestampedModel):
     error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
     is_regeneration: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_streaming: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # True when token/cost figures are locally estimated (provider silent,
+    # e.g. mid-stream failure with partial output) rather than provider-reported.
+    usage_estimated: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     provider = relationship("Provider", lazy="joined")
     model = relationship("AIModel", lazy="joined")
 
     __table_args__ = (
         Index("ix_request_logs_user_created", "user_id", "created_at"),
+        Index("ix_request_logs_org_created", "org_id", "created_at"),
+        Index("ix_request_logs_api_key", "api_key_id"),
+        Index("ix_request_logs_key_created", "api_key_id", "created_at"),
         Index("ix_request_logs_status", "status"),
         Index("ix_request_logs_conversation", "conversation_id", "created_at"),
         # Platform-admin error analytics.

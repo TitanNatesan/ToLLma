@@ -45,8 +45,30 @@ export interface ReasoningOutline {
 const STEP_MARKER = /^(?:#{1,4}\s*)?(?:Step\s*\d+[:.]?|\d+[.)])\s*/i;
 
 /**
+ * Removes common leading indentation from a text block (tabs count as two
+ * spaces). Display-only normalization: reasoning prose often arrives
+ * indented, which markdown would otherwise render as code blocks with raw
+ * `**` markers. Relative nesting is preserved; already-flush text is
+ * untouched.
+ */
+export function dedentBlock(text: string): string {
+  const lines = text.replace(/\t/g, "  ").split("\n");
+  let minIndent: number | null = null;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const indent = line.length - line.trimStart().length;
+    minIndent = minIndent === null ? indent : Math.min(minIndent, indent);
+  }
+  if (!minIndent) return text;
+  return lines
+    .map((line) => (line.trim() ? line.slice(Math.min(minIndent, line.length - line.trimStart().length)) : line))
+    .join("\n");
+}
+
+/**
  * Splits structured reasoning into a preamble plus steps, preserving each
  * step's body (title = marker line, body = the prose that follows it).
+ * Bodies are dedented so indented prose renders as prose, not code blocks.
  * Returns null for unstructured content or fewer than two steps so callers
  * can fall back to the plain reasoning text.
  */
@@ -73,5 +95,6 @@ export function splitReasoningSteps(content: string): ReasoningOutline | null {
   }
 
   if (steps.length < 2) return null;
-  return { preamble: preamble.join("\n").trim(), steps };
+  for (const step of steps) step.body = dedentBlock(step.body).trim();
+  return { preamble: dedentBlock(preamble.join("\n")).trim(), steps };
 }

@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { Boxes, Search, Trash2 } from "lucide-react";
-import { Button, Checkbox, EmptyState, Input, LoadingState, Switch } from "@/components/ui";
+import { Button, Checkbox, EmptyState, Input, LoadingState, ProviderLogo, Switch } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { logoForProviderType } from "@/services/catalog";
 import { NumberField } from "./NumberField";
 import { asNumber } from "./StatusPill";
 import type { AIModel } from "@/types";
@@ -31,6 +32,12 @@ interface ModelPermissionsEditorProps {
   value: ApiKeyModelPermissionInput[];
   onChange: (value: ApiKeyModelPermissionInput[]) => void;
   disabled?: boolean;
+  /** Override the personal registry (e.g. org-scoped models/providers). */
+  models?: AIModel[];
+  providers?: Array<{ id: string; name: string; provider_type: string }>;
+  isPending?: boolean;
+  /** Where the empty-state CTA navigates. Defaults to the personal registry. */
+  configureHref?: string;
 }
 
 /**
@@ -38,14 +45,25 @@ interface ModelPermissionsEditorProps {
  * enabled toggle plus optional per-model budget/RPM/TPM. Provider-wide rules
  * (`model_id` null) returned by the API are preserved and editable too.
  */
-export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermissionsEditorProps) {
-  const { data: models = [], isPending } = useModels();
-  const { data: providers = [] } = useProviders();
+export function ModelPermissionsEditor({ value, onChange, disabled, models: modelsOverride, providers: providersOverride, isPending: isPendingOverride, configureHref = "/providers" }: ModelPermissionsEditorProps) {
+  const { data: personalModels = [], isPending: personalPending } = useModels();
+  const { data: personalProviders = [] } = useProviders();
+  const models = modelsOverride ?? personalModels;
+  const providers = providersOverride ?? personalProviders;
+  const isPending = isPendingOverride ?? personalPending;
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const providerName = (id: string | null | undefined) =>
     providers.find((provider) => provider.id === id)?.name ?? "Other provider";
+
+  const providerFamily = (id: string | null | undefined) =>
+    providers.find((provider) => provider.id === id)?.provider_type ?? null;
+
+  const familyLabel = (family: string | null) =>
+    family
+      ? family.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")
+      : "Other providers";
 
   const providerWide = value.filter((permission) => !permission.model_id);
   const unlisted = value.filter(
@@ -62,13 +80,18 @@ export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermi
         providerName(model.provider_id).toLowerCase().includes(term)
       );
     });
+    // Group by canonical provider family (gateway semantics), not by raw
+    // connection id: the same family stays together even across connections.
+    // Identity per row is still (provider_id, model.id) — distinct routes.
     const map = new Map<string, AIModel[]>();
     for (const model of filtered) {
-      const list = map.get(model.provider_id) ?? [];
+      const family = providerFamily(model.provider_id) ?? `unknown:${model.provider_id}`;
+      const list = map.get(family) ?? [];
       list.push(model);
-      map.set(model.provider_id, list);
+      map.set(family, list);
     }
-    return { grouped: Array.from(map.entries()), visibleCount: filtered.length };
+    const ordered = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+    return { grouped: ordered, visibleCount: filtered.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [models, search, providers]);
 
@@ -104,6 +127,11 @@ export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermi
         icon={Boxes}
         title="No models registered"
         description="Register providers and models first, then grant this key access to specific models. An empty selection allows every enabled model."
+        action={
+          <Button size="sm" variant="outline" asChild className="gap-1 text-[11px]">
+            <a href={configureHref}>Configure a provider</a>
+          </Button>
+        }
         className="py-6"
       />
     );
@@ -131,10 +159,18 @@ export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermi
         {grouped.length === 0 && (
           <p className="py-4 text-center text-xs text-zinc-400">No models match “{search}”.</p>
         )}
-        {grouped.map(([providerId, providerModels]) => (
-          <div key={providerId} className="space-y-1">
-            <p className="px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-              {providerName(providerId)}
+        {grouped.map(([family, providerModels]) => {
+          const known = !family.startsWith("unknown:");
+          return (
+          <div key={family} className="space-y-1" data-testid={`model-group-${family}`}>
+            <p className="flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+              <ProviderLogo
+                logoUrl={known ? logoForProviderType(family) : null}
+                name={known ? familyLabel(family) : "Other providers"}
+                size="sm"
+                className="size-4 rounded"
+              />
+              {known ? familyLabel(family) : "Other providers"}
             </p>
             {providerModels.map((model) => {
               const key = permKey(model.provider_id, model.id);
@@ -171,7 +207,7 @@ export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermi
                         {model.name}
                       </span>
                       <span className="block truncate font-mono text-[10px] text-zinc-400">
-                        {model.model_id}
+                        {model.model_id} · {providerName(model.provider_id)}
                       </span>
                     </button>
                     {selected && (
@@ -224,7 +260,8 @@ export function ModelPermissionsEditor({ value, onChange, disabled }: ModelPermi
               );
             })}
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {providerWide.length > 0 && (

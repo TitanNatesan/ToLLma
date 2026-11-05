@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { PageHeader } from "@/components/ui";
+import { useEffect } from "react";
+import { PageContainer, PageHeader } from "@/components/ui";
 import {
   SETTINGS_SECTION_IDS,
-  type SettingsSectionId,
 } from "@/components/Sidebar/SidebarSettings";
+import { useHashSection } from "@/hooks/useHashSection";
 import { SettingsCard } from "./components/SettingsCard";
 import { AppearanceSection } from "./components/AppearanceSection";
 import { ChatPreferencesSection } from "./components/ChatPreferencesSection";
@@ -14,12 +14,14 @@ import { AccountSecuritySection } from "./components/AccountSecuritySection";
 import { DangerZoneSection } from "./components/DangerZoneSection";
 import { SessionsSection } from "./components/SessionsSection";
 import { ProvidersSection } from "./components/ProvidersSection";
+import { WorkspaceLoggingSection } from "@/components/logging/WorkspaceLoggingSection";
+import { OrganizationsSection } from "./components/OrganizationsSection";
 
 /** Settings: profile, appearance (accent system), chat prefs, password, sessions. */
 export default function SettingsPage() {
   // The URL hash is the single source of truth for the highlighted section.
   // Deep links (`/settings#appearance`) and sidebar clicks both drive it.
-  const activeId = useHashSection();
+  const activeId = useHashSection(SETTINGS_SECTION_IDS, "profile");
 
   // Deep links and hash changes scroll the card into view inside the
   // scrollable main container (scroll-margin on the cards clears the header).
@@ -28,15 +30,13 @@ export default function SettingsPage() {
   }, [activeId]);
 
   return (
-    <main
-      className="flex min-w-0 flex-1 flex-col overflow-y-auto scroll-smooth bg-white px-4 py-4 dark:bg-zinc-950"
-      data-testid="settings-page"
+    <PageContainer
+      header={<PageHeader title="Settings" subtitle="Account, appearance, chat behavior, providers, and organizations." />}
+      testId="settings-page"
     >
-      <PageHeader title="Settings" subtitle="Account, appearance, chat behavior and sessions." />
-
-      <div className="mt-4 flex min-w-0 flex-1 flex-col gap-4 pb-10">
           <SettingsCard
             id="profile"
+            active={activeId === "profile"}
             title="Profile"
             description="How you appear across ToLLma."
             testId="settings-section-profile"
@@ -46,6 +46,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="appearance"
+            active={activeId === "appearance"}
             title="Appearance"
             description="Theme and accent color — applied instantly, everywhere."
             testId="settings-section-appearance"
@@ -55,6 +56,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="chat"
+            active={activeId === "chat"}
             title="Chat preferences"
             description="Composer behavior, reasoning defaults and streaming."
             testId="settings-section-chat"
@@ -64,6 +66,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="account"
+            active={activeId === "account"}
             title="Account & security"
             description="Sign-in method and password management."
             testId="settings-section-account"
@@ -73,6 +76,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="sessions"
+            active={activeId === "sessions"}
             title="Login & sessions"
             description="Every device currently signed in to your account."
             testId="settings-section-sessions"
@@ -82,6 +86,7 @@ export default function SettingsPage() {
 
           <SettingsCard
             id="providers"
+            active={activeId === "providers"}
             title="Providers"
             description="Model providers connected to this workspace."
             testId="settings-section-providers"
@@ -90,7 +95,28 @@ export default function SettingsPage() {
           </SettingsCard>
 
           <SettingsCard
+            id="logging"
+            active={activeId === "logging"}
+            title="Prompt logging"
+            description="Which requests keep message bodies. Global toggle, effective state, and full controls."
+            testId="settings-section-logging"
+          >
+            <WorkspaceLoggingSection canManage />
+          </SettingsCard>
+
+          <SettingsCard
+            id="organizations"
+            active={activeId === "organizations"}
+            title="Organizations"
+            description="Workspaces you belong to. Create, join, or switch."
+            testId="settings-section-organizations"
+          >
+            <OrganizationsSection />
+          </SettingsCard>
+
+          <SettingsCard
             id="danger-zone"
+            active={activeId === "danger-zone"}
             title="Danger zone"
             description="Irreversible account actions."
             testId="danger-zone-section"
@@ -98,22 +124,6 @@ export default function SettingsPage() {
           >
             <DangerZoneSection />
           </SettingsCard>
-        </div>
-    </main>
+    </PageContainer>
   );
-}
-
-/** Active settings section from the URL hash (`/settings#appearance`), default profile. */
-function useHashSection(): SettingsSectionId {
-  const subscribe = useCallback((onChange: () => void) => {
-    window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
-  }, []);
-  const getSnapshot = useCallback((): SettingsSectionId => {
-    const hash = window.location.hash.slice(1);
-    return (SETTINGS_SECTION_IDS as readonly string[]).includes(hash)
-      ? (hash as SettingsSectionId)
-      : "profile";
-  }, []);
-  return useSyncExternalStore(subscribe, getSnapshot, () => "profile" as SettingsSectionId);
 }

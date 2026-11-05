@@ -2,7 +2,7 @@
 
 import { memo, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   CalendarClock,
   KeyRound,
@@ -31,12 +31,16 @@ import {
   updateApiKeyModelPermissions,
   updateApiKeyPolicy,
 } from "@/services/apiKeys";
+import { updateKeyLoggingState } from "@/services/promptLogs";
+import { usePromptLoggingSettings } from "@/hooks/usePromptLogs";
+import { KeyLoggingField } from "./KeyLoggingField";
 import { EndpointPermissions } from "./EndpointPermissions";
+import { KeyGuardrailsSection } from "@/app/guardrails/components/KeyGuardrailsSection";
 import { IpRulesEditor, ipRulesToText, parseIpRules } from "./IpRulesEditor";
 import { ModelPermissionsEditor, modelPermissionsToInput } from "./ModelPermissionsEditor";
 import { PolicyForm, policyToInput } from "./PolicyForm";
 import { Segmented } from "./SelectField";
-import { ApiKeyStatusPill, apiKeyStatus, fmtDateTime } from "./StatusPill";
+import { ApiKeyStatusPill, fmtDateTime, keyStatus } from "./StatusPill";
 import type { AIModel } from "@/types";
 import type {
   ApiKey,
@@ -56,12 +60,35 @@ export { DrawerBackdrop, useEscapeClose };
 // Expiration helpers (parity with KeyForm presets; edit drawer owns its copy)
 // ---------------------------------------------------------------------------
 
-type ExpiryPreset = "never" | "custom";
+type ExpiryPreset = "never" | "1d" | "7d" | "30d" | "90d" | "custom";
+
+const EXPIRY_DAYS: Record<"1d" | "7d" | "30d" | "90d", number> = {
+  "1d": 1,
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+};
 
 const EDIT_EXPIRY_OPTIONS: ReadonlyArray<{ value: ExpiryPreset; label: string }> = [
-  { value: "never", label: "Never expires" },
-  { value: "custom", label: "Custom date" },
+  { value: "never", label: "Never" },
+  { value: "1d", label: "1 day" },
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+  { value: "90d", label: "90 days" },
+  { value: "custom", label: "Custom" },
 ];
+
+/** Reverse-map a stored timestamp to its preset when it matches "now + N days". */
+function detectExpiryPreset(iso: string | null | undefined): ExpiryPreset {
+  if (!iso) return "never";
+  const target = new Date(iso).getTime();
+  if (isNaN(target)) return "never";
+  const diffDays = (target - Date.now()) / 86_400_000;
+  for (const [preset, days] of Object.entries(EXPIRY_DAYS)) {
+    if (Math.abs(diffDays - days) < 1.5) return preset as ExpiryPreset;
+  }
+  return "custom";
+}
 
 function toDateTimeLocal(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -107,6 +134,8 @@ export interface KeyEditDrawerProps {
   onClose: () => void;
   /** Called after a successful save (parent closes the drawer). */
   onSaved: () => void;
+  /** Same 30d spend basis the table/detail pill uses (enables budget state). */
+  cost?: number;
 }
 
 /**
@@ -114,7 +143,7 @@ export interface KeyEditDrawerProps {
  * the analytics drawer stays read-only. Only changed sections are submitted,
  * each through its own endpoint (metadata PATCH, policy/IP/models PUT).
  */
-export function KeyEditDrawer({ apiKey, open, onClose, onSaved }: KeyEditDrawerProps) {
+export function KeyEditDrawer({ apiKey, open, onClose, onSaved, cost }: KeyEditDrawerProps) {
   if (!apiKey) return null;
   return (
     <KeyEditContent
@@ -123,6 +152,7 @@ export function KeyEditDrawer({ apiKey, open, onClose, onSaved }: KeyEditDrawerP
       open={open}
       onClose={onClose}
       onSaved={onSaved}
+      cost={cost}
     />
   );
 }
@@ -135,11 +165,13 @@ const KeyEditContent = memo(function KeyEditContent({
   open,
   onClose,
   onSaved,
+  cost,
 }: {
   apiKey: ApiKey;
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
+  cost?: number;
 }) {
   const qc = useQueryClient();
   const { data: models = [] } = useModels();
@@ -156,17 +188,34 @@ const KeyEditContent = memo(function KeyEditContent({
   const [description, setDescription] = useState(apiKey.description ?? "");
   const [enabled, setEnabled] = useState(apiKey.enabled);
   const [expiresAt, setExpiresAt] = useState(initialExpires);
-  const [expiryPreset, setExpiryPreset] = useState<ExpiryPreset>(apiKey.expires_at ? "custom" : "never");
+  const [expiryPreset, setExpiryPreset] = useState<ExpiryPreset>(() =>
+    detectExpiryPreset(apiKey.expires_at),
+  );
   const [policy, setPolicy] = useState<ApiKeyPolicyInput>(initialPolicy);
   const [allow, setAllow] = useState(initialIp.allow);
   const [deny, setDeny] = useState(initialIp.deny);
   const [permissions, setPermissions] =
     useState<ApiKeyModelPermissionInput[]>(initialPermissions);
+  // Logging override: untouched until the user picks a value, so unrelated
+  // edits never touch logging. The stored explicit value comes from policy.
+  const [loggingTouched, setLoggingTouched] = useState<{ touched: boolean; value: boolean | null }>({
+    touched: false,
+    value: null,
+  });
+  const loggingSettings = usePromptLoggingSettings();
+  const serverLogging: boolean | null =
+    loggingSettings.data && typeof loggingSettings.data.key_states[apiKey.id] === "boolean"
+      ? (loggingSettings.data.key_states[apiKey.id] as boolean)
+      : null;
+  const loggingValue = loggingTouched.touched ? loggingTouched.value : serverLogging;
+  const loggingDirty =
+    !loggingSettings.isError && !!loggingSettings.data && loggingTouched.touched && loggingTouched.value !== serverLogging;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const parsedIp = useMemo(() => parseIpRules(allow, deny), [allow, deny]);
-  const status = apiKeyStatus(apiKey);
+  // Same basis as the table pill (payload-only statuses plus budget spend).
+  const status = keyStatus(apiKey, cost);
 
   const dirty = useMemo(() => {
     const metaDirty =
@@ -196,7 +245,7 @@ const KeyEditContent = memo(function KeyEditContent({
     permissions,
     initialPermissions,
   ]);
-  const isDirty = dirty.meta || dirty.policy || dirty.ip || dirty.models;
+  const isDirty = dirty.meta || dirty.policy || dirty.ip || dirty.models || loggingDirty;
 
   function reset() {
     setName(apiKey.name);
@@ -208,6 +257,7 @@ const KeyEditContent = memo(function KeyEditContent({
     setAllow(initialIp.allow);
     setDeny(initialIp.deny);
     setPermissions(initialPermissions);
+    setLoggingTouched({ touched: false, value: null });
     setError(null);
   }
 
@@ -274,8 +324,10 @@ const KeyEditContent = memo(function KeyEditContent({
         tasks.push(updateApiKeyIpRules(apiKey.id, rules));
       }
       if (dirty.models) tasks.push(updateApiKeyModelPermissions(apiKey.id, permissions));
+      if (loggingDirty) tasks.push(updateKeyLoggingState(undefined, apiKey.id, loggingValue));
       await Promise.all(tasks);
       await qc.invalidateQueries({ queryKey: ["api-keys"] });
+      if (loggingDirty) await qc.invalidateQueries({ queryKey: ["prompt-logs"] });
       toast.success("Key updated");
       onSaved();
     } catch (e) {
@@ -401,8 +453,16 @@ const KeyEditContent = memo(function KeyEditContent({
                 value={expiryPreset}
                 onChange={(next) => {
                   setExpiryPreset(next);
-                  if (next === "never") setExpiresAt("");
-                  else if (!expiresAt) setExpiresAt(initialExpires);
+                  if (next === "never") {
+                    setExpiresAt("");
+                    return;
+                  }
+                  if (next === "custom") {
+                    if (!expiresAt) setExpiresAt(initialExpires);
+                    return;
+                  }
+                  const days = EXPIRY_DAYS[next];
+                  setExpiresAt(toDateTimeLocal(new Date(Date.now() + days * 86_400_000).toISOString()));
                 }}
                 options={EDIT_EXPIRY_OPTIONS}
                 ariaLabel="Expiration preset"
@@ -494,6 +554,36 @@ const KeyEditContent = memo(function KeyEditContent({
             >
               <EndpointPermissions />
             </Section>
+
+            <Separator />
+
+            <Section
+              icon={ShieldCheck}
+              title="Guardrails"
+              description="Key-specific policies. Global and provider policies apply automatically; saving here never rotates the key."
+            >
+              <KeyGuardrailsSection keyId={apiKey.id} disabled={saving} />
+            </Section>
+
+            {!loggingSettings.isError && (
+              <>
+                <Separator />
+
+                <Section
+                  icon={ShieldCheck}
+                  title="Prompt logging"
+                  description="Override workspace logging for this key. Only sent when changed."
+                >
+                  <KeyLoggingField
+                    keyId={apiKey.id}
+                    value={loggingValue}
+                    onChange={(v) => setLoggingTouched({ touched: true, value: v })}
+                    disabled={saving}
+                    testIdPrefix="key-edit"
+                  />
+                </Section>
+              </>
+            )}
 
             {error && (
               <p

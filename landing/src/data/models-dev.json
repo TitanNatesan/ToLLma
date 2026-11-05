@@ -1,0 +1,1887 @@
+{
+  "source": "https://models.dev/api.json",
+  "logos": "https://github.com/sst/models.dev/tree/main/providers",
+  "syncedAt": "2026-11-05",
+  "providers": [
+    {
+      "mdId": "aixy",
+      "tollmaId": null,
+      "name": "Aixy",
+      "models": 13,
+      "api": "api.aixy-gateway.com/v1",
+      "logo": "/models-dev/aixy.svg"
+    },
+    {
+      "mdId": "volcengine",
+      "tollmaId": null,
+      "name": "Volcengine Ark",
+      "models": 16,
+      "api": "ark.cn-beijing.volces.com/api/",
+      "logo": "/models-dev/volcengine.svg"
+    },
+    {
+      "mdId": "cortecs",
+      "tollmaId": null,
+      "name": "Cortecs",
+      "models": 106,
+      "api": "api.cortecs.ai/v1",
+      "logo": null
+    },
+    {
+      "mdId": "aimlapi",
+      "tollmaId": null,
+      "name": "AI/ML API",
+      "models": 169,
+      "api": "api.aimlapi.com/v1",
+      "logo": "/models-dev/aimlapi.svg"
+    },
+    {
+      "mdId": "model-oracle-ai",
+      "tollmaId": null,
+      "name": "Model Oracle AI",
+      "models": 15,
+      "api": "api.modeloracle.com/api/v1",
+      "logo": "/models-dev/model-oracle-ai.svg"
+    },
+    {
+      "mdId": "scaleway",
+      "tollmaId": null,
+      "name": "Scaleway",
+      "models": 17,
+      "api": "api.scaleway.ai/v1",
+      "logo": "/models-dev/scaleway.svg"
+    },
+    {
+      "mdId": "opencode-go",
+      "tollmaId": null,
+      "name": "OpenCode Go",
+      "models": 38,
+      "api": "opencode.ai/inference/go/opena",
+      "logo": "/models-dev/opencode-go.svg"
+    },
+    {
+      "mdId": "siliconflow",
+      "tollmaId": null,
+      "name": "SiliconFlow",
+      "models": 57,
+      "api": "api.siliconflow.com/v1",
+      "logo": "/models-dev/siliconflow.svg"
+    },
+    {
+      "mdId": "wandb",
+      "tollmaId": null,
+      "name": "CoreWeave",
+      "models": 24,
+      "api": "api.inference.wandb.ai/v1",
+      "logo": "/models-dev/wandb.svg"
+    },
+    {
+      "mdId": "ambient",
+      "tollmaId": null,
+      "name": "Ambient",
+      "models": 10,
+      "api": "api.ambient.xyz/v1",
+      "logo": "/models-dev/ambient.svg"
+    },
+    {
+      "mdId": "merge-gateway",
+      "tollmaId": null,
+      "name": "Merge Gateway",
+      "models": 203,
+      "api": "api-gateway.merge.dev/v1/ai-sd",
+      "logo": "/models-dev/merge-gateway.svg"
+    },
+    {
+      "mdId": "xiaomi-token-plan-sgp",
+      "tollmaId": null,
+      "name": "Xiaomi Token Plan (Singapore)",
+      "models": 7,
+      "api": "token-plan-sgp.xiaomimimo.com/",
+      "logo": "/models-dev/xiaomi-token-plan-sgp.svg"
+    },
+    {
+      "mdId": "bee",
+      "tollmaId": null,
+      "name": "Bee by HEOSSI",
+      "models": 6,
+      "api": "api.bee.heossi.com/bee",
+      "logo": "/models-dev/bee.svg"
+    },
+    {
+      "mdId": "subconscious",
+      "tollmaId": null,
+      "name": "Subconscious",
+      "models": 2,
+      "api": "api.subconscious.dev/v1",
+      "logo": "/models-dev/subconscious.svg"
+    },
+    {
+      "mdId": "hetzner",
+      "tollmaId": null,
+      "name": "Hetzner",
+      "models": 2,
+      "api": "inference.hetzner.com/api/v1",
+      "logo": "/models-dev/hetzner.svg"
+    },
+    {
+      "mdId": "vivgrid",
+      "tollmaId": null,
+      "name": "Vivgrid",
+      "models": 38,
+      "api": "api.vivgrid.com/v1",
+      "logo": "/models-dev/vivgrid.svg"
+    },
+    {
+      "mdId": "llmtr",
+      "tollmaId": null,
+      "name": "LLMTR",
+      "models": 32,
+      "api": "llmtr.com/v1",
+      "logo": "/models-dev/llmtr.svg"
+    },
+    {
+      "mdId": "pendra",
+      "tollmaId": null,
+      "name": "Pendra",
+      "models": 6,
+      "api": "api.pendra.ai/api/v1",
+      "logo": "/models-dev/pendra.svg"
+    },
+    {
+      "mdId": "minimax-cn-coding-plan",
+      "tollmaId": null,
+      "name": "MiniMax Token Plan (minimax.cn)",
+      "models": 9,
+      "api": "api.minimax.cn/anthropic/v1",
+      "logo": "/models-dev/minimax-cn-coding-plan.svg"
+    },
+    {
+      "mdId": "vercel",
+      "tollmaId": null,
+      "name": "Vercel AI Gateway",
+      "models": 417,
+      "api": null,
+      "logo": "/models-dev/vercel.svg"
+    },
+    {
+      "mdId": "nova",
+      "tollmaId": null,
+      "name": "Nova",
+      "models": 2,
+      "api": "api.nova.amazon.com/v1",
+      "logo": "/models-dev/nova.svg"
+    },
+    {
+      "mdId": "evroc",
+      "tollmaId": null,
+      "name": "evroc",
+      "models": 16,
+      "api": "models.think.evroc.com/v1",
+      "logo": "/models-dev/evroc.svg"
+    },
+    {
+      "mdId": "inferx",
+      "tollmaId": null,
+      "name": "InferX",
+      "models": 12,
+      "api": "model.inferx.net/endpoints/v1",
+      "logo": "/models-dev/inferx.svg"
+    },
+    {
+      "mdId": "tokengo",
+      "tollmaId": null,
+      "name": "TokenGo",
+      "models": 13,
+      "api": "api.tokengo.com/v1",
+      "logo": "/models-dev/tokengo.svg"
+    },
+    {
+      "mdId": "perplexity",
+      "tollmaId": null,
+      "name": "Perplexity",
+      "models": 4,
+      "api": null,
+      "logo": "/models-dev/perplexity.svg"
+    },
+    {
+      "mdId": "arcee",
+      "tollmaId": null,
+      "name": "Arcee",
+      "models": 11,
+      "api": "api.arcee.ai/api/v1",
+      "logo": "/models-dev/arcee.svg"
+    },
+    {
+      "mdId": "aki-io",
+      "tollmaId": null,
+      "name": "AKI.IO",
+      "models": 7,
+      "api": "aki.io/v1",
+      "logo": "/models-dev/aki-io.svg"
+    },
+    {
+      "mdId": "neon",
+      "tollmaId": null,
+      "name": "Neon",
+      "models": 58,
+      "api": null,
+      "logo": "/models-dev/neon.svg"
+    },
+    {
+      "mdId": "pareto",
+      "tollmaId": null,
+      "name": "Pareto Inference",
+      "models": 1,
+      "api": "api.paretoinference.com/v1",
+      "logo": "/models-dev/pareto.svg"
+    },
+    {
+      "mdId": "baseten",
+      "tollmaId": null,
+      "name": "Baseten",
+      "models": 15,
+      "api": "inference.baseten.co/v1",
+      "logo": "/models-dev/baseten.svg"
+    },
+    {
+      "mdId": "meta",
+      "tollmaId": null,
+      "name": "Meta",
+      "models": 6,
+      "api": "api.meta.ai/v1",
+      "logo": "/models-dev/meta.svg"
+    },
+    {
+      "mdId": "mistral",
+      "tollmaId": null,
+      "name": "Mistral",
+      "models": 36,
+      "api": null,
+      "logo": "/models-dev/mistral.svg"
+    },
+    {
+      "mdId": "zai-coding-plan",
+      "tollmaId": null,
+      "name": "Z.AI Coding Plan",
+      "models": 7,
+      "api": "api.z.ai/api/coding/paas/v4",
+      "logo": "/models-dev/zai-coding-plan.svg"
+    },
+    {
+      "mdId": "qihang-ai",
+      "tollmaId": null,
+      "name": "QiHang",
+      "models": 9,
+      "api": "api.qhaigc.net/v1",
+      "logo": "/models-dev/qihang-ai.svg"
+    },
+    {
+      "mdId": "qiniu-ai",
+      "tollmaId": null,
+      "name": "Qiniu",
+      "models": 87,
+      "api": "api.qnaigc.com/v1",
+      "logo": "/models-dev/qiniu-ai.svg"
+    },
+    {
+      "mdId": "salad-cloud",
+      "tollmaId": null,
+      "name": "SaladCloud AI Gateway",
+      "models": 1,
+      "api": null,
+      "logo": "/models-dev/salad-cloud.svg"
+    },
+    {
+      "mdId": "gmicloud",
+      "tollmaId": null,
+      "name": "GMI Cloud",
+      "models": 17,
+      "api": "api.gmi-serving.com/v1",
+      "logo": null
+    },
+    {
+      "mdId": "kilo",
+      "tollmaId": null,
+      "name": "Kilo Gateway",
+      "models": 376,
+      "api": "api.kilo.ai/api/gateway",
+      "logo": "/models-dev/kilo.svg"
+    },
+    {
+      "mdId": "bothub",
+      "tollmaId": null,
+      "name": "Bothub",
+      "models": 8,
+      "api": "openai.bothub.ru/v1",
+      "logo": "/models-dev/bothub.svg"
+    },
+    {
+      "mdId": "blueclaw",
+      "tollmaId": null,
+      "name": "Blue Claw",
+      "models": 1,
+      "api": "openai.blueclaw.network/v1",
+      "logo": "/models-dev/blueclaw.svg"
+    },
+    {
+      "mdId": "lucidquery",
+      "tollmaId": null,
+      "name": "LucidQuery",
+      "models": 4,
+      "api": "api.lucidquery.com/v1",
+      "logo": "/models-dev/lucidquery.svg"
+    },
+    {
+      "mdId": "groq",
+      "tollmaId": null,
+      "name": "Groq",
+      "models": 14,
+      "api": null,
+      "logo": "/models-dev/groq.svg"
+    },
+    {
+      "mdId": "cohere",
+      "tollmaId": null,
+      "name": "Cohere",
+      "models": 17,
+      "api": null,
+      "logo": "/models-dev/cohere.svg"
+    },
+    {
+      "mdId": "302ai",
+      "tollmaId": null,
+      "name": "302.AI",
+      "models": 126,
+      "api": "api.302.ai/v1",
+      "logo": "/models-dev/302ai.svg"
+    },
+    {
+      "mdId": "azure-cognitive-services",
+      "tollmaId": null,
+      "name": "Azure Cognitive Services",
+      "models": 96,
+      "api": null,
+      "logo": "/models-dev/azure-cognitive-services.svg"
+    },
+    {
+      "mdId": "xpersona",
+      "tollmaId": null,
+      "name": "Xpersona",
+      "models": 13,
+      "api": "www.xpersona.co/v1",
+      "logo": "/models-dev/xpersona.svg"
+    },
+    {
+      "mdId": "cloudflare-workers-ai",
+      "tollmaId": null,
+      "name": "Cloudflare Workers AI",
+      "models": 28,
+      "api": null,
+      "logo": "/models-dev/cloudflare-workers-ai.svg"
+    },
+    {
+      "mdId": "liquid",
+      "tollmaId": null,
+      "name": "Liquid Inference",
+      "models": 1,
+      "api": "router.inference.ai.exchange/v",
+      "logo": "/models-dev/liquid.svg"
+    },
+    {
+      "mdId": "deepinfra",
+      "tollmaId": null,
+      "name": "Deep Infra",
+      "models": 77,
+      "api": null,
+      "logo": "/models-dev/deepinfra.svg"
+    },
+    {
+      "mdId": "sensenova",
+      "tollmaId": null,
+      "name": "SenseNova (China)",
+      "models": 6,
+      "api": "token.sensenova.cn/v1",
+      "logo": "/models-dev/sensenova.svg"
+    },
+    {
+      "mdId": "databricks",
+      "tollmaId": null,
+      "name": "Databricks",
+      "models": 31,
+      "api": null,
+      "logo": "/models-dev/databricks.svg"
+    },
+    {
+      "mdId": "commandcode",
+      "tollmaId": null,
+      "name": "CommandCode",
+      "models": 72,
+      "api": "api.commandcode.ai/provider/v1",
+      "logo": "/models-dev/commandcode.svg"
+    },
+    {
+      "mdId": "hpc-ai",
+      "tollmaId": null,
+      "name": "HPC-AI",
+      "models": 9,
+      "api": "api.hpc-ai.com/inference/v1",
+      "logo": "/models-dev/hpc-ai.svg"
+    },
+    {
+      "mdId": "ofox",
+      "tollmaId": null,
+      "name": "Ofox",
+      "models": 150,
+      "api": "api.ofox.ai/v1",
+      "logo": "/models-dev/ofox.svg"
+    },
+    {
+      "mdId": "ollama-cloud",
+      "tollmaId": null,
+      "name": "Ollama Cloud",
+      "models": 25,
+      "api": "ollama.com/v1",
+      "logo": "/models-dev/ollama-cloud.svg"
+    },
+    {
+      "mdId": "tencent-coding-plan",
+      "tollmaId": null,
+      "name": "Tencent Coding Plan (China)",
+      "models": 8,
+      "api": "api.lkeap.cloud.tencent.com/co",
+      "logo": "/models-dev/tencent-coding-plan.svg"
+    },
+    {
+      "mdId": "alibaba-token-plan",
+      "tollmaId": null,
+      "name": "Alibaba Token Plan",
+      "models": 29,
+      "api": "token-plan.ap-southeast-1.maas",
+      "logo": "/models-dev/alibaba-token-plan.svg"
+    },
+    {
+      "mdId": "inception",
+      "tollmaId": null,
+      "name": "Inception",
+      "models": 4,
+      "api": "api.inceptionlabs.ai/v1/",
+      "logo": "/models-dev/inception.svg"
+    },
+    {
+      "mdId": "edenai",
+      "tollmaId": null,
+      "name": "Eden AI",
+      "models": 385,
+      "api": "api.edenai.run/v3",
+      "logo": "/models-dev/edenai.svg"
+    },
+    {
+      "mdId": "melious",
+      "tollmaId": null,
+      "name": "Melious",
+      "models": 8,
+      "api": "api.melious.ai/v1",
+      "logo": "/models-dev/melious.svg"
+    },
+    {
+      "mdId": "regolo-ai",
+      "tollmaId": null,
+      "name": "Regolo AI",
+      "models": 18,
+      "api": "api.regolo.ai/v1",
+      "logo": "/models-dev/regolo-ai.svg"
+    },
+    {
+      "mdId": "longcat",
+      "tollmaId": null,
+      "name": "LongCat",
+      "models": 2,
+      "api": "api.longcat.chat/openai",
+      "logo": "/models-dev/longcat.svg"
+    },
+    {
+      "mdId": "sarvam",
+      "tollmaId": null,
+      "name": "Sarvam AI",
+      "models": 2,
+      "api": "api.sarvam.ai/v1",
+      "logo": null
+    },
+    {
+      "mdId": "mixlayer",
+      "tollmaId": null,
+      "name": "Mixlayer",
+      "models": 5,
+      "api": "models.mixlayer.ai/v1",
+      "logo": "/models-dev/mixlayer.svg"
+    },
+    {
+      "mdId": "opper",
+      "tollmaId": null,
+      "name": "Opper",
+      "models": 55,
+      "api": "api.opper.ai/v3/compat",
+      "logo": "/models-dev/opper.svg"
+    },
+    {
+      "mdId": "daoxe",
+      "tollmaId": null,
+      "name": "DaoXE",
+      "models": 9,
+      "api": "daoxe.com/v1",
+      "logo": "/models-dev/daoxe.svg"
+    },
+    {
+      "mdId": "moonshotai",
+      "tollmaId": null,
+      "name": "Moonshot AI",
+      "models": 6,
+      "api": "api.moonshot.ai/v1",
+      "logo": "/models-dev/moonshotai.svg"
+    },
+    {
+      "mdId": "auriko",
+      "tollmaId": null,
+      "name": "Auriko",
+      "models": 15,
+      "api": "api.auriko.ai/v1",
+      "logo": "/models-dev/auriko.svg"
+    },
+    {
+      "mdId": "wallaby",
+      "tollmaId": null,
+      "name": "Wallaby",
+      "models": 1,
+      "api": "api.wallabytoken.com/v1",
+      "logo": "/models-dev/wallaby.svg"
+    },
+    {
+      "mdId": "ai-router",
+      "tollmaId": null,
+      "name": "AI-ROUTER",
+      "models": 5,
+      "api": "api.ai-router.dev/v1",
+      "logo": "/models-dev/ai-router.svg"
+    },
+    {
+      "mdId": "dinference",
+      "tollmaId": null,
+      "name": "DInference",
+      "models": 6,
+      "api": "api.dinference.com/v1",
+      "logo": "/models-dev/dinference.svg"
+    },
+    {
+      "mdId": "agnes",
+      "tollmaId": null,
+      "name": "Agnes AI",
+      "models": 4,
+      "api": "apihub.agnes-ai.com/v1",
+      "logo": "/models-dev/agnes.svg"
+    },
+    {
+      "mdId": "kosmik",
+      "tollmaId": null,
+      "name": "Kosmik Compute",
+      "models": 1,
+      "api": "api.koscompute.com/v1",
+      "logo": "/models-dev/kosmik.svg"
+    },
+    {
+      "mdId": "anthropic",
+      "tollmaId": "anthropic",
+      "name": "Anthropic",
+      "models": 17,
+      "api": null,
+      "logo": "/models-dev/anthropic.svg"
+    },
+    {
+      "mdId": "kimi-code-plan-global",
+      "tollmaId": null,
+      "name": "Kimi For Coding (kimi.ai)",
+      "models": 6,
+      "api": "api.kimi.ai/coding/v1",
+      "logo": "/models-dev/kimi-code-plan-global.svg"
+    },
+    {
+      "mdId": "stepfun",
+      "tollmaId": null,
+      "name": "StepFun (China)",
+      "models": 7,
+      "api": "api.stepfun.com/v1",
+      "logo": "/models-dev/stepfun.svg"
+    },
+    {
+      "mdId": "ai21",
+      "tollmaId": null,
+      "name": "AI21 Labs",
+      "models": 2,
+      "api": "api.ai21.com/studio/v1",
+      "logo": "/models-dev/ai21.svg"
+    },
+    {
+      "mdId": "jalapeno",
+      "tollmaId": null,
+      "name": "Jalapeno Cloud",
+      "models": 17,
+      "api": "api.jalapeno-cloud.ai/v1",
+      "logo": "/models-dev/jalapeno.svg"
+    },
+    {
+      "mdId": "above",
+      "tollmaId": null,
+      "name": "above.dev",
+      "models": 10,
+      "api": "api.above.dev/v1",
+      "logo": "/models-dev/above.svg"
+    },
+    {
+      "mdId": "siliconflow-cn",
+      "tollmaId": null,
+      "name": "SiliconFlow (China)",
+      "models": 45,
+      "api": "api.siliconflow.cn/v1",
+      "logo": "/models-dev/siliconflow-cn.svg"
+    },
+    {
+      "mdId": "digitalocean",
+      "tollmaId": null,
+      "name": "DigitalOcean",
+      "models": 84,
+      "api": "inference.do-ai.run/v1",
+      "logo": "/models-dev/digitalocean.svg"
+    },
+    {
+      "mdId": "neuralwatt",
+      "tollmaId": null,
+      "name": "Neuralwatt",
+      "models": 23,
+      "api": "api.neuralwatt.com/v1",
+      "logo": "/models-dev/neuralwatt.svg"
+    },
+    {
+      "mdId": "venice",
+      "tollmaId": null,
+      "name": "Venice AI",
+      "models": 127,
+      "api": null,
+      "logo": "/models-dev/venice.svg"
+    },
+    {
+      "mdId": "munito",
+      "tollmaId": null,
+      "name": "Munito AI",
+      "models": 5,
+      "api": "api.munito.ai/inference/v1",
+      "logo": "/models-dev/munito.svg"
+    },
+    {
+      "mdId": "stepfun-ai",
+      "tollmaId": null,
+      "name": "StepFun (Global)",
+      "models": 7,
+      "api": "api.stepfun.ai/v1",
+      "logo": "/models-dev/stepfun-ai.svg"
+    },
+    {
+      "mdId": "modular",
+      "tollmaId": null,
+      "name": "Modular",
+      "models": 4,
+      "api": "api.modular.com/v1",
+      "logo": "/models-dev/modular.svg"
+    },
+    {
+      "mdId": "cloudferro-sherlock",
+      "tollmaId": null,
+      "name": "CloudFerro Sherlock",
+      "models": 5,
+      "api": "api-sherlock.cloudferro.com/op",
+      "logo": "/models-dev/cloudferro-sherlock.svg"
+    },
+    {
+      "mdId": "zenifra",
+      "tollmaId": null,
+      "name": "Zenifra",
+      "models": 1,
+      "api": "ai.zenifra.com/v1",
+      "logo": "/models-dev/zenifra.svg"
+    },
+    {
+      "mdId": "prime",
+      "tollmaId": null,
+      "name": "Prime Inference",
+      "models": 70,
+      "api": "api.pinference.ai/api/v1",
+      "logo": "/models-dev/prime.svg"
+    },
+    {
+      "mdId": "opencode",
+      "tollmaId": null,
+      "name": "OpenCode",
+      "models": 132,
+      "api": "opencode.ai/inference/openai/v",
+      "logo": "/models-dev/opencode.svg"
+    },
+    {
+      "mdId": "google-vertex",
+      "tollmaId": "vertex",
+      "name": "Vertex",
+      "models": 61,
+      "api": null,
+      "logo": "/models-dev/google-vertex.svg"
+    },
+    {
+      "mdId": "hyper",
+      "tollmaId": null,
+      "name": "Charm Hyper",
+      "models": 26,
+      "api": "hyper.charm.land/v1",
+      "logo": "/models-dev/hyper.svg"
+    },
+    {
+      "mdId": "bailing",
+      "tollmaId": null,
+      "name": "Bailing",
+      "models": 2,
+      "api": "api.tbox.cn/api/llm/v1",
+      "logo": "/models-dev/bailing.svg"
+    },
+    {
+      "mdId": "privatemode-ai",
+      "tollmaId": null,
+      "name": "Privatemode AI",
+      "models": 11,
+      "api": "localhost:8080/v1",
+      "logo": "/models-dev/privatemode-ai.svg"
+    },
+    {
+      "mdId": "frogbot",
+      "tollmaId": null,
+      "name": "FrogBot",
+      "models": 26,
+      "api": "app.frogbot.ai/api/v1",
+      "logo": "/models-dev/frogbot.svg"
+    },
+    {
+      "mdId": "inference",
+      "tollmaId": null,
+      "name": "Inference",
+      "models": 9,
+      "api": "inference.net/v1",
+      "logo": "/models-dev/inference.svg"
+    },
+    {
+      "mdId": "routing-run",
+      "tollmaId": null,
+      "name": "routing.run",
+      "models": 15,
+      "api": "api.routing.run/v1",
+      "logo": "/models-dev/routing-run.svg"
+    },
+    {
+      "mdId": "xai",
+      "tollmaId": null,
+      "name": "xAI",
+      "models": 12,
+      "api": null,
+      "logo": "/models-dev/xai.svg"
+    },
+    {
+      "mdId": "cline-pass",
+      "tollmaId": null,
+      "name": "ClinePass",
+      "models": 18,
+      "api": "api.cline.bot/api/v1",
+      "logo": null
+    },
+    {
+      "mdId": "aihubmix",
+      "tollmaId": null,
+      "name": "AIHubMix",
+      "models": 154,
+      "api": null,
+      "logo": "/models-dev/aihubmix.svg"
+    },
+    {
+      "mdId": "sap-ai-core",
+      "tollmaId": null,
+      "name": "SAP AI Core",
+      "models": 51,
+      "api": null,
+      "logo": null
+    },
+    {
+      "mdId": "ebcloud",
+      "tollmaId": null,
+      "name": "EBCloud",
+      "models": 4,
+      "api": "maas-api.ebcloud.com/v1",
+      "logo": "/models-dev/ebcloud.svg"
+    },
+    {
+      "mdId": "umans-ai-coding-plan",
+      "tollmaId": null,
+      "name": "Umans AI Coding Plan",
+      "models": 9,
+      "api": "api.code.umans.ai/v1",
+      "logo": "/models-dev/umans-ai-coding-plan.svg"
+    },
+    {
+      "mdId": "tinfoil",
+      "tollmaId": null,
+      "name": "Tinfoil",
+      "models": 8,
+      "api": "inference.tinfoil.sh/v1",
+      "logo": "/models-dev/tinfoil.svg"
+    },
+    {
+      "mdId": "submodel",
+      "tollmaId": null,
+      "name": "submodel",
+      "models": 9,
+      "api": "llm.submodel.ai/v1",
+      "logo": "/models-dev/submodel.svg"
+    },
+    {
+      "mdId": "nan",
+      "tollmaId": null,
+      "name": "NaN",
+      "models": 8,
+      "api": "api.nan.builders/v1",
+      "logo": "/models-dev/nan.svg"
+    },
+    {
+      "mdId": "togetherai",
+      "tollmaId": null,
+      "name": "Together AI",
+      "models": 33,
+      "api": null,
+      "logo": "/models-dev/togetherai.svg"
+    },
+    {
+      "mdId": "standardcompute",
+      "tollmaId": null,
+      "name": "Standard Compute",
+      "models": 40,
+      "api": "api.stdcmpt.com/v1",
+      "logo": "/models-dev/standardcompute.svg"
+    },
+    {
+      "mdId": "zai",
+      "tollmaId": null,
+      "name": "Z.AI",
+      "models": 18,
+      "api": "api.z.ai/api/paas/v4",
+      "logo": "/models-dev/zai.svg"
+    },
+    {
+      "mdId": "helicone",
+      "tollmaId": null,
+      "name": "Helicone",
+      "models": 90,
+      "api": "ai-gateway.helicone.ai/v1",
+      "logo": "/models-dev/helicone.svg"
+    },
+    {
+      "mdId": "minimax-coding-plan",
+      "tollmaId": null,
+      "name": "MiniMax Token Plan (minimax.io)",
+      "models": 9,
+      "api": "api.minimax.io/anthropic/v1",
+      "logo": "/models-dev/minimax-coding-plan.svg"
+    },
+    {
+      "mdId": "klokintegration",
+      "tollmaId": null,
+      "name": "klokintegration.se",
+      "models": 3,
+      "api": "api-gw.klok.ipaas.se/proxy/klo",
+      "logo": "/models-dev/klokintegration.svg"
+    },
+    {
+      "mdId": "google-vertex-anthropic",
+      "tollmaId": null,
+      "name": "Vertex (Anthropic)",
+      "models": 17,
+      "api": null,
+      "logo": "/models-dev/google-vertex-anthropic.svg"
+    },
+    {
+      "mdId": "modal",
+      "tollmaId": null,
+      "name": "Modal",
+      "models": 8,
+      "api": "inference.us-west.modal.direct",
+      "logo": "/models-dev/modal.svg"
+    },
+    {
+      "mdId": "zhipuai-coding-plan",
+      "tollmaId": null,
+      "name": "Zhipu AI Coding Plan",
+      "models": 4,
+      "api": "open.bigmodel.cn/api/coding/pa",
+      "logo": "/models-dev/zhipuai-coding-plan.svg"
+    },
+    {
+      "mdId": "llmtech",
+      "tollmaId": null,
+      "name": "LLM Tech",
+      "models": 1,
+      "api": "api.llmtech.eu/v1",
+      "logo": "/models-dev/llmtech.svg"
+    },
+    {
+      "mdId": "minimax-cn",
+      "tollmaId": null,
+      "name": "MiniMax (minimax.cn)",
+      "models": 8,
+      "api": "api.minimax.cn/anthropic/v1",
+      "logo": "/models-dev/minimax-cn.svg"
+    },
+    {
+      "mdId": "impossibl",
+      "tollmaId": null,
+      "name": "Impossibl",
+      "models": 76,
+      "api": "api.impossibl.com/v1",
+      "logo": "/models-dev/impossibl.svg"
+    },
+    {
+      "mdId": "cerebras",
+      "tollmaId": null,
+      "name": "Cerebras",
+      "models": 2,
+      "api": null,
+      "logo": "/models-dev/cerebras.svg"
+    },
+    {
+      "mdId": "sakana",
+      "tollmaId": null,
+      "name": "Sakana AI",
+      "models": 4,
+      "api": "api.sakana.ai/v1",
+      "logo": null
+    },
+    {
+      "mdId": "vispark",
+      "tollmaId": null,
+      "name": "Vispark",
+      "models": 3,
+      "api": "api.lab.vispark.in/v1",
+      "logo": "/models-dev/vispark.svg"
+    },
+    {
+      "mdId": "the-grid-ai",
+      "tollmaId": null,
+      "name": "The Grid AI",
+      "models": 17,
+      "api": "api.thegrid.ai/v1",
+      "logo": "/models-dev/the-grid-ai.svg"
+    },
+    {
+      "mdId": "google",
+      "tollmaId": "gemini",
+      "name": "Google",
+      "models": 36,
+      "api": null,
+      "logo": "/models-dev/google.svg"
+    },
+    {
+      "mdId": "volcengine-coding-plan",
+      "tollmaId": null,
+      "name": "Volcengine Ark Coding Plan",
+      "models": 10,
+      "api": "ark.cn-beijing.volces.com/api/",
+      "logo": "/models-dev/volcengine-coding-plan.svg"
+    },
+    {
+      "mdId": "trustedrouter",
+      "tollmaId": null,
+      "name": "TrustedRouter",
+      "models": 7,
+      "api": "api.trustedrouter.com/v1",
+      "logo": "/models-dev/trustedrouter.svg"
+    },
+    {
+      "mdId": "llmgateway",
+      "tollmaId": null,
+      "name": "DevPass (LLM Gateway)",
+      "models": 199,
+      "api": "api.llmgateway.io/v1",
+      "logo": "/models-dev/llmgateway.svg"
+    },
+    {
+      "mdId": "upstage",
+      "tollmaId": null,
+      "name": "Upstage",
+      "models": 5,
+      "api": "api.upstage.ai/v1/solar",
+      "logo": null
+    },
+    {
+      "mdId": "engy",
+      "tollmaId": null,
+      "name": "engy",
+      "models": 9,
+      "api": "api.engy.ai/v1",
+      "logo": "/models-dev/engy.svg"
+    },
+    {
+      "mdId": "poolside",
+      "tollmaId": null,
+      "name": "Poolside",
+      "models": 3,
+      "api": "inference.poolside.ai/v1",
+      "logo": "/models-dev/poolside.svg"
+    },
+    {
+      "mdId": "morph",
+      "tollmaId": null,
+      "name": "Morph",
+      "models": 11,
+      "api": "api.morphllm.com/v1",
+      "logo": null
+    },
+    {
+      "mdId": "scnet-token-plan",
+      "tollmaId": null,
+      "name": "SCNet Token Plan",
+      "models": 19,
+      "api": "api.scnet.cn/api/llm/v1",
+      "logo": "/models-dev/scnet-token-plan.svg"
+    },
+    {
+      "mdId": "drun",
+      "tollmaId": null,
+      "name": "D.Run (China)",
+      "models": 3,
+      "api": "chat.d.run/v1",
+      "logo": "/models-dev/drun.svg"
+    },
+    {
+      "mdId": "github-copilot",
+      "tollmaId": null,
+      "name": "GitHub Copilot",
+      "models": 36,
+      "api": "api.githubcopilot.com",
+      "logo": "/models-dev/github-copilot.svg"
+    },
+    {
+      "mdId": "openreason",
+      "tollmaId": null,
+      "name": "OpenReason",
+      "models": 3,
+      "api": "api.openreason.app/v1",
+      "logo": "/models-dev/openreason.svg"
+    },
+    {
+      "mdId": "qvac",
+      "tollmaId": null,
+      "name": "QVAC",
+      "models": 9,
+      "api": null,
+      "logo": "/models-dev/qvac.svg"
+    },
+    {
+      "mdId": "echo",
+      "tollmaId": null,
+      "name": "Echo",
+      "models": 1,
+      "api": "echo.tracerml.ai/v1",
+      "logo": "/models-dev/echo.svg"
+    },
+    {
+      "mdId": "scx-ai",
+      "tollmaId": null,
+      "name": "SCX.ai",
+      "models": 4,
+      "api": "api.scx.ai/v1",
+      "logo": "/models-dev/scx-ai.svg"
+    },
+    {
+      "mdId": "zhipuai",
+      "tollmaId": null,
+      "name": "Zhipu AI",
+      "models": 17,
+      "api": "open.bigmodel.cn/api/paas/v4",
+      "logo": "/models-dev/zhipuai.svg"
+    },
+    {
+      "mdId": "iteracompute",
+      "tollmaId": null,
+      "name": "IteraCompute",
+      "models": 10,
+      "api": "api.iteracompute.com/v1",
+      "logo": "/models-dev/iteracompute.svg"
+    },
+    {
+      "mdId": "alibaba-coding-plan",
+      "tollmaId": null,
+      "name": "Alibaba Coding Plan",
+      "models": 10,
+      "api": "coding-intl.dashscope.aliyuncs",
+      "logo": "/models-dev/alibaba-coding-plan.svg"
+    },
+    {
+      "mdId": "snowflake-cortex",
+      "tollmaId": null,
+      "name": "Snowflake Cortex",
+      "models": 25,
+      "api": null,
+      "logo": "/models-dev/snowflake-cortex.svg"
+    },
+    {
+      "mdId": "lowrouter",
+      "tollmaId": null,
+      "name": "LowRouter",
+      "models": 32,
+      "api": "api.lowrouter.ai/v1",
+      "logo": "/models-dev/lowrouter.svg"
+    },
+    {
+      "mdId": "abacus",
+      "tollmaId": null,
+      "name": "Abacus",
+      "models": 108,
+      "api": "routellm.abacus.ai/v1",
+      "logo": "/models-dev/abacus.svg"
+    },
+    {
+      "mdId": "hopper",
+      "tollmaId": null,
+      "name": "Hopper",
+      "models": 2,
+      "api": "api.withhopper.com/v1",
+      "logo": "/models-dev/hopper.svg"
+    },
+    {
+      "mdId": "fastrouter",
+      "tollmaId": null,
+      "name": "FastRouter",
+      "models": 39,
+      "api": "go.fastrouter.ai/api/v1",
+      "logo": "/models-dev/fastrouter.svg"
+    },
+    {
+      "mdId": "coralbricks",
+      "tollmaId": null,
+      "name": "CoralBricks",
+      "models": 1,
+      "api": "inference.coralbricks.ai/v1",
+      "logo": "/models-dev/coralbricks.svg"
+    },
+    {
+      "mdId": "llmgateway-providers",
+      "tollmaId": null,
+      "name": "LLM Gateway",
+      "models": 434,
+      "api": "api.llmgateway.io/v1",
+      "logo": "/models-dev/llmgateway-providers.svg"
+    },
+    {
+      "mdId": "boundless",
+      "tollmaId": null,
+      "name": "Boundless",
+      "models": 20,
+      "api": "api.inference.boundless.networ",
+      "logo": "/models-dev/boundless.svg"
+    },
+    {
+      "mdId": "deepseek",
+      "tollmaId": null,
+      "name": "DeepSeek",
+      "models": 4,
+      "api": "api.deepseek.com",
+      "logo": "/models-dev/deepseek.svg"
+    },
+    {
+      "mdId": "tokenrouter",
+      "tollmaId": null,
+      "name": "TokenRouter",
+      "models": 1,
+      "api": "api.tokenrouter.com/v1",
+      "logo": "/models-dev/tokenrouter.svg"
+    },
+    {
+      "mdId": "stackit",
+      "tollmaId": null,
+      "name": "STACKIT",
+      "models": 8,
+      "api": "api.openai-compat.model-servin",
+      "logo": "/models-dev/stackit.svg"
+    },
+    {
+      "mdId": "inco",
+      "tollmaId": null,
+      "name": "Inco",
+      "models": 7,
+      "api": "api.inco.ai/v1",
+      "logo": "/models-dev/inco.svg"
+    },
+    {
+      "mdId": "alibaba-coding-plan-cn",
+      "tollmaId": null,
+      "name": "Alibaba Coding Plan (China)",
+      "models": 10,
+      "api": "coding.dashscope.aliyuncs.com/",
+      "logo": "/models-dev/alibaba-coding-plan-cn.svg"
+    },
+    {
+      "mdId": "openrouter",
+      "tollmaId": null,
+      "name": "OpenRouter",
+      "models": 376,
+      "api": "openrouter.ai/api/v1",
+      "logo": "/models-dev/openrouter.svg"
+    },
+    {
+      "mdId": "cloudflare-ai-gateway",
+      "tollmaId": null,
+      "name": "Cloudflare AI Gateway",
+      "models": 74,
+      "api": null,
+      "logo": "/models-dev/cloudflare-ai-gateway.svg"
+    },
+    {
+      "mdId": "xiaomi",
+      "tollmaId": null,
+      "name": "Xiaomi",
+      "models": 6,
+      "api": "api.xiaomimimo.com/v1",
+      "logo": "/models-dev/xiaomi.svg"
+    },
+    {
+      "mdId": "thinkingmachines",
+      "tollmaId": null,
+      "name": "Thinking Machines",
+      "models": 38,
+      "api": "tinker.thinkingmachines.dev/se",
+      "logo": "/models-dev/thinkingmachines.svg"
+    },
+    {
+      "mdId": "runinfra",
+      "tollmaId": null,
+      "name": "RunInfra",
+      "models": 8,
+      "api": "api.runinfra.ai/v1",
+      "logo": "/models-dev/runinfra.svg"
+    },
+    {
+      "mdId": "poe",
+      "tollmaId": null,
+      "name": "Poe",
+      "models": 139,
+      "api": "api.poe.com/v1",
+      "logo": "/models-dev/poe.svg"
+    },
+    {
+      "mdId": "tencent-tokenhub",
+      "tollmaId": null,
+      "name": "Tencent TokenHub",
+      "models": 4,
+      "api": "tokenhub.tencentmaas.com/v1",
+      "logo": "/models-dev/tencent-tokenhub.svg"
+    },
+    {
+      "mdId": "oci",
+      "tollmaId": null,
+      "name": "OCI Generative AI",
+      "models": 9,
+      "api": "inference.generativeai.us-chic",
+      "logo": "/models-dev/oci.svg"
+    },
+    {
+      "mdId": "stepfun-step-plan",
+      "tollmaId": null,
+      "name": "StepFun Step Plan (China)",
+      "models": 5,
+      "api": "api.stepfun.com/step_plan/v1",
+      "logo": "/models-dev/stepfun-step-plan.svg"
+    },
+    {
+      "mdId": "modelis",
+      "tollmaId": null,
+      "name": "Modelis",
+      "models": 9,
+      "api": "modelishub.com/v1",
+      "logo": "/models-dev/modelis.svg"
+    },
+    {
+      "mdId": "moonshotai-cn",
+      "tollmaId": null,
+      "name": "Moonshot AI (China)",
+      "models": 6,
+      "api": "api.moonshot.cn/v1",
+      "logo": "/models-dev/moonshotai-cn.svg"
+    },
+    {
+      "mdId": "amd",
+      "tollmaId": null,
+      "name": "AMD",
+      "models": 11,
+      "api": "developer.amd.com.cn/radeon/ap",
+      "logo": "/models-dev/amd.svg"
+    },
+    {
+      "mdId": "meganova",
+      "tollmaId": null,
+      "name": "Meganova",
+      "models": 19,
+      "api": "api.meganova.ai/v1",
+      "logo": "/models-dev/meganova.svg"
+    },
+    {
+      "mdId": "stepfun-ai-step-plan",
+      "tollmaId": null,
+      "name": "StepFun Step Plan (Global)",
+      "models": 4,
+      "api": "api.stepfun.ai/step_plan/v1",
+      "logo": "/models-dev/stepfun-ai-step-plan.svg"
+    },
+    {
+      "mdId": "minimax",
+      "tollmaId": null,
+      "name": "MiniMax (minimax.io)",
+      "models": 8,
+      "api": "api.minimax.io/anthropic/v1",
+      "logo": "/models-dev/minimax.svg"
+    },
+    {
+      "mdId": "nano-gpt",
+      "tollmaId": null,
+      "name": "NanoGPT",
+      "models": 637,
+      "api": "nano-gpt.com/api/v1",
+      "logo": "/models-dev/nano-gpt.svg"
+    },
+    {
+      "mdId": "lynkr",
+      "tollmaId": null,
+      "name": "Lynkr",
+      "models": 1,
+      "api": "127.0.0.1:8081/v1",
+      "logo": "/models-dev/lynkr.svg"
+    },
+    {
+      "mdId": "jiekou",
+      "tollmaId": null,
+      "name": "Jiekou.AI",
+      "models": 61,
+      "api": "api.jiekou.ai/openai",
+      "logo": "/models-dev/jiekou.svg"
+    },
+    {
+      "mdId": "clarifai",
+      "tollmaId": null,
+      "name": "Clarifai",
+      "models": 12,
+      "api": "api.clarifai.com/v2/ext/openai",
+      "logo": "/models-dev/clarifai.svg"
+    },
+    {
+      "mdId": "pioneer",
+      "tollmaId": null,
+      "name": "Pioneer",
+      "models": 25,
+      "api": "api.fastino.ai/v1",
+      "logo": "/models-dev/pioneer.svg"
+    },
+    {
+      "mdId": "atomic-chat",
+      "tollmaId": null,
+      "name": "Atomic Chat",
+      "models": 5,
+      "api": "127.0.0.1:1337/v1",
+      "logo": "/models-dev/atomic-chat.svg"
+    },
+    {
+      "mdId": "unorouter",
+      "tollmaId": null,
+      "name": "UnoRouter",
+      "models": 23,
+      "api": "api.unorouter.com/v1",
+      "logo": "/models-dev/unorouter.svg"
+    },
+    {
+      "mdId": "abliteration-ai",
+      "tollmaId": null,
+      "name": "abliteration.ai",
+      "models": 3,
+      "api": "api.abliteration.ai/v1",
+      "logo": "/models-dev/abliteration-ai.svg"
+    },
+    {
+      "mdId": "tencent-token-plan",
+      "tollmaId": null,
+      "name": "Tencent Token Plan",
+      "models": 3,
+      "api": "api.lkeap.cloud.tencent.com/pl",
+      "logo": "/models-dev/tencent-token-plan.svg"
+    },
+    {
+      "mdId": "zenmux",
+      "tollmaId": null,
+      "name": "ZenMux",
+      "models": 110,
+      "api": "zenmux.ai/api/v1",
+      "logo": "/models-dev/zenmux.svg"
+    },
+    {
+      "mdId": "novita-ai",
+      "tollmaId": null,
+      "name": "Novita AI",
+      "models": 89,
+      "api": "api.novita.ai/openai",
+      "logo": "/models-dev/novita-ai.svg"
+    },
+    {
+      "mdId": "munito-eu",
+      "tollmaId": null,
+      "name": "Munito AI (EU)",
+      "models": 4,
+      "api": "api.eu.munito.ai/inference/v1",
+      "logo": "/models-dev/munito-eu.svg"
+    },
+    {
+      "mdId": "alibaba-token-plan-cn",
+      "tollmaId": null,
+      "name": "Alibaba Token Plan (China)",
+      "models": 29,
+      "api": "token-plan.cn-beijing.maas.ali",
+      "logo": null
+    },
+    {
+      "mdId": "requesty",
+      "tollmaId": null,
+      "name": "Requesty",
+      "models": 185,
+      "api": "router.requesty.ai/v1",
+      "logo": null
+    },
+    {
+      "mdId": "sambanova",
+      "tollmaId": null,
+      "name": "SambaNova",
+      "models": 6,
+      "api": "api.sambanova.ai/v1",
+      "logo": "/models-dev/sambanova.svg"
+    },
+    {
+      "mdId": "vancine",
+      "tollmaId": null,
+      "name": "Vancine",
+      "models": 8,
+      "api": "vancine.com/v1",
+      "logo": "/models-dev/vancine.svg"
+    },
+    {
+      "mdId": "zeldoc",
+      "tollmaId": null,
+      "name": "Zeldoc",
+      "models": 1,
+      "api": "api.zeldoc.ai/v1",
+      "logo": "/models-dev/zeldoc.svg"
+    },
+    {
+      "mdId": "anyapi",
+      "tollmaId": null,
+      "name": "AnyAPI",
+      "models": 30,
+      "api": "api.anyapi.ai/v1",
+      "logo": "/models-dev/anyapi.svg"
+    },
+    {
+      "mdId": "kuae-cloud-coding-plan",
+      "tollmaId": null,
+      "name": "KUAE Cloud Coding Plan",
+      "models": 1,
+      "api": "coding-plan-endpoint.kuaecloud",
+      "logo": "/models-dev/kuae-cloud-coding-plan.svg"
+    },
+    {
+      "mdId": "greenpt",
+      "tollmaId": null,
+      "name": "GreenPT",
+      "models": 41,
+      "api": "api.greenpt.ai/v1",
+      "logo": "/models-dev/greenpt.svg"
+    },
+    {
+      "mdId": "azure",
+      "tollmaId": null,
+      "name": "Azure",
+      "models": 96,
+      "api": null,
+      "logo": "/models-dev/azure.svg"
+    },
+    {
+      "mdId": "synthetic",
+      "tollmaId": null,
+      "name": "Synthetic",
+      "models": 12,
+      "api": "api.synthetic.new/openai/v1",
+      "logo": null
+    },
+    {
+      "mdId": "watsonx",
+      "tollmaId": null,
+      "name": "watsonx.ai",
+      "models": 5,
+      "api": null,
+      "logo": "/models-dev/watsonx.svg"
+    },
+    {
+      "mdId": "freemodel",
+      "tollmaId": null,
+      "name": "FreeModel",
+      "models": 10,
+      "api": "cc.freemodel.dev/v1",
+      "logo": "/models-dev/freemodel.svg"
+    },
+    {
+      "mdId": "nebius",
+      "tollmaId": null,
+      "name": "Nebius Token Factory",
+      "models": 26,
+      "api": "api.tokenfactory.nebius.com/v1",
+      "logo": "/models-dev/nebius.svg"
+    },
+    {
+      "mdId": "lmstudio",
+      "tollmaId": null,
+      "name": "LMStudio",
+      "models": 3,
+      "api": "127.0.0.1:1234/v1",
+      "logo": "/models-dev/lmstudio.svg"
+    },
+    {
+      "mdId": "infomaniak",
+      "tollmaId": null,
+      "name": "Infomaniak",
+      "models": 10,
+      "api": null,
+      "logo": "/models-dev/infomaniak.svg"
+    },
+    {
+      "mdId": "nvidia",
+      "tollmaId": null,
+      "name": "Nvidia",
+      "models": 52,
+      "api": "integrate.api.nvidia.com/v1",
+      "logo": "/models-dev/nvidia.svg"
+    },
+    {
+      "mdId": "empiriolabs",
+      "tollmaId": null,
+      "name": "EmpirioLabs AI",
+      "models": 64,
+      "api": "api.empiriolabs.ai/v1",
+      "logo": "/models-dev/empiriolabs.svg"
+    },
+    {
+      "mdId": "nearai",
+      "tollmaId": null,
+      "name": "NEAR AI Cloud",
+      "models": 60,
+      "api": "cloud-api.near.ai/v1",
+      "logo": "/models-dev/nearai.svg"
+    },
+    {
+      "mdId": "gitlab",
+      "tollmaId": null,
+      "name": "GitLab Duo",
+      "models": 31,
+      "api": null,
+      "logo": "/models-dev/gitlab.svg"
+    },
+    {
+      "mdId": "perplexity-agent",
+      "tollmaId": null,
+      "name": "Perplexity Agent",
+      "models": 45,
+      "api": "api.perplexity.ai/v1",
+      "logo": "/models-dev/perplexity-agent.svg"
+    },
+    {
+      "mdId": "umans-ai",
+      "tollmaId": null,
+      "name": "Umans AI",
+      "models": 8,
+      "api": "api.code.umans.ai/v1",
+      "logo": "/models-dev/umans-ai.svg"
+    },
+    {
+      "mdId": "inceptron",
+      "tollmaId": null,
+      "name": "Inceptron",
+      "models": 6,
+      "api": "api.inceptron.io/v1",
+      "logo": "/models-dev/inceptron.svg"
+    },
+    {
+      "mdId": "ovhcloud",
+      "tollmaId": null,
+      "name": "OVHcloud AI Endpoints",
+      "models": 11,
+      "api": "oai.endpoints.kepler.ai.cloud.",
+      "logo": "/models-dev/ovhcloud.svg"
+    },
+    {
+      "mdId": "orcarouter",
+      "tollmaId": null,
+      "name": "OrcaRouter",
+      "models": 117,
+      "api": "api.orcarouter.ai/v1",
+      "logo": "/models-dev/orcarouter.svg"
+    },
+    {
+      "mdId": "xiaomi-token-plan-ams",
+      "tollmaId": null,
+      "name": "Xiaomi Token Plan (Europe)",
+      "models": 7,
+      "api": "token-plan-ams.xiaomimimo.com/",
+      "logo": "/models-dev/xiaomi-token-plan-ams.svg"
+    },
+    {
+      "mdId": "friendli",
+      "tollmaId": null,
+      "name": "Friendli",
+      "models": 5,
+      "api": "api.friendli.ai/serverless/v1",
+      "logo": "/models-dev/friendli.svg"
+    },
+    {
+      "mdId": "tensorx",
+      "tollmaId": null,
+      "name": "TensorX",
+      "models": 25,
+      "api": "api.tensorx.ai/v1",
+      "logo": "/models-dev/tensorx.svg"
+    },
+    {
+      "mdId": "crusoe",
+      "tollmaId": null,
+      "name": "Crusoe",
+      "models": 11,
+      "api": "api.inference.crusoecloud.com/",
+      "logo": "/models-dev/crusoe.svg"
+    },
+    {
+      "mdId": "fireworks-ai",
+      "tollmaId": null,
+      "name": "Fireworks AI",
+      "models": 29,
+      "api": "api.fireworks.ai/inference/v1/",
+      "logo": "/models-dev/fireworks-ai.svg"
+    },
+    {
+      "mdId": "lilac",
+      "tollmaId": null,
+      "name": "Lilac",
+      "models": 4,
+      "api": "api.getlilac.com/v1",
+      "logo": "/models-dev/lilac.svg"
+    },
+    {
+      "mdId": "agentrouter",
+      "tollmaId": null,
+      "name": "AgentRouter",
+      "models": 5,
+      "api": "agentrouter.org/v1",
+      "logo": "/models-dev/agentrouter.svg"
+    },
+    {
+      "mdId": "neosmith",
+      "tollmaId": null,
+      "name": "NeoSmith",
+      "models": 4,
+      "api": "router.neosmith.ai/v1",
+      "logo": "/models-dev/neosmith.svg"
+    },
+    {
+      "mdId": "kenari",
+      "tollmaId": null,
+      "name": "Kenari",
+      "models": 64,
+      "api": "kenari.id/v1",
+      "logo": "/models-dev/kenari.svg"
+    },
+    {
+      "mdId": "amazon-bedrock",
+      "tollmaId": "bedrock",
+      "name": "Amazon Bedrock",
+      "models": 203,
+      "api": null,
+      "logo": "/models-dev/amazon-bedrock.svg"
+    },
+    {
+      "mdId": "wally",
+      "tollmaId": null,
+      "name": "Wally",
+      "models": 8,
+      "api": "inference.runanywhere.ai/v1",
+      "logo": "/models-dev/wally.svg"
+    },
+    {
+      "mdId": "crossmodel",
+      "tollmaId": null,
+      "name": "CrossModel",
+      "models": 68,
+      "api": "api.crossmodel.ai/v1",
+      "logo": "/models-dev/crossmodel.svg"
+    },
+    {
+      "mdId": "vultr",
+      "tollmaId": null,
+      "name": "Vultr",
+      "models": 15,
+      "api": "api.vultrinference.com/v1",
+      "logo": "/models-dev/vultr.svg"
+    },
+    {
+      "mdId": "claudinio",
+      "tollmaId": null,
+      "name": "Claudinio",
+      "models": 2,
+      "api": "api.claudin.io/v1",
+      "logo": "/models-dev/claudinio.svg"
+    },
+    {
+      "mdId": "aiand",
+      "tollmaId": null,
+      "name": "ai&",
+      "models": 12,
+      "api": "api.aiand.com/v1",
+      "logo": "/models-dev/aiand.svg"
+    },
+    {
+      "mdId": "io-net",
+      "tollmaId": null,
+      "name": "IO.NET",
+      "models": 17,
+      "api": "api.intelligence.io.solutions/",
+      "logo": "/models-dev/io-net.svg"
+    },
+    {
+      "mdId": "ainetcafe",
+      "tollmaId": null,
+      "name": "ainetcafe",
+      "models": 1,
+      "api": "microquickjs.com/v1",
+      "logo": "/models-dev/ainetcafe.svg"
+    },
+    {
+      "mdId": "alibaba-cn",
+      "tollmaId": null,
+      "name": "Alibaba (China)",
+      "models": 80,
+      "api": "dashscope.aliyuncs.com/compati",
+      "logo": "/models-dev/alibaba-cn.svg"
+    },
+    {
+      "mdId": "berget",
+      "tollmaId": null,
+      "name": "Berget.AI",
+      "models": 6,
+      "api": "api.berget.ai/v1",
+      "logo": "/models-dev/berget.svg"
+    },
+    {
+      "mdId": "wafer.ai",
+      "tollmaId": null,
+      "name": "Wafer",
+      "models": 5,
+      "api": "pass.wafer.ai/v1",
+      "logo": "/models-dev/wafer.ai.svg"
+    },
+    {
+      "mdId": "xiaomi-token-plan-cn",
+      "tollmaId": null,
+      "name": "Xiaomi Token Plan (China)",
+      "models": 7,
+      "api": "token-plan-cn.xiaomimimo.com/v",
+      "logo": "/models-dev/xiaomi-token-plan-cn.svg"
+    },
+    {
+      "mdId": "tempr",
+      "tollmaId": null,
+      "name": "Tempr Gateway",
+      "models": 82,
+      "api": "api.temprhq.io/v1",
+      "logo": "/models-dev/tempr.svg"
+    },
+    {
+      "mdId": "infer",
+      "tollmaId": null,
+      "name": "Infer by Flow7",
+      "models": 2,
+      "api": "infer.flow7.org/v1",
+      "logo": "/models-dev/infer.svg"
+    },
+    {
+      "mdId": "alibaba",
+      "tollmaId": null,
+      "name": "Alibaba",
+      "models": 53,
+      "api": "dashscope-intl.aliyuncs.com/co",
+      "logo": "/models-dev/alibaba.svg"
+    },
+    {
+      "mdId": "chutes",
+      "tollmaId": null,
+      "name": "Chutes",
+      "models": 18,
+      "api": "llm.chutes.ai/v1",
+      "logo": null
+    },
+    {
+      "mdId": "moark",
+      "tollmaId": null,
+      "name": "Moark",
+      "models": 10,
+      "api": "moark.com/v1",
+      "logo": "/models-dev/moark.svg"
+    },
+    {
+      "mdId": "reflection",
+      "tollmaId": null,
+      "name": "Reflection",
+      "models": 1,
+      "api": "api.reflection.ai/openai/v1",
+      "logo": "/models-dev/reflection.svg"
+    },
+    {
+      "mdId": "modelscope",
+      "tollmaId": null,
+      "name": "ModelScope",
+      "models": 7,
+      "api": "api-inference.modelscope.cn/v1",
+      "logo": "/models-dev/modelscope.svg"
+    },
+    {
+      "mdId": "kimi-code-plan-cn",
+      "tollmaId": null,
+      "name": "Kimi For Coding (kimi.com)",
+      "models": 6,
+      "api": "api.kimi.com/coding/v1",
+      "logo": "/models-dev/kimi-code-plan-cn.svg"
+    },
+    {
+      "mdId": "huggingface",
+      "tollmaId": null,
+      "name": "Hugging Face",
+      "models": 82,
+      "api": "router.huggingface.co/v1",
+      "logo": "/models-dev/huggingface.svg"
+    },
+    {
+      "mdId": "openai",
+      "tollmaId": "openai",
+      "name": "OpenAI",
+      "models": 51,
+      "api": null,
+      "logo": "/models-dev/openai.svg"
+    }
+  ]
+}

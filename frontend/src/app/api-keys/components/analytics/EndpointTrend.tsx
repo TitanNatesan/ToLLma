@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { chartColor } from "@/components/charts/palette";
 import { fmtTokens } from "@/lib/utils";
-import { AnalyticsTooltip, ChartSkeleton, EmptyHint, SectionFrame, truncate } from "./shared";
+import { AnalyticsTooltip, CHAT_ENDPOINT, CHAT_ENDPOINT_COLOR, ChartSkeleton, EmptyHint, SectionFrame, endpointLabel, truncate } from "./shared";
 import { useStackedSeries } from "./stacked";
 import type { AnalyticsPreset, ApiKeyTimeseries } from "@/types/apiKeys";
 
@@ -27,6 +27,8 @@ export function EndpointTrend({
   loading?: boolean;
 }) {
   const series = useStackedSeries(timeseries?.stacked, preset, 6);
+  // Gateway palette order excludes the in-app row so gateway colors never shift when chat appears.
+  const gatewayOrder = series.keys.filter((key) => key !== CHAT_ENDPOINT);
 
   return (
     <SectionFrame
@@ -80,21 +82,24 @@ export function EndpointTrend({
                   </span>
                 )}
               />
-              {series.keys.map((key, index) => (
+              {series.keys.map((key) => {
+                const color = key === "Other" ? "#64748b" : key === CHAT_ENDPOINT ? CHAT_ENDPOINT_COLOR : chartColor(gatewayOrder.indexOf(key));
+                return (
                 <Area
                   key={key}
                   type="monotone"
                   dataKey={key}
-                  name={key}
+                  name={endpointLabel(key)}
                   stackId="endpoints"
-                  stroke={key === "Other" ? "#64748b" : chartColor(index)}
-                  fill={key === "Other" ? "#64748b" : chartColor(index)}
+                  stroke={color}
+                  fill={color}
                   fillOpacity={0.32}
                   strokeWidth={1.5}
                   dot={false}
                   isAnimationActive={false}
                 />
-              ))}
+                );
+              })}
             </AreaChart>
           </ResponsiveContainer>
         </div>

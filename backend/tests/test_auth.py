@@ -33,12 +33,30 @@ def test_signup_creates_unverified_user(client: TestClient, db: Session) -> None
     assert body["user"]["auth_provider"] == "EMAIL"
     assert "password" not in body["user"]
     assert body["debug_verification_token"]
+    assert body["verification_sent"] is True
 
     dup = client.post("/auth/signup", json={"email": "a@tollma.ai", "password": "Password123"})
     assert dup.status_code == 422
 
     bad = client.post("/auth/signup", json={"email": "not-an-email", "password": "Password123"})
     assert bad.status_code == 422
+
+
+def test_signup_succeeds_when_verification_email_fails(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SMTP down: signup still 200s (account + session created) with sent=false."""
+    monkeypatch.setattr(auth_service, "send_verification_email", lambda to, url: False)
+    r = client.post(
+        "/auth/signup", json={"email": "smtp-fail@tollma.ai", "password": "Password123"}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["verification_sent"] is False
+    assert body["user"]["email_verified"] is False
+    assert body["debug_verification_token"]
+    # Session was still issued: the user is logged in despite the mail failure.
+    assert client.get("/auth/me").status_code == 200
 
 
 def test_email_verification_activates_and_replay_is_idempotent(client: TestClient) -> None:
@@ -404,6 +422,11 @@ def test_google_oauth_ip_mismatch_forbidden(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _hardening_config(monkeypatch)
+    # TestClient peer is "testclient" (unparseable -> never a trusted proxy),
+    # so gateway_client_ip would ignore XFF without this patch. Simulate a
+    # trusted-proxy deployment (production topology) where OAuth IP-mismatch
+    # protection operates. monkeypatch restores _peer_trusted after the test.
+    monkeypatch.setattr("tollms.core.sessions._peer_trusted", lambda peer: True)
 
     async def _tokens(code: str) -> dict:
         return {"access_token": "google-at"}

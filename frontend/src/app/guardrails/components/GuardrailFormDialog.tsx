@@ -1,0 +1,559 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import {
+  Button,
+  Checkbox,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  Field,
+  Input,
+  Select,
+  Switch,
+  Textarea,
+} from "@/components/ui";
+import { toast } from "@/lib/notify";
+import { parseApiError, toastApiError } from "@/lib/errors";
+import type { GuardrailPolicy } from "@/services/guardrails";
+import { useGuardrailMutations, useLayaHealth } from "@/hooks/useGuardrails";
+import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useChatKeys } from "@/hooks/useChatKeys";
+import { useOrgKeys } from "@/hooks/useOrgs";
+import { cn } from "@/lib/utils";
+import {
+  DETECTION_STEP_COPY,
+  GUARDRAIL_CATEGORIES,
+  SCOPE_STEP_COPY,
+  WIZARD_SCOPE_OPTIONS,
+  buildEvaluatorConfigs,
+  buildPolicyPayload,
+  buildReviewSummary,
+  draftFromPolicy,
+  emptyGuardrailDraft,
+  mapPolicySaveError,
+  unknownScopeKeys,
+  validateWizardStep,
+  type GuardrailDraft,
+} from "./policyLogic";
+
+const CATEGORIES = GUARDRAIL_CATEGORIES;
+const SEVERITIES = ["low", "medium", "high", "critical"];
+const ENFORCEMENTS = [
+  { value: "monitor", hint: "Log only — traffic always flows. Start here to measure noise before enforcing." },
+  { value: "warn", hint: "Flag the turn to the caller but still deliver it. Good for gradual rollouts." },
+  { value: "block", hint: "Stop the turn. Highest protection, highest false-positive cost." },
+];
+const EVALUATORS = ["deterministic", "laya", "openai_moderation", "jev", "llm"] as const;
+const STAGES = ["pre", "post", "both"] as const;
+const DELIVERY = [
+  { value: "buffer_then_inspect", hint: "Withholds output until inspection completes — non-streaming paths only. Streams always deliver and audit." },
+  { value: "inspect_before_buffer", hint: "Bounded-window audit scan while buffering. Cannot guarantee pre-delivery blocking on streams — recorded as audit rows." },
+  { value: "audit_after_delivery", hint: "Audit-only. Delivers first, audits after. Zero added latency." },
+  { value: "audit_then_delivery", hint: "Audit-only. Audits a copy, then delivers the original." },
+];
+
+// Draft baseline + edit preload live in policyLogic (covered by vitest).
+
+const STEPS = ["Basics", "Detection", "Evaluator", "Scope & enforcement", "Review"];
+
+/** Searchable checkbox picker for key-scoped rows. */
+function TargetPicker({
+  label,
+  items,
+  selected,
+  onToggle,
+  testId,
+  emptyHint,
+}: {
+  label: string;
+  items: { id: string; name: string; sub?: string }[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  testId: string;
+  emptyHint: string;
+}) {
+  const [q, setQ] = useState("");
+  const chosen = useMemo(() => new Set(selected), [selected]);
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const rows = needle
+      ? items.filter(
+          (i) => i.name.toLowerCase().includes(needle) || i.id.toLowerCase().includes(needle),
+        )
+      : items;
+    return rows.slice(0, 100);
+  }, [items, q]);
+  const unknown = useMemo(() => selected.filter((id) => !items.some((i) => i.id === id)), [selected, items]);
+  return (
+    <Field label={`${label} (${selected.length} selected)`}>
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={`Search ${label.toLowerCase()}…`}
+        data-testid={testId}
+      />
+      <div className="mt-1 max-h-44 space-y-1 overflow-y-auto rounded-md border border-zinc-200 p-1.5 dark:border-zinc-800">
+        {unknown.map((id) => (
+          <label
+            key={id}
+            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-500"
+          >
+            <Checkbox checked onChange={() => onToggle(id)} aria-label={`Unknown target ${id}`} />
+            <span className="min-w-0 flex-1 truncate font-mono">Unknown target {id.slice(0, 8)}…</span>
+          </label>
+        ))}
+        {visible.length === 0 && unknown.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-zinc-400">{emptyHint}</p>
+        ) : (
+          visible.map((item) => (
+            <label
+              key={item.id}
+              className={cn(
+                "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+                chosen.has(item.id) && "bg-tollma-50 dark:bg-tollma-950/30",
+              )}
+            >
+              <Checkbox
+                checked={chosen.has(item.id)}
+                onChange={() => onToggle(item.id)}
+                aria-label={item.name}
+                data-testid={`${testId}-option-${item.id}`}
+              />
+              <span className="min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300">
+                {item.name}
+                {item.sub && <span className="text-zinc-400"> · {item.sub}</span>}
+              </span>
+            </label>
+          ))
+        )}
+      </div>
+    </Field>
+  );
+}
+
+export function GuardrailFormDialog({
+  open,
+  onClose,
+  initial,
+  orgId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initial: GuardrailPolicy | null;
+  orgId?: string;
+}) {
+  const mut = useGuardrailMutations(orgId);
+  const laya = useLayaHealth(open);
+  const providersQuery = useProviders();
+  const modelsQuery = useModels();
+  const chatKeysQuery = useChatKeys();
+  const orgKeysQuery = useOrgKeys(orgId ?? "", { enabled: !!orgId });
+  const [step, setStep] = useState(0);
+  const [draft, setDraft] = useState<GuardrailDraft>(() => (initial ? draftFromPolicy(initial) : emptyGuardrailDraft()));
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(initial?.is_enabled ?? true);
+  const [logTriggers, setLogTriggers] = useState(initial?.log_triggers ?? true);
+  const [notify, setNotify] = useState(initial?.notify_on_trigger ?? false);
+  const [failureAction, setFailureAction] = useState(initial?.failure_action ?? "allow");
+  const [saving, setSaving] = useState(false);
+  const [credState, setCredState] = useState<"idle" | "busy" | "valid" | "invalid">("idle");
+
+  const set = (patch: Partial<GuardrailDraft>) => {
+    setSaveError(null);
+    setDraft((d) => ({ ...d, ...patch }));
+  };
+  const toggleKey = (id: string) => {
+    setSaveError(null);
+    setDraft((prev) => ({
+      ...prev,
+      key_ids: prev.key_ids.includes(id) ? prev.key_ids.filter((x) => x !== id) : [...prev.key_ids, id],
+    }));
+  };
+  const isEditing = !!initial;
+  // Stored credentials never round-trip: edit mode never demands re-entry.
+  const stepError = validateWizardStep(step, draft, { isEditing });
+  const goStep = (i: number) => {
+    setSaveError(null);
+    setStep(i);
+  };
+  const layaReachable = laya.data?.reachable;
+
+  const keyItems = useMemo(() => {
+    if (orgId) {
+      return ((orgKeysQuery.data as { id: string; name: string }[] | undefined) ?? []).map((k) => ({
+        id: k.id,
+        name: k.name,
+      }));
+    }
+    return (chatKeysQuery.data ?? []).map((k) => ({ id: k.id, name: k.name }));
+  }, [orgId, orgKeysQuery.data, chatKeysQuery.data]);
+
+  const modelsForProvider = useMemo(
+    () => (modelsQuery.data ?? []).filter((m) => !draft.escalationProviderId || m.provider_id === draft.escalationProviderId),
+    [modelsQuery.data, draft.escalationProviderId],
+  );
+
+  async function handleSave() {
+    setSaveError(null);
+    for (let i = 0; i < STEPS.length; i++) {
+      const err = validateWizardStep(i, draft, { isEditing });
+      if (err) {
+        goStep(i);
+        toast.error(err);
+        return;
+      }
+    }
+    if (unknownScopeKeys(draft, keyItems.map((k) => k.id)).length > 0) {
+      setStep(3);
+      toast.error("Selected keys must belong to this workspace.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const body = buildPolicyPayload(draft, {
+        log_triggers: logTriggers,
+        notify_on_trigger: notify,
+        failure_action: failureAction,
+        is_enabled: enabled,
+      });
+      if (isEditing) {
+        await mut.update.mutateAsync({ id: initial.id, body });
+        toast.success(`Guardrail "${draft.name.trim()}" updated.`);
+      } else {
+        const created = await mut.create.mutateAsync(body);
+        for (const evaluator of buildEvaluatorConfigs(draft)) {
+          await mut.createEvaluator.mutateAsync({ policyId: created.id, body: evaluator });
+        }
+        toast.success(`Guardrail "${draft.name.trim()}" created.`);
+      }
+      onClose();
+    } catch (e) {
+      // Backend 422s (empty-rules+block, unknown scope keys, ...) land on the
+      // owning step with the server's own words — never a silent toast.
+      const mapped = mapPolicySaveError(e);
+      if (mapped) {
+        setStep(mapped.step);
+        setSaveError(mapped.message);
+        toast.error(mapped.message);
+      } else {
+        toastApiError(e, { title: isEditing ? "Update failed" : "Create failed" });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleValidateCreds(etype: "jev" | "openai_moderation") {
+    setCredState("busy");
+    try {
+      const credentials = {
+        ...(draft.credentials.api_key?.trim() ? { api_key: draft.credentials.api_key.trim() } : {}),
+      };
+      const res = await mut.validateCredentials.mutateAsync({
+        evaluator_type: etype,
+        credentials,
+        base_url: etype === "jev" ? draft.credentials.base_url?.trim() || undefined : undefined,
+      });
+      setCredState(res.valid ? "valid" : "invalid");
+      toast[res.valid ? "success" : "error"](res.valid ? "Credentials valid." : (res.message ?? "Credentials rejected."));
+    } catch (e) {
+      setCredState("invalid");
+      toast.error(parseApiError(e).message);
+    }
+  }
+
+  const keyNames = useMemo(() => new Map(keyItems.map((k) => [k.id, k.name])), [keyItems]);
+  const unknownKeys = step === 3 ? unknownScopeKeys(draft, keyItems.map((k) => k.id)) : [];
+  const scopeError = unknownKeys.length > 0 ? "Selected keys must belong to this workspace." : null;
+  const summary: [string, string][] = buildReviewSummary(draft, { keyNames, enabled });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl p-5" data-testid="guardrail-form-dialog">
+        <DialogTitle className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          {isEditing ? `Edit “${initial.name}”` : "New guardrail"}
+        </DialogTitle>
+        <DialogDescription asChild>
+          <div>
+            <div className="mb-3 flex flex-wrap gap-1" role="tablist" aria-label="Policy wizard steps" data-testid="wizard-steps">
+              {STEPS.map((label, i) => (
+                <button
+                  key={label}
+                  type="button"
+                  role="tab"
+                  aria-selected={i === step}
+                  onClick={() => {
+                    if (i > step && stepError) {
+                      toast.error(stepError);
+                      return;
+                    }
+                    goStep(i);
+                  }}
+                  data-testid={`wizard-step-tab-${i}`}
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[11px]",
+                    i === step
+                      ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
+                      : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+                  )}
+                >
+                  {i + 1}. {label}
+                </button>
+              ))}
+            </div>
+            <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1" data-testid="wizard-step-body">
+              {step === 0 && (
+                <div className="space-y-3">
+                  <Field label="Name">
+                    <Input value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Block PII in responses" data-testid="gr-name" />
+                  </Field>
+                  <Field label="Description">
+                    <Textarea value={draft.description} onChange={(e) => set({ description: e.target.value })} placeholder="What this policy protects and why" data-testid="gr-description" />
+                  </Field>
+                  <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enabled" data-testid="gr-enabled" />
+                    Enabled on save
+                  </label>
+                </div>
+              )}
+              {step === 1 && (
+                <div className="space-y-3">
+                  <Field label="Protection categories">
+                    <p className="mb-1.5 text-xs text-zinc-500" data-testid="detection-copy">{DETECTION_STEP_COPY}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {CATEGORIES.map((c) => (
+                        <label key={c} className={cn("flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", draft.categories.includes(c) ? "border-tollma-500 bg-tollma-50 text-tollma-800 dark:bg-tollma-950/30 dark:text-tollma-300" : "border-zinc-200 dark:border-zinc-800")}>
+                          <Checkbox checked={draft.categories.includes(c)} onChange={() => set({ categories: draft.categories.includes(c) ? draft.categories.filter((x) => x !== c) : [...draft.categories, c] })} aria-label={c} data-testid={`gr-cat-${c}`} />
+                          {c.replace(/_/g, " ")}
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Severity">
+                      <Select value={draft.severity} onChange={(e) => set({ severity: e.target.value })} data-testid="gr-severity">
+                        {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </Select>
+                    </Field>
+                    <Field label="Stages">
+                      <Select value={draft.stage} onChange={(e) => set({ stage: e.target.value as GuardrailDraft["stage"] })} data-testid="gr-stage">
+                        {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </Select>
+                    </Field>
+                  </div>
+                </div>
+              )}
+              {step === 2 && (
+                <div className="space-y-3">
+                  <Field label="Evaluator">
+                    <Select value={draft.evaluator} onChange={(e) => { setCredState("idle"); set({ evaluator: e.target.value }); }} data-testid="gr-evaluator">
+                      {EVALUATORS.map((v) => <option key={v} value={v}>{v.replace(/_/g, " ")}</option>)}
+                    </Select>
+                  </Field>
+                  {draft.evaluator === "laya" && (
+                    <p className="rounded-lg border border-zinc-200 p-2.5 text-xs dark:border-zinc-800" data-testid="laya-health">
+                      Laya health: <strong>{laya.isPending ? "checking…" : layaReachable ? "reachable" : "unreachable"}</strong>
+                      {laya.data?.latency_ms != null && <span className="text-zinc-500"> · {laya.data.latency_ms}ms</span>}
+                      {laya.data?.message && <span className="block text-zinc-500">{laya.data.message}</span>}
+                    </p>
+                  )}
+                  {draft.evaluator === "jev" && (
+                    <div className="space-y-2 rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
+                      <Field label="API key">
+                        <Input type="password" autoComplete="off" value={draft.credentials.api_key ?? ""} onChange={(e) => set({ credentials: { ...draft.credentials, api_key: e.target.value } })} placeholder="••••••" data-testid="gr-jev-key" />
+                      </Field>
+                      <Field label="Base URL">
+                        <Input value={draft.credentials.base_url ?? ""} onChange={(e) => set({ credentials: { ...draft.credentials, base_url: e.target.value } })} placeholder="https://…" data-testid="gr-jev-url" />
+                      </Field>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void handleValidateCreds("jev")} disabled={credState === "busy"} data-testid="gr-jev-validate">
+                          {credState === "busy" ? "Validating…" : "Validate"}
+                        </Button>
+                        {credState === "valid" && <span className="text-xs text-green-600">Valid</span>}
+                        {credState === "invalid" && <span className="text-xs text-red-600">Invalid</span>}
+                      </div>
+                    </div>
+                  )}
+                  {draft.evaluator === "openai_moderation" && (
+                    <div className="space-y-2 rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
+                      <Field label="OpenAI API key">
+                        <Input type="password" autoComplete="new-password" value={draft.credentials.api_key ?? ""} onChange={(e) => { setCredState("idle"); set({ credentials: { ...draft.credentials, api_key: e.target.value } }); }} placeholder="sk-…" data-testid="gr-openai-key" />
+                      </Field>
+                      <p className="text-[11px] text-zinc-500">
+                        Stored encrypted on this policy only — never shared across workspaces.
+                        Saving validates the key live; an invalid key is rejected.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void handleValidateCreds("openai_moderation")} disabled={credState === "busy" || !(draft.credentials.api_key ?? "").trim()} data-testid="gr-openai-validate">
+                          {credState === "busy" ? "Validating…" : "Validate"}
+                        </Button>
+                        {credState !== "busy" && (
+                          <span className="text-xs" data-testid="gr-openai-status">
+                            {credState === "valid" ? (
+                              <span className="text-green-600">Configured · valid</span>
+                            ) : credState === "invalid" ? (
+                              <span className="text-red-600">Invalid — check the key and retry</span>
+                            ) : (
+                              <span className="text-zinc-500">Not configured — enter a key, then Validate</span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    <Switch checked={draft.needsLlmEscalation} onCheckedChange={(v) => set({ needsLlmEscalation: v })} data-testid="gr-llm-escalation" />
+                    Escalate uncertain calls to an LLM judge
+                  </label>
+                  {draft.needsLlmEscalation && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Escalation provider">
+                        <Select value={draft.escalationProviderId} onChange={(e) => set({ escalationProviderId: e.target.value, escalationModelId: "" })} data-testid="gr-esc-provider">
+                          <option value="">Select…</option>
+                          {(providersQuery.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </Select>
+                      </Field>
+                      <Field label="Escalation model">
+                        <Select value={draft.escalationModelId} onChange={(e) => set({ escalationModelId: e.target.value })} data-testid="gr-esc-model">
+                          <option value="">Select…</option>
+                          {modelsForProvider.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </Select>
+                      </Field>
+                    </div>
+                  )}
+                  <Field label="Delivery mode">
+                    <Select value={draft.delivery_mode} onChange={(e) => set({ delivery_mode: e.target.value })} data-testid="gr-delivery">
+                      {DELIVERY.map((d) => (
+                        <option key={d.value} value={d.value}>
+                          {d.value.replace(/_/g, " ")}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <p className="text-xs text-zinc-500">
+                    {(DELIVERY.find((d) => d.value === draft.delivery_mode) ?? DELIVERY[2]).hint}
+                  </p>
+                </div>
+              )}
+              {step === 3 && (
+                <div className="space-y-3">
+                  <Field label="Scope">
+                    <p className="mb-1.5 text-xs text-zinc-500" data-testid="scope-copy">{SCOPE_STEP_COPY}</p>
+                    <Select value={draft.scope} onChange={(e) => set({ scope: e.target.value })} data-testid="gr-scope">
+                      {WIZARD_SCOPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </Select>
+                  </Field>
+                  {draft.scope === "keys" && (
+                    <div className="space-y-1">
+                      <TargetPicker
+                        label="API keys"
+                        items={keyItems}
+                        selected={draft.key_ids}
+                        onToggle={(id) => toggleKey(id)}
+                        testId="gr-scope-keys"
+                        emptyHint="No API keys yet."
+                      />
+                      <p className="text-xs text-zinc-500" data-testid="scope-keys-summary">
+                        {draft.key_ids.length === 0
+                          ? "No keys selected yet."
+                          : `${draft.key_ids.length} key${draft.key_ids.length === 1 ? "" : "s"} selected. Assignments may only reference keys in this workspace.`}
+                      </p>
+                      {scopeError && (
+                        <p className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300" data-testid="scope-keys-error">
+                          {scopeError}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <Field label="Enforcement">
+                    <p className="mb-1.5 text-xs text-zinc-500" data-testid="enforcement-copy">
+                      Monitor logs without stopping traffic — start here to measure noise. Block stops the turn: highest protection, highest false-positive cost.
+                    </p>
+                    <div className="space-y-2">
+                      {ENFORCEMENTS.map((e) => (
+                        <label key={e.value} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-2.5", draft.enforcement === e.value ? "border-tollma-500" : "border-zinc-200 dark:border-zinc-800")}>
+                          <input type="radio" name="enforcement" value={e.value} checked={draft.enforcement === e.value} onChange={() => set({ enforcement: e.value })} data-testid={`gr-enf-${e.value}`} className="mt-0.5" />
+                          <span className="text-xs"><strong className="capitalize">{e.value}.</strong> {e.hint}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
+                </div>
+              )}
+              {step === 4 && (
+                <div className="space-y-3">
+                  <p className="text-xs text-zinc-500" data-testid="review-detection-copy">{DETECTION_STEP_COPY}</p>
+                  <dl className="grid grid-cols-2 gap-2">
+                    {summary.map(([k, v]) => (
+                      <div key={k} className="rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+                        <dt className="text-[10px] uppercase tracking-wider text-zinc-400">{k}</dt>
+                        <dd className="mt-0.5 text-xs font-medium text-zinc-900 dark:text-zinc-100">{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    <Switch checked={logTriggers} onCheckedChange={setLogTriggers} data-testid="gr-log" /> Log trigger events
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    <Switch checked={notify} onCheckedChange={setNotify} data-testid="gr-notify" /> Notify on trigger
+                  </label>
+                  {notify && (
+                    <p className="text-[11px] text-zinc-500" data-testid="gr-recipients-note">
+                      Sends to the policy owner (personal) or workspace roots (organization).
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Confidence threshold (0–1)">
+                      <Input type="number" min={0} max={1} step={0.05} value={draft.threshold ?? ""} onChange={(e) => set({ threshold: e.target.value === "" ? null : Number(e.target.value) })} data-testid="gr-threshold" />
+                    </Field>
+                    <Field label="Evaluator timeout (ms)">
+                      <Input type="number" min={1} value={draft.timeout_ms ?? ""} onChange={(e) => set({ timeout_ms: e.target.value === "" ? null : Number(e.target.value) })} data-testid="gr-timeout" />
+                    </Field>
+                  </div>
+                  <Field label="Evaluator failure action">
+                    <Select value={failureAction} onChange={(e) => setFailureAction(e.target.value)} data-testid="gr-failure">
+                      <option value="allow">allow — fail open</option>
+                      <option value="block">block — fail closed</option>
+                    </Select>
+                  </Field>
+                  {!isEditing && (
+                    <p className="rounded-lg bg-zinc-50 p-2.5 text-xs text-zinc-500 dark:bg-zinc-900" data-testid="test-hint">
+                      Save the policy first, then use Test on the row to dry-run content before enabling enforcement.
+                    </p>
+                  )}
+                </div>
+              )}
+              {stepError && (
+                <p className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300" data-testid="wizard-error">
+                  {stepError}
+                </p>
+              )}
+              {saveError && (
+                <p className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300" data-testid="wizard-save-error">
+                  {saveError}
+                </p>
+              )}
+            </div>
+            <div className="mt-3 flex items-center justify-between">
+              <Button variant="ghost" size="sm" onClick={() => goStep(Math.max(0, step - 1))} disabled={step === 0} data-testid="wizard-back">Back</Button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+                {step < STEPS.length - 1 ? (
+                  <Button size="sm" onClick={() => stepError ? toast.error(stepError) : goStep(step + 1)} data-testid="wizard-next">Next</Button>
+                ) : (
+                  <Button size="sm" onClick={() => void handleSave()} disabled={saving} data-testid="wizard-save">
+                    {saving ? "Saving…" : isEditing ? "Save changes" : "Create policy"}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </DialogDescription>
+      </DialogContent>
+    </Dialog>
+  );
+}

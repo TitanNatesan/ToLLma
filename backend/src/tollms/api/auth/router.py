@@ -67,7 +67,9 @@ async def signup(
     data: SignupRequest, response: Response, request: Request, db: Session = Depends(get_db),
     _: None = Depends(rate_limit.limit("auth:signup")),
 ) -> AuthResponse:
-    user, verify_token = await service.signup(db, str(data.email), data.password, data.full_name)
+    user, verify_token, verification_sent = await service.signup(
+        db, str(data.email), data.password, data.full_name
+    )
     refresh_jti = security.generate_refresh_jti()
     session_id = await security.create_session(
         user.id, user.email, "password", **security.client_meta(request),
@@ -79,6 +81,7 @@ async def signup(
     return AuthResponse(
         user=service.read_user(user),
         access_token=access,
+        verification_sent=verification_sent,
         debug_verification_token=_debug_token(verify_token),
     )
 
@@ -110,7 +113,9 @@ async def login(
 ) -> AuthResponse:
     user, access, refresh, _ = await service.login(db, str(data.email), data.password, **security.client_meta(request))
     _set_session_cookies(response, access, refresh)
-    return AuthResponse(user=service.read_user(user), access_token=access)
+    return AuthResponse(
+        user=service.read_user(user), access_token=access, verification_sent=True
+    )
 
 
 @router.get("/google/login")

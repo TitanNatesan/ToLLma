@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Activity,
   BarChart3,
@@ -24,11 +24,14 @@ import {
 import {
   Badge,
   Button,
+  DetailPanel,
   EmptyState,
   ErrorState,
   LoadingState,
+  PageContainer,
   PageHeader,
   Select,
+  StatGrid,
 } from "@/components/ui";
 import {
   AreaChart,
@@ -51,18 +54,22 @@ import {
 } from "@/hooks/useAnalytics";
 import { downloadAnalyticsExport, formatExportTruncationNotice } from "@/services/api";
 import { useAnalyticsWidgets } from "@/hooks/useIntelligence";
+import { useOrg } from "@/hooks/useOrgs";
+import { OrgAnalyticsDashboard } from "@/app/organizations/components/OrgAnalyticsDashboard";
+import { useOrgStore } from "@/store/org";
 import { AnalyticsWidgetsPanel } from "./components/AnalyticsWidgetsPanel";
 import { fmtCompactTokens, fmtTokens } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { KpiCard, SectionCard } from "./components/KpiCard";
-import { RangePicker } from "./components/RangePicker";
+import { AnalyticsRangePicker } from "@/components/ui/RangePicker";
 import { ConversationRankList, ModelsTable, ProvidersTable } from "./components/AnalyticsTables";
-import { fmtBucket, fmtBucketFull, fmtFloat, fmtMoney, fmtMs, fmtNumber, fmtPct } from "./format";
+import { PRESET_LABELS, fmtBucket, fmtBucketFull, fmtFloat, fmtMoney, fmtMs, fmtNumber, fmtPct } from "./format";
 import type {
   AnalyticsDataset,
   AnalyticsGranularity,
   AnalyticsPreset,
   AnalyticsRangeParams,
+  ConversationAnalyticsRow,
   ModelSort,
 } from "@/types";
 
@@ -87,6 +94,101 @@ const INSIGHT_STYLES: Record<string, string> = {
 };
 
 export default function AnalyticsPage() {
+  const context = useOrgStore((s) => s.context);
+  if (context.type === "org") {
+    return <OrgAnalyticsView orgId={context.orgId} orgName={context.orgName} />;
+  }
+  return <PersonalAnalyticsView />;
+}
+
+/** Org scope: identical page chrome (PageContainer + PageHeader + scope chip),
+ *  org data via the shared OrgAnalyticsDashboard (same charts, same gates). */
+function OrgAnalyticsView({ orgId, orgName }: { orgId: string; orgName: string }) {
+  const org = useOrg(orgId);
+  const data = org.data;
+  const can = (code: string) => !!data && (data.is_root || data.permissions.includes(code));
+  const canView =
+    !!data && (data.is_root || can("Analytics.ViewUsage") || can("Organization.ViewAnalytics"));
+  const canSeeCost = !!data && (data.is_root || can("Analytics.ViewCost"));
+  const canReadBudget = !!data && (data.is_root || can("Budgets.Read"));
+  const canEditBudget = !!data && (data.is_root || can("Budgets.Update"));
+
+  const header = (
+    <PageHeader
+      title="Analytics"
+      subtitle="Usage, spend, tokens and performance intelligence — computed server-side."
+      badges={
+        <Badge variant="secondary" data-testid="analytics-scope">
+          {orgName}
+        </Badge>
+      }
+    />
+  );
+
+  if (org.isLoading) {
+    return (
+      <PageContainer
+        header={header}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
+      >
+        <div className="mt-10">
+          <LoadingState message="Loading organization…" />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  if (org.isError || !data) {
+    return (
+      <PageContainer
+        header={header}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
+      >
+        <div className="mt-6">
+          <ErrorState
+            title="Organization unavailable"
+            message={org.error instanceof Error ? org.error.message : "Could not load organization."}
+            onRetry={() => void org.refetch()}
+          />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  // Same permission empty-state pattern as the org analytics section.
+  if (!canView) {
+    return (
+      <PageContainer
+        header={header}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
+      >
+        <div className="mt-6">
+          <EmptyState
+            title="Analytics"
+            description="You need usage-analytics permission to view organization analytics."
+          />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  return (
+    <PageContainer header={header} testId="analytics-page">
+      <OrgAnalyticsDashboard
+        orgId={orgId}
+        canView={canView}
+        canSeeCost={canSeeCost}
+        canReadBudget={canReadBudget}
+        canEditBudget={canEditBudget}
+      />
+    </PageContainer>
+  );
+}
+
+function PersonalAnalyticsView() {
   const router = useRouter();
   const timezone = useMemo(() => browserTimezone(), []);
 
@@ -98,6 +200,9 @@ export default function AnalyticsPage() {
   const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null);
   const [dataset, setDataset] = useState<AnalyticsDataset>("summary");
   const [exporting, setExporting] = useState(false);
+  // Summary panel: conversation rows open a detail drawer reusing the row's
+  // data (no extra fetch); navigation is an explicit action inside.
+  const [selectedConv, setSelectedConv] = useState<ConversationAnalyticsRow | null>(null);
 
   const customReady = preset !== "custom" || (!!customStart && !!customEnd);
   const params = useMemo<AnalyticsRangeParams>(
@@ -158,6 +263,7 @@ export default function AnalyticsPage() {
   }
 
   function openConversation(conversationId: string) {
+    setSelectedConv(null);
     router.push(`/c/${conversationId}`);
   }
 
@@ -185,8 +291,13 @@ export default function AnalyticsPage() {
     <PageHeader
       title="Analytics"
       subtitle="Usage, spend, tokens and performance intelligence — computed server-side."
+      badges={
+        <Badge variant="secondary" data-testid="analytics-scope">
+          Personal
+        </Badge>
+      }
       actions={
-        <RangePicker
+        <AnalyticsRangePicker
           preset={preset}
           onPreset={changePreset}
           customStart={customStart}
@@ -205,6 +316,7 @@ export default function AnalyticsPage() {
             breakdown.isFetching ||
             performance.isFetching
           }
+          presetLabels={PRESET_LABELS}
         />
       }
     />
@@ -212,11 +324,11 @@ export default function AnalyticsPage() {
 
   if (!ready) {
     return (
-      <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-        data-testid="analytics-page"
+      <PageContainer
+        header={pageHeader}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
       >
-        {pageHeader}
         <div className="mt-6">
           <EmptyState
             icon={Clock}
@@ -225,17 +337,17 @@ export default function AnalyticsPage() {
             testId="analytics-custom-prompt"
           />
         </div>
-      </main>
+      </PageContainer>
     );
   }
 
   if (summary.isError) {
     return (
-      <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-        data-testid="analytics-page"
+      <PageContainer
+        header={pageHeader}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
       >
-        {pageHeader}
         <div className="mt-6">
           <ErrorState
             title="Analytics unavailable"
@@ -243,35 +355,29 @@ export default function AnalyticsPage() {
             onRetry={() => void summary.refetch()}
           />
         </div>
-      </main>
+      </PageContainer>
     );
   }
 
   if (summary.isLoading || !kpi) {
     return (
-      <main
-        className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-        data-testid="analytics-page"
+      <PageContainer
+        header={pageHeader}
+        testId="analytics-page"
+        contentClassName="flex min-w-0 flex-1 flex-col px-4 pt-4"
       >
-        {pageHeader}
         <div className="mt-10">
           <LoadingState message="Crunching your usage data…" />
         </div>
-      </main>
+      </PageContainer>
     );
   }
 
   const empty = Number(kpi.total_requests.value) === 0;
 
   return (
-    <main
-      className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white px-4 py-4 dark:bg-zinc-950"
-      data-testid="analytics-page"
-    >
-      {pageHeader}
-
-      <div className="mt-4 flex flex-col gap-4 pb-10">
-        {empty ? (
+    <PageContainer header={pageHeader} testId="analytics-page">
+      {empty ? (
           <SectionCard id="summary" title="No activity yet" testId="analytics-empty">
             <EmptyState
               icon={BarChart3}
@@ -310,11 +416,7 @@ export default function AnalyticsPage() {
             )}
 
             {/* KPI grid */}
-            <section
-              id="summary"
-              className="grid scroll-mt-4 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
-              data-testid="analytics-kpis"
-            >
+            <StatGrid id="summary" className="scroll-mt-4" testId="analytics-kpis">
               <KpiCard
                 label="Total spend"
                 value={fmtMoney(kpi.total_spend.value)}
@@ -388,7 +490,7 @@ export default function AnalyticsPage() {
                 icon={<Sparkles className="size-4" />}
                 testId="kpi-cache"
               />
-            </section>
+            </StatGrid>
 
             <AnalyticsWidgetsPanel widgets={widgets.data} />
 
@@ -400,23 +502,23 @@ export default function AnalyticsPage() {
               testId="analytics-section-cost"
               action={
                 <div className="flex items-center gap-1">
-                  {GRANULARITIES.map((g) => (
-                    <button
-                      key={g.value}
-                      type="button"
-                      onClick={() => changeGranularity(g.value)}
-                      aria-pressed={activeGranularity === g.value}
-                      data-testid={`granularity-${g.value}`}
-                      className={cn(
-                        "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-                        activeGranularity === g.value
-                          ? "bg-tollma-600 text-white dark:bg-tollma-500"
-                          : "text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800",
-                      )}
-                    >
-                      {g.label}
-                    </button>
-                  ))}
+                  {GRANULARITIES.map((g) => {
+                    const active = activeGranularity === g.value;
+                    return (
+                      <Button
+                        key={g.value}
+                        type="button"
+                        size="sm"
+                        variant={active ? "default" : "ghost"}
+                        onClick={() => changeGranularity(g.value)}
+                        aria-pressed={active}
+                        data-testid={`granularity-${g.value}`}
+                        className={active ? undefined : "text-zinc-500 dark:text-zinc-400"}
+                      >
+                        {g.label}
+                      </Button>
+                    );
+                  })}
                   {zoom && (
                     <Button variant="ghost" size="sm" className="text-xs" onClick={() => setZoom(null)} data-testid="zoom-reset">
                       Reset zoom
@@ -491,7 +593,7 @@ export default function AnalyticsPage() {
                       <tr
                         key={row.id}
                         className="cursor-pointer border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50"
-                        onClick={() => openConversation(row.id)}
+                        onClick={() => setSelectedConv(row)}
                         data-testid={`top-conversation-${row.id}`}
                       >
                         <td className="max-w-64 truncate py-2 pr-3 font-medium text-zinc-800 dark:text-zinc-200">
@@ -754,35 +856,35 @@ export default function AnalyticsPage() {
                   title="Most active"
                   rows={conversations.data?.most_active ?? []}
                   metric={(row) => `${row.messages} msgs`}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-active"
                 />
                 <ConversationRankList
                   title="Longest"
                   rows={conversations.data?.longest ?? []}
                   metric={(row) => `${row.user_messages} prompts`}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-longest"
                 />
                 <ConversationRankList
                   title="Most expensive"
                   rows={conversations.data?.most_expensive ?? []}
                   metric={(row) => fmtMoney(row.spend)}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-expensive"
                 />
                 <ConversationRankList
                   title="Largest context"
                   rows={conversations.data?.largest_context ?? []}
                   metric={(row) => `${fmtCompactTokens(row.max_context_tokens)} ctx`}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-context"
                 />
                 <ConversationRankList
                   title="Highest tokens"
                   rows={conversations.data?.highest_tokens ?? []}
                   metric={(row) => fmtTokens(row.tokens)}
-                  onOpen={(row) => openConversation(row.id)}
+                  onOpen={(row) => setSelectedConv(row)}
                   testId="rank-tokens"
                 />
                 <div className="rounded-lg border border-dashed border-zinc-200 p-4 dark:border-zinc-800">
@@ -803,7 +905,34 @@ export default function AnalyticsPage() {
             </p>
           </>
         )}
-      </div>
-    </main>
+
+      <DetailPanel open={selectedConv !== null} onClose={() => setSelectedConv(null)}
+        testId="analytics-conversation-summary"
+        title={selectedConv?.title ?? "Conversation"}
+        subtitle={selectedConv ? `${selectedConv.messages} messages · ${fmtTokens(selectedConv.tokens)}` : undefined}
+        actions={selectedConv ? (
+          <Button size="sm" onClick={() => openConversation(selectedConv.id)} data-testid="analytics-conv-open">
+            Open conversation
+          </Button>
+        ) : undefined}>
+        {selectedConv && (
+          <dl className="space-y-1 text-xs">
+            {[
+              ["Provider", selectedConv.provider_name ?? "—"],
+              ["Model", selectedConv.model_name ?? "—"],
+              ["Cost", fmtMoney(selectedConv.spend)],
+              ["Tokens", fmtTokens(selectedConv.tokens)],
+              ["Prompts", String(selectedConv.user_messages)],
+              ["Context peak", fmtCompactTokens(selectedConv.max_context_tokens)],
+            ].map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-2 rounded border border-zinc-100 px-2 py-1 dark:border-zinc-900">
+                <dt className="text-zinc-500">{k}</dt>
+                <dd className="truncate text-right font-mono text-[11px]">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </DetailPanel>
+    </PageContainer>
   );
 }

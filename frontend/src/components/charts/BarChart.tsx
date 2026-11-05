@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useElementSize } from "./useElementSize";
+import { useChartHeight } from "./useChartHeight";
 import { chartColor, compactNumber, niceMax } from "./palette";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +21,7 @@ interface BarChartProps {
 export function BarChart({
   labels,
   values,
-  height = 200,
+  height: heightProp,
   color = chartColor(0),
   valueFormat = compactNumber,
   highlightIndex = null,
@@ -28,6 +29,8 @@ export function BarChart({
   className,
 }: BarChartProps) {
   const { ref, width } = useElementSize<HTMLDivElement>();
+  const responsiveHeight = useChartHeight(200);
+  const height = heightProp ?? responsiveHeight;
   const [hover, setHover] = useState<number | null>(null);
   const pad = { left: 44, right: 10, top: 12, bottom: 24 };
   const innerWidth = Math.max(10, width - pad.left - pad.right);

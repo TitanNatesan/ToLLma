@@ -5,8 +5,9 @@ import { Activity, KeyRound, Network, Pencil } from "lucide-react";
 import { Badge, Button, DetailPanel } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { KeyAnalytics } from "./KeyAnalytics";
+import { ModelPermissionChips } from "./ModelPermissionChips";
 import { NetworkPanel } from "./NetworkPanel";
-import { ApiKeyStatusPill, apiKeyStatus, fmtDateTime } from "./StatusPill";
+import { ApiKeyStatusPill, fmtDateTime, keyStatus } from "./StatusPill";
 import type { ApiKey } from "@/types/apiKeys";
 
 type Tab = "analytics" | "network";
@@ -35,12 +36,31 @@ const NetworkSlot = memo(function NetworkSlot({ keyId }: { keyId: string }) {
   return <NetworkPanel keyId={keyId} />;
 });
 
+/** Read-only model allowlist chips; empty means the key may use any model. */
+function ModelsSection({ apiKey }: { apiKey: ApiKey }) {
+  const perms = apiKey.model_permissions ?? [];
+  return (
+    <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Model permissions</p>
+      {perms.length === 0 ? (
+        <p className="mt-1 text-[11px] text-zinc-500" data-testid={`key-models-${apiKey.id}`}>
+          All models — no per-model restriction.
+        </p>
+      ) : (
+        <ModelPermissionChips items={perms} testId={`key-models-${apiKey.id}`} />
+      )}
+    </div>
+  );
+}
+
 interface KeyDetailsPanelProps {
   apiKey: ApiKey | null;
   open: boolean;
   onClose: () => void;
   /** Opens the dedicated edit drawer for this key. */
   onEdit?: (apiKey: ApiKey) => void;
+  /** 30d spend when already loaded by the list; same signal the table passes. */
+  cost?: number | null;
 }
 
 /**
@@ -48,7 +68,7 @@ interface KeyDetailsPanelProps {
  * All editing moved to KeyEditDrawer — this panel renders no inputs.
  * Chrome (backdrop, Escape, focus trap) comes from the shared DetailPanel.
  */
-export function KeyDetailsPanel({ apiKey, open, onClose, onEdit }: KeyDetailsPanelProps) {
+export function KeyDetailsPanel({ apiKey, open, onClose, onEdit, cost }: KeyDetailsPanelProps) {
   if (!apiKey) return null;
   return (
     <KeyDetailsContent
@@ -57,6 +77,7 @@ export function KeyDetailsPanel({ apiKey, open, onClose, onEdit }: KeyDetailsPan
       open={open}
       onClose={onClose}
       onEdit={onEdit}
+      cost={cost}
     />
   );
 }
@@ -66,14 +87,17 @@ const KeyDetailsContent = memo(function KeyDetailsContent({
   open,
   onClose,
   onEdit,
+  cost,
 }: {
   apiKey: ApiKey;
   open: boolean;
   onClose: () => void;
   onEdit?: (apiKey: ApiKey) => void;
+  cost?: number | null;
 }) {
   const [tab, setTab] = useState<Tab>("analytics");
-  const status = apiKeyStatus(apiKey);
+  // Identical function + spend basis as the table row: no disagreement.
+  const status = keyStatus(apiKey, cost);
 
   return (
     <DetailPanel
@@ -105,7 +129,37 @@ const KeyDetailsContent = memo(function KeyDetailsContent({
       label={`Details for ${apiKey.name}`}
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+        {(apiKey.is_primary || apiKey.is_default) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {apiKey.is_primary && (
+              <Badge
+                variant="secondary"
+                className="text-[10px]"
+                data-testid={`key-details-primary-${apiKey.id}`}
+                title="Primary is your automatic system key"
+              >
+                Primary
+              </Badge>
+            )}
+            {apiKey.is_default && (
+              <Badge
+                variant="success"
+                className="text-[10px]"
+                data-testid={`key-details-default-${apiKey.id}`}
+                title="Default is the most-recent key used for new requests"
+              >
+                Default
+              </Badge>
+            )}
+            <span
+              className="text-[11px] text-zinc-500 dark:text-zinc-400"
+              data-testid="key-primary-default-explainer"
+            >
+              Primary is automatic. Default is the most-recent key.
+            </span>
+          </div>
+        )}
+        <div className="grid grid-cols-1 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-2">
           <Meta label="Status" value={<ApiKeyStatusPill status={status} />} />
           <Meta label="Prefix" value={<span className="font-mono">{apiKey.key_prefix}</span>} />
           <Meta label="Created" value={fmtDateTime(apiKey.created_at)} />
@@ -121,10 +175,12 @@ const KeyDetailsContent = memo(function KeyDetailsContent({
           />
         </div>
 
+                <ModelsSection apiKey={apiKey} />
+
         <div
           role="tablist"
           aria-label="Key observability"
-          className="grid grid-cols-2 gap-0.5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+          className="grid grid-cols-1 gap-0.5 rounded-lg border border-zinc-200 bg-zinc-50/60 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60 sm:grid-cols-2"
         >
           {TABS.map((item) => {
             const Icon = item.icon;

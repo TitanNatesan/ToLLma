@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { BarChart3, Coins, Cpu, Route } from "lucide-react";
 import { chartColor } from "@/components/charts/palette";
 import { fmtCost, fmtTokens } from "@/lib/utils";
-import { SectionFrame, num, truncate } from "./shared";
+import { SectionFrame, endpointLabel, num, truncate } from "./shared";
 import type { ApiKeyAnalyticsSummary } from "@/types/apiKeys";
 
 interface LeaderboardItem {
@@ -111,7 +111,7 @@ export function TopConsumers({ summary }: { summary: ApiKeyAnalyticsSummary }) {
     () =>
       [...(summary.endpoints ?? [])]
         .map((row) => ({
-          name: row.endpoint || "unknown endpoint",
+          name: endpointLabel(row.endpoint),
           value: num(row.spend),
           hint: `${fmtTokens(row.requests)} req`,
         }))

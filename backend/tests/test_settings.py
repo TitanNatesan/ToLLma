@@ -237,7 +237,8 @@ def test_gateway_tags_messages_with_session_id(
             yield StreamChunk(delta="hi")
 
     monkeypatch.setattr(gateway_service, "build_adapter", lambda *a, **k: TinyAdapter(credentials={}, model_id="m"))
-    r = client.post("/api/v1/gateway/chat", json={"provider_id": p["id"], "model_id": m["id"], "message": "hello"})
+    key_id = client.get("/api/v1/chat/keys").json()[0]["id"]
+    r = client.post("/api/v1/gateway/chat", json={"provider_id": p["id"], "model_id": m["id"], "message": "hello", "key_id": key_id})
     assert r.status_code == 200, r.text
 
     sid = _sid(client)

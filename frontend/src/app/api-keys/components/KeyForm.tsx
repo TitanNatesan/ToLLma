@@ -16,13 +16,17 @@ import {
   DialogDescription,
   DialogTitle,
   Input,
+  Select,
   Separator,
   Switch,
   Textarea,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { KeyGuardrailsSection } from "@/app/guardrails/components/KeyGuardrailsSection";
+import { useOrgStore } from "@/store/org";
 import { apiKeyErrorMessage } from "@/services/apiKeys";
 import { IpRulesEditor, parseIpRules } from "./IpRulesEditor";
+import { KeyLoggingField } from "./KeyLoggingField";
 import { ModelPermissionsEditor } from "./ModelPermissionsEditor";
 import { PolicyForm, hasPolicyValues, policyToInput } from "./PolicyForm";
 import { Segmented } from "./SelectField";
@@ -33,6 +37,7 @@ import type {
   ApiKeyPolicyInput,
   ApiKeyUpdateInput,
 } from "@/types/apiKeys";
+import type { AIModel } from "@/types";
 
 /** Everything the create flow can submit (policy/IP/models empty = inherit). */
 export interface KeyFormResult {
@@ -42,10 +47,30 @@ export interface KeyFormResult {
   policy: ApiKeyPolicyInput | null;
   ipRules: ApiKeyIpRuleInput[];
   modelPermissions: ApiKeyModelPermissionInput[];
+  /** Guardrail policies to attach after the key exists. */
+  guardrail_ids: string[];
+  /** Organization assignee (org scope only). */
+  assigneeUserId: string | null;
+  /** Prompt-logging override; null = inherit (nothing is sent). */
+  logging_enabled: boolean | null;
+}
+
+export interface KeyAssignee {
+  id: string;
+  email: string;
 }
 
 interface KeyFormProps {
   mode: "create" | "edit";
+  /** "org" adds a required assignee; every other section matches personal. */
+  scope?: "personal" | "org";
+  assignees?: KeyAssignee[];
+  assigneeId?: string;
+  onAssigneeChange?: (id: string) => void;
+  /** Override the personal registry (e.g. org-scoped models/providers). */
+  models?: AIModel[];
+  providers?: Array<{ id: string; name: string; provider_type: string }>;
+  configureHref?: string;
   apiKey?: ApiKey | null;
   onCreate?: (result: KeyFormResult) => Promise<void>;
   onUpdate?: (id: string, body: ApiKeyUpdateInput) => Promise<void>;
@@ -120,8 +145,9 @@ function Section({
 }
 
 /** Create (full) and edit (metadata) dialog for a user API key. */
-export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormProps) {
+export function KeyForm({ mode, scope = "personal", assignees, assigneeId, onAssigneeChange, models: modelsOverride, providers: providersOverride, configureHref, apiKey, onCreate, onUpdate, onClose }: KeyFormProps) {
   const editing = mode === "edit" && !!apiKey;
+  const isOrg = scope === "org" && !editing;
 
   const [name, setName] = useState(apiKey?.name ?? "");
   const [description, setDescription] = useState(apiKey?.description ?? "");
@@ -134,8 +160,17 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
   const [allow, setAllow] = useState("");
   const [deny, setDeny] = useState("");
   const [modelPermissions, setModelPermissions] = useState<ApiKeyModelPermissionInput[]>([]);
+  const [orgAssignee, setOrgAssignee] = useState(assigneeId ?? "");
+  const [guardrailIds, setGuardrailIds] = useState<Set<string>>(new Set());
+  // Prompt-logging override (null = inherit; only non-null is ever sent).
+  const [logging, setLogging] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const context = useOrgStore((st) => st.context);
+  const guardrailOrgId = context.type === "org" ? context.orgId : undefined;
+  const effectiveAssignee = assigneeId ?? orgAssignee;
+  const setEffectiveAssignee = onAssigneeChange ?? setOrgAssignee;
 
   function applyExpiryPreset(preset: ExpiryPreset) {
     setExpiryPreset(preset);
@@ -152,6 +187,10 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError("Name is required.");
+      return;
+    }
+    if (isOrg && !effectiveAssignee) {
+      setError("Choose the member this key is assigned to.");
       return;
     }
     if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
@@ -184,6 +223,9 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
           policy: hasPolicyValues(policy) ? policy : null,
           ipRules: parsedIp.rules,
           modelPermissions,
+          guardrail_ids: [...guardrailIds],
+          assigneeUserId: isOrg ? effectiveAssignee || null : null,
+          logging_enabled: logging,
         });
       }
     } catch (e) {
@@ -200,24 +242,69 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
         if (!next && !busy) onClose();
       }}
     >
-      <DialogContent className="max-w-3xl p-5" data-testid="key-form-dialog">
+      <DialogContent className="max-w-2xl p-5" data-testid="key-form-dialog">
         <DialogTitle className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          {editing ? "Edit API key" : "Create API key"}
+          {editing ? "Edit API key" : isOrg ? "Create organization API key" : "Create API key"}
         </DialogTitle>
         <DialogDescription asChild>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
             {editing
               ? "Update the key's metadata. Limits, network rules and model access are managed from the key's details panel."
-              : "The secret is shown once after creation — copy it into your secret manager."}
+              : isOrg
+                ? "Keys are scoped to this organization and inherit its governance. The secret is shown once after creation."
+                : "The secret is shown once after creation — copy it into your secret manager."}
           </p>
         </DialogDescription>
 
         <div className="mt-4 space-y-5">
+          <div className="min-w-0 space-y-5">
           <Section
             icon={KeyRound}
             title="Basics"
-            description="Name, lifetime and an optional note for your team."
+            description={
+              isOrg
+                ? "Name, assignee, lifetime, limits and an optional note."
+                : "Name, lifetime and an optional note for your team."
+            }
           >
+            {isOrg && (
+              <div className="flex min-w-0 flex-col gap-1">
+                <label
+                  htmlFor="key-assignee-input"
+                  className="text-[10px] font-medium uppercase tracking-wider text-zinc-400"
+                >
+                  Assignee (member)
+                </label>
+                <Select
+                  id="key-assignee-input"
+                  value={effectiveAssignee}
+                  onChange={(event) => setEffectiveAssignee(event.target.value)}
+                  disabled={busy}
+                  data-testid="key-assignee-input"
+                  aria-label="Assignee (member)"
+                >
+                  <option value="">Select a member…</option>
+                  {(assignees ?? []).map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.email}
+                    </option>
+                  ))}
+                  {(assignees ?? []).length === 0 && (
+                    <option value="" disabled>
+                      No eligible members
+                    </option>
+                  )}
+                </Select>
+                {(assignees ?? []).length === 0 && (
+                  <p
+                    className="text-[11px] text-zinc-500 dark:text-zinc-400"
+                    data-testid="key-assignee-empty"
+                  >
+                    No active members in this organization to assign a key to.
+                  </p>
+                )}
+              </div>
+            )}
             <div className="flex min-w-0 flex-col gap-1">
               <label
                 htmlFor="key-name-input"
@@ -314,7 +401,12 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
                   disabled={busy}
                 />
               </Section>
+            </>
+          )}
+          </div>
 
+          {!editing && (
+            <>
               <Separator />
               <Section
                 icon={ShieldCheck}
@@ -324,6 +416,47 @@ export function KeyForm({ mode, apiKey, onCreate, onUpdate, onClose }: KeyFormPr
                 <ModelPermissionsEditor
                   value={modelPermissions}
                   onChange={setModelPermissions}
+                  disabled={busy}
+                  models={modelsOverride}
+                  providers={providersOverride}
+                  configureHref={configureHref}
+                />
+              </Section>
+            </>
+          )}
+
+          {!editing && (
+            <>
+              <Separator />
+              <Section
+                icon={ShieldCheck}
+                title="Prompt logging"
+                description="Override workspace logging for this key. Inherited follows the workspace logging policy (global or selected keys)."
+              >
+                <KeyLoggingField
+                  orgId={isOrg && context.type === "org" ? context.orgId : undefined}
+                  keyId={null}
+                  value={logging}
+                  onChange={setLogging}
+                  disabled={busy}
+                  testIdPrefix="key-form"
+                />
+              </Section>
+            </>
+          )}
+
+          {!editing && (
+            <>
+              <Separator />
+              <Section
+                icon={ShieldCheck}
+                title="Guardrails"
+                description="Attach policies to this key. Global and provider policies apply automatically; mandatory org policies cannot be removed."
+              >
+                <KeyGuardrailsSection
+                  orgId={guardrailOrgId}
+                  selectedIds={guardrailIds}
+                  onSelectionChange={setGuardrailIds}
                   disabled={busy}
                 />
               </Section>

@@ -44,6 +44,10 @@ class GenerationRun(TimestampedModel):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     generation_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Attributing key for the generation (NULL = legacy/keyless).
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
+    )
     provider_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("providers.id", ondelete="SET NULL"), nullable=True
     )
@@ -67,4 +71,5 @@ class GenerationRun(TimestampedModel):
     __table_args__ = (
         UniqueConstraint("message_id", "generation_number", name="uq_generation_runs_message_number"),
         Index("ix_generation_runs_message_active", "message_id", "is_active"),
+        Index("ix_generation_runs_api_key", "api_key_id"),
     )

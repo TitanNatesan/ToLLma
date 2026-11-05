@@ -11,6 +11,7 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -30,6 +31,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
 
+if TYPE_CHECKING:
+    from tollms.models.message import Message
+    from tollms.models.guardrail import GuardrailAssignment, GuardrailTrigger
+    from tollms.models.organization import Organization
+    from tollms.models.prompt_logging import PromptLog, PromptLoggingKeyOverride, PromptLoggingKeyTarget
+
 
 class IpRuleType(str, enum.Enum):
     ALLOW = "allow"
@@ -42,13 +49,55 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
         UniqueConstraint("key_prefix", name="uq_api_keys_prefix"),
         UniqueConstraint("key_hash", name="uq_api_keys_hash"),
         Index("ix_api_keys_user", "user_id"),
+        Index("ix_api_keys_org", "org_id"),
+        Index("ix_api_keys_issued_by", "issued_by"),
         Index("ix_api_keys_created", "created_at"),
         Index("ix_api_keys_enabled", "enabled"),
         Index("ix_api_keys_parent", "parent_key_id"),
+        # Key names unique per org among live org rows (NULL org_id =
+        # personal keys, which carry no DB name constraint — see service).
+        Index(
+            "uq_api_keys_org_name_live",
+            "org_id",
+            "name",
+            unique=True,
+            postgresql_where=text("is_deleted = false AND org_id IS NOT NULL"),
+        ),
+        # One primary key per personal user: only personal (org_id IS NULL),
+        # live, primary rows participate — org keys and non-primary
+        # personal keys are unconstrained.
+        Index(
+            "uq_api_keys_primary_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text(
+                "is_deleted = false AND org_id IS NULL AND is_primary = true"
+            ),
+        ),
+        # One default key per personal user: the most-recent personal key
+        # (primary is system-managed allow-list; default is the newest
+        # personal key used for password-less flows). Org keys never
+        # participate.
+        Index(
+            "uq_api_keys_default_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text(
+                "is_deleted = false AND org_id IS NULL AND is_default = true"
+            ),
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # NULL = personal key (owned by user_id). Non-NULL = org-scoped key.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True
+    )
+    # User who issued the key (audit trail, like invitations.invited_by).
+    issued_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -57,6 +106,17 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
     # SHA-256 hex of the raw key. The raw value is shown exactly once at creation.
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Personal-key default for password-less flows. At most one live
+    # primary per personal user (see uq_api_keys_primary_per_user).
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # Personal-key default (most-recent personal key) vs primary (system
+    # allow-list key): a primary is usually also the default, but a newer
+    # user-created key takes over the default slot while the primary stays.
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rotation_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -71,11 +131,22 @@ class ApiKey(SoftDeleteMixin, TimestampedModel):
     policy: Mapped["ApiKeyPolicy | None"] = relationship(
         back_populates="api_key", cascade="all, delete-orphan", uselist=False
     )
+    organization: Mapped["Organization | None"] = relationship(back_populates="api_keys")
     ip_rules: Mapped[list["ApiKeyIpRule"]] = relationship(
         back_populates="api_key", cascade="all, delete-orphan"
     )
     model_permissions: Mapped[list["ApiKeyModelPermission"]] = relationship(
         back_populates="api_key", cascade="all, delete-orphan"
+    )
+    messages: Mapped[list["Message"]] = relationship(back_populates="api_key")
+    guardrail_assignments: Mapped[list["GuardrailAssignment"]] = relationship(back_populates="api_key")
+    guardrail_triggers: Mapped[list["GuardrailTrigger"]] = relationship(back_populates="api_key")
+    prompt_logs: Mapped[list["PromptLog"]] = relationship(back_populates="api_key")
+    prompt_logging_key_targets: Mapped[list["PromptLoggingKeyTarget"]] = relationship(
+        back_populates="api_key"
+    )
+    prompt_logging_key_overrides: Mapped[list["PromptLoggingKeyOverride"]] = relationship(
+        back_populates="api_key"
     )
 
 
@@ -156,6 +227,7 @@ class ApiRequestLog(TimestampedModel):
     __table_args__ = (
         Index("ix_api_request_logs_key_created", "api_key_id", "created_at"),
         Index("ix_api_request_logs_user_created", "user_id", "created_at"),
+        Index("ix_api_request_logs_org_created", "org_id", "created_at"),
         Index("ix_api_request_logs_created", "created_at"),
         Index("ix_api_request_logs_model_created", "model", "created_at"),
         Index("ix_api_request_logs_endpoint", "endpoint"),
@@ -168,6 +240,12 @@ class ApiRequestLog(TimestampedModel):
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Org attribution for the org usage ledger (NULL = personal-key traffic).
+    # Populated by the backend layer; column-only (no relationship), mirroring
+    # audit_logs/notification org columns.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True
     )
     provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -191,3 +269,7 @@ class ApiRequestLog(TimestampedModel):
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     region: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_streaming: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # True when token/cost figures are locally estimated (provider silent)
+    # rather than provider-reported. Failed in-app rows that estimated from
+    # partial output set this; unknown values stay NULL, not zero.
+    usage_estimated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

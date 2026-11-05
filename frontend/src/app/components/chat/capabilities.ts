@@ -1,4 +1,4 @@
-import type { AIModel } from "@/types";
+import type { AIModel, ReasoningOption } from "@/types";
 
 import { REASONING_OFF_LEVEL, normalizeReasoningLevels } from "./reasoningLevels";
 
@@ -23,7 +23,19 @@ export interface ModelCapabilities {
   supportsVideoGeneration: boolean;
   supportsResponses: boolean;
   reasoningLevels: string[];
+  /** Dynamic control from the model's reasoning_options (null = hide).
+   *  Effort levels are the provided values verbatim — never the hardcoded
+   *  fallback set. Budget/toggle carry no scale levels. */
+  reasoningControl: ReasoningControl;
 }
+
+/** Dynamic reasoning control derived from reasoning_options. Null hides the
+ *  control entirely (unknown model or model without reasoning). */
+export type ReasoningControl =
+  | { kind: "effort"; levels: string[]; defaultLevel: string | null }
+  | { kind: "budget"; min: number; max: number | null; defaultValue: string | null }
+  | { kind: "toggle"; onValue: string }
+  | null;
 
 export interface ComposerAttachment {
   id: string;
@@ -112,10 +124,11 @@ export function getModelCapabilities(model: AIModel | null | undefined): ModelCa
       supportsVideoGeneration: false,
       supportsResponses: false,
       reasoningLevels: [],
+      reasoningControl: null,
     };
   }
   const supportsReasoning = model.supports_reasoning === true;
-  const levels = metaLevels(model);
+  const reasoningControl = getReasoningControl(model);
   return {
     supportsText: model.supports_text !== false,
     supportsVision: model.supports_vision === true,
@@ -130,9 +143,8 @@ export function getModelCapabilities(model: AIModel | null | undefined): ModelCa
     supportsImageEditing: metaBool(model, "supports_image_editing"),
     supportsVideoGeneration: metaBool(model, "supports_video_generation"),
     supportsResponses: metaBool(model, "supports_responses"),
-    reasoningLevels: supportsReasoning
-      ? normalizeReasoningLevels(levels.length > 0 ? levels : DEFAULT_REASONING_LEVELS)
-      : [],
+    reasoningLevels: reasoningControl?.kind === "effort" ? reasoningControl.levels : [],
+    reasoningControl,
   };
 }
 
@@ -168,16 +180,125 @@ export function uploadKinds(caps: ModelCapabilities): AttachmentKind[] {
   return kinds;
 }
 
+/** Raw reasoning_options, null-safe. Undefined = pre-contract response
+ *  (backend lands separately) → legacy metadata path. Null or malformed =
+ *  unknown → hide, never crash. */
+function rawReasoningOptions(model: AIModel): ReasoningOption[] | null | undefined {
+  const raw: unknown = (model as { reasoning_options?: unknown }).reasoning_options;
+  if (raw === undefined) return undefined;
+  return Array.isArray(raw) ? (raw as ReasoningOption[]) : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isBudgetString(value: string, min: number, max: number | null): boolean {
+  if (!/^\d+$/.test(value.trim())) return false;
+  const n = Number(value.trim());
+  return n >= min && (max === null || n <= max);
+}
+
+/** First recognized reasoning_options entry wins; unknown future types are
+ *  skipped, empty values fall through — never invent a control. Effort uses
+ *  the provided values verbatim ("none" only when the catalog says so). */
+export function getReasoningControl(model: AIModel | null | undefined): ReasoningControl {
+  if (!model) return null;
+  const raw = rawReasoningOptions(model);
+  if (raw === undefined) {
+    // Pre-contract response: legacy metadata levels (keeps current UX until
+    // the backend field lands everywhere). Explicit null takes the hide path.
+    if (model.supports_reasoning !== true) return null;
+    const declared = metaLevels(model);
+    const levels = normalizeReasoningLevels(
+      declared.length > 0 ? declared : DEFAULT_REASONING_LEVELS,
+    );
+    return {
+      kind: "effort",
+      levels,
+      defaultLevel: levels.find((level) => level !== REASONING_OFF_LEVEL) ?? levels[0] ?? null,
+    };
+  }
+  if (raw === null) return null;
+  for (const entry of raw) {
+    if (!isRecord(entry) || typeof entry.type !== "string") continue;
+    if (entry.type === "effort") {
+      const values = Array.isArray(entry.values)
+        ? entry.values.filter((v): v is string => typeof v === "string" && v.length > 0)
+        : [];
+      if (values.length === 0) continue;
+      const def = typeof entry.default === "string" && values.includes(entry.default)
+        ? entry.default
+        : null;
+      return { kind: "effort", levels: values, defaultLevel: def };
+    }
+    if (entry.type === "budget_tokens") {
+      const min =
+        typeof entry.min === "number" && Number.isFinite(entry.min) && entry.min >= 0
+          ? Math.floor(entry.min)
+          : 0;
+      const max =
+        typeof entry.max === "number" && Number.isFinite(entry.max) && entry.max >= min
+          ? Math.floor(entry.max)
+          : null;
+      const def =
+        typeof entry.default === "string" && isBudgetString(entry.default, min, max)
+          ? entry.default
+          : null;
+      return { kind: "budget", min, max, defaultValue: def };
+    }
+    if (entry.type === "toggle") {
+      const onValue =
+        typeof entry.default === "string" && entry.default.length > 0 ? entry.default : "on";
+      return { kind: "toggle", onValue };
+    }
+  }
+  return null;
+}
+
+/** Gate before send/display: only values the model's control supports.
+ *  Null (empty/disabled) is always sendable — the gateway treats it as off. */
+export function isReasoningValueValid(control: NonNullable<ReasoningControl>, value: string): boolean {
+  switch (control.kind) {
+    case "effort":
+      return control.levels.includes(value);
+    case "budget":
+      return isBudgetString(value, control.min, control.max);
+    case "toggle":
+      return value === control.onValue;
+  }
+}
+
+/** Keep a stored value when the model still supports it; otherwise fall back
+ *  to the provided default (user preference for effort, catalog default) or
+ *  empty. Never auto-picks beyond that. Output is always valid-or-null, so
+ *  the send path can use it directly. */
+export function resolveReasoningValue(
+  caps: ModelCapabilities,
+  stored: string | null,
+  preferred: string | null,
+): string | null {
+  const control = caps.reasoningControl;
+  if (!control) return null;
+  if (stored !== null && isReasoningValueValid(control, stored)) return stored;
+  if (control.kind === "effort") {
+    if (preferred && control.levels.includes(preferred)) return preferred;
+    return control.defaultLevel;
+  }
+  if (control.kind === "budget") return control.defaultValue;
+  return null;
+}
+
 /** Default reasoning selection: first level that is not the off switch
  *  (cheapest on-level), so adding "none" never silently disables reasoning
  *  for models that reasoned by default. Off-only level sets fall back to
  *  "none". */
 export function defaultReasoningLevel(caps: ModelCapabilities): string | null {
-  return (
-    caps.reasoningLevels.find((level) => level !== REASONING_OFF_LEVEL) ??
-    caps.reasoningLevels[0] ??
-    null
-  );
+  const control = caps.reasoningControl;
+  if (!control) return null;
+  if (control.kind === "effort") return control.defaultLevel;
+  if (control.kind === "budget") return control.defaultValue;
+  return null;
 }
 
 /** User preference wins when the selected model actually offers that level;
@@ -186,9 +307,7 @@ export function preferredReasoningLevel(
   caps: ModelCapabilities,
   preferred: string | null,
 ): string | null {
-  if (!caps.supportsReasoning) return null;
-  if (preferred && caps.reasoningLevels.includes(preferred)) return preferred;
-  return defaultReasoningLevel(caps);
+  return resolveReasoningValue(caps, null, preferred);
 }
 
 export function kindForFile(file: File): AttachmentKind | null {

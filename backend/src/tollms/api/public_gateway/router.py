@@ -6,6 +6,7 @@ or the shared translators.
 """
 
 import base64
+import json
 import time
 import uuid
 from typing import Annotated
@@ -50,8 +51,41 @@ def _created() -> int:
     return int(time.time())
 
 
+def _tool_arguments_text(arguments) -> str:
+    if isinstance(arguments, str):
+        return arguments
+    if arguments is None:
+        return ""
+    return json.dumps(arguments, sort_keys=True)
+
+
+def _tool_arguments_input(arguments) -> dict:
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str) and arguments.strip():
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _chat_completion_payload(outcome: service.ChatOutcome) -> dict:
     tokens = outcome.usage
+    message: dict = {"role": "assistant", "content": outcome.text}
+    if outcome.tool_calls:
+        message["tool_calls"] = [
+            {
+                "id": call.get("id") or f"call_{pos}",
+                "type": "function",
+                "function": {
+                    "name": call.get("name") or "",
+                    "arguments": _tool_arguments_text(call.get("arguments")),
+                },
+            }
+            for pos, call in enumerate(outcome.tool_calls)
+        ]
     return {
         "id": "chatcmpl-" + uuid.uuid4().hex[:24],
         "object": "chat.completion",
@@ -60,14 +94,19 @@ def _chat_completion_payload(outcome: service.ChatOutcome) -> dict:
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": outcome.text},
-                "finish_reason": "stop",
+                "message": message,
+                "finish_reason": "tool_calls" if outcome.tool_calls else "stop",
             }
         ],
         "usage": {
             "prompt_tokens": tokens.prompt,
             "completion_tokens": tokens.completion,
             "total_tokens": outcome.total_tokens,
+            **(
+                {"prompt_tokens_details": {"cached_tokens": tokens.cache_read}}
+                if tokens.cache_read
+                else {}
+            ),
         },
     }
 
@@ -87,29 +126,59 @@ def _responses_payload(outcome: service.ChatOutcome) -> dict:
                 "status": "completed",
                 "role": "assistant",
                 "content": [{"type": "output_text", "text": outcome.text, "annotations": []}],
-            }
+            },
+            *[
+                {
+                    "type": "function_call",
+                    "id": call.get("id") or f"call_{pos}",
+                    "call_id": call.get("id") or f"call_{pos}",
+                    "name": call.get("name") or "",
+                    "arguments": _tool_arguments_text(call.get("arguments")),
+                }
+                for pos, call in enumerate(outcome.tool_calls)
+            ],
         ],
         "output_text": outcome.text,
         "usage": {
             "input_tokens": tokens.prompt,
             "output_tokens": tokens.completion,
             "total_tokens": outcome.total_tokens,
+            **(
+                {"input_tokens_details": {"cached_tokens": tokens.cache_read}}
+                if tokens.cache_read
+                else {}
+            ),
         },
     }
 
 
 def _anthropic_payload(outcome: service.ChatOutcome) -> dict:
     tokens = outcome.usage
-    return {
+    content = [{"type": "text", "text": outcome.text}] if outcome.text else []
+    content.extend(
+        {
+            "type": "tool_use",
+            "id": call.get("id") or f"call_{pos}",
+            "name": call.get("name") or "",
+            "input": _tool_arguments_input(call.get("arguments")),
+        }
+        for pos, call in enumerate(outcome.tool_calls)
+    )
+    payload = {
         "id": "msg_" + uuid.uuid4().hex[:24],
         "type": "message",
         "role": "assistant",
         "model": outcome.model_identifier,
-        "content": [{"type": "text", "text": outcome.text}],
-        "stop_reason": "end_turn",
+        "content": content,
+        "stop_reason": "tool_use" if outcome.tool_calls else "end_turn",
         "stop_sequence": None,
         "usage": {"input_tokens": tokens.prompt, "output_tokens": tokens.completion},
     }
+    if tokens.cache_read:
+        payload["usage"]["cache_read_input_tokens"] = tokens.cache_read
+    if tokens.cache_write:
+        payload["usage"]["cache_creation_input_tokens"] = tokens.cache_write
+    return payload
 
 
 def _images_payload(outcome: service.MediaOutcome) -> dict:

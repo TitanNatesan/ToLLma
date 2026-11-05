@@ -41,8 +41,10 @@ export function MessageHistoryDialog({ open, onOpenChange, messageId }: MessageH
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
                     version.version_number === data.current_version
-                      ? "border-tollma-500 bg-tollma-50 text-tollma-700 dark:bg-tollma-950/40 dark:text-tollma-300"
-                      : "border-zinc-200 text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
+                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                      : version.version_number === compareTo
+                        ? "border-amber-500 bg-amber-50 text-amber-700 dark:border-amber-500 dark:bg-amber-950/40 dark:text-amber-300"
+                        : "border-zinc-200 text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800",
                   )}
                   data-testid={`history-version-${version.version_number}`}
                   key={version.id}

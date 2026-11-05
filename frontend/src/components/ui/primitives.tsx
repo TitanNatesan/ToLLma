@@ -7,17 +7,14 @@ import * as SeparatorPrimitive from "@radix-ui/react-separator";
 import * as DialogPrimitives from "@radix-ui/react-dialog";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
-import { Check, ChevronDown } from "lucide-react";
-import { Toaster as SonnerToaster } from "sonner";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export function Toaster() {
-  return <SonnerToaster richColors closeButton />;
-}
+export { Toaster } from "./SileoToaster";
 
 // --- shadcn/ui button (cva variants + Radix Slot for asChild) ---
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -52,10 +49,8 @@ export function Button({ className, variant, size, asChild, ...props }: ButtonPr
   return <Comp className={cn(buttonVariants({ variant, size }), className)} {...props} />;
 }
 
-// Back-compat alias used across pages (outline variant).
-export function GhostButton({ className, variant = "outline", ...props }: ButtonProps) {
-  return <Button variant={variant} className={className} {...props} />;
-}
+// GhostButton was removed: it aliased the outline variant under a misleading
+// name. Use `<Button variant="outline">` explicitly.
 
 export function IconButton({ className, variant = "ghost", size = "icon", ...props }: ButtonProps) {
   return <Button variant={variant} size={size} className={cn("shrink-0", className)} {...props} />;
@@ -117,8 +112,8 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        "flex h-9 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm",
-        "focus-visible:outline-none focus-visible:border-tollma-500 focus-visible:ring-2 focus-visible:ring-tollma-500/40",
+        "flex h-9 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -131,8 +126,8 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   return (
     <textarea
       className={cn(
-        "flex min-h-16 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm",
-        "focus-visible:outline-none focus-visible:border-tollma-500 focus-visible:ring-2 focus-visible:ring-tollma-500/40",
+        "flex min-h-16 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -141,58 +136,11 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   );
 }
 
-export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
-  sizeVariant?: "default" | "sm";
-  wrapperClassName?: string;
-}
-
-export function Select({
-  className,
-  wrapperClassName,
-  sizeVariant = "default",
-  children,
-  disabled,
-  ...props
-}: SelectProps) {
-  const widthClasses = className
-    ?.split(/\s+/)
-    .filter((c) => /^(w-|max-w-|min-w-|flex-)/.test(c))
-    .join(" ");
-
-  return (
-    <div
-      className={cn(
-        "relative inline-flex items-center",
-        widthClasses || "w-full",
-        disabled && "opacity-50",
-        wrapperClassName,
-      )}
-    >
-      <select
-        disabled={disabled}
-        className={cn(
-          "w-full appearance-none rounded-md border text-zinc-900 transition-colors cursor-pointer",
-          "border-zinc-300 bg-white hover:border-zinc-400 shadow-xs",
-          "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/40 focus-visible:border-tollma-500 dark:focus-visible:ring-tollma-500/40",
-          "disabled:cursor-not-allowed",
-          sizeVariant === "sm" ? "h-8 pl-2.5 pr-7 text-xs" : "h-9 pl-3 pr-8 text-sm",
-          "[&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-900 dark:[&>option]:text-zinc-100",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-      </select>
-      <ChevronDown
-        className={cn(
-          "pointer-events-none absolute right-2 text-zinc-400 dark:text-zinc-500 shrink-0",
-          sizeVariant === "sm" ? "size-3.5" : "size-4",
-        )}
-      />
-    </div>
-  );
-}
+// --- custom dropdown select (button trigger + listbox, no native <select>) ---
+// Lives in ./select.tsx so the interactive control keeps its own "use client"
+// boundary; server components importing the rest of this file stay server-side.
+export { Select, parseSelectOptions } from "./select";
+export type { ParsedSelectOption, SelectProps } from "./select";
 
 export interface CheckboxProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> {
@@ -222,15 +170,16 @@ export function Checkbox({
           type="checkbox"
           checked={checked}
           disabled={disabled}
-          className="peer sr-only"
+          className="peer absolute inset-0 h-full w-full cursor-pointer opacity-0 focus-visible:outline-none"
           {...props}
         />
         <div
+          aria-hidden
           className={cn(
-            "flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
+            "pointer-events-none flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
             "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900",
             "group-hover:border-zinc-400 dark:group-hover:border-zinc-500",
-            "peer-focus-visible:ring-2 peer-focus-visible:ring-tollma-500/40 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
+            "peer-focus-visible:ring-2 peer-focus-visible:ring-tollma-500/60 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
             "peer-checked:border-tollma-600 peer-checked:bg-tollma-600 peer-checked:text-white",
             "dark:peer-checked:border-tollma-500 dark:peer-checked:bg-tollma-500 dark:peer-checked:text-white",
           )}
@@ -323,13 +272,14 @@ export function Tooltip({ children, content, side = "top" }: { children: React.R
 export const DropdownMenu = DropdownMenuPrimitives.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitives.Trigger;
 
-export function DropdownMenuContent({ className, sideOffset = 4, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Content>) {
+export function DropdownMenuContent({ className, sideOffset = 4, collisionPadding = 8, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Content>) {
   return (
     <DropdownMenuPrimitives.Portal>
       <DropdownMenuPrimitives.Content
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn(
-          "z-50 min-w-48 overflow-hidden rounded-md border border-zinc-200 bg-white p-1 shadow-md dark:border-zinc-800 dark:bg-zinc-900",
+          "z-50 min-w-48 max-h-[min(24rem,90dvh)] overflow-y-auto rounded-md border border-zinc-200 bg-white p-1 shadow-md dark:border-zinc-800 dark:bg-zinc-900",
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           className,
         )}
@@ -403,13 +353,18 @@ export function DialogContent({ className, children, ...props }: React.Component
   return (
     <DialogPortal>
       <DialogOverlay />
+      {/* Centered with margin auto, not translate: a transform (or filter)
+        on this container would become the containing block for
+        position:fixed descendants (e.g. Select listboxes portaled here to
+        escape inner overflow), breaking their viewport coordinates and
+        injecting them into the dialog's scroll overflow. inset-x-4 keeps
+        edge padding on narrow viewports. */}
       <DialogPrimitives.Content
         className={cn(
-          "fixed left-1/2 top-[15%] z-50 w-full max-w-lg -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
+          "fixed inset-x-4 top-[15%] z-50 mx-auto max-w-lg rounded-xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
           "max-h-[80vh] overflow-y-auto",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-          "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
           className,
         )}
         {...props}

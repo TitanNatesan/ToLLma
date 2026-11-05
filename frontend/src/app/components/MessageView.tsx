@@ -1,14 +1,18 @@
 "use client";
 
-import { memo, useState } from "react";
+import React, { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
+import "katex/dist/katex.min.css";
 import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   AlertCircle,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -44,6 +48,7 @@ import type { ChatMessage } from "@/types";
 import type { OptimisticMessage } from "@/store/chat";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useAllChatKeyModels, useChatKeys } from "@/hooks/useChatKeys";
 import { Button, Textarea } from "@/components/ui/primitives";
 import { fmtCost, stripTrailingZeros } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
@@ -81,7 +86,8 @@ function copyText(text: string) {
 }
 
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
-  const code = typeof children === "string" ? children : "";
+  // children are syntax-highlighted elements, not a string — extract for copy.
+  const code = extractText(children);
   return (
     <div className="relative my-2 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
       <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-3 py-1.5">
@@ -96,7 +102,73 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
           <span>Copy</span>
         </button>
       </div>
-      <pre className="overflow-x-auto p-3 text-sm text-zinc-100">{children}</pre>
+      <pre className="max-h-[480px] overflow-x-auto overflow-y-auto p-3 text-sm text-zinc-100">{children}</pre>
+    </div>
+  );
+}
+
+/** Collapsed height for long user requests; expansion is CSS-only (no data loss). */
+const USER_COLLAPSE_MAX_PX = 320;
+
+/**
+ * Long user prompts collapse to a readable height with Show more / Show less.
+ * The threshold comes from the rendered height (scrollHeight), not character
+ * count, so pasted code, HTML, and multiline text are all handled. State is
+ * per message instance and never touches assistant responses or code cells.
+ */
+function CollapsibleUserContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const regionId = useId();
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const measure = () => {
+      // Expanded content has no clamp, so scrollHeight can't reveal overflow;
+      // keep the prior state so Show less stays available.
+      if (expanded) return;
+      setClamped(el.scrollHeight > USER_COLLAPSE_MAX_PX + 8);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [content, expanded]);
+
+  return (
+    <div className="min-w-0">
+      <div
+        ref={bodyRef}
+        id={regionId}
+        className={clamped && !expanded ? "relative max-h-80 overflow-hidden" : "relative"}
+      >
+        <UserMarkdown content={content} isStreaming={isStreaming} />
+        {clamped && !expanded && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-zinc-100 to-transparent dark:from-zinc-800"
+          />
+        )}
+      </div>
+      {clamped && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-controls={regionId}
+          data-testid="user-message-toggle"
+          className="mt-1 inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200/60 hover:text-zinc-800 focus-visible:outline-2 focus-visible:outline-tollma-500 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100"
+        >
+          {expanded ? "Show less" : "Show more"}
+          <ChevronDown
+            className={`size-3 transition-transform motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          />
+        </button>
+      )}
     </div>
   );
 }
@@ -104,12 +176,25 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
 /** User content is plain text or user markdown. */
 function UserMarkdown({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
   return (
-    <div className={isStreaming ? "streaming-cursor" : undefined}>
+    <div className={isStreaming ? "streaming-cursor break-words" : "break-words"}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
-          pre: ({ children }) => <>{children}</>,
+          pre: ({ children }) => {
+            // Fenced block without a language tag: proper cell instead of
+            // the bare inline style (no max-height, broken copy).
+            // child.type is the custom `code` component (a function), so
+            // the missing language tag is the discriminator.
+            const child = React.Children.toArray(children)[0];
+            if (
+              React.isValidElement<{ className?: string; children?: React.ReactNode }>(child) &&
+              !child.props.className
+            ) {
+              return <CodeBlock>{child.props.children}</CodeBlock>;
+            }
+            return <>{children}</>;
+          },
           code: ({ className, children, ...props }) => {
             const codeStr = extractText(children);
             const isMermaid =
@@ -122,7 +207,8 @@ function UserMarkdown({ content, isStreaming }: { content: string; isStreaming?:
             if (isMermaid) {
               return <MermaidBlock chart={codeStr} />;
             }
-            const isBlock = className?.startsWith("language-");
+            // rehype-highlight prefixes "hljs ", so match anywhere.
+            const isBlock = className?.includes("language-");
             return isBlock ? (
               <CodeBlock className={className}>{children}</CodeBlock>
             ) : (
@@ -204,6 +290,14 @@ function formatLatency(ms: number | null): string | null {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${stripTrailingZeros((ms / 1000).toFixed(1))}s`;
 }
 
+/** Total image count from "(i of N)" progress deltas; undefined when unknown. */
+function mediaProgressTotal(content: string): number | undefined {
+  const matches = [...content.matchAll(/\((\d+)\s+of\s+(\d+)\)/g)];
+  if (matches.length === 0) return undefined;
+  const total = Number(matches[matches.length - 1]?.[2]);
+  return Number.isFinite(total) && total > 1 ? total : undefined;
+}
+
 /** Human generation state from the streamed progress log. */
 function mediaProgressLabel(kind: "image" | "video", content: string): string {
   const lines = content
@@ -213,7 +307,11 @@ function mediaProgressLabel(kind: "image" | "video", content: string): string {
   const last = (lines[lines.length - 1] ?? "").toLowerCase();
   if (last.startsWith("uploading")) return `Uploading ${kind}…`;
   if (last.startsWith("generated")) return "Finalizing…";
-  if (last.startsWith("generating")) return `Generating ${kind}…`;
+  if (last.startsWith("generating")) {
+    const progress = /\((\d+)\s+of\s+(\d+)\)/.exec(last);
+    if (progress) return `Generating ${kind} ${progress[1]} of ${progress[2]}…`;
+    return `Generating ${kind}…`;
+  }
   return lines[lines.length - 1] ?? `Generating ${kind}…`;
 }
 
@@ -222,6 +320,7 @@ function MessageHeaderMeta({
   timestamp,
   modelName,
   providerName,
+  modelLoading,
   tokens,
   tokensTooltip,
   cost,
@@ -232,6 +331,8 @@ function MessageHeaderMeta({
   timestamp?: string;
   modelName?: string | null;
   providerName?: string | null;
+  /** Streaming and the names aren't resolved yet: shimmer, never blank. */
+  modelLoading?: boolean;
   tokens?: number | null;
   tokensTooltip?: string;
   cost?: string | null;
@@ -245,17 +346,27 @@ function MessageHeaderMeta({
 
   return (
     <div
-      className={`flex items-center gap-2 text-[11px] text-zinc-400 ${isUser ? "flex-row-reverse" : ""}`}
+      className={`flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 ${isUser ? "flex-row-reverse" : ""}`}
     >
       {formattedTime && (
         <time dateTime={timestamp} title={timestamp}>
           {formattedTime}
         </time>
       )}
-      {!isUser && (modelName || providerName) && (
-        <span data-testid="message-model" title={`${providerName ?? ""} / ${modelName ?? ""}`}>
-          {[modelName, providerName].filter(Boolean).join(" · ")}
-        </span>
+      {!isUser && modelLoading && !modelName && !providerName ? (
+        <span
+          data-testid="message-model-loading"
+          role="status"
+          aria-label="Loading model info"
+          className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
+        />
+      ) : (
+        !isUser &&
+        (modelName || providerName) && (
+          <span data-testid="message-model" title={`${providerName ?? ""} / ${modelName ?? ""}`}>
+            {[modelName, providerName].filter(Boolean).join(" · ")}
+          </span>
+        )
       )}
       {!isUser && tokens != null && (
         <span data-testid="message-usage" title={tokensTooltip}>
@@ -288,13 +399,25 @@ function MessageViewInner({
   const isUser = role === "user";
   const msg = message as ChatMessage;
   const costEstimated = msg.usage_estimated === true;
-  const costStr = `${formatCost(msg.total_cost ?? null)}${costEstimated ? " est." : ""}`;
+  const costAmount = formatCost(msg.total_cost ?? null);
+  const costStr = costAmount ? `${costAmount}${costEstimated ? " est." : ""}` : null;
   const inCostStr = formatCost(msg.input_cost ?? null);
   const outCostStr = formatCost(msg.output_cost ?? null);
   const latencyStr = formatLatency(msg.latency_ms ?? null);
   const { data: models } = useModels(undefined, undefined, { enabled: !isUser });
   const { data: providers } = useProviders();
-  const modelName = !isUser ? models?.find((m) => m.id === msg.model_id)?.name : null;
+  const { data: chatKeys } = useChatKeys();
+  const { entries: keyEntries } = useAllChatKeyModels(chatKeys);
+  const modelById = useMemo(() => {
+    const byId = new Map((models ?? []).map((m) => [m.id, m]));
+    for (const entry of keyEntries) {
+      for (const km of entry.models ?? []) {
+        if (!byId.has(km.id)) byId.set(km.id, km);
+      }
+    }
+    return byId;
+  }, [models, keyEntries]);
+  const modelName = !isUser && msg.model_id ? (modelById.get(msg.model_id)?.name ?? null) : null;
   const providerName = !isUser ? providers?.find((p) => p.id === msg.provider_id)?.name : null;
 
   const usageTitle = [
@@ -319,9 +442,11 @@ function MessageViewInner({
         : "complete";
 
   // Media generations stream progress text; render a skeleton instead of the
-  // raw log. The label tracks the live generation state.
+  // raw log. The label tracks the live generation state. Multi-image runs
+  // stream "(i of N)" progress: one skeleton + badge, never N loaders.
   const mediaKind = /^Generating (image|video)/.exec(message.content)?.[1] as "image" | "video" | undefined;
   const progressLabel = mediaKind ? mediaProgressLabel(mediaKind, message.content) : undefined;
+  const mediaTotal = mediaKind === "image" ? mediaProgressTotal(message.content) : undefined;
 
   const generations = msg.generations ?? [];
   const activeGenerationIndex = Math.max(
@@ -345,7 +470,6 @@ function MessageViewInner({
       exit={{ opacity: 0, y: -4 }}
       id={message.id}
       initial={{ opacity: 0, y: 8 }}
-      layout
       transition={{ duration: 0.2, ease: "easeOut" }}
     >
       {!isUser && (
@@ -363,6 +487,7 @@ function MessageViewInner({
           costTooltip={costTitle}
           latency={latencyStr}
           modelName={modelName}
+          modelLoading={isStreaming}
           providerName={providerName}
           role={role}
           timestamp={message.created_at}
@@ -422,7 +547,7 @@ function MessageViewInner({
                 </div>
               </div>
             ) : (
-              <UserMarkdown content={message.content} isStreaming={isStreaming} />
+              <CollapsibleUserContent content={message.content} isStreaming={isStreaming} />
             )
           ) : (
             <>
@@ -467,9 +592,40 @@ function MessageViewInner({
 
               {mediaKind ? (
                 isStreaming ? (
-                  <MediaGenerationSkeleton kind={mediaKind} label={progressLabel} />
-                ) : null
-              ) : (
+                  <MediaGenerationSkeleton kind={mediaKind} label={progressLabel} total={mediaTotal} />
+                ) : (msg.attachments?.length ?? 0) > 0 ? null : message.content?.trim() ? (
+                  <AssistantContent
+                    content={message.content}
+                    isStreaming={isStreaming}
+                    reasoningTokens={msg.reasoning_tokens}
+                    sources={sources}
+                    status={reasoningStatus}
+                    thinkingMs={msg.thinking_ms}
+                  />
+                ) : (
+                  <div
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
+                    data-testid={`media-unavailable-${message.id}`}
+                    role="status"
+                  >
+                    <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+                      <AlertCircle className="size-3.5 shrink-0" />
+                      <span className="truncate">Media unavailable</span>
+                    </span>
+                    {onRegenerate && (
+                      <button
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+                        data-testid={`media-retry-${message.id}`}
+                        onClick={() => onRegenerate(message.id)}
+                        type="button"
+                      >
+                        <RotateCcw className="size-3" />
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                )
+              ) : message.content?.trim() ? (
                 <AssistantContent
                   content={message.content}
                   isStreaming={isStreaming}
@@ -478,7 +634,24 @@ function MessageViewInner({
                   status={reasoningStatus}
                   thinkingMs={msg.thinking_ms}
                 />
-              )}
+              ) : isStreaming ? (
+                <div
+                  data-testid="typing-indicator"
+                  role="status"
+                  aria-label="Responding"
+                  className="flex items-center gap-1 py-1 text-zinc-400 dark:text-zinc-500"
+                >
+                  <span className="size-1.5 animate-pulse rounded-full bg-current" />
+                  <span
+                    className="size-1.5 animate-pulse rounded-full bg-current"
+                    style={{ animationDelay: "200ms" }}
+                  />
+                  <span
+                    className="size-1.5 animate-pulse rounded-full bg-current"
+                    style={{ animationDelay: "400ms" }}
+                  />
+                </div>
+              ) : null}
 
               <Sources sources={sources} />
             </>
@@ -506,6 +679,25 @@ function MessageViewInner({
                 Generation failed{msg.error ? `: ${msg.error}` : ""}
               </span>
             </span>
+            {msg.error && (
+              <details className="w-full text-[11px]" data-testid={`failed-details-${message.id}`}>
+                <summary className="cursor-pointer select-none text-red-600 underline-offset-2 hover:underline dark:text-red-400">
+                  Show full error
+                </summary>
+                <pre className="mt-1 max-h-32 overflow-auto rounded bg-red-100/60 p-2 font-mono text-[10px] break-all whitespace-pre-wrap dark:bg-red-950/40">
+                  {msg.error}
+                </pre>
+                <button
+                  type="button"
+                  className="mt-1 inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-0.5 text-[11px] font-medium hover:bg-red-100 dark:border-red-900/60 dark:hover:bg-red-950/40"
+                  data-testid={`failed-copy-${message.id}`}
+                  onClick={() => copyText(message.content ? `${msg.error}` : (msg.error ?? ""))}
+                >
+                  <Copy className="size-3" />
+                  Copy error
+                </button>
+              </details>
+            )}
             {onRegenerate && (
               <button
                 className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-700"
@@ -523,7 +715,7 @@ function MessageViewInner({
         <MessageHistoryDialog messageId={message.id} onOpenChange={setHistoryOpen} open={historyOpen} />
 
         <MessageActions
-          className={`opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 ${
+          className={`opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100 ${
             isUser ? "flex-row-reverse" : ""
           }`}
         >

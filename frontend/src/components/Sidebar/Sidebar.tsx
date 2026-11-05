@@ -7,15 +7,18 @@ import { motion } from "framer-motion";
 import { ShieldCheck } from "lucide-react";
 import { useChatStore } from "@/store/chat";
 import { useAuthStore } from "@/store/auth";
+import { useOrgStore } from "@/store/org";
 import { cn } from "@/lib/utils";
 import { SidebarHeader } from "./SidebarHeader";
-import { SidebarNavigation } from "./SidebarNavigation";
+import { SidebarPersonalNav, SidebarLogoutNav } from "./SidebarNavigation";
 import { SidebarAdmin, ADMIN_SECTION_IDS, type AdminSectionId } from "./SidebarAdmin";
 import { SidebarSettings, SETTINGS_SECTION_IDS, type SettingsSectionId } from "./SidebarSettings";
 import { SidebarConversations } from "./SidebarConversations";
 import { SidebarProviders } from "./SidebarProviders";
-import { SidebarAnalytics } from "./SidebarAnalytics";
+import { SidebarAnalytics, ANALYTICS_REPORT_IDS, type AnalyticsReportId } from "./SidebarAnalytics";
 import { SidebarFooter } from "./SidebarFooter";
+import { SidebarOrgNav } from "./SidebarOrgNav";
+import { SidebarContextSlot } from "./SidebarPanelPortal";
 
 /** Hash fragment follows for section navigators (fragment navigation fires hashchange). */
 function subscribeSectionHash(callback: () => void) {
@@ -43,9 +46,18 @@ function settingsSectionFromHash(hash: string): SettingsSectionId {
     : "profile";
 }
 
+function analyticsReportFromHash(hash: string): AnalyticsReportId {
+  return (ANALYTICS_REPORT_IDS as readonly string[]).includes(hash)
+    ? (hash as AnalyticsReportId)
+    : "summary";
+}
+
 /**
  * Primary application navigation (ChatGPT-style).
  * Content switches on the active route; the header and profile footer persist.
+ * Layout: scrollable middle = route-aware body ONLY; bottom-anchored section
+ * = personal nav always + (when an org is selected) the collapsible org
+ * group. Nothing ever swaps the body.
  *
  *   /c/*, /      -> conversations context + full nav
  *   /admin*      -> admin section navigator (platform admins only)
@@ -56,6 +68,43 @@ function settingsSectionFromHash(hash: string): SettingsSectionId {
 export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () => void }) {
   const pathname = usePathname();
   const { leftSidebarOpen, sidebarWidth, setSidebarWidth } = useChatStore();
+  // Bottom-anchored navigation visibility. The footer chevron toggles (pins)
+  // it; hovering the chevron while hidden only peeks until pointer + focus
+  // leave the chevron/nav area for 1s. The sidebar itself is unaffected.
+  const navVisible = useChatStore((s) => s.navVisible);
+  const setNavVisible = useChatStore((s) => s.setNavVisible);
+  const [peekNav, setPeekNav] = useState(false);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearPeekTimer = () => {
+    if (peekTimer.current !== null) {
+      clearTimeout(peekTimer.current);
+      peekTimer.current = null;
+    }
+  };
+
+  useEffect(() => () => {
+    if (peekTimer.current !== null) clearTimeout(peekTimer.current);
+  }, []);
+
+  // Peek: hovering the chevron while nav is hidden shows the nav
+  // temporarily. Clicking pins it open (unfocus then keeps it visible).
+  const peekNavOpen = () => {
+    if (useChatStore.getState().navVisible) return;
+    clearPeekTimer();
+    setPeekNav(true);
+  };
+  const schedulePeekClose = () => {
+    if (useChatStore.getState().navVisible) return;
+    clearPeekTimer();
+    peekTimer.current = setTimeout(() => setPeekNav(false), 150);
+  };
+  const toggleNavPinned = () => {
+    clearPeekTimer();
+    setPeekNav(false);
+    setNavVisible(!useChatStore.getState().navVisible);
+  };
+  const navShown = navVisible || peekNav;
   const user = useAuthStore((s) => s.user);
   const isPlatformAdmin = user?.platform_role === "platform_admin";
   const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
@@ -63,39 +112,47 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const adminActiveId = adminSectionFromHash(adminHash);
   const settingsHash = useSyncExternalStore(subscribeSectionHash, getSectionHash, getSectionHashServer);
   const settingsActiveId = settingsSectionFromHash(settingsHash);
+  const analyticsHash = useSyncExternalStore(subscribeSectionHash, getSectionHash, getSectionHashServer);
+  const analyticsActiveId = analyticsReportFromHash(analyticsHash);
 
-  // Navigation links stay hidden until the profile gear toggles them open.
-  // navPath records which route the menu was opened on; navigating away
-  // (stale path) collapses it again on the next render.
-  const [navPath, setNavPath] = useState<string | null>(null);
-  const navOpen = navPath === pathname;
-  const toggleNav = () => setNavPath((p) => (p === pathname ? null : pathname));
-
+  const isChatPage = pathname === "/" || pathname.startsWith("/c/");
   const isProvidersPage = pathname === "/providers" || pathname.startsWith("/providers/");
   const isAnalyticsPage = pathname === "/analytics" || pathname.startsWith("/analytics/");
   const isSettingsPage = pathname === "/settings" || pathname.startsWith("/settings/");
+  const orgSegment = pathname.split("/")[2] ?? "";
+  const isOrgDetailPage = /^\/organizations\/[^/]+$/.test(pathname) && orgSegment !== "invites";
+  const context = useOrgStore((s) => s.context);
+  // Org scope wins everywhere; URL-derived org is a fallback until the detail
+  // page writes the context itself (it owns setContext on direct visits).
+  const scopeOrgId = context.type === "org" ? context.orgId : isOrgDetailPage ? orgSegment : null;
 
   // Resizing state
   const [isResizing, setIsResizing] = useState(false);
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    // Pointer events cover touch; the mouse listeners stay so existing
+    // desktop behavior is untouched (both report the same clientX).
+    const handleMove = (e: MouseEvent | PointerEvent) => {
       const newWidth = Math.min(Math.max(e.clientX, 200), 450);
       setSidebarWidth(newWidth);
     };
 
-    const handleMouseUp = () => {
+    const handleUp = () => {
       setIsResizing(false);
     };
 
     if (isResizing) {
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
+      document.addEventListener("mousemove", handleMove);
+      document.addEventListener("mouseup", handleUp);
+      document.addEventListener("pointermove", handleMove);
+      document.addEventListener("pointerup", handleUp);
     }
 
     return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup", handleUp);
+      document.removeEventListener("pointermove", handleMove);
+      document.removeEventListener("pointerup", handleUp);
     };
   }, [isResizing, setSidebarWidth]);
 
@@ -103,12 +160,12 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
   const ariaLabel = isAdminPage
     ? "Admin navigation"
     : isProvidersPage
-      ? "Provider list"
-      : isAnalyticsPage
-        ? "Analytics"
-        : isSettingsPage
-          ? "Settings"
-          : "Conversations";
+        ? "Provider list"
+        : isAnalyticsPage
+          ? "Analytics"
+          : isSettingsPage
+            ? "Settings"
+            : "Conversations";
 
   // Below md the sidebar becomes an off-canvas overlay so page content keeps
   // the full viewport width (analytics/settings need it).
@@ -128,25 +185,67 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
     >
       <SidebarHeader onOpenCommandPalette={onOpenCommandPalette} />
 
-      {/* Route-aware context (the only scrollable region; footer stays put) */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {isAdminPage ? (
+      {/* Route-aware context: the only scrollable region. Conversations
+          render ONLY on chat pages; providers/analytics/settings/admin keep
+          their contextual bodies; everywhere else the body stays empty so
+          the bottom-anchored nav is the single navigation. */}
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        {isChatPage ? (
+          <SidebarConversations />
+        ) : isAdminPage ? (
           isPlatformAdmin ? (
             <SidebarAdmin activeId={adminActiveId} />
           ) : null
         ) : isProvidersPage ? (
           <SidebarProviders />
         ) : isAnalyticsPage ? (
-          <SidebarAnalytics />
+          <SidebarAnalytics activeId={analyticsActiveId} />
         ) : isSettingsPage ? (
           <SidebarSettings activeId={settingsActiveId} />
         ) : (
-          <SidebarConversations />
+          /* No contextual body content here: the bottom-anchored nav is the
+             single navigation. */
+          <div aria-hidden className="flex-1" />
         )}
+        {/* Page-owned contextual panel (filters, section nav, summaries).
+            Pages portal their controls here via SidebarPanelPortal so all
+            filtering lives in the main layout sidebar instead of a second
+            content column. Empty on pages without a panel. */}
+        <SidebarContextSlot />
       </div>
 
-      <SidebarNavigation open={navOpen} />
-      {navOpen && isPlatformAdmin && (
+      {/* Bottom-anchored nav above the footer: personal links always, plus
+          the org group when an org is selected. Never scrolls, never swaps
+          the body above. Hidden only via the footer chevron. */}
+      {/* Bottom-anchored nav: org scope shows ONLY the org navigation
+          (unified pages included); personal scope shows the personal nav.
+          Hidden only via the footer chevron. */}
+      {!isAdminPage && navShown && (
+        <div
+          className="flex max-h-[46vh] min-h-0 shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800"
+          onMouseEnter={peekNavOpen}
+          onMouseLeave={schedulePeekClose}
+          onFocus={peekNavOpen}
+          onBlur={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+            schedulePeekClose();
+          }}
+          onFocusCapture={peekNavOpen}
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {scopeOrgId ? (
+              <SidebarOrgNav orgId={scopeOrgId} />
+            ) : (
+              <SidebarPersonalNav />
+            )}
+          </div>
+          <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800">
+            <SidebarLogoutNav />
+          </div>
+        </div>
+      )}
+
+      {isPlatformAdmin && (
         <nav
           aria-label="Platform administration"
           className="border-t border-zinc-200 px-2 py-2 dark:border-zinc-800"
@@ -157,9 +256,9 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
             aria-current={isAdminPage ? "page" : undefined}
             data-testid="sidebar-nav-admin"
             className={cn(
-              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
-              "text-tollma-700 hover:bg-tollma-50 dark:text-tollma-300 dark:hover:bg-tollma-950/40",
-              isAdminPage && "bg-tollma-50 dark:bg-tollma-950/40",
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60",
+              "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+              isAdminPage && "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900",
             )}
           >
             <ShieldCheck className="size-3.5 shrink-0" />
@@ -167,7 +266,13 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
           </Link>
         </nav>
       )}
-      <SidebarFooter navOpen={navOpen} onToggleNav={toggleNav} />
+      <SidebarFooter
+        navOpen={navShown}
+        onToggleNav={toggleNavPinned}
+        onPeekNav={peekNavOpen}
+        onUnpeekNav={schedulePeekClose}
+        hideToggle={isAdminPage}
+      />
     </div>
   );
 
@@ -180,6 +285,8 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
         )}
         aria-label={ariaLabel}
         aria-hidden={!leftSidebarOpen}
+        inert={!leftSidebarOpen}
+        tabIndex={-1}
         data-testid="left-sidebar"
       >
         {inner}
@@ -196,17 +303,41 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
       }}
       className="relative flex shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
       aria-label={ariaLabel}
+      aria-hidden={!leftSidebarOpen}
+      inert={!leftSidebarOpen}
       data-testid="left-sidebar"
       style={{ width: currentWidth }}
     >
       {inner}
 
-      {/* Resizer Handle */}
+      {/* Resizer Handle: 8px hit area, 4px visual */}
       <div
         id="sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuemin={200}
+        aria-valuemax={450}
+        aria-valuenow={Math.round(sidebarWidth)}
+        tabIndex={0}
         onMouseDown={() => setIsResizing(true)}
-        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-zinc-400/50 active:bg-zinc-500 transition-colors z-10"
-      />
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          setIsResizing(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            setSidebarWidth(Math.max(200, sidebarWidth - 16));
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            setSidebarWidth(Math.min(450, sidebarWidth + 16));
+          }
+        }}
+        className="group absolute right-0 top-0 bottom-0 w-2 -mx-0.5 z-10 cursor-col-resize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60"
+      >
+        <div className="mx-auto h-full w-1 transition-colors group-hover:bg-zinc-400/50 group-active:bg-zinc-500 group-focus-visible:bg-zinc-400/50" />
+      </div>
     </motion.aside>
   );
 }

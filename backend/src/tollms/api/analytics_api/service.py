@@ -7,23 +7,36 @@ composes the frozen payloads and caches the result in Valkey for
 extra params. Cache entries are best-effort: a Valkey failure degrades to a
 direct PostgreSQL read.
 
+Per-key endpoints merge both usage ledgers — public-gateway
+``api_request_logs`` plus in-app-chat ``request_logs WHERE api_key_id = :key``
+(same UTC half-open ``[start, end)`` window on ``created_at``; disjoint writers
+so no double-count; in-app rows surface as endpoint ``"chat"`` with
+registry-resolved provider/model names; ``timeout``/``retry`` stay gateway-only
+approximations; chat ``"regenerated"`` folds into ``cancelled``; latency merges
+exactly via ``UNION ALL``; errors propagate, never silent-empty — same
+conventions as ``api/keys/analytics.py``). ``network`` stays gateway-only:
+``request_logs`` has no IP/geo columns, so IP history, locations, devices and
+clients cannot include chat traffic (documented, not silently dropped).
+
 Documented query counts per endpoint (grouped SQL only, no N+1):
 
 * ``GET /platform`` — 6: totals (current+previous, one round-trip), dimension
   grouping sets, trailing costs, most-expensive request, key inventory+growth,
   key breakdown.
 * ``GET /api-keys`` — 1: outer-join scan of the user's keys + window usage.
-* ``GET /api-keys/{id}`` — 5: ownership, totals, dimensions, trailing costs,
-  most-expensive request.
-* ``GET /api-keys/{id}/timeseries`` — 4: ownership + points/stacked/latency.
-* ``GET /api-keys/{id}/network`` — 6: ownership (+ IP rules), IP history,
-  locations, devices, clients.
-* ``GET /api-keys/{id}/insights`` — 3: ownership, totals, dimensions.
+* ``GET /api-keys/{id}`` — 5 + chat union: ownership, totals (gateway + chat +
+  exact latency unions), dimensions (+ chat scan), trailing costs (+ chat scan),
+  most-expensive request (+ chat scan).
+* ``GET /api-keys/{id}/timeseries`` — 4 + chat union: ownership +
+  points/stacked/latency (each gateway + chat, latency via exact union).
+* ``GET /api-keys/{id}/network`` — 6, gateway-only (see above): ownership
+  (+ IP rules), IP history, locations, devices, clients.
+* ``GET /api-keys/{id}/insights`` — 3 + chat union: ownership, totals, dimensions.
 * ``GET /platform/export`` — uncached: totals (one round-trip), dimension
   grouping sets, trailing costs, most-expensive request (+ timeseries points
   only for the ``timeseries`` dataset).
 * ``GET /api-keys/{id}/export`` — ownership + the same dataset queries,
-  key-scoped.
+  key-scoped (with the same chat union).
 """
 
 import hashlib
@@ -38,6 +51,7 @@ from typing import Any, Callable, Literal
 
 from sqlalchemy.orm import Session
 
+from tollms.core.exceptions import NotFoundError
 from tollms.models.api_key import IpRuleType
 from tollms.models.user import User
 from tollms.services.analytics import AnalyticsWindow
@@ -118,6 +132,25 @@ def _cost_section(
         requests_total=current["total"],
         expensive=costs_engine.most_expensive(db, window, key_id=key_id),
     )
+
+
+def _require_readable_key(
+    db: Session, user: User, key_id: uuid.UUID, *, with_rules: bool = False,
+):
+    """Owned personal key, else an org key assigned to the caller or visible
+    via ``Keys.Read``. Everything else 404s (no oracle).
+
+    Downstream queries already scope by key id alone, so permitted org viewers
+    see the key's full traffic. The org fallback lives in the feature service
+    (this layer may import ``api.*``); the analytics engine stays pure.
+    """
+    try:
+        return apikeys_engine.require_owned_key(db, key_id, user.id, with_rules=with_rules)
+    except NotFoundError:
+        pass
+    from tollms.api.keys import organization_service as org_keys
+
+    return org_keys.get_org_key(db, user.id, key_id)
 
 
 def _previous_metrics(previous: dict[str, Any]) -> dict[str, Any]:
@@ -229,7 +262,7 @@ def api_key_detail(db: Session, user: User, key_id: uuid.UUID, query: AnalyticsQ
     window = resolve_window(query)
 
     def load() -> dict[str, Any]:
-        key = apikeys_engine.require_owned_key(db, key_id, user.id)
+        key = _require_readable_key(db, user, key_id)
         sections = _aggregate(db, window, key_id=key_id)
         return {
             "range": aggregations.window_payload(window),
@@ -259,7 +292,7 @@ def api_key_timeseries(
     window = resolve_window(query)
 
     def load() -> dict[str, Any]:
-        apikeys_engine.require_owned_key(db, key_id, user.id)
+        _require_readable_key(db, user, key_id)
         return {
             "range": aggregations.window_payload(window),
             **timeseries_engine.series(db, window, key_id=key_id, group_by=group_by),
@@ -269,11 +302,15 @@ def api_key_timeseries(
 
 
 def api_key_network(db: Session, user: User, key_id: uuid.UUID, query: AnalyticsQuery) -> dict[str, Any]:
-    """IP/geo/device/client sections for one owned key (6 queries)."""
+    """IP/geo/device/client sections for one owned key (6 queries, gateway-only).
+
+    ``request_logs`` carries no IP/geo columns, so chat traffic cannot appear
+    here — documented, not silently dropped (see module docstring).
+    """
     window = resolve_window(query)
 
     def load() -> dict[str, Any]:
-        key = apikeys_engine.require_owned_key(db, key_id, user.id, with_rules=True)
+        key = _require_readable_key(db, user, key_id, with_rules=True)
         allow = [rule.cidr for rule in key.ip_rules if rule.type == IpRuleType.ALLOW]
         deny = [rule.cidr for rule in key.ip_rules if rule.type == IpRuleType.DENY]
         payload = network_engine.network(
@@ -289,7 +326,7 @@ def api_key_insights(db: Session, user: User, key_id: uuid.UUID, query: Analytic
     window = resolve_window(query)
 
     def load() -> dict[str, Any]:
-        apikeys_engine.require_owned_key(db, key_id, user.id)
+        _require_readable_key(db, user, key_id)
         sections = _aggregate(db, window, key_id=key_id, with_cost=False)
         return {
             "range": aggregations.window_payload(window),
@@ -434,7 +471,7 @@ def export_api_key(
 ) -> tuple[bytes | str, str, str, int]:
     """Per-key export (uncached, key-scoped; mirrors ``/api/v1/analytics/export``)."""
     window = resolve_window(query)
-    apikeys_engine.require_owned_key(db, key_id, user.id)
+    _require_readable_key(db, user, key_id)
     name, columns, rows = _export_rows(db, window, key_id=key_id, dataset=dataset)
     content, filename, media_type = _render_export(
         name, columns, rows, window.start.strftime("%Y%m%d"), export_format

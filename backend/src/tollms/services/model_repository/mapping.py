@@ -156,12 +156,22 @@ def _mapped(
     suggested["model_id"] = model_id  # discovered id wins; repo id stays in the key
     # Fixed-endpoint families re-point chat models at their wire endpoint;
     # OpenAI-compatible families keep the repository's endpoint truth.
+    # Non-chat endpoints (image/audio generation on image models) are
+    # preserved: the family default only replaces the chat entry, so
+    # eligible Gemini/Vertex image models keep images/generations and the
+    # chat adapter can request IMAGE output for them. Video is never added
+    # here (Veo lives behind Vertex, not the Gemini API).
     if lock_endpoint and default_endpoint and suggested.get("primary_endpoint") in {
         "responses", "chat_completions", "messages", "converse"
     }:
         suggested["endpoint_type"] = default_endpoint
         suggested["primary_endpoint"] = default_endpoint
-        suggested["supported_endpoints"] = [default_endpoint]
+        keep = [
+            e for e in (suggested.get("supported_endpoints") or [])
+            if e and e != default_endpoint
+            and e not in {"responses", "chat_completions", "messages", "converse"}
+        ]
+        suggested["supported_endpoints"] = [default_endpoint, *keep]
     return {
         "model_id": model_id,
         "match_type": match_type,

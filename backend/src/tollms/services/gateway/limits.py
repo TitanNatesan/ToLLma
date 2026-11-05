@@ -136,6 +136,11 @@ def _model_spend_key(ctx: KeyContext, provider_id: Any, model_id: Any, now: date
     )
 
 
+def _org_spend_key(org_id: uuid.UUID) -> str:
+
+    return cache_keys._key(_SECTION, f"{org_id}:org-spend")  # noqa: SLF001
+
+
 def _reservation_key(
     ctx: KeyContext, provider_id: Any, model_id: Any, request_id: str | None = None
 ) -> str:
@@ -378,6 +383,7 @@ def _evaluate(
     tokens: int,
     cost_micros: int,
     applied: _Applied,
+    org_max_spend_usd: Decimal | None = None,
 ) -> LimitsDecision | None:
     """Run every dimension in order; return the first denial or None when allowed."""
     policy = ctx.policy
@@ -440,6 +446,15 @@ def _evaluate(
             override.max_budget,
             cost_micros,
             "model_budget",
+            None,
+        )
+    if ctx.org_id is not None:
+        return _check_money(
+            applied,
+            _org_spend_key(ctx.org_id),
+            org_max_spend_usd,
+            cost_micros,
+            "org_budget",
             None,
         )
     return None
@@ -517,6 +532,7 @@ def _post_call_budget_check(
     provider_id: Any,
     model_id: Any,
     override: Any,
+    org_max_spend_usd: Decimal | None = None,
 ) -> None:
     """Flag the key when reconciled spend sits over any configured cap."""
     policy = ctx.policy
@@ -525,6 +541,8 @@ def _post_call_budget_check(
         ("daily_spend", _daily_spend_key(ctx, now), policy.daily_spend_limit),
         ("monthly_spend", _monthly_spend_key(ctx, now), policy.monthly_spend_limit),
     ]
+    if ctx.org_id is not None:
+        candidates.append(("org_budget", _org_spend_key(ctx.org_id), org_max_spend_usd))
     if override is not None and override.max_budget is not None:
         candidates.append(
             ("model_budget", _model_spend_key(ctx, provider_id, model_id, now), override.max_budget)
@@ -551,6 +569,7 @@ def check_request(
     estimated_tokens: int,
     estimated_cost: Decimal,
     request_id: str | None = None,
+    org_max_spend_usd: Decimal | None = None,
 ) -> LimitsDecision:
     """Check every limit and reserve the estimate. Never raises; fails open."""
     if _is_overbudget(ctx):
@@ -564,7 +583,8 @@ def check_request(
     applied = _Applied()
     try:
         denial = _evaluate(
-            ctx, now, provider_id, model_id, provider, model, tokens, cost_micros, applied
+            ctx, now, provider_id, model_id, provider, model, tokens, cost_micros, applied,
+            org_max_spend_usd=org_max_spend_usd,
         )
         if denial is not None:
             applied.rollback()
@@ -600,6 +620,7 @@ def record_usage(
     provider_id: uuid.UUID | str | None,
     model_id: uuid.UUID | str | None,
     request_id: str | None = None,
+    org_max_spend_usd: Decimal | None = None,
 ) -> None:
     """Reconcile the reservation with actual usage. Never raises."""
     now = _now()
@@ -634,7 +655,9 @@ def record_usage(
                 _apply_delta(_monthly_spend_key(ctx, now), delta_micros, _MONTHLY_TTL)
             if override is not None and override.max_budget is not None:
                 _apply_delta(_model_spend_key(ctx, provider_id, model_id, now), delta_micros, period_ttl)
-        _post_call_budget_check(ctx, now, provider_id, model_id, override)
+            if ctx.org_id is not None:
+                _apply_delta(_org_spend_key(ctx.org_id), delta_micros, None)
+        _post_call_budget_check(ctx, now, provider_id, model_id, override, org_max_spend_usd)
     except Exception:
         logger.warning("limits: usage reconciliation failed for key %s", ctx.key_id, exc_info=True)
 

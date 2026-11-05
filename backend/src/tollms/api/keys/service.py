@@ -1,39 +1,28 @@
-"""API-key feature service: owner-scoped CRUD, policy/rules and analytics.
+"""API-key feature service: owner-scoped CRUD, policy/rules and validation.
 
 All key SQL and validation live here; generation, hashing and context caching
 stay in the reusable engine (`services.api_keys.keys`). Raw keys are returned
 to the caller exactly once and never persisted. Every mutation drops the
 engine's compiled-context cache entry so the gateway cannot serve stale
-permissions.
-
-Freshness: per-key analytics are Valkey-cached for 60s (same scheme as the
-platform/key analytics API — endpoint + user + key + minute-floored range
-end), so recently logged gateway traffic can lag the dashboard by up to a
-minute. CRUD responses are never cached.
+permissions. (Per-key analytics live in `api/keys/analytics.py`.)
 """
 
 import ipaddress
-import hashlib
-import json
 import logging
 import math
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from tollms.api.keys.schemas import (
-    AnalyticsCountryRow,
-    AnalyticsEndpointRow,
-    AnalyticsModelRow,
-    AnalyticsPoint,
     ApiKeyCreate,
     ApiKeyUpdate,
     IpRuleIn,
-    KeyAnalytics,
     ModelPermissionIn,
+    ModelPermissionRead,
     PolicyIn,
 )
 from tollms.core.exceptions import NotFoundError, ValidationError
@@ -42,24 +31,16 @@ from tollms.models.api_key import (
     ApiKeyIpRule,
     ApiKeyModelPermission,
     ApiKeyPolicy,
-    ApiRequestLog,
     IpRuleType,
 )
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
 from tollms.services.api_keys import keys as key_engine
-from tollms.services.analytics import presets as preset_vocab
-from tollms.services.cache import constants as cache_ttl
-from tollms.services.cache import keys as cache_keys
-from tollms.services.cache.manager import cache_get_sync, cache_set_sync
 from tollms.services.observability.events import emit
 
 logger = logging.getLogger(__name__)
 
 MASK_HEAD = 16  # "tma_sk_live_ab12" — prefix characters shown before the ellipsis
-DEFAULT_PRESET = "last_7d"
-PRESETS = ("today", "last_7d", "last_30d", "last_90d", "this_month")
-TOP_LIMIT = 5
 
 
 def masked_prefix(key_prefix: str) -> str:
@@ -71,9 +52,11 @@ def masked_prefix(key_prefix: str) -> str:
 
 
 def _key_select():
+    # Personal keys only (org_id IS NULL). Org keys are managed exclusively
+    # through the organizations API (`api/orgs/keys/service.py`).
     return (
         select(ApiKey)
-        .where(ApiKey.is_deleted.is_(False))
+        .where(ApiKey.is_deleted.is_(False), ApiKey.org_id.is_(None))
         .options(
             selectinload(ApiKey.policy),
             selectinload(ApiKey.ip_rules),
@@ -88,6 +71,22 @@ def get_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> ApiKey:
     if key is None:
         raise NotFoundError(f"api key {key_id} not found")
     return key
+
+
+def get_key_for_read(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> ApiKey:
+    """Personal key owned by `user_id`, else an org key assigned to them or
+    visible via ``Keys.Read``. Everything else 404s (no oracle).
+
+    Read-path companion to `get_key`: mutations keep using `get_key` so org
+    keys stay managed exclusively through the organizations API.
+    """
+    try:
+        return get_key(db, key_id, user_id)
+    except NotFoundError:
+        pass
+    from tollms.api.keys import organization_service as org_keys
+
+    return org_keys.get_org_key(db, user_id, key_id)
 
 
 def list_keys(db: Session, user_id: uuid.UUID) -> list[ApiKey]:
@@ -181,9 +180,27 @@ def _validated_policy(data: PolicyIn) -> dict:
 
 
 def _validated_model_permissions(
-    db: Session, items: list[ModelPermissionIn], user_id: uuid.UUID
+    db: Session,
+    items: list[ModelPermissionIn],
+    user_id: uuid.UUID,
+    *,
+    visible_org_ids: set[uuid.UUID] | frozenset | None = None,
+    require_org_id: uuid.UUID | None = None,
 ) -> list[dict]:
-    """Validate scopes exist, belong to the caller, and are unique per key."""
+    """Validate scopes exist, are visible to the caller, and are unique per key.
+
+    Personal scope (``visible_org_ids=None``): only personal providers/models
+    owned by the caller are visible — org providers (``org_id`` set, even when
+    their ``user_id`` equals the caller) are never reachable from personal
+    keys. Org scope: providers/models of every org in ``visible_org_ids``
+    (the granter's ACTIVE orgs) are additionally visible.
+
+    ``require_org_id`` (org-key issuance only): every listed provider/model
+    must additionally belong to the key's own org. A granter in two orgs can
+    otherwise stamp another org's model onto this org's key — harmless at the
+    gateway (resolution still scopes to the assignee's orgs) but wrong as
+    configuration, so issuance rejects it.
+    """
     seen: set[tuple] = set()
     for item in items:
         _reject_bad_number(item.max_budget, field="model_permissions.max_budget")
@@ -196,6 +213,15 @@ def _validated_model_permissions(
     if not items:
         return []
 
+    visible_orgs = set(visible_org_ids or ())
+
+    def _provider_visible(provider: Provider) -> bool:
+        if provider.is_deleted:
+            return False
+        if provider.org_id is not None:
+            return provider.org_id in visible_orgs
+        return provider.user_id == user_id
+
     provider_ids = {item.provider_id for item in items if item.provider_id}
     providers: dict[uuid.UUID, Provider] = {}
     if provider_ids:
@@ -204,8 +230,10 @@ def _validated_model_permissions(
         if missing:
             raise ValidationError(f"unknown provider: {min(str(value) for value in missing)}")
         for provider in providers.values():
-            if provider.is_deleted or (provider.user_id is not None and provider.user_id != user_id):
+            if not _provider_visible(provider):
                 raise ValidationError(f"provider {provider.id} not found")
+            if require_org_id is not None and provider.org_id != require_org_id:
+                raise ValidationError(f"provider {provider.id} is outside this organization")
 
     model_ids = {item.model_id for item in items if item.model_id}
     models: dict[uuid.UUID, AIModel] = {}
@@ -222,13 +250,10 @@ def _validated_model_permissions(
         )
         for model in models.values():
             owner = owners.get(model.provider_id) or providers.get(model.provider_id)
-            if (
-                model.is_deleted
-                or owner is None
-                or owner.is_deleted
-                or (owner.user_id is not None and owner.user_id != user_id)
-            ):
+            if model.is_deleted or owner is None or not _provider_visible(owner):
                 raise ValidationError(f"model {model.id} not found")
+            if require_org_id is not None and owner.org_id != require_org_id:
+                raise ValidationError(f"model {model.id} is outside this organization")
 
     for item in items:
         if item.provider_id and item.model_id and models[item.model_id].provider_id != item.provider_id:
@@ -236,31 +261,145 @@ def _validated_model_permissions(
     return [item.model_dump() for item in items]
 
 
+# --- permission display names --------------------------------------------------
+
+def permission_name_maps(
+    db: Session, perms
+) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, str]]:
+    """Batch-load display names for permission rows (no N+1).
+
+    Returns (provider names by provider_id, model `model_id` strings by
+    model row id). Deleted rows are simply absent — callers render None.
+    Two queries regardless of how many rows are passed.
+    """
+    pids = {p.provider_id for p in perms if p.provider_id is not None}
+    mids = {p.model_id for p in perms if p.model_id is not None}
+    provider_names: dict[uuid.UUID, str] = (
+        dict(
+            db.execute(select(Provider.id, Provider.name).where(Provider.id.in_(pids))).all()
+        )
+        if pids
+        else {}
+    )
+    model_names: dict[uuid.UUID, str] = (
+        dict(db.execute(select(AIModel.id, AIModel.model_id).where(AIModel.id.in_(mids))).all())
+        if mids
+        else {}
+    )
+    return provider_names, model_names
+
+
+def model_permission_reads(
+    db: Session, perms, *, names: tuple[dict, dict] | None = None
+) -> list[ModelPermissionRead]:
+    """ORM permission rows -> display reads, deterministically ordered.
+
+    `names` is a precomputed `permission_name_maps` result for the batch
+    case (list endpoints resolve one map for the whole page, then pass it
+    per key); single-key reads pass nothing and cost exactly two queries.
+    """
+    ordered = sorted(
+        perms, key=lambda perm: (str(perm.provider_id or ""), str(perm.model_id or ""))
+    )
+    if not ordered:
+        return []
+    provider_names, model_names = names if names is not None else permission_name_maps(db, ordered)
+    return [
+        ModelPermissionRead(
+            id=perm.id,
+            provider_id=perm.provider_id,
+            model_id=perm.model_id,
+            model_name=model_names.get(perm.model_id) if perm.model_id is not None else None,
+            provider_name=provider_names.get(perm.provider_id)
+            if perm.provider_id is not None
+            else None,
+            enabled=perm.enabled,
+            max_budget=perm.max_budget,
+            rpm=perm.rpm,
+            tpm=perm.tpm,
+        )
+        for perm in ordered
+    ]
+
+
 # --- mutations ---------------------------------------------------------------
 
+# Validated primitives for one key row. Shared by personal creation below and
+# org-key issuance (`api/orgs/service.py`) so raw-key handling, hashing and
+# persistence exist exactly once.
+class _KeyParts:
+    def __init__(self, *, name: str, description: str | None, expires_at,
+                 policy_values: dict | None, ip_rules: list[dict], permissions: list[dict]) -> None:
+        self.name = name
+        self.description = description
+        self.expires_at = expires_at
+        self.policy_values = policy_values
+        self.ip_rules = ip_rules
+        self.permissions = permissions
 
-def create_key(db: Session, data: ApiKeyCreate, user_id: uuid.UUID) -> tuple[ApiKey, str]:
-    """Create a key; returns (row, raw_key) with the raw value shown exactly once."""
+
+def prepare_key_parts(
+    db: Session, data: ApiKeyCreate, user_id: uuid.UUID, *,
+    visible_org_ids: set[uuid.UUID] | frozenset | None = None,
+    key_org_id: uuid.UUID | None = None,
+) -> _KeyParts:
+    """Validate a creation payload (personal or org scope) into persistable parts."""
     ip_rules = _validated_ip_rules(data.ip_rules)
-    permissions = _validated_model_permissions(db, data.model_permissions, user_id)
+    permissions = _validated_model_permissions(db, data.model_permissions, user_id,
+                                               visible_org_ids=visible_org_ids,
+                                               require_org_id=key_org_id)
     _ensure_future_expires(data.expires_at, field="expires_at")
+    policy_values = _validated_policy(data.policy) if data.policy is not None else None
+    return _KeyParts(
+        name=data.name, description=data.description, expires_at=data.expires_at,
+        policy_values=policy_values, ip_rules=ip_rules, permissions=permissions,
+    )
+
+
+def persist_key(
+    db: Session, parts: _KeyParts, *, user_id: uuid.UUID,
+    org_id: uuid.UUID | None = None, issued_by: uuid.UUID | None = None,
+    is_primary: bool = False, is_default: bool = False,
+) -> tuple[ApiKey, str]:
+    """Insert the key row; returns (row, raw_key) with the raw value shown once.
+
+    Personal keys pass ``org_id=None``; org keys pass the org, the assignee as
+    ``user_id`` and the granting caller as ``issued_by``. Org issuance never
+    sets the flags (defaults False); personal creation promotes via
+    ``set_default_key`` after persist.
+    """
     raw_key, key_prefix, key_hash = key_engine.generate_key()
     api_key = ApiKey(
         user_id=user_id,
-        name=data.name,
-        description=data.description,
+        org_id=org_id,
+        issued_by=issued_by,
+        name=parts.name,
+        description=parts.description,
         key_prefix=key_prefix,
         key_hash=key_hash,
-        expires_at=data.expires_at,
+        expires_at=parts.expires_at,
+        is_primary=is_primary,
+        is_default=is_default,
     )
-    if data.policy is not None:
-        api_key.policy = ApiKeyPolicy(**_validated_policy(data.policy))
-    api_key.ip_rules = [ApiKeyIpRule(**rule) for rule in ip_rules]
-    api_key.model_permissions = [ApiKeyModelPermission(**perm) for perm in permissions]
+    if parts.policy_values is not None:
+        api_key.policy = ApiKeyPolicy(**parts.policy_values)
+    api_key.ip_rules = [ApiKeyIpRule(**rule) for rule in parts.ip_rules]
+    api_key.model_permissions = [ApiKeyModelPermission(**perm) for perm in parts.permissions]
     db.add(api_key)
     db.commit()
-    logger.info("api key created: %s (%s)", api_key.id, key_prefix)
-    return get_key(db, api_key.id, user_id), raw_key
+    logger.info("api key created: %s (%s) org=%s", api_key.id, key_prefix, org_id)
+    return api_key, raw_key
+
+
+def create_key(db: Session, data: ApiKeyCreate, user_id: uuid.UUID) -> tuple[ApiKey, str]:
+    """Create a personal key; returns (row, raw_key) shown exactly once.
+
+    The new key takes the default slot (most-recent personal); the primary
+    key, when one exists, is untouched.
+    """
+    parts = prepare_key_parts(db, data, user_id)
+    api_key, raw_key = persist_key(db, parts, user_id=user_id)
+    return set_default_key(db, api_key.id, user_id), raw_key
 
 
 def update_key(db: Session, key_id: uuid.UUID, data: ApiKeyUpdate, user_id: uuid.UUID) -> ApiKey:
@@ -286,6 +425,9 @@ def update_key(db: Session, key_id: uuid.UUID, data: ApiKeyUpdate, user_id: uuid
 def delete_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> None:
     key = get_key(db, key_id, user_id)
     key_hash = key.key_hash
+    was_default = bool(key.is_default)
+    # NOTE: is_primary stays on the dead row; ensure_primary_key recreates
+    # a live primary lazily.
     key.is_deleted = True
     key.deleted_at = datetime.now(timezone.utc)
     key.deleted_by = user_id
@@ -296,6 +438,23 @@ def delete_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> None:
     key_engine.write_tombstone(key_hash)
     logger.info("api key deleted: %s", key_id)
     emit("key.deleted", key_id=str(key_id), user_id=str(user_id))
+    if was_default:
+        try:
+            candidate = db.scalar(
+                select(ApiKey)
+                .where(
+                    ApiKey.user_id == user_id,
+                    ApiKey.org_id.is_(None),
+                    ApiKey.is_deleted.is_(False),
+                )
+                .order_by(ApiKey.created_at.desc())
+            )
+            if candidate is not None:
+                set_default_key(db, candidate.id, user_id)
+            # else: no live personal key remains — leave no default;
+            # the next create/ensure re-establishes it.
+        except Exception:
+            logger.exception("api key default promote failed: user_id=%s", user_id)
 
 
 def rotate_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> tuple[ApiKey, str]:
@@ -362,182 +521,239 @@ def put_model_permissions(
     return get_key(db, key_id, user_id)
 
 
-# --- analytics ---------------------------------------------------------------
+
+# --- primary key lifecycle ---------------------------------------------------
+# One live primary per personal user (partial UQ
+# `uq_api_keys_primary_per_user`). The primary carries empty restrictions
+# (unlimited, no policy/IP rules); the model registry appends an allow-list
+# row per personal model (see `sync_primary_model`). Explicit user policy/IP
+# edits are never touched here, and a disabled/revoked primary is never
+# auto-enabled — the sync skips it until the user re-enables the key.
+
+PRIMARY_KEY_NAME = "Primary key"
 
 
-def _preset_window(preset: str, now: datetime | None = None) -> tuple[datetime, datetime, str]:
-    """(start, end, bucket granularity) for a supported preset; UTC walls.
-
-    Legacy aliases from the other analytics surfaces are accepted via the
-    shared preset vocabulary; unknown presets (and ``custom``, which takes
-    no date bounds here) still raise (HTTP 422).
-    """
-    now = now or datetime.now(timezone.utc)
-    preset = preset_vocab.normalize(preset, family="keys")
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if preset == "today":
-        return midnight, now, "hour"
-    if preset == "last_7d":
-        return midnight - timedelta(days=6), now, "day"
-    if preset == "last_30d":
-        return midnight - timedelta(days=29), now, "day"
-    if preset == "last_90d":
-        return midnight - timedelta(days=89), now, "day"
-    if preset == "this_month":
-        return midnight.replace(day=1), now, "day"
-    raise ValidationError(f"unknown analytics preset: {preset!r}; expected one of {', '.join(PRESETS)}")
-
-
-def _log_scope(key: ApiKey, user_id: uuid.UUID, start: datetime, end: datetime) -> tuple:
-    return (
-        ApiRequestLog.api_key_id == key.id,
-        ApiRequestLog.user_id == user_id,
-        ApiRequestLog.created_at >= start,
-        ApiRequestLog.created_at < end,
+def find_primary_key(db: Session, user_id: uuid.UUID) -> ApiKey | None:
+    """Live personal primary owned by `user_id`, if any."""
+    return db.scalar(
+        select(ApiKey).where(
+            ApiKey.user_id == user_id,
+            ApiKey.org_id.is_(None),
+            ApiKey.is_primary.is_(True),
+            ApiKey.is_deleted.is_(False),
+        )
     )
 
 
-def _series(db: Session, scope: tuple, granularity: str) -> list[AnalyticsPoint]:
-    bucket = func.date_trunc(granularity, ApiRequestLog.created_at)
-    rows = db.execute(
-        select(
-            bucket,
-            func.count(ApiRequestLog.id),
-            func.coalesce(func.sum(ApiRequestLog.total_tokens), 0),
-            func.coalesce(func.sum(ApiRequestLog.cost), 0),
-            func.count(ApiRequestLog.id).filter(ApiRequestLog.status != "success"),
+def find_default_key(db: Session, user_id: uuid.UUID) -> ApiKey | None:
+    """Live personal default owned by `user_id`, if any."""
+    return db.scalar(
+        select(ApiKey).where(
+            ApiKey.user_id == user_id,
+            ApiKey.org_id.is_(None),
+            ApiKey.is_default.is_(True),
+            ApiKey.is_deleted.is_(False),
         )
-        .where(*scope)
-        .group_by(bucket)
-        .order_by(bucket)
-    ).all()
-    return [
-        AnalyticsPoint(
-            bucket=row[0],
-            requests=int(row[1]),
-            tokens=int(row[2]),
-            cost=Decimal(str(row[3])),
-            errors=int(row[4]),
-        )
-        for row in rows
-    ]
+    )
 
 
-def _top_models(db: Session, scope: tuple) -> list[AnalyticsModelRow]:
-    model = func.coalesce(ApiRequestLog.model, "unknown")
-    spend = func.coalesce(func.sum(ApiRequestLog.cost), 0)
-    requests = func.count(ApiRequestLog.id)
-    rows = db.execute(
-        select(model, requests, func.coalesce(func.sum(ApiRequestLog.total_tokens), 0), spend)
-        .where(*scope)
-        .group_by(model)
-        .order_by(spend.desc(), requests.desc())
-        .limit(TOP_LIMIT)
-    ).all()
-    return [
-        AnalyticsModelRow(model=str(row[0]), requests=int(row[1]), tokens=int(row[2]), cost=Decimal(str(row[3])))
-        for row in rows
-    ]
+def set_default_key(db: Session, key_id: uuid.UUID, user_id: uuid.UUID) -> ApiKey:
+    """Make one live personal key the default (most-recent slot).
 
+    Unsets every other live personal default of the owner, sets the target,
+    commits and drops the target's cached context. 404-oracle on foreign keys.
 
-def _top_endpoints(db: Session, scope: tuple) -> list[AnalyticsEndpointRow]:
-    requests = func.count(ApiRequestLog.id)
-    spend = func.coalesce(func.sum(ApiRequestLog.cost), 0)
-    rows = db.execute(
-        select(ApiRequestLog.endpoint, requests, spend)
-        .where(*scope)
-        .group_by(ApiRequestLog.endpoint)
-        .order_by(requests.desc(), spend.desc())
-        .limit(TOP_LIMIT)
-    ).all()
-    return [
-        AnalyticsEndpointRow(endpoint=str(row[0]), requests=int(row[1]), cost=Decimal(str(row[2])))
-        for row in rows
-    ]
-
-
-def _top_countries(db: Session, scope: tuple) -> list[AnalyticsCountryRow]:
-    requests = func.count(ApiRequestLog.id)
-    rows = db.execute(
-        select(ApiRequestLog.country, requests)
-        .where(*scope, ApiRequestLog.country.is_not(None))
-        .group_by(ApiRequestLog.country)
-        .order_by(requests.desc())
-        .limit(TOP_LIMIT)
-    ).all()
-    return [AnalyticsCountryRow(country=str(row[0]), requests=int(row[1])) for row in rows]
-
-
-def _analytics_digest(preset: str, end: datetime, key_id: uuid.UUID) -> str:
-    """Stable cache identity: endpoint + canonical preset + minute-floored
-    range end (preset windows end at ``now``) + key."""
-    parts = [
-        "key-analytics",
-        preset,
-        end.replace(second=0, microsecond=0).isoformat(),
-        json.dumps({"key_id": str(key_id)}, sort_keys=True),
-    ]
-    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
-
-
-def get_analytics(
-    db: Session, key_id: uuid.UUID, user_id: uuid.UUID, preset: str = DEFAULT_PRESET
-) -> KeyAnalytics:
-    """Grouped per-key roll-up; every query is scoped to the key's owner.
-
-    Valkey-cached for 60s (best-effort: failures fall through to PostgreSQL).
+    Race-safe: the claim runs in a savepoint; a lost
+    `uq_api_keys_default_per_user` race expires the rolled-back flag and
+    returns the concurrent winner instead of 500.
     """
+    from sqlalchemy.exc import IntegrityError
+
     key = get_key(db, key_id, user_id)
-    start, end, granularity = _preset_window(preset)
-    canonical = preset_vocab.normalize(preset, family="keys")
-    cache_key = cache_keys.analytics(user_id, _analytics_digest(canonical, end, key_id))
-    hit = cache_get_sync(cache_key)
-    if isinstance(hit, dict):
+    try:
+        with db.begin_nested():
+            db.execute(
+                update(ApiKey)
+                .where(
+                    ApiKey.user_id == user_id,
+                    ApiKey.org_id.is_(None),
+                    ApiKey.is_deleted.is_(False),
+                    ApiKey.is_default.is_(True),
+                    ApiKey.id != key_id,
+                )
+                .values(is_default=False)
+            )
+            key.is_default = True
+            db.flush()
+    except IntegrityError:
+        db.expire(key)
+        winner = find_default_key(db, user_id)
+        if winner is not None:
+            logger.info("api default key race lost, winner kept: %s", winner.id)
+            return winner
+        raise
+    db.commit()
+    key_engine.invalidate_context(key.key_hash)
+    logger.info("api default key set: %s", key_id)
+    return get_key(db, key_id, user_id)
+
+
+def backfill_missing_primaries(db: Session) -> int:
+    """Ensure every live user owns a live personal primary. Returns count created."""
+    from tollms.models.user import User
+
+    made = 0
+    for uid in db.scalars(select(User.id).where(User.is_deleted.is_(False))):
         try:
-            return KeyAnalytics(**hit)
-        except Exception:  # noqa: BLE001 - corrupt entry rebuilds below
-            logger.warning("keys analytics: corrupt cache entry for key %s", key_id)
-    result = _build_analytics(db, key, user_id, start, end, granularity, canonical)
-    cache_set_sync(cache_key, result.model_dump(mode="json"), ttl=cache_ttl.ANALYTICS)
-    return result
+            if find_primary_key(db, uid) is None:
+                ensure_primary_key(db, uid)
+                made += 1
+        except Exception:
+            logger.exception("primary key backfill failed: user_id=%s", uid)
+    logger.info("primary key backfill: %d ensured", made)
+    return made
 
 
-def _build_analytics(
+def ensure_primary_key(db: Session, user_id: uuid.UUID, *, commit: bool = True) -> ApiKey:
+    """Fetch the live personal primary, creating it (unrestricted) if missing.
+
+    Idempotent under concurrency: creation runs in a savepoint so a lost
+    partial-UQ race rolls back only the insert, then re-fetches the winner.
+    A primary with no live personal default adopts the slot (same savepoint
+    discipline: a lost default race expires the rolled-back flag and keeps
+    the concurrent winner).
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    key = find_primary_key(db, user_id)
+    if key is None:
+        _raw, key_prefix, key_hash = key_engine.generate_key()
+        candidate = ApiKey(
+            user_id=user_id,
+            org_id=None,
+            name=PRIMARY_KEY_NAME,
+            key_prefix=key_prefix,
+            key_hash=key_hash,
+            is_primary=True,
+        )
+        try:
+            with db.begin_nested():
+                db.add(candidate)
+                db.flush()
+        except IntegrityError:
+            pass  # another transaction won the race; refetch below
+        key = find_primary_key(db, user_id)
+        if key is None:  # pragma: no cover - defensive; UQ guarantees a winner
+            raise ValidationError("could not establish a primary API key")
+    if find_default_key(db, user_id) is None:
+        try:
+            with db.begin_nested():
+                key.is_default = True
+                db.flush()
+        except IntegrityError:
+            # Another key took the default slot concurrently; drop the
+            # rolled-back flag so the commit below stays clean.
+            db.expire(key)
+    if commit:
+        db.commit()
+        db.refresh(key)
+    logger.info("api primary key ensured: %s", key.id)
+    return key
+
+
+def sync_primary_model(
     db: Session,
-    key,  # ApiKey row (ownership already checked)
+    *,
     user_id: uuid.UUID,
-    start: datetime,
-    end: datetime,
-    granularity: str,
-    preset: str,
-) -> KeyAnalytics:
-    """Grouped per-key roll-up; every query is scoped to the key's owner."""
-    scope = _log_scope(key, user_id, start, end)
+    provider_id: uuid.UUID,
+    model_id: uuid.UUID,
+    commit: bool = True,
+) -> ApiKey | None:
+    """Append one allow-list row (provider, model, enabled) to the primary.
 
-    requests, tokens, cost, avg_latency, p95_latency, errors = db.execute(
-        select(
-            func.count(ApiRequestLog.id),
-            func.coalesce(func.sum(ApiRequestLog.total_tokens), 0),
-            func.coalesce(func.sum(ApiRequestLog.cost), 0),
-            func.avg(ApiRequestLog.latency_ms),
-            func.percentile_cont(0.95).within_group(ApiRequestLog.latency_ms),
-            func.count(ApiRequestLog.id).filter(ApiRequestLog.status != "success"),
-        ).where(*scope)
-    ).one()
+    Skips silently when the primary is disabled or soft-deleted (never
+    auto-enable, never resurrect); skips duplicates via check-exists-first
+    plus a savepoint for races. Policy/IP restrictions are never modified.
+    """
+    from sqlalchemy.exc import IntegrityError
 
-    request_count = int(requests or 0)
-    return KeyAnalytics(
-        range=preset,
-        range_start=start,
-        range_end=end,
-        requests=request_count,
-        tokens=int(tokens or 0),
-        cost=Decimal(str(cost)),
-        avg_latency_ms=float(avg_latency) if avg_latency is not None else None,
-        p95_latency_ms=float(p95_latency) if p95_latency is not None else None,
-        error_rate=round(int(errors or 0) / request_count, 4) if request_count else 0.0,
-        series=_series(db, scope, granularity),
-        top_models=_top_models(db, scope),
-        top_endpoints=_top_endpoints(db, scope),
-        top_countries=_top_countries(db, scope),
+    key = ensure_primary_key(db, user_id, commit=False)
+    if not key.enabled or key.is_deleted:
+        return key
+    exists = db.scalar(
+        select(ApiKeyModelPermission.id).where(
+            ApiKeyModelPermission.api_key_id == key.id,
+            ApiKeyModelPermission.provider_id == provider_id,
+            ApiKeyModelPermission.model_id == model_id,
+        )
     )
+    if exists is not None:
+        return key
+    try:
+        with db.begin_nested():
+            db.add(
+                ApiKeyModelPermission(
+                    api_key_id=key.id,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    enabled=True,
+                )
+            )
+            db.flush()
+    except IntegrityError:
+        pass  # concurrent sync won; the row exists now
+    key_engine.invalidate_context(key.key_hash)
+    if commit:
+        db.commit()
+    logger.info("api primary key synced model: key=%s model=%s", key.id, model_id)
+    return key
+
+
+def prune_primary_provider_models(
+    db: Session, *, user_id: uuid.UUID, provider_id: uuid.UUID
+) -> int:
+    """Delete the owner's primary-key allow-list rows for one provider.
+
+    Strictly scoped to ``find_primary_key(user_id)`` — a missing primary is
+    a no-op. Returns the deleted row count.
+    """
+    key = find_primary_key(db, user_id)
+    if key is None:
+        return 0
+    result = db.execute(
+        delete(ApiKeyModelPermission).where(
+            ApiKeyModelPermission.api_key_id == key.id,
+            ApiKeyModelPermission.provider_id == provider_id,
+        )
+    )
+    db.commit()
+    key_engine.invalidate_context(key.key_hash)
+    logger.info(
+        "api primary key pruned provider: key=%s provider=%s rows=%s",
+        key.id, provider_id, result.rowcount,
+    )
+    return result.rowcount or 0
+
+
+def prune_primary_model(db: Session, *, user_id: uuid.UUID, model_id: uuid.UUID) -> int:
+    """Delete the owner's primary-key allow-list rows for one model.
+
+    Same scope/no-op contract as ``prune_primary_provider_models``.
+    Returns the deleted row count.
+    """
+    key = find_primary_key(db, user_id)
+    if key is None:
+        return 0
+    result = db.execute(
+        delete(ApiKeyModelPermission).where(
+            ApiKeyModelPermission.api_key_id == key.id,
+            ApiKeyModelPermission.model_id == model_id,
+        )
+    )
+    db.commit()
+    key_engine.invalidate_context(key.key_hash)
+    logger.info(
+        "api primary key pruned model: key=%s model=%s rows=%s",
+        key.id, model_id, result.rowcount,
+    )
+    return result.rowcount or 0

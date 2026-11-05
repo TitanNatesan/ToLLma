@@ -1,19 +1,23 @@
 """Model Intelligence Repository tables.
 
 Global, provider-agnostic source of truth for model metadata, pricing,
-capabilities, and limits. Populated by ModelRepositorySyncService from
-external sources (LiteLLM, OpenRouter); never edited by hand.
+capabilities, and limits. Populated by the model-repository sync engine from
+the models.dev catalog; never edited by hand.
 """
 
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import Base, SoftDeleteMixin, TimestampedModel
+
+if TYPE_CHECKING:
+    from tollms.models.canonical_model import CanonicalModel
 
 # Pricing is stored source-native (per-token) at high precision. Consumers
 # (e.g. the gateway cost engine, which prices per-1M) must convert units.
@@ -25,8 +29,10 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     __table_args__ = (
         UniqueConstraint("model_key", name="uq_model_repository_key"),
         Index("ix_model_repository_provider", "provider"),
+        Index("ix_model_repository_catalog", "catalog_slug"),
         Index("ix_model_repository_active", "is_active"),
         Index("ix_model_repository_created", "created_at"),
+        Index("ix_model_repository_canonical_id", "canonical_id"),
     )
 
     model_key: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g. anthropic/claude-sonnet-4
@@ -35,6 +41,19 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     family: Mapped[str | None] = mapped_column(String(128), nullable=True)
     provider: Mapped[str] = mapped_column(String(128), nullable=False)
     provider_model_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    catalog_slug: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Link to provider_catalog.slug (NULL when the provider has no catalog
+    # entry). Set at sync time, never user-edited.
+    # Logical link to canonical_model.canonical_id (NULL when the upstream
+    # record has no canonical_model_id or it resolves nowhere). Set at sync
+    # time, never user-edited. model_key/provider_model_id are never rewritten.
+    canonical_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("canonical_model.canonical_id", ondelete="SET NULL"), nullable=True
+    )
+    # Polymorphic upstream reasoning options, passthrough (NULL when absent).
+    reasoning_options: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Overflow pricing from upstream cost (tiers, context_over_200k). NULL when empty.
+    extra_cost: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     vendor: Mapped[str | None] = mapped_column(String(128), nullable=True)
     endpoint_type: Mapped[str] = mapped_column(String(64), default="chat_completions", nullable=False)
     # Endpoint-aware metadata (wire paths): the primary endpoint plus every
@@ -100,6 +119,8 @@ class RepositoryModel(SoftDeleteMixin, TimestampedModel):
     # Full per-source raw payloads, keyed by source name. New upstream fields
     # land here automatically — no migration needed when sources evolve.
     raw_source_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+    canonical: Mapped["CanonicalModel | None"] = relationship(back_populates="offerings")
 
     sources_: Mapped[list["RepositorySource"]] = relationship(
         back_populates="repository_entry", cascade="all, delete-orphan"

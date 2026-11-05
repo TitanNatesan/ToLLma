@@ -100,7 +100,7 @@ export function BudgetBar({
 
   if (loading && spent === null) {
     return (
-      <div className={cn("w-32 space-y-1.5", className)} data-testid={testId} aria-busy="true">
+      <div className={cn("w-full max-w-44 space-y-1.5", className)} data-testid={testId} aria-busy="true">
         <div className="h-2.5 w-24 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />
         <div className="h-1.5 w-full animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />
       </div>
@@ -123,7 +123,7 @@ export function BudgetBar({
 
   return (
     <div
-      className={cn("w-32 space-y-1", size === "md" && "w-44", className)}
+      className={cn("w-full max-w-44 space-y-1", size === "md" && "max-w-56", className)}
       data-testid={testId}
       role="progressbar"
       aria-valuemin={0}
@@ -132,7 +132,7 @@ export function BudgetBar({
       aria-valuetext={`${fmtPercentUsed(pct)}% used, ${fmtBudgetAmount(remaining)} remaining`}
       title={`${fmtBudgetAmount(spent)} of ${fmtBudgetAmount(budget)} spent (${windowLabel})`}
     >
-      <div className="flex items-baseline justify-between gap-2 text-[10px] tabular-nums">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-[10px] tabular-nums">
         <span className={cn("font-mono", TEXT_TONE[tone])}>{fmtPercentUsed(pct)}% used</span>
         <span className="font-mono text-zinc-400">{fmtBudgetAmount(remaining)} remaining</span>
       </div>

@@ -262,8 +262,10 @@ def test_platform_empty_window_zeros(client: TestClient, db: Session, user_facto
     assert body["cost"]["most_expensive_request"] is None
     assert body["tokens"]["total"] == 0 and body["tokens"]["per_request"] == 0.0
     assert body["providers"] == [] and body["models"] == [] and body["endpoints"] == []
-    assert body["keys"] == {"total": 0, "active": 0, "disabled": 0, "expired": 0, "rotated": 0}
-    assert body["top_keys"] == [] and body["key_growth"] == []
+    # signup auto-provisions one "Primary key", so the empty window still inventories it
+    assert body["keys"] == {"total": 1, "active": 1, "disabled": 0, "expired": 0, "rotated": 0}
+    assert body["top_keys"] == []
+    assert len(body["key_growth"]) == 1 and body["key_growth"][0]["created"] == 1
     assert body["insights"] == []
 
 
@@ -388,7 +390,10 @@ def test_api_keys_list_scopes_to_owner(client: TestClient, db: Session, user_fac
     body = r.json()
     assert set(body) == {"range", "keys"}
     rows = {row["key_id"]: row for row in body["keys"]}
-    assert set(rows) == {str(used_key.id), str(idle_key.id)}
+    # signup auto-provisions one "Primary key" for the owner alongside Used/Idle
+    primaries = [row for row in body["keys"] if row["name"] == "Primary key"]
+    assert len(primaries) == 1 and primaries[0]["requests"] == 0
+    assert set(rows) == {str(used_key.id), str(idle_key.id), primaries[0]["key_id"]}
     assert str(foreign_key.id) not in rows and other["id"] != owner["id"]
 
     used = rows[str(used_key.id)]
@@ -595,11 +600,12 @@ def test_platform_payload_values(client: TestClient, db: Session, user_factory) 
     assert body["requests"]["total"] == 2 and body["requests"]["failed"] == 1
     assert Decimal(str(body["cost"]["total"])) == Decimal("0.03")
     assert body["tokens"]["total"] == 150
-    assert body["keys"]["total"] == 1 and body["keys"]["active"] == 1
+    # +1 signup "Primary key" alongside the seeded "Platform key"
+    assert body["keys"]["total"] == 2 and body["keys"]["active"] == 2
     assert body["top_keys"][0]["requests"] == 2
     assert Decimal(str(body["key_spend"][0]["share"])) == 1.0
     assert Decimal(str(body["key_cache_savings"][0]["savings"])) == Decimal("0.008")
-    assert body["key_growth"] and body["key_growth"][0]["created"] == 1
+    assert body["key_growth"] and body["key_growth"][0]["created"] == 2
     assert body["models"][0]["model"] == "gpt-test"
     assert body["providers"][0]["provider"] == "openai"
     assert body["endpoints"][0]["endpoint"] == "/v1/chat/completions"
@@ -671,8 +677,9 @@ def test_admin_api_keys_payload_and_dashboard_section(
     assert r.status_code == 200, r.text
     body = r.json()
     assert set(body) == ADMIN_KEY_KEYS
-    assert body["total"] == 4
-    assert body["active"] == 3
+    # +1 signup "Primary key" alongside the four seeded keys
+    assert body["total"] == 5
+    assert body["active"] == 4
     assert body["disabled"] == 1
     assert body["expired"] == 1
     assert body["rotated"] == 1
@@ -681,10 +688,10 @@ def test_admin_api_keys_payload_and_dashboard_section(
     assert Decimal(str(body["spend_by_key"][0]["spend"])) == Decimal("0.03")
     assert body["errors_by_key"][0]["errors"] == 1
     assert Decimal(str(body["cache_savings_by_key"][0]["savings"])) == Decimal("0.008")
-    assert body["growth"] and body["growth"][0]["created"] == 4
+    assert body["growth"] and body["growth"][0]["created"] == 5
 
     dashboard = client.get("/api/admin/dashboard", params={"preset": "last_7d"})
     assert dashboard.status_code == 200, dashboard.text
     section = dashboard.json()["api_keys"]
     assert set(section) == ADMIN_KEY_KEYS
-    assert section["total"] == 4 and section["top_keys"][0]["key_id"] == str(active.id)
+    assert section["total"] == 5 and section["top_keys"][0]["key_id"] == str(active.id)

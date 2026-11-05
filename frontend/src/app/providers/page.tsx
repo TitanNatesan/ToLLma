@@ -1,14 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { toast } from "sonner";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { toast } from "@/lib/notify";
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  EmptyState,
   ErrorState,
-  GhostButton,
   LoadingState,
   SearchInput,
   Select,
@@ -25,7 +26,16 @@ import {
   useProviderMutations,
   useProviders,
 } from "@/hooks/useRegistry";
+import { useProviderHealthActions } from "@/hooks/useProviderHealth";
+import {
+  isNotFoundError,
+  useOrgMutations,
+  useOrgProviderModels,
+  useOrgProviders,
+  useOrgs,
+} from "@/hooks/useOrgs";
 import { useChatStore } from "@/store/chat";
+import { useOrgStore } from "@/store/org";
 import { ProviderWizardModal } from "./components/ProviderWizardModal";
 import { ModelDetailDrawer } from "./components/ModelDetailDrawer";
 import { RegisterModelDrawer } from "./components/RegisterModelDrawer";
@@ -36,7 +46,8 @@ import {
   providerTypeLabel,
   resolveWireEndpoint,
 } from "./fields";
-import type { AIModel, DiscoveredModelInfo, Provider } from "@/types";
+import type { AIModel, DiscoveredModelInfo, Provider, ProviderType } from "@/types";
+import { CatalogBrowserDialog } from "./components/CatalogBrowser";
 import {
   CheckCircle2,
   Cpu,
@@ -45,6 +56,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -72,6 +84,11 @@ function fmtPriceShort(v: unknown): string {
   return fmtPrice(v);
 }
 
+/** Sticky filter bar shared by both model-list columns: same offset in the
+ *  unified scroll container, parent-matched bg so there is no solid seam. */
+const STICKY_FILTER_BAR =
+  "sticky -top-4 z-10 -mx-4 bg-zinc-50/30 px-4 pt-4 pb-2 dark:bg-zinc-950/30";
+
 const MATCH_BADGE: Record<string, string> = {
   provider_specific: "Exact match",
   global: "Repository",
@@ -79,25 +96,92 @@ const MATCH_BADGE: Record<string, string> = {
 };
 
 export default function ProvidersPage() {
-  const providersQuery = useProviders();
-  const modelsQuery = useModels();
-  const providers = providersQuery.data ?? [];
+  // useSearchParams (?provider= deep link) needs a Suspense boundary or the
+  // production build fails.
+  return (
+    <Suspense fallback={<LoadingState message="Loading providers…" className="flex-1 py-16" />}>
+      <ProvidersPageInner />
+    </Suspense>
+  );
+}
+
+function ProvidersPageInner() {
+  // Scope: personal workspace behaves exactly as before; an org context
+  // reuses this identical UI with org data (each scope reads its own list
+  // query, so org rows never mix with personal rows and vice versa).
+  const context = useOrgStore((st) => st.context);
+  const isOrg = context.type === "org";
+  const orgId = isOrg ? context.orgId : null;
+  const orgName = isOrg ? context.orgName : null;
+
+  // The org list carries the viewer's effective perms (is_root/permissions),
+  // the same fields the org dashboard gates on — no extra detail fetch.
+  const orgs = useOrgs();
+  const orgEntry = orgId ? (orgs.data ?? []).find((o) => o.id === orgId) : undefined;
+  const canOrg = (code: string) =>
+    !!orgEntry && (orgEntry.is_root || orgEntry.permissions.includes(code));
+  // Gates mirror the deleted OrgProvidersSection call site (verified before
+  // delete): read needs Providers.Read; manage needs Create (Update kept —
+  // the old call site granted it too, so updaters keep their Edit button).
+  const canRead = !isOrg || canOrg("Providers.Read");
+  const canManage = !isOrg || canOrg("Providers.Create") || canOrg("Providers.Update");
+
+  const personalProvidersQuery = useProviders();
+  const orgProvidersQuery = useOrgProviders(orgId ?? "", { enabled: isOrg && canRead });
+  // The org endpoint returns the same ProviderRead shape as personal, so the
+  // workspace below consumes it directly (cast only — no remap to drift).
+  // Memoized so the scope-derived list keeps a stable identity for downstream
+  // memos (the scope branch itself is render-time derivation, no waterfall).
+  const providers: Provider[] = useMemo(
+    () =>
+      isOrg
+        ? ((orgProvidersQuery.data ?? []) as unknown as Provider[])
+        : (personalProvidersQuery.data ?? []),
+    [isOrg, orgProvidersQuery.data, personalProvidersQuery.data],
+  );
+  const providersQuery = isOrg ? orgProvidersQuery : personalProvidersQuery;
+  // Personal model endpoints 404 org rows (personal_only); org models are
+  // registered atomically in the wizard — so org scope skips the list and
+  // the register/edit/toggle/delete controls below stay personal-only.
+  const modelsQuery = useModels(undefined, undefined, { enabled: !isOrg });
   const allModels = modelsQuery.data ?? [];
   const pm = useProviderMutations();
   const mm = useModelMutations();
+  const orgMut = useOrgMutations(orgId ?? undefined);
+  const orgProviderNames = useMemo(() => providers.map((pr) => pr.name), [providers]);
 
   const {
     selectedProviderId,
     setSelectedProviderId,
     addProviderOpen,
     setAddProviderOpen,
+    catalogOpen,
+    setCatalogOpen,
+    catalogPrefill,
+    setCatalogPrefill,
     leftSidebarOpen,
     setLeftSidebar,
   } = useChatStore();
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
   const [discoverMsg, setDiscoverMsg] = useState<Record<string, string>>({});
+  const { busy, runValidate, runDiscover, track } = useProviderHealthActions({
+    onDiscovered: (id, message) => setDiscoverMsg((prev) => ({ ...prev, [id]: message })),
+  });
+
+  // Org enable/disable (the personal page has no provider toggle; the
+  // deleted org section did — preserved here so the capability survives).
+  async function runToggleProvider(pr: Provider, active: boolean) {
+    if (!orgId) return;
+    await track(`toggle:${pr.id}`, async () => {
+      try {
+        await orgMut.updateOrgProvider.mutateAsync({ providerId: pr.id, payload: { is_active: active } });
+        toast.success(active ? `"${pr.name}" enabled.` : `"${pr.name}" disabled.`);
+      } catch (e) {
+        toast.error(parseApiError(e).message);
+      }
+    });
+  }
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [showEditForm, setShowEditForm] = useState(false);
   const [drawerModel, setDrawerModel] = useState<AIModel | null>(null);
@@ -113,13 +197,37 @@ export default function ProvidersPage() {
   const [deleteModelTarget, setDeleteModelTarget] = useState<AIModel | null>(null);
 
   // Determine active provider: either from store or first available provider
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Deep link (?provider=): selecting a provider keeps the id in the URL so
+  // the detail view is shareable and survives reload.
+  useEffect(() => {
+    const param = searchParams.get("provider");
+    if (param && providers.some((pr) => pr.id === param) && param !== selectedProviderId) {
+      setSelectedProviderId(param);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, providers]);
   const activeId =
     selectedProviderId && providers.some((p) => p.id === selectedProviderId)
       ? selectedProviderId
       : providers[0]?.id ?? null;
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if ((params.get("provider") ?? null) === (activeId ?? null)) return;
+    if (activeId) params.set("provider", activeId);
+    else params.delete("provider");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProviderId, providers]);
 
   const selected = providers.find((p) => p.id === activeId) ?? null;
-  const selectedModels = allModels.filter((m) => m.provider_id === activeId);
+  const orgModelsQuery = useOrgProviderModels(orgId ?? "", activeId, { enabled: isOrg && canRead });
+  const selectedModels = isOrg
+    ? (orgModelsQuery.data ?? [])
+    : allModels.filter((m) => m.provider_id === activeId);
 
   // Discovery cache (written by Refresh; never registers anything by itself).
   const discovery = (() => {
@@ -163,42 +271,44 @@ export default function ProvidersPage() {
       m.model_id.toLowerCase().includes(registeredSearch.toLowerCase()),
   );
 
-  async function runValidate(id: string) {
-    setBusy(`validate:${id}`);
-    try {
-      const r = await pm.validate.mutateAsync(id);
-      r.valid
-        ? toast.success("Credentials valid", { description: `${r.latency_ms.toFixed(0)}ms` })
-        : toast.error("Credentials invalid", { description: r.message });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function runDiscover(id: string) {
-    setBusy(`discover:${id}`);
-    try {
-      const d = await pm.discover.mutateAsync(id);
-      setDiscoverMsg((s) => ({ ...s, [id]: d.message }));
-      toast.success("Model discovery finished", { description: d.message });
-    } catch (e) {
-      toast.error("Discovery failed", { description: e instanceof Error ? e.message : "Error" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function confirmDeleteProvider() {
     if (!deleteProviderTarget) return;
-    await pm.remove.mutateAsync(deleteProviderTarget.id);
+    if (isOrg && orgId) {
+      await orgMut.deleteOrgProvider.mutateAsync(deleteProviderTarget.id);
+    } else {
+      await pm.remove.mutateAsync(deleteProviderTarget.id);
+    }
     if (selectedProviderId === deleteProviderTarget.id) setSelectedProviderId(null);
     setDeleteProviderTarget(null);
-    toast.success("Provider deleted");
+    toast.success(isOrg ? `Provider "${deleteProviderTarget.name}" removed.` : "Provider deleted");
+  }
+
+  // Org scope without read permission mirrors the deleted section's gate.
+  if (isOrg && !canRead) {
+    if (orgs.isPending) {
+      return (
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden p-8">
+          <LoadingState message="Loading organization…" />
+        </div>
+      );
+    }
+    return (
+      <div className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden p-8">
+        <EmptyState
+          title="Providers"
+          description="You need provider-read permission to view organization providers."
+        />
+      </div>
+    );
   }
 
   async function confirmDeleteModel() {
     if (!deleteModelTarget) return;
-    await mm.remove.mutateAsync(deleteModelTarget.id);
+    if (isOrg && orgId) {
+      await orgMut.deleteOrgModel.mutateAsync(deleteModelTarget.id);
+    } else {
+      await mm.remove.mutateAsync(deleteModelTarget.id);
+    }
     setDeleteModelTarget(null);
     toast.success("Model deleted");
   }
@@ -207,22 +317,30 @@ export default function ProvidersPage() {
     <div className="flex h-full min-h-0 flex-1 overflow-hidden">
       {/* Three-Panel Workspace: Center (Details) & Right (Models) */}
       <section
-        className="flex min-w-0 flex-1 overflow-hidden divide-x divide-zinc-200 dark:divide-zinc-800"
+        className="flex min-w-0 flex-1 flex-col overflow-y-auto divide-zinc-200 xl:flex-row xl:overflow-hidden xl:divide-x dark:divide-zinc-800"
         aria-label="Provider details"
       >
         {providersQuery.isPending ? (
           <LoadingState message="Loading providers…" className="flex-1 py-16" />
         ) : providersQuery.error ? (
-          <ErrorState
-            title="Could not load providers"
-            message={parseApiError(providersQuery.error).message}
-            onRetry={() => void providersQuery.refetch()}
-            className="flex-1"
-          />
+          isOrg && isNotFoundError(providersQuery.error) ? (
+            <EmptyState
+              title="Providers aren't available yet"
+              description="The organization provider service is still rolling out. Personal providers keep working."
+              className="flex-1"
+            />
+          ) : (
+            <ErrorState
+              title="Could not load providers"
+              message={parseApiError(providersQuery.error).message}
+              onRetry={() => void providersQuery.refetch()}
+              className="flex-1"
+            />
+          )
         ) : !selected ? (
           <div className="relative flex flex-1 items-center justify-center p-8">
             {!leftSidebarOpen && (
-              <div className="absolute top-4 left-4">
+              <div className="absolute top-4 left-4 md:hidden">
                 <Tooltip content="Show sidebar">
                   <Button
                     size="sm"
@@ -252,14 +370,16 @@ export default function ProvidersPage() {
                 <p className="text-xs text-zinc-500">
                   Choose a provider from the sidebar to validate credentials, discover models, and register models.
                 </p>
-                <Button
-                  size="sm"
-                  onClick={() => setAddProviderOpen(true)}
-                  className="gap-1.5 text-xs mt-2"
-                >
-                  <Plus className="size-3.5" />
-                  Add Provider
-                </Button>
+                {(!isOrg || canManage) && (
+                  <Button
+                    size="sm"
+                    onClick={() => setAddProviderOpen(true)}
+                    className="gap-1.5 text-xs mt-2"
+                  >
+                    <Plus className="size-3.5" />
+                    Add Provider
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -267,19 +387,19 @@ export default function ProvidersPage() {
           <>
             {/* Center Panel: Provider Details & Health */}
             <div
-              className="flex w-full lg:w-2/5 flex-col overflow-y-auto bg-white dark:bg-zinc-950 min-h-[300px]"
+              className="flex w-full flex-col bg-white dark:bg-zinc-950 min-h-[300px] xl:w-2/5 xl:min-h-0 xl:overflow-y-auto"
               data-testid="provider-detail"
             >
               {/* Header */}
-              <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+              <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                     {!leftSidebarOpen && (
                       <Tooltip content="Show sidebar">
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-8 w-8 p-0 text-zinc-500 -ml-1 mr-1"
+                          className="h-8 w-8 p-0 text-zinc-500 -ml-1 mr-1 md:hidden"
                           onClick={() => setLeftSidebar(true)}
                           aria-label="Open sidebar"
                           data-testid="left-sidebar-toggle"
@@ -288,36 +408,71 @@ export default function ProvidersPage() {
                         </Button>
                       </Tooltip>
                     )}
-                    <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
+                    <h1 className="min-w-0 flex-1 truncate text-lg font-bold text-zinc-900 dark:text-zinc-100">
                       {selected.name}
                     </h1>
                     <Badge variant="outline" className="text-xs">
                       {providerTypeLabel(selected.provider_type)}
                     </Badge>
+                    {isOrg ? (
+                      <Badge
+                        variant="secondary"
+                        className="text-xs"
+                        data-testid="provider-scope-org"
+                        title="Organization providers are shared with every member"
+                      >
+                        {orgName ?? "Organization"}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="secondary"
+                        className="text-xs"
+                        data-testid="provider-scope-personal"
+                        title="Personal providers are visible only to you"
+                      >
+                        Personal
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 gap-1.5 text-xs"
-                      onClick={() => {
-                        setEditingProvider(selected);
-                        setAddProviderOpen(true);
-                      }}
-                    >
-                      <Pencil className="size-3.5" />
-                      <span>Edit</span>
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                      onClick={() => setDeleteProviderTarget(selected)}
-                      data-testid={`provider-delete-${selected.id}`}
-                      title="Delete provider"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                    {(!isOrg || canManage) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={() => {
+                          setEditingProvider(selected);
+                          setAddProviderOpen(true);
+                        }}
+                      >
+                        <Pencil className="size-3.5" />
+                        <span>Edit</span>
+                      </Button>
+                    )}
+                    {isOrg && (
+                      <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+                        <Switch
+                          checked={selected.is_active !== false}
+                          onCheckedChange={(v) => void runToggleProvider(selected, v)}
+                          disabled={busy !== null || !canManage}
+                          aria-label={`Enable ${selected.name}`}
+                          data-testid={`org-prov-toggle-${selected.id}`}
+                        />
+                        <span className="text-[10px]">{selected.is_active !== false ? "On" : "Off"}</span>
+                      </label>
+                    )}
+                    {(!isOrg || canManage) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
+                        onClick={() => setDeleteProviderTarget(selected)}
+                        data-testid={`provider-delete-${selected.id}`}
+                        title="Delete provider"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -380,34 +535,36 @@ export default function ProvidersPage() {
                 </div>
 
                 {/* Operations Toolbar: only Validate + Refresh models */}
-                <div className="flex flex-wrap gap-2">
-                  <GhostButton
-                    size="sm"
-                    className="gap-1.5 text-xs"
-                    onClick={() => runValidate(selected.id)}
-                    disabled={busy !== null}
-                    data-testid={`validate-${selected.id}`}
-                  >
-                    <CheckCircle2 className="size-3.5 text-tollma-500" />
-                    {busy === `validate:${selected.id}` ? "Checking…" : "Validate"}
-                  </GhostButton>
+                {(!isOrg || canManage) && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-xs"
+                      onClick={() => runValidate(selected.id)}
+                      disabled={busy !== null}
+                      data-testid={`validate-${selected.id}`}
+                    >
+                      <CheckCircle2 className="size-3.5 text-tollma-500" />
+                      {busy === `validate:${selected.id}` ? "Checking…" : "Validate"}
+                    </Button>
 
-                  <GhostButton
-                    size="sm"
-                    className="gap-1.5 text-xs"
-                    onClick={() => runDiscover(selected.id)}
-                    disabled={busy !== null}
-                    data-testid={`discover-${selected.id}`}
-                  >
-                    <RefreshCw
-                      className={cn(
-                        "size-3.5 text-tollma-500",
-                        busy === `discover:${selected.id}` && "animate-spin",
-                      )}
-                    />
-                    {busy === `discover:${selected.id}` ? "Discovering…" : "Refresh models"}
-                  </GhostButton>
-                </div>
+                    <Button variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-xs"
+                      onClick={() => runDiscover(selected.id)}
+                      disabled={busy !== null}
+                      data-testid={`discover-${selected.id}`}
+                    >
+                      <RefreshCw
+                        className={cn(
+                          "size-3.5 text-tollma-500",
+                          busy === `discover:${selected.id}` && "animate-spin",
+                        )}
+                      />
+                      {busy === `discover:${selected.id}` ? "Discovering…" : "Refresh models"}
+                    </Button>
+                  </div>
+                )}
 
                 {discoverMsg[selected.id] && (
                   <div
@@ -460,11 +617,12 @@ export default function ProvidersPage() {
                 />
               </div>
             ) : (
-            <div className="flex flex-1 flex-col overflow-y-auto bg-zinc-50/30 dark:bg-zinc-950/30 min-h-[300px] xl:flex-row xl:overflow-hidden">
+            <div className="flex flex-1 flex-col bg-zinc-50/30 dark:bg-zinc-950/30 min-h-[300px] xl:flex-row xl:overflow-hidden">
               {/* LEFT: Available Models */}
               <div className="flex flex-1 flex-col border-b border-zinc-200 p-4 dark:border-zinc-800 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r">
+                <div className={STICKY_FILTER_BAR}>
                 <div className="mb-2 flex items-center gap-2">
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Available Models
                   </h2>
                   <Badge variant="secondary" className="text-xs">
@@ -524,6 +682,7 @@ export default function ProvidersPage() {
                     </Select>
                   </div>
                 </div>
+                </div>
 
                 <div className="mt-3 grid gap-2">
                   {filteredAvailable.map((m) => (
@@ -557,51 +716,62 @@ export default function ProvidersPage() {
                           })()}
                         </p>
                       </div>
-                      <div className="flex gap-1.5">
-                        <Button
-                          size="sm"
-                          className="h-7 text-[11px]"
-                          onClick={() => {
-                            setRegisterInfo(m);
-                            setRegisterStep(2);
-                          }}
-                          data-testid={`register-${m.model_id}`}
-                        >
-                          Register
-                        </Button>
-                        <GhostButton
-                          size="sm"
-                          className="h-7 text-[11px]"
-                          onClick={() => {
-                            setRegisterInfo(m);
-                            setRegisterStep(0);
-                          }}
-                          data-testid={`available-details-${m.model_id}`}
-                        >
-                          View Details
-                        </GhostButton>
-                      </div>
+                      {(!isOrg || canManage) && (
+                        <div className="flex gap-1.5">
+                          <Button
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            onClick={() => {
+                              setRegisterInfo(m);
+                              setRegisterStep(2);
+                            }}
+                            data-testid={`register-${m.model_id}`}
+                          >
+                            Register
+                          </Button>
+                          <Button variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            onClick={() => {
+                              setRegisterInfo(m);
+                              setRegisterStep(0);
+                            }}
+                            data-testid={`available-details-${m.model_id}`}
+                          >
+                            View Details
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {available.length === 0 && (
-                    <p className="py-8 text-center text-xs text-zinc-400" data-testid="no-available-models">
-                      {discovery
-                        ? "All discovered models are registered."
-                        : "No discovered models yet — click Refresh models to discover."}
-                    </p>
+                    <EmptyState
+                      icon={Cpu}
+                      title="No available models"
+                      description={
+                        discovery
+                          ? "All discovered models are registered."
+                          : "No discovered models yet — click Refresh models to discover."
+                      }
+                      testId="no-available-models"
+                    />
                   )}
                   {available.length > 0 && filteredAvailable.length === 0 && (
-                    <p className="py-8 text-center text-xs text-zinc-400" data-testid="no-available-match">
-                      No available models match the current filters.
-                    </p>
+                    <EmptyState
+                      icon={Search}
+                      title="No matching models"
+                      description="No available models match the current filters."
+                      testId="no-available-match"
+                    />
                   )}
                 </div>
               </div>
 
               {/* RIGHT: Registered Models */}
               <div className="flex flex-1 flex-col p-4 xl:min-h-0 xl:overflow-y-auto">
+                <div className={STICKY_FILTER_BAR}>
                 <div className="mb-2 flex items-center gap-2">
-                  <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     Registered Models
                   </h2>
                   <Badge variant="secondary" className="text-xs">
@@ -616,9 +786,10 @@ export default function ProvidersPage() {
                   className="h-8"
                   data-testid="registered-search"
                 />
+                </div>
 
                 {/* Inline edit form (registered models only) */}
-                {showEditForm && editingModel && (
+                {(!isOrg || canManage) && showEditForm && editingModel && (
                   <div className="mt-3">
                     <ModelForm
                       initial={fromModel(editingModel)}
@@ -632,7 +803,14 @@ export default function ProvidersPage() {
                             selected.id,
                             f,
                           );
-                          await mm.update.mutateAsync({ id: editingModel.id, body: rest });
+                          if (isOrg && orgId) {
+                            await orgMut.updateOrgModel.mutateAsync({
+                              modelId: editingModel.id,
+                              payload: rest,
+                            });
+                          } else {
+                            await mm.update.mutateAsync({ id: editingModel.id, body: rest });
+                          }
                           toast.success("Model updated");
                           setShowEditForm(false);
                           setEditingModel(null);
@@ -653,7 +831,7 @@ export default function ProvidersPage() {
                       data-testid={`model-row-${m.id}`}
                       onClick={() => setDrawerModel(m)}
                       className={cn(
-                        "group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition-all hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700 cursor-pointer",
+                        "group flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition-all hover:border-zinc-300 hover:shadow dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700 cursor-pointer",
                         !m.is_active && "opacity-60",
                         lastRegisteredId === m.id &&
                           "border-tollma-400 bg-tollma-50/60 dark:border-tollma-700 dark:bg-tollma-950/20",
@@ -697,49 +875,70 @@ export default function ProvidersPage() {
                       </div>
 
                       <div
-                        className="flex items-center gap-2 shrink-0 self-end sm:self-center"
+                        className="flex items-center gap-2 shrink-0 self-end xl:self-center"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <label className="flex items-center gap-1.5 text-xs text-zinc-500">
                           <Switch
                             checked={m.is_active}
-                            onCheckedChange={(v) => mm.update.mutate({ id: m.id, body: { is_active: v } })}
+                            disabled={isOrg && !canManage}
+                            onCheckedChange={(v) => {
+                              if (isOrg && orgId) {
+                                orgMut.updateOrgModel.mutate({
+                                  modelId: m.id,
+                                  payload: { is_active: v },
+                                });
+                              } else {
+                                mm.update.mutate({ id: m.id, body: { is_active: v } });
+                              }
+                            }}
                             aria-label={`Enable ${m.name}`}
                             data-testid={`model-toggle-${m.id}`}
                           />
                           <span className="text-[10px]">{m.is_active ? "On" : "Off"}</span>
                         </label>
 
-                        <GhostButton
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={() => {
-                            setEditingModel(m);
-                            setShowEditForm(true);
-                          }}
-                          data-testid={`model-edit-${m.id}`}
-                          title="Edit Model"
-                        >
-                          <Pencil className="size-3" />
-                        </GhostButton>
+                        {(!isOrg || canManage) && (
+                          <>
+                            <Button variant="outline"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => {
+                                setEditingModel(m);
+                                setShowEditForm(true);
+                              }}
+                              data-testid={`model-edit-${m.id}`}
+                              title="Edit Model"
+                            >
+                              <Pencil className="size-3" />
+                            </Button>
 
-                        <GhostButton
-                          size="sm"
-                          className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
-                          onClick={() => setDeleteModelTarget(m)}
-                          data-testid={`model-delete-${m.id}`}
-                          title="Delete Model"
-                        >
-                          <Trash2 className="size-3" />
-                        </GhostButton>
+                            <Button variant="outline"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/20"
+                              onClick={() => setDeleteModelTarget(m)}
+                              data-testid={`model-delete-${m.id}`}
+                              title="Delete Model"
+                            >
+                              <Trash2 className="size-3" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
 
                   {selectedModels.length === 0 && !showEditForm && (
-                    <p className="text-xs text-zinc-400 py-8 text-center" data-testid="no-registered-models">
-                      No registered models — discover above, then Register from Available Models.
-                    </p>
+                    <EmptyState
+                      icon={Cpu}
+                      title="No registered models"
+                      description={
+                        isOrg
+                          ? "No registered models yet — models are added when the provider is connected."
+                          : "No registered models — discover above, then Register from Available Models."
+                      }
+                      testId="no-registered-models"
+                    />
                   )}
                 </div>
               </div>
@@ -755,6 +954,7 @@ export default function ProvidersPage() {
         provider={selected}
         open={!!drawerModel}
         onClose={() => setDrawerModel(null)}
+        orgId={orgId ?? undefined}
         onEdit={(m) => {
           setDrawerModel(null);
           setEditingModel(m);
@@ -769,6 +969,7 @@ export default function ProvidersPage() {
           info={registerInfo}
           providerId={selected?.id ?? ""}
           open={!!registerInfo}
+          orgId={orgId ?? undefined}
           initialStep={registerStep}
           onClose={() => setRegisterInfo(null)}
           onRegistered={(m) => {
@@ -783,13 +984,21 @@ export default function ProvidersPage() {
       {/* Provider Wizard Modal (Add / Edit) */}
       {addProviderOpen && (
         <ProviderWizardModal
-          key={editingProvider?.id ?? "new"}
+          key={editingProvider?.id ?? catalogPrefill?.slug ?? catalogPrefill?.family ?? "new"}
           open={addProviderOpen}
         onClose={() => {
           setAddProviderOpen(false);
           setEditingProvider(null);
+          setCatalogPrefill(null);
         }}
         editingProvider={editingProvider}
+        initialType={(catalogPrefill?.family ?? null) as ProviderType | null}
+        initialName={catalogPrefill?.name ?? null}
+        catalogSlug={catalogPrefill?.slug ?? null}
+        initialBaseUrl={catalogPrefill?.baseUrl ?? null}
+        ownership={isOrg && orgId ? { type: "org" as const, orgId } : undefined}
+        orgName={isOrg ? orgName : undefined}
+        existingNames={isOrg ? orgProviderNames : undefined}
         onSaved={(p, discMsg) => {
           setSelectedProviderId(p.id);
           if (discMsg) {
@@ -799,20 +1008,44 @@ export default function ProvidersPage() {
         />
       )}
 
+      {/* Models.dev provider catalog browser */}
+      {catalogOpen && (
+        <CatalogBrowserDialog
+          open={catalogOpen}
+          onClose={() => setCatalogOpen(false)}
+          onConfigure={(p, family, opts) => {
+            if (!family) return;
+            setCatalogOpen(false);
+            setEditingProvider(null);
+            setCatalogPrefill({
+              family,
+              name: p.name,
+              slug: p.slug,
+              baseUrl: opts?.viaCustom ? (p.api_base_url ?? null) : null,
+            });
+            setAddProviderOpen(true);
+          }}
+        />
+      )}
+
       <ConfirmDialog
         open={!!deleteProviderTarget}
         destructive
-        title={`Delete “${deleteProviderTarget?.name ?? ""}”?`}
+        title={isOrg ? `Remove provider “${deleteProviderTarget?.name ?? ""}”?` : `Delete “${deleteProviderTarget?.name ?? ""}”?`}
         description={
-          <>
-            This permanently removes the provider
-            {selectedModels.length > 0 && deleteProviderTarget?.id === selected?.id
-              ? ` and its ${selectedModels.length} registered model${selectedModels.length === 1 ? "" : "s"}`
-              : ""}
-            . Chats using these models will need a new model. This action cannot be undone.
-          </>
+          isOrg ? (
+            "Members lose access to this shared provider immediately. Personal providers are unaffected."
+          ) : (
+            <>
+              This permanently removes the provider
+              {selectedModels.length > 0 && deleteProviderTarget?.id === selected?.id
+                ? ` and its ${selectedModels.length} registered model${selectedModels.length === 1 ? "" : "s"}`
+                : ""}
+              . Chats using these models will need a new model. This action cannot be undone.
+            </>
+          )
         }
-        confirmLabel="Delete provider"
+        confirmLabel={isOrg ? "Remove provider" : "Delete provider"}
         onConfirm={confirmDeleteProvider}
         onClose={() => setDeleteProviderTarget(null)}
       />

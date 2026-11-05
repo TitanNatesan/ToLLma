@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { ApiError } from "@/services/api";
 
 export interface ParsedApiError {

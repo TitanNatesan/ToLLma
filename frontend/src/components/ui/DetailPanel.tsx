@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -147,7 +148,14 @@ export function DetailPanel({
   const resolvedBackdropTestId =
     backdropTestId ?? (testId ? `${testId}-backdrop` : "drawer-backdrop");
 
-  return (
+  // Portaled to document.body: drawers often mount deep inside layout
+  // subtrees (sticky headers with backdrop-blur, transformed containers).
+  // backdrop-filter/filter/transform/perspective on ANY ancestor would make
+  // that ancestor the containing block for our fixed positioning, collapsing
+  // the panel and backdrop into the ancestor's box. A body portal keeps
+  // viewport-relative geometry while focus/escape/dismissal (all
+  // DOM-query based) keep working unchanged.
+  const chrome = (
     <>
       <AnimatePresence>
         {open && backdrop && (
@@ -167,7 +175,7 @@ export function DetailPanel({
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "100%", opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            style={{ width, zIndex }}
+            style={{ width: typeof width === "number" ? `min(${width}px, 100vw)` : width, zIndex }}
             role="dialog"
             aria-modal="true"
             aria-label={label}
@@ -216,4 +224,7 @@ export function DetailPanel({
       </AnimatePresence>
     </>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(chrome, document.body);
 }

@@ -30,6 +30,11 @@ PROVIDER_HINTS = {
 }
 
 
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards so search text matches literally (%, _, \\)."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _cached_entry(db: Session, key: str) -> RepositoryModel | None | bool:
     """Resolve an entry-ID cache slot. Returns None (cached miss), the entry
     (cached hit), or False (no cache entry — query the database)."""
@@ -131,15 +136,16 @@ def _lookup_uncached(db: Session, query: str, provider_hint: str | None = None) 
         )
         if match is not None:
             return match
-    like = f"%{text}%"
+    # LIKE wildcards (%, _, \\) match literally — user input is escaped.
+    like = f"%{_escape_like(text)}%"
     rows = list(
         db.scalars(
             select(RepositoryModel)
             .where(
                 RepositoryModel.is_deleted.is_(False),
-                RepositoryModel.canonical_name.ilike(like)
-                | RepositoryModel.display_name.ilike(like)
-                | RepositoryModel.provider_model_id.ilike(like),
+                RepositoryModel.canonical_name.ilike(like, escape="\\")
+                | RepositoryModel.display_name.ilike(like, escape="\\")
+                | RepositoryModel.provider_model_id.ilike(like, escape="\\"),
             )
             .order_by(
                 (RepositoryModel.provider_model_id == text).desc(),
@@ -221,6 +227,7 @@ def suggest_payload(entry: RepositoryModel) -> dict[str, Any]:
         "context_window": entry.context_window,
         "max_output_tokens": entry.max_output_tokens,
         "release_date": entry.release_date,
+        "reasoning_options": getattr(entry, "reasoning_options", None),
     }
 
 

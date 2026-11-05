@@ -10,7 +10,6 @@ routes through the shared provider adapters, and lands in `api_request_logs`
 import asyncio
 import base64
 import inspect
-import ipaddress
 import json
 import logging
 import time
@@ -31,11 +30,14 @@ from tollms.core.exceptions import (
     AuthenticationError,
     ErrorCode,
     ForbiddenError,
+    NotFoundError,
     ProviderError,
     ValidationError,
     classify_provider_failure,
 )
-from tollms.core.security import client_meta as _request_client_meta
+from tollms.core.sessions import client_meta as _request_client_meta
+from tollms.core.sessions import gateway_client_ip
+from tollms.services.gateway import key_policy
 from tollms.api.providers.service import decrypted_credentials, request_revalidation
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
@@ -47,7 +49,12 @@ from tollms.services.cost_estimator import (
     media_rate_card,
 )
 from tollms.services.gateway import dispatch
-from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatResult, StreamChunk
+from tollms.services.gateway.adapters.base import (
+    BaseProviderAdapter,
+    ChatResult,
+    StreamChunk,
+    _accumulate_tool_call,
+)
 from tollms.services.gateway.api_logs import ApiLogEntry, log_request
 from tollms.services.gateway.costing import (
     CostBreakdown,
@@ -56,7 +63,8 @@ from tollms.services.gateway.costing import (
     prices_for_model,
 )
 from tollms.services.gateway.factory import build_adapter
-from tollms.services.gateway.limits import check_request, record_usage
+from tollms.services.gateway.limits import LimitsDecision, check_request, record_usage
+from tollms.services.gateway import key_policy as key_policy_engine
 from tollms.services.gateway.model_resolution import ResolvedModel, resolve_model
 from tollms.services.gateway.unified import UnifiedRequest
 from tollms.services.model_repository.lookup import find_for_model
@@ -98,6 +106,11 @@ def client_meta(request: Request) -> ClientMeta:
     )
 
 
+def policy_client_ip(request: Request) -> str | None:
+    """Policy-grade client IP for key checks (XFF only behind a trusted peer)."""
+    return gateway_client_ip(request) or None
+
+
 # --- outcomes returned to the router -----------------------------------------
 
 
@@ -114,6 +127,9 @@ class ChatOutcome:
     breakdown: CostBreakdown
     latency_ms: float
     estimated: bool
+    # Normalized tool calls [{"id", "name", "arguments"}] + provider stop reason.
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    finish_reason: str | None = None
 
 
 @dataclass
@@ -177,30 +193,9 @@ def _denied_result(decision) -> DeniedResult:
 # --- auth dependency ----------------------------------------------------------
 
 
-def _match_network(address: ipaddress.IPv4Address | ipaddress.IPv6Address, cidr: str) -> bool:
-    try:
-        network = ipaddress.ip_network(cidr, strict=False)
-    except ValueError:
-        return False
-    try:
-        return address in network
-    except TypeError:
-        return False
-
-
 def _ip_allowed(ctx: KeyContext, ip_text: str | None) -> bool:
-    """Deny rules win; an empty allow list allows every address."""
-    if not ip_text:
-        return True
-    try:
-        address = ipaddress.ip_address(ip_text)
-    except ValueError:
-        return True  # unparseable client address cannot be evaluated
-    if any(_match_network(address, rule) for rule in ctx.deny_rules):
-        return False
-    if not ctx.allow_rules:
-        return True
-    return any(_match_network(address, rule) for rule in ctx.allow_rules)
+    """Shared deny-wins IP rules (see `services.gateway.key_policy`)."""
+    return key_policy.ip_allowed(ctx, ip_text)
 
 
 def _deny_event(
@@ -258,7 +253,7 @@ def api_key_required(request: Request, db: Session = Depends(get_db)) -> KeyCont
     if ctx.is_expired():
         _deny_event(reason="expired", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("API key is expired")
-    if not _ip_allowed(ctx, _request_client_meta(request).get("ip")):
+    if not _ip_allowed(ctx, policy_client_ip(request)):
         _deny_event(reason="ip", key_prefix=ctx.key_prefix, status_code=403)
         raise ForbiddenError("request blocked by API key IP rules")
     return ctx
@@ -357,11 +352,14 @@ def _log_request(
     tokens: UsageTokens | None = None,
     total_tokens: int | None = None,
     is_streaming: bool = False,
+    usage_estimated: bool = False,
 ) -> None:
     entry = ApiLogEntry(
         request_id=meta.request_id,
         api_key_id=ctx.key_id,
         user_id=ctx.user_id,
+        # Server-derived attribution: the resolving key's org (None = personal).
+        org_id=getattr(ctx, "org_id", None),
         provider=provider_label,
         model=model_label,
         endpoint=unified.endpoint,
@@ -378,6 +376,7 @@ def _log_request(
         ip_address=meta.ip_address,
         user_agent=meta.user_agent,
         is_streaming=is_streaming,
+        usage_estimated=usage_estimated,
     )
     try:
         log_request(db, entry)
@@ -385,6 +384,11 @@ def _log_request(
         logger.warning("public gateway: log_request failed", exc_info=True)
     # Metrics-only request counter per plane + status (fail-open; the DB row above is the record).
     incr_counter("gateway.request", {"plane": "public", "status": status})
+
+
+def _org_cap_usd(db: Session, ctx: KeyContext) -> Decimal | None:
+    """Live org spend cap (shared helper; None = personal key or uncapped)."""
+    return key_policy.org_cap_usd(db, ctx)
 
 
 def _record_usage(
@@ -395,6 +399,7 @@ def _record_usage(
     tokens: int,
     cost: Decimal,
     request_id: str | None = None,
+    org_cap: Decimal | None = None,
 ) -> None:
     try:
         record_usage(
@@ -404,6 +409,7 @@ def _record_usage(
             provider_id=provider.id,
             model_id=model.id,
             request_id=request_id,
+            org_max_spend_usd=org_cap,
         )
     except Exception:
         logger.warning("public gateway: record_usage failed", exc_info=True)
@@ -414,6 +420,7 @@ def _release_reservation(prepared: "_Prepared") -> None:
     _record_usage(
         prepared.ctx, prepared.provider, prepared.model,
         tokens=0, cost=Decimal(0), request_id=prepared.meta.request_id,
+        org_cap=prepared.org_cap,
     )
 
 
@@ -433,6 +440,7 @@ class _Prepared:
     started: float
     provider_label: str = field(init=False)
     model_label: str = field(init=False)
+    org_cap: Decimal | None = None
 
     def __post_init__(self) -> None:
         self.provider_label = self.provider.provider_type.value.lower()
@@ -483,6 +491,11 @@ def _require_chat_capabilities(model, unified: UnifiedRequest) -> None:
         raise ForbiddenError(
             f"model_not_allowed: {model.model_id} lacks supports_text for {unified.endpoint}"
         )
+    # Tools gate: explicit 403, never a silent strip. Fail-open was considered
+    # and rejected: an incapable model must surface model_not_allowed here
+    # instead of a downstream provider 400. Models that serve tools declare
+    # supports_tool_calling (flipping the flag re-allows them, locked by the
+    # tool-gate hardening test); the provider always decides the final shape.
     if unified.tools and not getattr(model, "supports_tool_calling", False):
         raise ForbiddenError(
             f"model_not_allowed: {model.model_id} lacks supports_tool_calling for {unified.endpoint}"
@@ -502,32 +515,93 @@ def _require_chat_capabilities(model, unified: UnifiedRequest) -> None:
         )
 
 
+def _caller_org_ids(db: Session, ctx: KeyContext) -> list:
+    """Org scope for model resolution, pinned to the key itself.
+
+    Personal key -> [] (personal scope only). Org key -> exactly
+    [ctx.org_id] (the key's own org ONLY — never the assignee's other ACTIVE
+    orgs). `authenticate` already 401s org keys whose assignee lost ACTIVE
+    membership, so the pin needs no live membership re-check here.
+    """
+    if getattr(ctx, "org_id", None) is None:
+        return []
+    return [ctx.org_id]
+
+
 def _prepare(
     db: Session, ctx: KeyContext, unified: UnifiedRequest, meta: ClientMeta
 ) -> _Prepared:
     """Resolve, authorize, rate-limit and build the adapter before any I/O."""
-    resolved: ResolvedModel = resolve_model(db, unified.model_identifier, ctx.user_id)
+    resolved: ResolvedModel = resolve_model(
+        db, unified.model_identifier, ctx.user_id, org_ids=_caller_org_ids(db, ctx) or None,
+    )
     provider, model = resolved.provider, resolved.model
+    # Scope pin (404, no existence oracle beyond scope): org keys serve only
+    # their own org's providers; personal keys serve only their own personal
+    # rows. The resolver already scopes this way — the pin holds even if
+    # resolution ever widens.
+    if ctx.org_id is not None:
+        if provider.org_id != ctx.org_id:
+            raise NotFoundError(f"model not found: {unified.model_identifier}")
+    elif provider.org_id is not None or provider.user_id != ctx.user_id:
+        raise NotFoundError(f"model not found: {unified.model_identifier}")
     if not ctx.model_allowed(provider.id, model.id):
         raise ForbiddenError("model_not_allowed")
     _require_capability(model, unified.endpoint)
     if unified.endpoint in CHAT_ENDPOINTS:
         _require_chat_capabilities(model, unified)
+    # Guardrail pre: after capability gates, before limits.check_request.
+    # Blocks raise 403; warns are logged+emitted (no response metadata field).
+    _guardrail_pre(db, ctx, unified, provider, model, meta)
+    org_cap = _org_cap_usd(db, ctx)
+    estimated_cost = _estimated_cost(db, provider, model, unified)
+    # Same stored-spend truth as the in-app gate: deny when Postgres already
+    # covers a cap even if the Valkey counters are cold (flush/restart) or
+    # behind. Identical rule on both planes — no bypass by switching surface.
+    pg_deny = key_policy_engine.postgres_deny(db, ctx, estimated_cost)
+    if pg_deny is not None:
+        reason, retry_after = pg_deny
+        # Same observability as a Valkey denial (`check_request` counts via
+        # `_count_denied`; this path never reaches it, so count here — the
+        # `_LimitsDenied` handler below emits the event but does not count).
+        incr_counter("gateway.denied", {"reason": reason})
+        raise _LimitsDenied(
+            _denied_result(LimitsDecision(allowed=False, reason=reason, status_code=403, retry_after=retry_after))
+        )
     decision = check_request(
         ctx,
         provider_id=provider.id,
         model_id=model.id,
         estimated_tokens=_prompt_tokens(unified),
-        estimated_cost=_estimated_cost(db, provider, model, unified),
+        estimated_cost=estimated_cost,
         request_id=meta.request_id,
+        org_max_spend_usd=org_cap,
     )
     if not decision.allowed:
         raise _LimitsDenied(_denied_result(decision))
-    credentials = decrypted_credentials(provider)
-    adapter = build_adapter(provider, model, credentials)
+    try:
+        credentials = decrypted_credentials(provider)
+        adapter = build_adapter(provider, model, credentials)
+    except Exception:
+        # Reservation is stashed but no provider call happens — refund so a
+        # credential/adapter failure leaves no phantom spend. Deny paths above
+        # roll back inside `check_request` and never reach here.
+        _record_usage(
+            ctx, provider, model,
+            tokens=0, cost=Decimal(0), request_id=meta.request_id,
+            org_cap=org_cap,
+        )
+        raise
     adapter.max_output_tokens = model.max_output_tokens
+    # Prompt-cache plan, same engine as internal Chat: Bedrock Claude ids get
+    # cachePoints when the model declares support; OpenAI gets a stable
+    # per-(provider,model) key shared with the internal plane (cross-plane
+    # prefix reuse); implicit families stay byte-identical.
+    from tollms.api.gateway.service import caching_for_model as _plan_for
+
+    adapter.prompt_cache = _plan_for(db, provider, model, None)
     messages = unified.as_chat_messages()
-    return _Prepared(
+    prepared = _Prepared(
         ctx=ctx,
         meta=meta,
         unified=unified,
@@ -538,6 +612,171 @@ def _prepare(
         history_text="".join(message.content for message in messages),
         started=time.monotonic(),
     )
+    prepared.org_cap = org_cap
+    return prepared
+
+
+
+
+def _guardrail_invocation_parts(unified: UnifiedRequest) -> list[str]:
+    """Invocation names/inputs from message extras (all roles).
+
+    Shared by the full scan text and the tool-action corpus: tool_calls
+    names/arguments, tool_use names/inputs, response function_call
+    names/arguments. Tool DEFINITIONS are never included here.
+    """
+    parts: list[str] = []
+    for message in unified.messages:
+        extra = message.extra or {}
+        for call in extra.get("tool_calls") or []:
+            function = call.get("function") or {}
+            if function.get("name"):
+                parts.append(f"tool_call:{function['name']}")
+            if function.get("arguments"):
+                parts.append(str(function["arguments"])[:2000])
+        for block in extra.get("blocks") or []:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            if block.get("name"):
+                parts.append(f"tool_call:{block['name']}")
+            if block.get("input") is not None:
+                parts.append(json.dumps(block["input"], sort_keys=True, default=str)[:2000])
+        item = extra.get("response_item")
+        if isinstance(item, dict) and item.get("type") == "function_call":
+            if item.get("name"):
+                parts.append(f"tool_call:{item['name']}")
+            if item.get("arguments"):
+                parts.append(str(item["arguments"])[:2000])
+    return parts
+
+
+def _guardrail_action_text(unified: UnifiedRequest) -> str:
+    """Tool-action corpus: user content + invocation names/inputs only.
+
+    Tool Action governs attempted ACTIONS, never static capability
+    declarations: tool definitions/descriptions/schemas, system prompts and
+    assistant text are excluded. The gateway never executes tools (execution
+    is client-side); a risky chain is killed when the user requests it (pre)
+    or the model emits/instructs it (post). Definitions/summaries never match.
+    """
+    parts = [message.content for message in unified.messages
+             if (message.role or "").lower() == "user" and message.content]
+    parts.extend(_guardrail_invocation_parts(unified))
+    return "\n".join(part for part in parts if part)
+
+
+def _guardrail_post_action_text(text: str, tool_calls: list[dict] | None) -> str:
+    """Post-stage action corpus: assistant output text + emitted tool_use.
+
+    An emitted tool_use IS an invocation attempt, so its name/inputs join
+    the corpus. Tool definitions never exist post-side.
+    """
+    parts = [text] if (text or "").strip() else []
+    for call in tool_calls or []:
+        if not isinstance(call, dict):
+            continue
+        if call.get("name"):
+            parts.append(f"tool_call:{call['name']}")
+        if call.get("arguments"):
+            parts.append(str(call["arguments"])[:2000])
+    return "\n".join(part for part in parts if part)
+
+
+def _guardrail_text(unified: UnifiedRequest) -> str:
+    """Scannable pre-check text: message content plus tool names and inputs.
+
+    Tool definitions and tool_use/tool_calls arguments ride along as plain
+    text so injection and policy scans see them. The forwarded request itself
+    is untouched: tools are never stripped here.
+    """
+    parts = [message.content for message in unified.as_chat_messages() if message.content]
+    for tool in unified.tools or []:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+        name = tool.get("name") or function.get("name")
+        if name:
+            parts.append(f"tool:{name}")
+        description = tool.get("description") or function.get("description")
+        if description:
+            parts.append(str(description)[:2000])
+        schema = tool.get("input_schema") or function.get("parameters")
+        if schema is not None:
+            parts.append(json.dumps(schema, sort_keys=True, default=str)[:2000])
+    parts.extend(_guardrail_invocation_parts(unified))
+    return "\n".join(part for part in parts if part)
+
+
+def _guardrail_pre(db: Session, ctx: KeyContext, unified: UnifiedRequest,
+                   provider: Provider, model: AIModel, meta: ClientMeta) -> None:
+    """Public-plane pre hook. Lazy import: guardrail engines never import api."""
+    try:
+        from tollms.services.guardrails import enforcement as guardrail_enforcement
+
+        guardrail_enforcement.check_pre_sync(
+            db, text=_guardrail_text(unified),
+            action_text=_guardrail_action_text(unified),
+            user_id=ctx.user_id, org_id=getattr(ctx, "org_id", None),
+            provider_id=provider.id, model_id=model.id, api_key_id=ctx.key_id,
+            source="external", endpoint=unified.endpoint,
+            request_id=meta.request_id)
+    except (ForbiddenError, NotFoundError):
+        raise
+    except Exception:
+        logger.warning("public gateway guardrail pre failed (fail-open)", exc_info=True)
+
+
+def _guardrail_post(db: Session, prepared: "_Prepared", text: str, *,
+                    allow_block: bool,
+                    tool_calls: list[dict[str, Any]] | None = None) -> str:
+    """Public-plane post hook: audit-first, never raises, never touches Valkey
+    usage counters. Streaming callers pass allow_block=False (delivery already
+    happened — a blocked verdict is still recorded as blocked, never
+    downgraded)."""
+    try:
+        from tollms.services.guardrails import enforcement as guardrail_enforcement
+
+        return guardrail_enforcement.record_post_sync(
+            db, text=text or "",
+            action_text=_guardrail_post_action_text(text or "", tool_calls),
+            user_id=prepared.ctx.user_id,
+            org_id=getattr(prepared.ctx, "org_id", None),
+            provider_id=prepared.provider.id, model_id=prepared.model.id,
+            api_key_id=prepared.ctx.key_id, source="external",
+            endpoint=prepared.unified.endpoint,
+            request_id=prepared.meta.request_id, generation_id=None,
+            allow_block=allow_block)
+    except Exception:
+        logger.warning("public gateway guardrail post failed", exc_info=True)
+        return "allowed"
+
+
+async def _promptlog_capture(db: Session, prepared: _Prepared, *,
+                       input_text: str | None, output_text: str | None,
+                       status: str, error_code: str | None = None,
+                       latency_ms: float | None = None,
+                       tokens: UsageTokens | None = None) -> None:
+    """Prompt-log hook: immutable ledger write, fail-open always. Never raises,
+    never touches Valkey usage counters, never logs content or raw keys."""
+    try:
+        from tollms.services.prompt_logging import queue as promptlog_queue
+
+        ctx = prepared.ctx
+        promptlog_queue.enqueue_post(
+            db, input_text=input_text, output_text=output_text,
+            user_id=ctx.user_id, org_id=getattr(ctx, "org_id", None),
+            api_key_id=ctx.key_id,
+            key_provenance=("organization" if getattr(ctx, "org_id", None)
+                            is not None else "personal"),
+            provider_id=prepared.provider.id, model_id=prepared.model.id,
+            conversation_id=None, endpoint=prepared.unified.endpoint,
+            source="external", request_id=prepared.meta.request_id,
+            generation_id=None, status=status,
+            tokens=({"prompt": tokens.prompt, "completion": tokens.completion}
+                    if tokens is not None else None),
+            latency_ms=latency_ms, error_code=error_code, allow_store=True)
+    except Exception:
+        logger.warning("public gateway promptlog hook failed", exc_info=True)
 
 
 # --- non-streaming execution ----------------------------------------------------------
@@ -592,16 +831,49 @@ async def execute_unified(
             )
         raise
     if unified.stream and unified.endpoint in CHAT_ENDPOINTS:
+        # Eager tool-shape check: _stream_chat recomputes the same kwargs
+        # lazily on first iteration (status already 200 there), so validate
+        # here to keep the 403 model_not_allowed shape identical to the
+        # non-streaming path.
+        _tool_kwargs(prepared.adapter.chat_stream, prepared.unified)
         return StreamResult(iterator=_stream_chat(prepared, db))
     if unified.endpoint in CHAT_ENDPOINTS:
         return await _execute_chat(db, prepared)
     return await _execute_media(db, prepared)
 
 
+def _tool_kwargs(method: Any, unified: UnifiedRequest) -> dict[str, Any]:
+    """Tool passthrough for adapters that declare it; older doubles keep working.
+
+    Explicit 403, never a silent strip: tools requested of an adapter with
+    no tools param (Bedrock/Gemini/Vertex chat_stream) raise the same
+    model_not_allowed ForbiddenError as the capability gate instead of
+    returning text-only success with the tools dropped.
+    """
+    try:
+        params = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "tools" not in params:
+        if unified.tools:
+            raise ForbiddenError(
+                f"model_not_allowed: {unified.model_identifier} adapter lacks "
+                f"tools support for {unified.endpoint}"
+            )
+        return {}
+    return {"tools": unified.tools, "tool_choice": unified.tool_choice}
+
+
 async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
     started = prepared.started
     try:
-        result = await prepared.adapter.chat(prepared.messages)
+        # Inspect chat_stream (not chat): base.chat() always declares tools
+        # kwargs but forwards them only when chat_stream supports them, so
+        # checking chat would let tool-less adapters (Gemini/Vertex) slip
+        # through to a silent text-only success.
+        result = await prepared.adapter.chat(
+            prepared.messages, **_tool_kwargs(prepared.adapter.chat_stream, prepared.unified)
+        )
         latency_ms = (time.monotonic() - started) * 1000
         tokens, total, breakdown, estimated = _finalize_usage(
             db, prepared.provider, prepared.model, prepared.history_text, result.text, result
@@ -610,6 +882,7 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             prepared.ctx, prepared.provider, prepared.model,
             tokens=total, cost=breakdown.total_cost,
             request_id=prepared.meta.request_id,
+            org_cap=prepared.org_cap,
         )
         _log_request(
             db, prepared.ctx, prepared.meta, prepared.unified,
@@ -620,21 +893,34 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             cost=breakdown.total_cost,
             tokens=tokens,
             total_tokens=total,
+            usage_estimated=estimated,
         )
         logger.info(
             "public gateway chat: key=%s model=%s tokens=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, total, breakdown.total_cost, latency_ms,
         )
+        # Guardrail rule: this non-streaming path withholds delivery on a
+        # blocked buffer_then_inspect verdict, so the ledger stores the same
+        # marker — never the blocked text (verdict threaded through, not
+        # re-evaluated). Streaming paths capture delivered bytes instead.
+        guard_action = _guardrail_post(db, prepared, result.text, allow_block=True,
+                                       tool_calls=result.tool_calls)
+        text = "[withheld by guardrail policy]" if guard_action == "blocked" else result.text
+        await _promptlog_capture(db, prepared, input_text=prepared.history_text,
+                           output_text=text, status="completed",
+                           latency_ms=latency_ms, tokens=tokens)
         return ChatOutcome(
             request_id=prepared.meta.request_id,
             model_identifier=prepared.unified.model_identifier,
             provider_label=prepared.provider_label,
-            text=result.text,
+            text=text,
             usage=tokens,
             total_tokens=total,
             breakdown=breakdown,
             latency_ms=latency_ms,
             estimated=estimated,
+            tool_calls=result.tool_calls,
+            finish_reason=result.finish_reason,
         )
     except Exception as exc:
         latency_ms = (time.monotonic() - started) * 1000
@@ -652,6 +938,10 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             error_code=classified.code.value,
             latency_ms=latency_ms,
         )
+        await _promptlog_capture(db, prepared, input_text=prepared.history_text,
+                           output_text="", status="failed",
+                           error_code=classified.code.value,
+                           latency_ms=latency_ms)
         # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
         # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
         try:
@@ -699,7 +989,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
                     raise ValidationError("image must be valid base64") from None
             kwargs = _pick_options(adapter.generate_image, options, ("size", "quality"))
             if edit_image is not None:
-                kwargs["image"] = edit_image
+                kwargs["image_bytes"] = edit_image
             count = max(1, int(options.get("n") or 1))
             payloads = [
                 await dispatch.call_endpoint(
@@ -713,6 +1003,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             prepared.ctx, prepared.provider, prepared.model,
             tokens=0, cost=cost,
             request_id=prepared.meta.request_id,
+            org_cap=prepared.org_cap,
         )
         latency_ms = (time.monotonic() - started) * 1000
         _log_request(
@@ -722,11 +1013,16 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             model_label=prepared.model_label,
             latency_ms=latency_ms,
             cost=cost,
+            usage_estimated=estimated,
         )
         logger.info(
             "public gateway media: key=%s model=%s endpoint=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, unified.endpoint, cost, latency_ms,
         )
+        # Media bytes are never captured: text prompt only, when present.
+        await _promptlog_capture(db, prepared, input_text=unified.prompt or "",
+                           output_text="", status="completed",
+                           latency_ms=latency_ms)
         return MediaOutcome(
             request_id=prepared.meta.request_id,
             model_identifier=unified.model_identifier,
@@ -754,6 +1050,10 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
             error_code=classified.code.value,
             latency_ms=latency_ms,
         )
+        await _promptlog_capture(db, prepared, input_text=prepared.unified.prompt or "",
+                           output_text="", status="failed",
+                           error_code=classified.code.value,
+                           latency_ms=latency_ms)
         # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
         # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
         try:
@@ -812,6 +1112,10 @@ def _sse(payload: dict, event: str | None = None) -> str:
 
 
 def _absorb(target: ChatResult, chunk: StreamChunk) -> None:
+    if chunk.finish_reason is not None:
+        target.finish_reason = chunk.finish_reason
+    if chunk.tool_call_delta:
+        _accumulate_tool_call(target.tool_calls, chunk.tool_call_delta)
     if chunk.prompt_tokens is not None:
         target.prompt_tokens = chunk.prompt_tokens
     if chunk.completion_tokens is not None:
@@ -832,10 +1136,23 @@ def _usage_details(tokens: UsageTokens, total: int) -> dict[str, Any]:
         "completion_tokens": tokens.completion,
         "total_tokens": total,
     }
-    if tokens.cache_read or tokens.cache_write:
+    if tokens.cache_read:
         usage["prompt_tokens_details"] = {"cached_tokens": tokens.cache_read}
     if tokens.reasoning:
         usage["completion_tokens_details"] = {"reasoning_tokens": tokens.reasoning}
+    return usage
+
+
+def _responses_usage_details(tokens: UsageTokens, total: int) -> dict[str, Any]:
+    usage: dict[str, Any] = {
+        "input_tokens": tokens.prompt,
+        "output_tokens": tokens.completion,
+        "total_tokens": total,
+    }
+    if tokens.cache_read:
+        usage["input_tokens_details"] = {"cached_tokens": tokens.cache_read}
+    if tokens.reasoning:
+        usage["output_tokens_details"] = {"reasoning_tokens": tokens.reasoning}
     return usage
 
 
@@ -933,25 +1250,60 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             return [_sse(payload, "response.created")]
         return []
 
+    def _tool_calls() -> list[dict[str, Any]]:
+        calls = []
+        for pos, entry in enumerate(result.tool_calls):
+            call_id = entry.get("id") or (tool_blocks[pos]["id"] if pos < len(tool_blocks) else "") or f"call_{pos}"
+            calls.append({
+                "id": call_id,
+                "name": entry.get("name") or (tool_blocks[pos]["name"] if pos < len(tool_blocks) else ""),
+                "arguments": entry.get("arguments") or "",
+            })
+        return calls
+
     def _close(tokens: UsageTokens, total: int) -> list[str]:
         nonlocal sequence
         if fmt == "anthropic":
-            return [
-                _sse({"type": "content_block_stop", "index": 0}, "content_block_stop"),
+            anthropic_usage: dict[str, Any] = {
+                "input_tokens": tokens.prompt,
+                "output_tokens": tokens.completion,
+            }
+            if tokens.cache_write:
+                anthropic_usage["cache_creation_input_tokens"] = tokens.cache_write
+            if tokens.cache_read:
+                anthropic_usage["cache_read_input_tokens"] = tokens.cache_read
+            frames = []
+            if text_open:
+                frames.append(_sse({"type": "content_block_stop", "index": 0}, "content_block_stop"))
+            for pos in range(len(tool_blocks)):
+                frames.append(_sse({"type": "content_block_stop", "index": 1 + pos}, "content_block_stop"))
+            frames.extend([
                 _sse(
                     {
                         "type": "message_delta",
-                        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                        "usage": {
-                            "input_tokens": tokens.prompt,
-                            "output_tokens": tokens.completion,
+                        "delta": {
+                            "stop_reason": "tool_use" if tool_blocks else "end_turn",
+                            "stop_sequence": None,
                         },
+                        "usage": anthropic_usage,
                     },
                     "message_delta",
                 ),
                 _sse({"type": "message_stop"}, "message_stop"),
-            ]
+            ])
+            return frames
         if fmt == "responses":
+            frames = []
+            for pos, call in enumerate(_tool_calls()):
+                done = {
+                    "type": "response.function_call_arguments.done",
+                    "sequence_number": sequence,
+                    "item_id": call["id"],
+                    "output_index": pos,
+                    "arguments": call["arguments"],
+                }
+                sequence += 1
+                frames.append(_sse(done, "response.function_call_arguments.done"))
             payload = {
                 "type": "response.completed",
                 "sequence_number": sequence,
@@ -968,18 +1320,39 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                             "status": "completed",
                             "role": "assistant",
                             "content": [{"type": "output_text", "text": result.text, "annotations": []}],
-                        }
+                        },
+                        *[
+                            {
+                                "type": "function_call",
+                                "id": call["id"],
+                                "call_id": call["id"],
+                                "name": call["name"],
+                                "arguments": call["arguments"],
+                            }
+                            for call in _tool_calls()
+                        ],
                     ],
-                    "usage": {
-                        "input_tokens": tokens.prompt,
-                        "output_tokens": tokens.completion,
-                        "total_tokens": total,
-                    },
+                    "usage": _responses_usage_details(tokens, total),
                 },
             }
             sequence += 1
-            return [_sse(payload, "response.completed")]
-        return [
+            frames.append(_sse(payload, "response.completed"))
+            return frames
+        frames = []
+        if tool_blocks:
+            reason = result.finish_reason or "tool_calls"
+            if reason == "tool_use":
+                reason = "tool_calls"
+            frames.append(_sse(
+                {
+                    "id": stream_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": reason}],
+                }
+            ))
+        frames.extend([
             _sse(
                 {
                     "id": stream_id,
@@ -991,7 +1364,8 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 }
             ),
             "data: [DONE]\n\n",
-        ]
+        ])
+        return frames
 
     def _error(classified: ApplicationException) -> list[str]:
         if fmt == "anthropic":
@@ -1012,12 +1386,120 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         }
         return [_sse(payload), "data: [DONE]\n\n"]
 
+    def _tool_key(delta: dict[str, Any]) -> str:
+        if delta.get("id"):
+            return str(delta["id"])
+        index = delta.get("index")
+        return f"index:{index if index is not None else len(tool_blocks)}"
+
+    def _tool_frame(delta: dict[str, Any]) -> list[str]:
+        nonlocal sequence, text_open
+        key = _tool_key(delta)
+        is_new = key not in tool_index
+        if is_new:
+            tool_index[key] = len(tool_blocks)
+            tool_blocks.append({"id": delta.get("id") or "", "name": delta.get("name") or ""})
+        pos = tool_index[key]
+        if delta.get("id"):
+            tool_blocks[pos]["id"] = delta["id"]
+        if delta.get("name") and not tool_blocks[pos]["name"]:
+            tool_blocks[pos]["name"] = delta["name"]
+        args = delta.get("arguments_delta") or ""
+        if fmt == "anthropic":
+            frames = []
+            if is_new:
+                if text_open:
+                    frames.append(_sse({"type": "content_block_stop", "index": 0}, "content_block_stop"))
+                    text_open = False
+                frames.append(_sse(
+                    {
+                        "type": "content_block_start",
+                        "index": 1 + pos,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": tool_blocks[pos]["id"],
+                            "name": tool_blocks[pos]["name"],
+                        },
+                    },
+                    "content_block_start",
+                ))
+            if args:
+                frames.append(_sse(
+                    {
+                        "type": "content_block_delta",
+                        "index": 1 + pos,
+                        "delta": {"type": "input_json_delta", "partial_json": args},
+                    },
+                    "content_block_delta",
+                ))
+            return frames
+        if fmt == "responses":
+            frames = []
+            call_id = tool_blocks[pos]["id"] or f"call_{pos}"
+            if is_new:
+                added = {
+                    "type": "response.output_item.added",
+                    "sequence_number": sequence,
+                    "output_index": pos,
+                    "item": {
+                        "type": "function_call",
+                        "id": call_id,
+                        "call_id": call_id,
+                        "name": tool_blocks[pos]["name"],
+                        "arguments": "",
+                    },
+                }
+                sequence += 1
+                frames.append(_sse(added, "response.output_item.added"))
+            if args:
+                frames.append(_sse(
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "sequence_number": sequence,
+                        "item_id": call_id,
+                        "output_index": pos,
+                        "delta": args,
+                    },
+                    "response.function_call_arguments.delta",
+                ))
+                sequence += 1
+            return frames
+        entry: dict[str, Any] = {"index": pos}
+        if delta.get("id"):
+            entry["id"] = delta["id"]
+        function: dict[str, Any] = {}
+        if delta.get("name"):
+            function["name"] = delta["name"]
+        if args:
+            function["arguments"] = args
+        if function:
+            entry["function"] = function
+        delta_payload: dict[str, Any] = {"tool_calls": [entry]}
+        if is_new:
+            delta_payload["role"] = "assistant"
+        return [_sse(
+            {
+                "id": stream_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta_payload, "finish_reason": None}],
+            }
+        )]
+
     model = prepared.unified.model_identifier
+    tool_kwargs = _tool_kwargs(prepared.adapter.chat_stream, prepared.unified)
+    tool_blocks: list[dict[str, Any]] = []
+    tool_index: dict[str, int] = {}
+    text_open = True
     for frame in _open():
         yield frame
     try:
-        async for chunk in prepared.adapter.chat_stream(prepared.messages):
+        async for chunk in prepared.adapter.chat_stream(prepared.messages, **tool_kwargs):
             _absorb(result, chunk)
+            if chunk.tool_call_delta:
+                for frame in _tool_frame(chunk.tool_call_delta):
+                    yield frame
             if chunk.delta:
                 result.text += chunk.delta
                 for frame in _delta(chunk.delta):
@@ -1029,6 +1511,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             prepared.ctx, prepared.provider, prepared.model,
             tokens=total, cost=breakdown.total_cost,
             request_id=prepared.meta.request_id,
+            org_cap=prepared.org_cap,
         )
         latency_ms = (time.monotonic() - prepared.started) * 1000
         _log_request(
@@ -1041,17 +1524,31 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
             tokens=tokens,
             total_tokens=total,
             is_streaming=True,
+            usage_estimated=estimated,
         )
         logged = True
         logger.info(
             "public gateway stream done: key=%s model=%s tokens=%s cost=%s latency=%.0fms",
             prepared.ctx.key_prefix, prepared.model_label, total, breakdown.total_cost, latency_ms,
         )
+        await _promptlog_capture(db, prepared, input_text=prepared.history_text,
+                           output_text=result.text, status="completed",
+                           latency_ms=latency_ms, tokens=tokens)
+        # Guardrail post on streams is audit-only (delivery already happened).
+        _guardrail_post(db, prepared, result.text, allow_block=False,
+                            tool_calls=result.tool_calls)
         for frame in _close(tokens, total):
             yield frame
     except asyncio.CancelledError:
         if not logged:
             _release_reservation(prepared)
+            await _promptlog_capture(
+                db, prepared, input_text=prepared.history_text,
+                output_text=result.text,
+                status="partial" if (result.text or "").strip() else "cancelled",
+                latency_ms=(time.monotonic() - prepared.started) * 1000)
+            _guardrail_post(db, prepared, result.text, allow_block=False,
+                                tool_calls=result.tool_calls)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="cancelled",
@@ -1066,6 +1563,13 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         # no frames may be emitted here, but the terminal row still applies.
         if not logged:
             _release_reservation(prepared)
+            await _promptlog_capture(
+                db, prepared, input_text=prepared.history_text,
+                output_text=result.text,
+                status="partial" if (result.text or "").strip() else "cancelled",
+                latency_ms=(time.monotonic() - prepared.started) * 1000)
+            _guardrail_post(db, prepared, result.text, allow_block=False,
+                                tool_calls=result.tool_calls)
             _log_request(
                 db, prepared.ctx, prepared.meta, prepared.unified,
                 status="cancelled",
@@ -1092,6 +1596,11 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 latency_ms=(time.monotonic() - prepared.started) * 1000,
                 is_streaming=True,
             )
+            await _promptlog_capture(
+                db, prepared, input_text=prepared.history_text,
+                output_text=result.text, status="failed",
+                error_code=classified.code.value,
+                latency_ms=(time.monotonic() - prepared.started) * 1000)
             logged = True
         # Failure-triggered revalidation: prepared.provider is always set here
         # (resolved in _prepare before any I/O). Throttled; never raises.
@@ -1128,12 +1637,19 @@ def key_identity(db: Session, ctx: KeyContext) -> dict:
 
 
 def list_public_models(db: Session, ctx: KeyContext) -> list[tuple[Provider, AIModel]]:
-    """Active models owned by the key's user that the key is allowed to call."""
+    """Active models the key is allowed to call: the assignee's personal rows
+    (personal key) or exactly the key's own org rows (org key)."""
+    from sqlalchemy import and_
+
+    if ctx.org_id is not None:
+        scope = (Provider.org_id == ctx.org_id)
+    else:
+        scope = and_(Provider.org_id.is_(None), Provider.user_id == ctx.user_id)
     rows = db.execute(
         select(Provider, AIModel)
         .join(AIModel, AIModel.provider_id == Provider.id)
         .where(
-            Provider.user_id == ctx.user_id,
+            scope,
             Provider.is_deleted.is_(False),
             Provider.is_active.is_(True),
             AIModel.is_deleted.is_(False),

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SectionHeader } from "@/components/ui/SectionHeader";
 
 interface KpiCardProps {
   label: string;
@@ -90,13 +91,7 @@ export function SectionCard({ id, title, description, action, children, classNam
       )}
       data-testid={testId}
     >
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
-          {description && <p className="mt-0.5 text-xs text-zinc-400">{description}</p>}
-        </div>
-        {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
-      </div>
+      <SectionHeader title={title} description={description} action={action} className="mb-4" />
       {children}
     </section>
   );

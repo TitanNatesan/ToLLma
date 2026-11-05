@@ -1,451 +1,1214 @@
+@import url("https://fonts.googleapis.com/css2?family=Jersey+10&display=swap");
 @import "tailwindcss";
+@import "./tokens.css";
 
-@theme {
-  /* ToLLma brand palette */
-  --color-brand: #2563eb;
-  --color-brand-dark: #1d4ed8;
-  --color-brand-light: #dbeafe;
-  --color-gold: #eab308;
-  --color-gold-light: #fef9c3;
-  --color-mint: #10b981;
-  --color-mint-light: #d1fae5;
-  --color-ink: #0f172a;
-  --color-muted: #475569;
+/* Design tokens live in ./tokens.css (single source of truth). */
 
-  /* Contrast-safe text accents (AA on light surfaces) */
-  --color-gold-ink: #a16207;
-  --color-mint-ink: #047857;
-}
-
-/* ---------- Design tokens (single source of truth) ---------- */
-/* Token sheet: see /tmp/opencode/tollma-design/DESIGN_REPORT.md §§1,4,5,7,8.
-   Groups: spacing / type / elevation / radius / motion / container / touch. */
-:root {
-  /* Layout container (nav == hero == sections share this exactly) */
-  --container-max: 72rem; /* = max-w-6xl; 1152px, keep — do not exceed 1280px */
-  --container-px: 1rem;
-  --container-px-sm: 1.5rem;
-
-  /* Spacing scale (4px base; macro tier for sections) */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-12: 48px;
-  --space-16: 64px;
-  --space-20: 80px;
-  --space-24: 96px;
-  --space-30: 120px;
-
-  /* Section rhythm (mobile / desktop) */
-  --section-py: 4rem; /* 64px mobile floor */
-  --section-py-sm: 6rem; /* 96px desktop default */
-  --section-gap: 2.5rem; /* heading → content, 40px */
-  --section-gap-sm: 3rem; /* 48px desktop */
-
-  /* Hero breathing room (largest single value on the page) */
-  --hero-pt: 3.5rem; /* 56px mobile */
-  --hero-pt-sm: 5rem; /* 80px desktop */
-
-  /* Card padding (standardized; was ad-hoc per section) */
-  --card-pad: 1.5rem; /* 24px default */
-  --card-pad-featured: 2rem; /* 32px featured */
-
-  /* Type scale (system sans + mono; ratio ≈ 1.25 Major Third) */
-  --text-hero: 3rem; /* 48px desktop */
-  --text-hero-mobile: 2rem; /* 32px mobile */
-  --text-hero-leading: 1.05;
-  --text-hero-tracking: -0.025em;
-  --text-h2: 2rem; /* 32px desktop */
-  --text-h2-mobile: 1.625rem; /* 26px mobile */
-  --text-h2-leading: 1.15;
-  --text-h2-tracking: -0.02em;
-  --text-h3: 1.375rem; /* 22px */
-  --text-h3-leading: 1.3;
-  --text-h3-tracking: -0.01em;
-  --text-body: 1rem; /* 16px/400/1.6 */
-  --text-body-leading: 1.6;
-  --text-lead: 1.125rem; /* 18px hero sub/1.65 */
-  --text-lead-leading: 1.65;
-  --text-ui: 0.875rem; /* 14px/500/1.45 nav + buttons */
-  --text-ui-leading: 1.45;
-  --text-caption: 0.8125rem; /* 13px/1.4/+0.01em */
-  --text-caption-leading: 1.4;
-  --text-caption-tracking: 0.01em;
-  --text-mono: 0.8125rem; /* 13px mono proof-lines/labels */
-  --text-mono-leading: 1.6;
-
-  /* Elevation (light canvas: border contrast, not shadow) */
-  --border-hairline: #e2e8f0; /* slate-200 */
-  --surface-raised: #ffffff;
-  --surface-sunken: #f8fafc;
-  --radius-card: 1rem; /* rounded-2xl, 16px feature cards */
-  --radius-chip: 0.75rem; /* 12px small cards */
-  --radius-control: 0.625rem; /* 10px buttons/controls */
-  --radius-panel: 1.5rem; /* 24px large panels */
-  --radius-pill: 9999px; /* pills/badges/tabs only */
-  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --shadow-card-hover: 0 16px 36px -16px rgba(15, 23, 42, 0.22);
-  --shadow-float: 0 28px 56px -28px rgba(15, 23, 42, 0.35);
-  --shadow-glow-blue: 0 32px 64px -24px rgba(37, 99, 235, 0.5);
-
-  /* Motion (two tiers; GPU-only: opacity/transform) */
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* entrances */
-  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1); /* = ease-out alias */
-  --ease-emphasis: cubic-bezier(0.16, 1, 0.3, 1); /* featured reveals */
-  --ease-interactive: cubic-bezier(0.4, 0, 0.2, 1); /* hover/press/focus */
-  --dur-instant: 120ms; /* pressed/focus micro-feedback */
-  --dur-hover: 0.3s; /* interactive tier ceiling (200–300ms) */
-  --dur-entrance: 0.55s; /* reveal tier (420–550ms) */
-  --dur-spotlight: 0.35s;
-  --dur-ambient: 14s; /* glow drift ceiling (9–14s, opacity/transform only) */
-  --reveal-rise: 20px; /* entrance rise (12–20px) */
-  --stagger-step: 0.12s; /* stagger delay step (≤0.15s, max 3 steps/section) */
-
-  /* Touch */
-  --touch-min: 44px;
-}
-
-/* Shared layout container: nav width == hero width == section width.
-   In @layer components so one-off utilities can still override tokens. */
-@layer components {
-  .container-x {
-    width: 100%;
-    margin-inline: auto;
-    max-width: var(--container-max);
-    padding-inline: var(--container-px);
-  }
-  /* Shared section rhythm. */
-  .section {
-    padding-block: var(--section-py);
-  }
-  /* Gap between a section heading block and its content. */
-  .section-gap {
-    margin-top: var(--section-gap);
-  }
-  /* Standardized card padding (default / featured). */
-  .card-pad {
-    padding: var(--card-pad);
-  }
-  .card-pad-featured {
-    padding: var(--card-pad-featured);
-  }
-  /* Sunken surface for wells / code strips on the light canvas. */
-  .surface-sunken {
-    background: var(--surface-sunken);
-  }
-  /* Pill shape for badges / tabs / pills only. */
-  .pill {
-    border-radius: var(--radius-pill);
-  }
-  /* Type utilities (fluid via mobile/desktop token swap). */
-  .type-hero {
-    font-size: var(--text-hero-mobile);
-    line-height: var(--text-hero-leading);
-    letter-spacing: -0.015em;
-    font-weight: 700;
-  }
-  .type-h2 {
-    font-size: var(--text-h2-mobile);
-    line-height: var(--text-h2-leading);
-    letter-spacing: var(--text-h2-tracking);
-    font-weight: 700;
-  }
-  .type-h3 {
-    font-size: var(--text-h3);
-    line-height: var(--text-h3-leading);
-    letter-spacing: var(--text-h3-tracking);
-    font-weight: 600;
-  }
-  .type-lead {
-    font-size: var(--text-lead);
-    line-height: var(--text-lead-leading);
-  }
-  .type-body {
-    font-size: var(--text-body);
-    line-height: var(--text-body-leading);
-  }
-  .type-ui {
-    font-size: var(--text-ui);
-    line-height: var(--text-ui-leading);
-    font-weight: 500;
-  }
-  .type-caption {
-    font-size: var(--text-caption);
-    line-height: var(--text-caption-leading);
-    letter-spacing: var(--text-caption-tracking);
-  }
-  .type-mono {
-    font-size: var(--text-mono);
-    line-height: var(--text-mono-leading);
-    font-family:
-      ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  /* Motion helpers: interactive vs entrance tiers. */
-  .transition-interactive {
-    transition-timing-function: var(--ease-interactive);
-    transition-duration: var(--dur-hover);
-  }
-  .transition-entrance {
-    transition-timing-function: var(--ease-entrance);
-    transition-duration: var(--dur-entrance);
-  }
-  /* Unified card system: radius / border / elevation in one place. */
-  .card {
-    border-radius: var(--radius-card);
-    border: 1px solid var(--color-slate-200);
-    background: #fff;
-    box-shadow: var(--shadow-card);
-  }
-  /* Calm hover for non-showcase sections: border + shadow only, no lift. */
-  .card-calm {
-    transition:
-      border-color var(--dur-hover) ease,
-      box-shadow var(--dur-hover) ease;
-  }
-  .card-calm:hover {
-    border-color: rgba(37, 99, 235, 0.35);
-    box-shadow: var(--shadow-card-hover);
-  }
-  /* Spotlight hover for the screenshot gallery (border glow + depth). */
-  .shot {
-    transition:
-      border-color var(--dur-spotlight) ease,
-      box-shadow var(--dur-spotlight) ease;
-  }
-  .shot:hover,
-  .shot:focus-within {
-    border-color: rgba(37, 99, 235, 0.45);
-    box-shadow:
-      0 32px 64px -28px rgba(37, 99, 235, 0.35),
-      0 2px 8px -2px rgba(15, 23, 42, 0.08);
-  }
-}
-@media (min-width: 640px) {
-  .container-x {
-    padding-inline: var(--container-px-sm);
-  }
-  .section {
-    padding-block: var(--section-py-sm);
-  }
-  .section-gap {
-    margin-top: var(--section-gap-sm);
-  }
-  .type-hero {
-    font-size: var(--text-hero);
-    letter-spacing: var(--text-hero-tracking);
-  }
-  .type-h2 {
-    font-size: var(--text-h2);
-  }
-}
+/* Layout rhythm + type scale live in ./tokens.css. */
 
 html {
   scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Anchored sections must clear the fixed header (h-16 + breathing room). */
+section[id] {
+  scroll-margin-top: 5rem;
 }
 
 body {
-  background: #ffffff;
+  background: var(--color-canvas);
   color: var(--color-ink);
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  overflow-x: clip; /* guard against stray wide SVGs; no horizontal scroll */
 }
 
 ::selection {
-  background: rgba(37, 99, 235, 0.18);
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
 }
 
-/* ---------- Accessible focus ---------- */
-:where(a, button, [tabindex]):focus-visible {
+/* Visible focus ring everywhere (a11y baseline) */
+:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
-/* ---------- Texture utilities ---------- */
-
-/* Subtle blueprint grid, layered over section backgrounds. */
-.bg-grid {
-  background-image:
-    linear-gradient(to right, rgba(15, 23, 42, 0.055) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(15, 23, 42, 0.055) 1px, transparent 1px);
-  background-size: 28px 28px;
+/* Layout helpers shared by every section */
+.container-gutter {
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+.container-std {
+  max-width: var(--container);
+}
+.container-wide {
+  max-width: var(--container-wide);
+}
+.container-xwide {
+  max-width: var(--container-xwide);
 }
 
-.bg-grid-dark {
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
-  background-size: 28px 28px;
+/* Section heading primitives */
+.eyebrow {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-brand);
 }
 
-/* Film-grain noise overlay (tiny inline SVG, no network). */
-.noise-overlay {
+/* Primary CTA shine: a single sweep on hover/focus. CSS-only, no JS. */
+.btn-shine {
   position: relative;
+  overflow: hidden;
   isolation: isolate;
 }
-.noise-overlay::after {
+.btn-shine::after {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: -1;
   pointer-events: none;
-  opacity: 0.028;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  transform: translateX(-130%) skewX(-16deg);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.38),
+    transparent
+  );
+  transition: transform 0.7s var(--ease-out-expo);
+}
+.btn-shine:hover::after,
+.btn-shine:focus-visible::after {
+  transform: translateX(130%) skewX(-16deg);
 }
 
-/* Gradient hairline border for featured cards (background-clip trick). */
-.gradient-border {
-  border: 1px solid transparent;
-  background:
-    linear-gradient(#ffffff, #ffffff) padding-box,
-    linear-gradient(135deg, rgba(37, 99, 235, 0.55), rgba(16, 185, 129, 0.45), rgba(234, 179, 8, 0.4)) border-box;
-}
-.gradient-border-dark {
-  border: 1px solid transparent;
-  background:
-    linear-gradient(rgba(15, 23, 42, 0.72), rgba(15, 23, 42, 0.72)) padding-box,
-    linear-gradient(135deg, rgba(96, 165, 250, 0.6), rgba(52, 211, 153, 0.45), rgba(250, 204, 21, 0.35)) border-box;
-}
-
-/* Glass reflection sweeping the top of browser frames. */
-.glass-reflection {
-  position: relative;
-  overflow: hidden;
-}
-.glass-reflection::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 46%;
-  pointer-events: none;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0));
-}
-
-/* Perspective stage for the screenshot gallery (GPU transforms only). */
-.perspective-stage {
-  perspective: 1400px;
-}
-.tilt-card {
-  transform: rotateX(2.5deg);
-  transform-style: preserve-3d;
-  transition: transform 0.4s ease, box-shadow 0.4s ease;
-}
-.tilt-card:nth-child(even) {
-  transform: rotateX(2.5deg) rotateY(-1.5deg);
-}
-.tilt-card:hover,
-.tilt-card:focus-within {
-  transform: rotateX(0deg) rotateY(0deg) translateY(-4px);
-}
-
-/* Comparison table row focus. */
-.matrix-row {
-  transition: background-color 0.25s ease;
-}
-.matrix-row:hover,
-.matrix-row:focus-within {
-  background-color: rgba(37, 99, 235, 0.045);
-}
-
-/* Trust badges. */
-.trust-badge {
-  transition: transform 0.3s ease, border-color 0.3s ease, background-color 0.3s ease;
-}
-.trust-badge:hover {
-  transform: translateY(-2px);
-  border-color: rgba(37, 99, 235, 0.4);
-  background-color: #eff6ff;
-}
-
-@keyframes roadmap-flow {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-.animate-roadmap-flow {
-  background-size: 200% 100%;
-  animation: roadmap-flow 8s ease-in-out infinite;
-  will-change: background-position;
-}
-
-/* ---------- Ambient keyframes (slow + subtle; entrance-only elsewhere) ---------- */
-@keyframes glow-drift {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.8; }
-  50% { transform: translate3d(2%, -3%, 0) scale(1.06); opacity: 1; }
-}
-.animate-glow-drift {
-  animation: glow-drift 14s ease-in-out infinite;
+/* Reveal primitives: content is visible by default; JS adds .is-hidden
+   only when motion is allowed, so reduced-motion + no-JS both show all. */
+[data-reveal] {
   will-change: transform, opacity;
-}
-
-@keyframes cta-glow {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50% { opacity: 0.9; transform: scale(1.08); }
-}
-.animate-cta-glow {
-  animation: cta-glow 9s ease-in-out infinite;
-  will-change: transform, opacity;
-}
-
-/* Animated packet travelling along the hero architecture diagram (CSS path fallback) */
-@keyframes packet-travel {
-  0% {
-    offset-distance: 0%;
-    opacity: 0;
-  }
-  8% {
-    opacity: 1;
-  }
-  92% {
-    opacity: 1;
-  }
-  100% {
-    offset-distance: 100%;
-    opacity: 0;
-  }
-}
-
-.packet {
-  offset-rotate: 0deg;
-  animation: packet-travel 2.8s linear infinite;
-}
-
-.packet-delay-1 {
-  animation-delay: 0.9s;
-}
-
-.packet-delay-2 {
-  animation-delay: 1.8s;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .packet,
-  .animate-glow-drift,
-  .animate-cta-glow,
-  .animate-roadmap-flow {
-    animation: none;
-  }
-  .packet {
-    opacity: 0;
-  }
-  .tilt-card,
-  .tilt-card:nth-child(even),
-  .tilt-card:hover,
-  .tilt-card:focus-within {
-    transform: none;
-  }
-  .trust-badge:hover {
-    transform: none;
-  }
-  /* NOTE: hero SVG packets use SMIL <animateMotion>, which CSS cannot
-     pause — hero.tsx skips rendering them when reduced motion is set. */
   html {
     scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Nominal editorial palette lives in ./tokens.css. */
+
+body {
+  background: var(--color-cream);
+  color: var(--color-coal);
+}
+
+/* Floating hero pills: transform lives on the INNER pill so the outer
+   wrapper is free for scroll-parallax transforms. */
+@keyframes pill-float {
+  0%,
+  100% {
+    transform: translateY(-6px);
+  }
+  50% {
+    transform: translateY(6px);
+  }
+}
+.pill-float {
+  animation: pill-float 7s ease-in-out infinite;
+  animation-play-state: paused;
+}
+.hero-pills[data-playing="true"] .pill-float {
+  animation-play-state: running;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill-float {
+    animation: none;
+  }
+}
+
+/* Guide card hover: restrained lift + arrow shift (transform-only). */
+.guide-card {
+  transition: transform 300ms var(--ease-out-expo), border-color 300ms;
+}
+.guide-card:hover,
+.guide-card:focus-within {
+  transform: translateY(-4px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-card {
+    transition: none;
+  }
+}
+
+/* ===== Nominal-recording mechanics (2D/CSS only) ===== */
+
+/* Logo marquee: infinite auto-scroll, independent of page scroll. */
+@keyframes marquee-x {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee-track {
+  animation: marquee-x 36s linear infinite;
+  will-change: transform;
+  animation-play-state: paused;
+}
+.marquee[data-playing="true"] .marquee-track {
+  animation-play-state: running;
+}
+.marquee[data-playing="true"]:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+/* Outcomes carousel: stat wipe (clip-path) then quote crossfade. */
+.stat-wipe-enter {
+  animation: stat-wipe-in 380ms var(--ease-out-expo) both;
+}
+@keyframes stat-wipe-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+    transform: translateY(14px);
+    opacity: 0.4;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.stat-wipe-out {
+  animation: stat-wipe-out 200ms ease-in both;
+}
+@keyframes stat-wipe-out {
+  from {
+    clip-path: inset(0 0 0 0);
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+}
+.quote-fade-enter {
+  animation: quote-fade-in 320ms ease-out both;
+}
+
+/* Outcomes mini-visual loops idle only while the section is in view
+   (data-playing from an enter/exit IntersectionObserver); static otherwise. */
+@keyframes quote-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scroll-linked status pill flip (dashboard): 3D faces, JS sets rotateX. */
+.flip-pill {
+  perspective: 400px;
+}
+.flip-inner {
+  position: relative;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.flip-face {
+  display: inline-flex;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(180deg);
+}
+
+/* Provider grid target-lock corners: 8–10px L-brackets that scale in from
+   their own corners over the existing hover. */
+.target-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  opacity: 0;
+  transform: scale(0.6);
+  pointer-events: none;
+  transition:
+    opacity 200ms var(--ease-out-expo),
+    transform 200ms var(--ease-out-expo);
+}
+.target-tl {
+  left: 8px;
+  top: 8px;
+  border-left: 2px solid var(--color-teal-ink);
+  border-top: 2px solid var(--color-teal-ink);
+  transform-origin: top left;
+}
+.target-tr {
+  right: 8px;
+  top: 8px;
+  border-right: 2px solid var(--color-teal-ink);
+  border-top: 2px solid var(--color-teal-ink);
+  transform-origin: top right;
+}
+.target-bl {
+  left: 8px;
+  bottom: 8px;
+  border-left: 2px solid var(--color-teal-ink);
+  border-bottom: 2px solid var(--color-teal-ink);
+  transform-origin: bottom left;
+}
+.target-br {
+  right: 8px;
+  bottom: 8px;
+  border-right: 2px solid var(--color-teal-ink);
+  border-bottom: 2px solid var(--color-teal-ink);
+  transform-origin: bottom right;
+}
+.group:hover .target-corner,
+.group:focus-within .target-corner,
+.group:focus-visible .target-corner {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Pixel block wipe columns scale from the band edge (transform-only). */
+.wipe-col {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track,
+  .stat-wipe-enter,
+  .stat-wipe-out,
+  .quote-fade-enter,
+  .panel-enter,
+  .panel-exit,
+  .end-fade {
+    animation: none;
+  }
+}
+
+/* How-it-works cinematic scene: node/packet emphasis is JS-driven
+   (opacity only); bars grow from their base (transform only). */
+.arch-node,
+.arch-pkts {
+  transition: opacity 0.4s ease;
+}
+.arch-bar {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+/* How-it-works intro build: node pop scales from each element's own center
+   (transform-only, scroll-driven, fully reversible). */
+.arch-build {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+/* How-it-works cinematic scene: node/packet emphasis crossfades in place
+   (~400ms, inside the 300-500ms window) while the camera holds steady —
+   no hard cuts, no per-tile stagger. */
+.panel-enter {
+  animation: panel-in 400ms var(--ease-out-expo) both;
+}
+.panel-exit {
+  animation: panel-out 400ms ease-in both;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+.end-fade {
+  animation: end-in 450ms var(--ease-out-expo) both;
+}
+@keyframes end-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Night stage scope: dark form controls + balanced headings. */
+#platform {
+  color-scheme: dark;
+}
+#platform h2 {
+  text-wrap: balance;
+}
+
+/* ===== Phase A shared motion primitives =====
+   All transform/opacity only. Content is visible by default; JS adds
+   hidden states only when motion is allowed, so reduced-motion and
+   no-JS render final states. */
+
+/* Nav link underline: draws left → right on hover/focus, full when active. */
+.nav-link {
+  position: relative;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1.5px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 250ms var(--ease-out-expo);
+}
+.nav-link:hover::after,
+.nav-link:focus-visible::after,
+.nav-link[data-active="true"]::after {
+  transform: scaleX(1);
+}
+
+/* Free React Bits GlassSurface (vendored, no new deps): refractive
+   glass material. The SVG-displacement path (Chromium) bends the page
+   behind the element; other engines get the frosted variant; engines
+   without backdrop-filter get the solid variant. */
+.glass-surface {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: opacity 0.26s ease-out;
+}
+.glass-surface__filter {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  z-index: -1;
+}
+.glass-surface__content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  border-radius: inherit;
+  position: relative;
+  z-index: 1;
+}
+.glass-surface--svg {
+  background: hsl(0 0% 100% / var(--glass-frost, 0));
+  backdrop-filter: var(--filter-id, url(#glass-filter)) saturate(var(--glass-saturation, 1));
+  box-shadow:
+    0 0 2px 1px color-mix(in oklch, black, transparent 85%)
+      inset,
+    0 0 10px 4px color-mix(in oklch, black, transparent 90%)
+      inset,
+    0px 4px 16px rgba(17, 17, 26, 0.05),
+    0px 8px 24px rgba(17, 17, 26, 0.05),
+    0px 16px 56px rgba(17, 17, 26, 0.05),
+    0px 4px 16px rgba(17, 17, 26, 0.05) inset,
+    0px 8px 24px rgba(17, 17, 26, 0.05) inset,
+    0px 16px 56px rgba(17, 17, 26, 0.05) inset;
+}
+.glass-surface--webgl {
+  box-shadow:
+    0px 4px 16px rgba(17, 17, 26, 0.05),
+    0px 8px 24px rgba(17, 17, 26, 0.05),
+    0px 16px 56px rgba(17, 17, 26, 0.05);
+}
+.glass-surface__canvas,
+.glass-surface__frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.glass-surface__frame {
+  background: hsl(0 0% 100% / var(--glass-frost, 0));
+  box-shadow:
+    0 0 2px 1px color-mix(in oklch, black, transparent 85%)
+      inset,
+    0 0 10px 4px color-mix(in oklch, black, transparent 90%)
+      inset,
+    0px 4px 16px rgba(17, 17, 26, 0.05) inset,
+    0px 8px 24px rgba(17, 17, 26, 0.05) inset,
+    0px 16px 56px rgba(17, 17, 26, 0.05) inset;
+}
+.glass-surface--fallback {
+  background: hsl(0 0% 100% / calc(0.12 + var(--glass-frost, 0) * 0.5));
+  -webkit-backdrop-filter: blur(12px) saturate(calc(var(--glass-saturation, 1) * 1.4)) brightness(1.04);
+  backdrop-filter: blur(12px) saturate(calc(var(--glass-saturation, 1) * 1.4)) brightness(1.04);
+  box-shadow:
+    inset 0 1px 0 0 hsl(0 0% 100% / 0.85),
+    inset 0 -1px 0 0 hsl(0 0% 100% / 0.35),
+    0 0 2px 1px color-mix(in oklch, black, transparent 88%)
+      inset,
+    0 0 12px 3px color-mix(in oklch, white, transparent 72%)
+      inset,
+    0px 4px 16px rgba(17, 17, 26, 0.06),
+    0px 8px 24px rgba(17, 17, 26, 0.06),
+    0px 16px 56px rgba(17, 17, 26, 0.06);
+}
+.glass-surface__sheen,
+.glass-surface__rim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.glass-surface__sheen {
+  background: linear-gradient(
+    135deg,
+    hsl(0 0% 100% / 0.42) 0%,
+    transparent 42%,
+    transparent 64%,
+    hsl(0 0% 100% / 0.18) 100%
+  );
+}
+.glass-surface__rim {
+  padding: 3px;
+  background: linear-gradient(
+    150deg,
+    hsl(0 0% 100% / 0.7),
+    hsl(0 0% 100% / 0.1) 45%,
+    hsl(0 0% 100% / 0.08) 60%,
+    hsl(0 0% 100% / 0.42)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+}
+.glass-surface__line,
+.glass-surface__glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+.glass-surface--svg .glass-surface__line,
+.glass-surface--webgl .glass-surface__line {
+  background: color-mix(in oklch, black, transparent 85%);
+}
+.glass-surface--svg .glass-surface__glow,
+.glass-surface--webgl .glass-surface__glow {
+  background: color-mix(in oklch, black, transparent 90%);
+}
+.glass-surface--fallback .glass-surface__line {
+  background: color-mix(in oklch, black, transparent 88%);
+}
+.glass-surface--fallback .glass-surface__glow {
+  background: color-mix(in oklch, white, transparent 72%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-surface--fallback {
+    background: hsl(0 0% 100% / 0.72);
+  }
+}
+.glass-surface:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+/* Island nav link underline is defined on .nav-link; the -light variant
+   keeps the same currentColor rule on the glass island. */
+
+/* Glass nav links: soft hover/active capsule behind the label. Padding
+   lives here so the pill wraps the text; the row gap absorbs it. */
+.nav-link-glass {
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  margin: -0.3rem -0.35rem;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+.nav-link-glass:hover {
+  background: rgba(23, 25, 20, 0.06);
+}
+.nav-link-glass[data-active="true"] {
+  background: rgba(23, 25, 20, 0.08);
+}
+.nav-link-glass:focus-visible {
+  outline: 2px solid rgba(23, 25, 20, 0.45);
+  outline-offset: 1px;
+  background: rgba(23, 25, 20, 0.06);
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-link-glass {
+    transition: none;
+  }
+  .navbar-glass::after {
+    transition: none;
+    opacity: 0.55;
+  }
+}
+
+/* Preview glass system — dashboard-stack windows share one hierarchy.
+   L1 window: translucent ivory + 5px frost + layered border + ambient
+   shadow (the single backdrop-filter per window; nested surfaces layer
+   translucency over the already-frosted backdrop instead of re-blurring,
+   so scroll-driven sticky transforms stay cheap). L2 panels: soft
+   translucency, fine borders, no shadow, no own blur. L3 cards/badges:
+   lightest tint, hairline borders, no shadow. Text is never blurred.
+   Fallback below for engines without backdrop-filter. */
+.dash-glass-window {
+  background-color: var(--preview-glass-bg);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0) 26%);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+  border: 1px solid var(--preview-glass-border);
+  border-radius: var(--preview-radius-window);
+  box-shadow:
+    var(--preview-glass-shadow),
+    0 1px 0 var(--preview-glass-highlight) inset,
+    0 -1px 0 rgba(70, 78, 62, 0.07) inset;
+}
+.dash-glass-title {
+  background: rgba(255, 255, 255, 0.35);
+}
+.dash-glass-side {
+  background: rgba(255, 255, 255, 0.32);
+}
+.dash-glass-panel {
+  background-color: var(--preview-glass-bg-soft);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0) 40%);
+  border: 1px solid var(--preview-glass-border-subtle);
+  border-radius: var(--preview-radius-panel);
+}
+.dash-glass-card {
+  background-color: var(--preview-glass-bg-soft);
+  border: 1px solid var(--preview-glass-border-subtle);
+  border-radius: var(--preview-radius-card);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset;
+}
+.dash-badge {
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset;
+}
+/* Table rows inside a glass panel use the fainter divider so the table
+   reads as one cohesive surface instead of stacked boxes. */
+.dash-glass-panel .dash-row {
+  border-color: var(--preview-glass-border-subtle);
+}
+@supports not ((backdrop-filter: blur(5px)) or (-webkit-backdrop-filter: blur(5px))) {
+  .dash-glass-window {
+    background-color: rgba(255, 255, 252, 0.97);
+    background-image: none;
+  }
+  .dash-glass-panel,
+  .dash-glass-card {
+    background-color: rgba(255, 255, 255, 0.9);
+    background-image: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-glass-window .dash-row {
+    transition: none;
+  }
+}
+
+/* Reveal: fade + rise (24px, 700ms, var(--ease-reveal)). JS sets
+   [data-hidden] only when motion is allowed; --reveal-delay staggers
+   siblings (90ms steps); --reveal-y overrides distance. */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    transition:
+      opacity 700ms var(--ease-reveal),
+      transform 700ms var(--ease-reveal);
+    transition-delay: var(--reveal-delay, 0ms);
+  }
+  .reveal[data-hidden] {
+    opacity: 0;
+    transform: translateY(var(--reveal-y, 24px));
+  }
+}
+
+/* SpotlightCard: cursor-following radial glow (per-card --spot at 20%,
+   fallback --color-brand) + 1px gradient border fade-in + 2px lift on
+   hover. Glow also shows on :focus-within so touch/keyboard focus gets
+   the same spotlight as hover. All fades <300ms. */
+.spotlight {
+  position: relative;
+  transition: transform 250ms var(--ease-out-expo);
+}
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-brand) 55%, transparent),
+    color-mix(in srgb, var(--color-teal) 45%, transparent)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 220ms ease;
+  pointer-events: none;
+}
+.spotlight::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    220px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, var(--spot, var(--color-brand)) 20%, transparent),
+    transparent 70%
+  );
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+.spotlight:hover::before,
+.spotlight:focus-within::before {
+  opacity: 1;
+}
+.spotlight:hover::after,
+.spotlight:focus-within::after {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .spotlight:hover {
+    transform: translateY(-2px);
+  }
+}
+
+/* MagneticButton wrapper: JS translates toward the cursor (no scale).
+   Coarse pointers + reduced-motion render it static. */
+.magnetic {
+  display: inline-flex;
+  will-change: transform;
+}
+
+/* ===== Phase D motion (transform/opacity only; SSR-visible; static under
+   reduced-motion via the global rule + explicit animation: none below) ===== */
+
+/* Provider marks: monochrome until the card is hovered/focused, then ease
+   back to full color (artwork itself untouched). Logo never moves. */
+.provider-mark {
+  filter: grayscale(1);
+  transition: filter 250ms ease;
+}
+.group:hover .provider-mark,
+.group:focus-within .provider-mark {
+  filter: grayscale(0);
+}
+/* Provider cards: static on hover — glow only, no lift, no logo shift.
+   (The generic .spotlight lift stays for other sections; this pins
+   provider cells in place.) */
+.spotlight.provider-card:hover {
+  transform: none;
+}
+
+/* Guide cards: illustration zoom on card hover (parallax lives on the
+   wrapper div, so the two transforms never fight). */
+.guide-zoom {
+  transition: transform 300ms var(--ease-out-expo);
+}
+.guide-card:hover .guide-zoom,
+.guide-card:focus-within .guide-zoom {
+  transform: scale(1.04);
+}
+
+/* Read-more underline: draws in left → right on card or link hover. */
+.guide-readmore {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1.5px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  padding-bottom: 2px;
+  transition: background-size 300ms var(--ease-out-expo);
+}
+.guide-card:hover .guide-readmore,
+.guide-readmore:hover,
+.guide-readmore:focus-visible {
+  background-size: 100% 1.5px;
+}
+
+/* Guide SVG scenes: ~6s slow loops, transforms/opacity only. Animations run
+   only while the scene is in view (data-playing from an IO latch); base
+   markup is the composed static state for reduced-motion / no-JS. */
+.guide-scene .scene-dot,
+.guide-scene .scene-packet,
+.guide-scene .scene-drop,
+.guide-scene .scene-row,
+.guide-scene .scene-pulse {
+  animation-play-state: paused;
+}
+.guide-scene[data-playing="true"] .scene-dot,
+.guide-scene[data-playing="true"] .scene-packet,
+.guide-scene[data-playing="true"] .scene-drop,
+.guide-scene[data-playing="true"] .scene-row,
+.guide-scene[data-playing="true"] .scene-pulse {
+  animation-play-state: running;
+}
+.guide-scene .scene-dot {
+  animation: scene-drift 6s ease-in-out infinite;
+}
+@keyframes scene-drift {
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: 1; }
+  80% { transform: translateX(84px); opacity: 1; }
+  94%, 100% { transform: translateX(96px); opacity: 0; }
+}
+.guide-scene .scene-packet {
+  animation: scene-run 6s linear infinite;
+}
+@keyframes scene-run {
+  0% { transform: translateX(0); opacity: 0; }
+  10% { opacity: 1; }
+  72% { transform: translateX(118px); opacity: 1; }
+  88%, 100% { transform: translateX(132px); opacity: 0; }
+}
+.guide-scene .scene-drop {
+  animation: scene-drop 6s ease-in infinite;
+}
+@keyframes scene-drop {
+  0% { transform: translateY(0); opacity: 0; }
+  12% { opacity: 1; }
+  45% { transform: translateY(56px); opacity: 1; }
+  60%, 100% { transform: translateY(64px); opacity: 0; }
+}
+.guide-scene .scene-row {
+  animation: scene-row 6s ease-in-out infinite;
+}
+@keyframes scene-row {
+  0%, 100% { opacity: 0.35; }
+  12% { opacity: 1; }
+  30% { opacity: 0.35; }
+}
+.guide-scene .scene-pulse {
+  animation: scene-breathe 6s ease-in-out infinite;
+}
+@keyframes scene-breathe {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-scene .scene-dot,
+  .guide-scene .scene-packet,
+  .guide-scene .scene-drop,
+  .guide-scene .scene-row,
+  .guide-scene .scene-pulse {
+    animation: none;
+  }
+}
+
+/* Closing CTA: faint brand glow drifting behind the heading (0.1 parallax
+   via [data-parallax]; the gradient itself is static). */
+.cta-glow {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--color-brand) 12%, transparent),
+    transparent 72%
+  );
+  pointer-events: none;
+}
+
+/* Footer links: underline sweeps left → right on hover/focus. */
+.foot-link {
+  position: relative;
+}
+.foot-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 250ms var(--ease-out-expo);
+}
+.foot-link:hover::after,
+.foot-link:focus-visible::after {
+  transform: scaleX(1);
+}
+
+/* Footer wordmark: one small rotation per hover (transition, not a loop). */
+.foot-logo img {
+  transition: transform 500ms var(--ease-out-expo);
+}
+.foot-logo:hover img {
+  transform: rotate(-14deg);
+}
+
+/* Footer wordmark: plain Jersey 10, static. Flex spreads the line edge
+   to edge; clamp() sizes it (deterministic, no measuring), so it can
+   never overflow. Parallax dips clip at the box edge instead of
+   crossing the divider below. */
+.foot-pressure {
+  position: relative;
+  width: 100%;
+  overflow: clip;
+  padding-inline: clamp(16px, 4vw, 72px);
+}
+.foot-wordmark {
+  display: flex;
+  justify-content: center;
+  column-gap: 0.1em;
+  font-family: "Jersey 10", "Arial Black", sans-serif;
+  color: var(--color-coal);
+  font-size: clamp(88px, 28vw, 480px);
+  line-height: 1;
+  white-space: nowrap;
+  margin-top: clamp(2px, 0.8vw, 12px);
+}
+.foot-letter {
+  display: inline-block;
+  will-change: transform;
+}
+
+/* Free React Bits DriftWall (vendored, no deps): drifting tile wall.
+   Tile inner adapted to the cream theme (warm-white surface + hairline
+   border instead of upstream's near-black). Edge mask dissolves the wall
+   into the page background. */
+.drift-wall {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  perspective: var(--dw-perspective, 1200px);
+  perspective-origin: 50% 50%;
+  --dw-tile-w: 200px;
+  --dw-tile-h: 132px;
+  --dw-gap: 18px;
+  --dw-radius: 14px;
+  --dw-lift: 64px;
+  --dw-dim: 0.55;
+  --dw-gray: 0;
+  --dw-overlay: #060010;
+  --dw-edge: 40%;
+  -webkit-mask-image:
+    radial-gradient(ellipse 78% 82% at 50% 46%, #000 var(--dw-edge), transparent 100%),
+    linear-gradient(to top, #000 var(--dw-edge), transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    radial-gradient(ellipse 78% 82% at 50% 46%, #000 var(--dw-edge), transparent 100%),
+    linear-gradient(to top, #000 var(--dw-edge), transparent 100%);
+  mask-composite: intersect;
+}
+.drift-wall__plane {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  flex-direction: row;
+  transform-style: preserve-3d;
+  cursor: pointer;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+.drift-wall__col {
+  position: relative;
+  width: calc(var(--dw-tile-w) + var(--dw-gap));
+  transform-style: preserve-3d;
+}
+.drift-wall__track {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+  transform-style: preserve-3d;
+}
+.drift-wall__tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: calc(var(--dw-tile-h) + var(--dw-gap));
+  flex: 0 0 auto;
+  outline: none;
+  transform-style: preserve-3d;
+}
+.drift-wall__inner {
+  position: absolute;
+  inset: calc(var(--dw-gap) / 2);
+  display: block;
+  border-radius: var(--dw-radius);
+  overflow: hidden;
+  background: rgba(255, 255, 252, 0.85);
+  border: 1px solid rgba(23, 25, 20, 0.1);
+  opacity: var(--dw-dim);
+  transform: translateZ(0);
+  pointer-events: none;
+  transition:
+    transform 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.drift-wall__inner > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: grayscale(var(--dw-gray)) saturate(0.92);
+  transition: filter 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+  user-select: none;
+  -webkit-user-touch-callout: none;
+}
+/* DOM tile alternative (brand lockup): same box + grayscale treatment
+   as the img path so node tiles sit identically in the wall. */
+.drift-wall__node {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  filter: grayscale(var(--dw-gray)) saturate(0.92);
+  transition: filter 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+  user-select: none;
+}
+.wall-brand {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  text-align: center;
+  color: var(--color-coal);
+}
+.wall-brand-name {
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.2;
+  max-width: 176px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wall-brand-api {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.3;
+  max-width: 176px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--color-coal) 60%, transparent);
+}
+.wall-mark-fallback {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-coal) 30%, transparent);
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-coal);
+}
+.drift-wall__overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--dw-overlay);
+  opacity: 0.42;
+  pointer-events: none;
+  transition: opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.drift-wall__tile.is-active .drift-wall__inner,
+.drift-wall__tile:focus-visible .drift-wall__inner {
+  opacity: 1;
+  transform: translateZ(var(--dw-lift));
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.7);
+}
+.drift-wall__tile.is-active .drift-wall__inner > img,
+.drift-wall__tile:focus-visible .drift-wall__inner > img,
+.drift-wall__tile.is-active .drift-wall__node,
+.drift-wall__tile:focus-visible .drift-wall__node {
+  filter: grayscale(0) saturate(1.05);
+}
+.drift-wall__tile.is-active .drift-wall__overlay,
+.drift-wall__tile:focus-visible .drift-wall__overlay {
+  opacity: 0;
+}
+.drift-wall__tile:focus-visible .drift-wall__inner {
+  box-shadow:
+    0 24px 60px -18px rgba(0, 0, 0, 0.7),
+    0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+@media (prefers-reduced-motion: reduce) {
+  .drift-wall__plane,
+  .drift-wall__track {
+    will-change: auto;
+  }
+}
+
+/* Free React Bits ScrollStack (vendored, no new deps). */
+.scroll-stack {
+  position: relative;
+  width: 100%;
+}
+.scroll-stack--contained {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.scroll-stack__inner {
+  position: relative;
+  padding-inline: clamp(1rem, 6%, 5rem);
+}
+.scroll-stack__slot {
+  position: sticky;
+}
+.scroll-stack-card {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 20rem;
+  padding: 2.5rem;
+  border-radius: 28px;
+  background: #ffffff;
+  color: #18181b;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.06),
+    0 -12px 40px -16px rgb(0 0 0 / 0.35),
+    0 24px 48px -24px rgb(0 0 0 / 0.4);
+  transform-origin: 50% 0;
+  will-change: transform;
+}
+.scroll-stack-card__shade {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #000;
+  opacity: var(--scroll-stack-dim, 0);
+  pointer-events: none;
+}
+
+/* Dashboard integration: neutralize the upstream card chrome — our
+   glass Window provides its own surface, size, radius and shadow.
+   Keeps the radius so the dim shade clips to the window shape. */
+.scroll-stack-card.dash-stack-card {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  height: auto;
+  border-radius: 18px;
+  display: block;
+  /* Shrink-wrap the window (instead of spanning the slot): the dim
+     shade is inset-0 of this card, so a full-width card paints dim
+     bands across the whole row. Centered via auto margins. */
+  width: fit-content;
+  margin-inline: auto;
+}
+/* Upstream inner gutters are redundant — our windows self-gutter at
+   92vw — and would double-narrow them on mobile. */
+.scroll-stack__inner {
+  padding-inline: 0;
+}
+.dash-stack-card > [data-page] {
+  margin-inline: auto;
+}
+/* Free React Bits GradientASCII (vendored, no new deps): glowing ASCII
+   field on canvas. Decorative backdrop only. */
+.gradient-ascii-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.gradient-ascii-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Footer brand sticker: transparent hit layer only where the sticker
+   is; the canvas itself never intercepts pointer events. */
+.sticker-peel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.sticker-peel-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.sticker-peel-hit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Footer license pill: subtle hairline pill (Apache 2.0 + self-host story). */
+.foot-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-cream-line);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--color-coal) 70%, transparent);
+}
+
+/* Page-frame surround: the page wrapper floats on black, so the body
+   itself must be black (the base token sets cream). Unlayered on purpose:
+   utilities live in a cascade layer and lose to unlayered rules, which is
+   also why the body class alone can't do it. Plain white in print. */
+body {
+  background: #000;
+}
+@media print {
+  body {
+    background: #fff;
   }
 }

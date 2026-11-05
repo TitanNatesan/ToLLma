@@ -24,6 +24,7 @@ import {
 } from "./format";
 import { KpiCard } from "./KpiCard";
 import { SectionCard } from "./SectionCard";
+import { StatGrid } from "@/components/ui/Grids";
 import { TrendChart } from "./TrendChart";
 import type {
   AdminApiKeyCacheRow,
@@ -138,7 +139,7 @@ export function ApiKeysSection({ data, error }: { data: AdminApiKeys | null; err
 
   return (
     <div className="space-y-4" data-testid="admin-api-keys">
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+      <StatGrid xl="xl:grid-cols-5">
         <KpiCard
           label="Total keys"
           value={fmtNumber(data.total)}
@@ -174,7 +175,7 @@ export function ApiKeysSection({ data, error }: { data: AdminApiKeys | null; err
           icon={<RefreshCw className="size-4" />}
           testId="admin-api-keys-kpi-rotated"
         />
-      </div>
+      </StatGrid>
 
       <SectionCard
         title="Top keys by traffic"

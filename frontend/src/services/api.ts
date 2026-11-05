@@ -11,6 +11,9 @@ import type {
   AnalyticsRangeParams,
   AnalyticsSummary,
   ChatAttachment,
+  ChatKey,
+  ChatKeyModel,
+  ChatKeyProblem,
   AnalyticsTimeseries,
   AnalyticsWidgets,
   AuthResponse,
@@ -42,6 +45,7 @@ import type {
   ValidationResult,
 } from "@/types";
 import { getAccessToken, setStoredAccessToken, useAuthStore } from "@/store/auth";
+import { useChatKeyStore } from "@/app/components/chat/chatKeyStore";
 
 // Server components resolve BACKEND_URL (service name); client components
 // fall back to NEXT_PUBLIC_API_URL (host-mapped port for the browser).
@@ -52,6 +56,15 @@ function apiBase(): string {
     }
   }
   return process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+}
+
+/**
+ * Absolute backend URL for a relative API path. Use this when the raw
+ * Response is needed (e.g. reading the `X-Next-Cursor` pagination header),
+ * since apiRequest only returns the parsed body.
+ */
+export function apiUrl(path: string): string {
+  return `${apiBase()}${path}`;
 }
 
 export class ApiError extends Error {
@@ -68,6 +81,11 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.retryAfterSeconds = retryAfterSeconds ?? null;
   }
+}
+
+/** Shared low-level request helper (auth headers, refresh-and-retry, envelope errors). */
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return req<T>(path, init);
 }
 
 async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T> {
@@ -134,11 +152,7 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
       );
     }
     const method = init?.method ?? "GET";
-    const retryAfterHeader = res.headers.get("retry-after");
-    const retryAfterSeconds =
-      retryAfterHeader !== null && retryAfterHeader.trim() !== "" && Number.isFinite(Number(retryAfterHeader))
-        ? Math.max(0, Math.ceil(Number(retryAfterHeader)))
-        : null;
+    const retryAfterSeconds = parseRetryAfter(res);
     throw new ApiError(
       res.status,
       res.statusText,
@@ -148,6 +162,14 @@ async function req<T>(path: string, init?: RequestInit, retry = true): Promise<T
     );
   }
   return res.json() as Promise<T>;
+}
+
+
+/** Seconds from the `Retry-After` header (429s), when present. */
+function parseRetryAfter(res: Response): number | null {
+  const header = res.headers.get("retry-after");
+  if (header === null || header.trim() === "" || !Number.isFinite(Number(header))) return null;
+  return Math.max(0, Math.ceil(Number(header)));
 }
 
 const get = <T,>(path: string) => req<T>(path);
@@ -195,8 +217,62 @@ export const mapDiscoveredModels = (body: { provider_type?: string; base_url?: s
   post<{ mapped: MappedModel[] }>("/api/v1/model-repository/map", body);
 
 // --- Conversations ---
+export interface ConversationPage {
+  items: Conversation[];
+  /** Opaque cursor for the next page; null when the backend has no more (or
+   *  is an older shape without pagination — then the single page is all). */
+  nextCursor: string | null;
+}
+
+function asConversationPage(payload: unknown): ConversationPage {
+  if (Array.isArray(payload)) return { items: payload as Conversation[], nextCursor: null };
+  if (payload && typeof payload === "object") {
+    const rec = payload as Record<string, unknown>;
+    for (const key of ["items", "conversations", "results", "data"]) {
+      if (Array.isArray(rec[key])) {
+        const next = rec.next_cursor ?? rec.nextCursor ?? rec.cursor ?? null;
+        return { items: rec[key] as Conversation[], nextCursor: typeof next === "string" ? next : null };
+      }
+    }
+  }
+  return { items: [], nextCursor: null };
+}
+
 export const listConversations = (search?: string) =>
   get<Conversation[]>(`/api/v1/conversations${search ? `?search=${encodeURIComponent(search)}` : ""}`);
+
+/** Cursor-paged conversation read. The next-page cursor travels the
+ * `X-Next-Cursor` response header (falling back to a body cursor field),
+ * so this stays a raw fetch: apiRequest only returns the parsed body.
+ * Older backends ignore the params and return a bare array (single page). */
+export const listConversationPage = async (
+  search?: string,
+  opts?: { limit?: number; cursor?: string; signal?: AbortSignal },
+): Promise<ConversationPage> => {
+  const q = new URLSearchParams();
+  if (search) q.set("search", search);
+  q.set("limit", String(opts?.limit ?? 20));
+  if (opts?.cursor) q.set("cursor", opts.cursor);
+  const headers = new Headers();
+  const token = getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(apiUrl(`/api/v1/conversations?${q.toString()}`), {
+    cache: "no-store",
+    credentials: "include",
+    headers,
+    signal: opts?.signal,
+  });
+  const headerCursor = res.headers.get("X-Next-Cursor");
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    let data: unknown = body;
+    try { data = JSON.parse(body); } catch { /* not JSON */ }
+    throw new ApiError(res.status, res.statusText, data, `GET /api/v1/conversations -> ${res.status}`);
+  }
+  const payload: unknown = await res.json().catch(() => []);
+  const page = asConversationPage(payload);
+  return { items: page.items, nextCursor: headerCursor || page.nextCursor };
+};
 export const getConversation = (id: string) => get<Conversation>(`/api/v1/conversations/${id}`);
 export const createConversation = (body: { title?: string; provider_id?: string | null; model_id?: string | null }) =>
   post<Conversation>("/api/v1/conversations", body);
@@ -288,6 +364,8 @@ export async function streamChat(
   body: {
     provider_id: string;
     model_id: string;
+    /** In-app generation key. Defaults to the composer's selected key. */
+    key_id?: string | null;
     conversation_id?: string | null;
     message: string;
     reasoning_level?: string | null;
@@ -296,7 +374,15 @@ export async function streamChat(
   },
   cb: StreamCallbacks,
 ): Promise<void> {
-  return postStream("/api/v1/gateway/stream", body, cb);
+  // BYOK: every in-app generation carries the selected key. The composer owns
+  // selection; injecting here (rather than in each caller) guarantees no send
+  // path can submit a model without its key.
+  const selectedKeyId = body.key_id ?? useChatKeyStore.getState().keyId;
+  return postStream(
+    "/api/v1/gateway/stream",
+    selectedKeyId ? { ...body, key_id: selectedKeyId } : body,
+    cb,
+  );
 }
 
 /** Refresh recovery: reattach to a running generation (snapshot + live). */
@@ -416,7 +502,9 @@ async function consumeStream(res: Response, cb: StreamCallbacks): Promise<void> 
     return;
   }
   if (!res.ok || !res.body) {
-    cb.onError(`stream failed with ${res.status}`);
+    const failure = await readStreamFailure(res);
+    if (failure.problem) useChatKeyStore.getState().flagProblem(failure.problem);
+    cb.onError(failure.message);
     return;
   }
   const reader = res.body.getReader();
@@ -438,10 +526,13 @@ async function consumeStream(res: Response, cb: StreamCallbacks): Promise<void> 
         } catch {
           continue;
         }
-        if (typeof event.delta === "string") cb.onDelta(event.delta);
+        // Terminal frames carry the full content too — done MUST win over
+        // content/snapshot, otherwise onDone (usage, toast, cleanup) never
+        // fires and the stream just ends silently.
+        if (event.done) cb.onDone(event as unknown as StreamDone);
+        else if (typeof event.delta === "string") cb.onDelta(event.delta);
         else if (typeof event.content === "string") cb.onSnapshot?.(event.content);
         else if (typeof event.conversation_id === "string") cb.onMeta?.(event as unknown as StreamMeta);
-        else if (event.done) cb.onDone(event as unknown as StreamDone);
         else if (typeof event.error === "string" && !event.done) cb.onError(event.error);
       }
     }
@@ -862,12 +953,39 @@ export async function exportConversations(payload: {
 
 export const getMessageHistory = (messageId: string) =>
   get<MessageHistory>(`/api/v1/messages/${messageId}/history`);
-export const editMessage = (messageId: string, content: string) =>
-  patch<MessageEditResult>(`/api/v1/messages/${messageId}`, { content });
-export const regenerateMessage = (messageId: string) =>
+/**
+ * BYOK: edits and regenerations carry the composer's selected key (same gate
+ * as chat send — see streamChat). Resolves from the chat key store unless an
+ * explicit id is passed. With no key selected the request never fires: the
+ * key-required notice goes up and the thrown 422 flows through the callers'
+ * existing toastApiError handling.
+ */
+function requireChatKeyId(explicit?: string | null): string {
+  const keyId = explicit ?? useChatKeyStore.getState().keyId;
+  if (keyId) return keyId;
+  useChatKeyStore.getState().flagProblem("key-required");
+  throw new ApiError(
+    422,
+    "Unprocessable Entity",
+    {
+      error: {
+        code: "KEY_REQUIRED",
+        message: "Select an API key above first — edits and regenerations carry the selected key.",
+        retryable: false,
+      },
+    },
+    "edit/regenerate without a selected chat key",
+  );
+}
+export const editMessage = (messageId: string, content: string, keyId?: string | null) =>
+  patch<MessageEditResult>(
+    `/api/v1/messages/${messageId}?key_id=${encodeURIComponent(requireChatKeyId(keyId))}`,
+    { content },
+  );
+export const regenerateMessage = (messageId: string, keyId?: string | null) =>
   post<{ conversation_id: string; generation_id: string; message_id: string; status: string }>(
     `/api/v1/messages/${messageId}/regenerate`,
-    {},
+    { key_id: requireChatKeyId(keyId) },
   );
 export const activateGeneration = (messageId: string, runId: string) =>
   post<{ message: ChatMessage; run: GenerationRun }>(
@@ -900,3 +1018,139 @@ export const getRequestLogs = (params: { conversationId?: string; limit?: number
   if (params.limit) q.set("limit", String(params.limit));
   return get<RequestLogPage>(`/api/v1/request-logs?${q.toString()}`);
 };
+
+// --- Chat API keys (BYOK composer) -------------------------------------------
+
+export const listChatKeys = () => get<ChatKey[]>("/api/v1/chat/keys");
+export const listChatKeyModels = (keyId: string) =>
+  get<ChatKeyModel[]>(`/api/v1/chat/models?key_id=${encodeURIComponent(keyId)}`);
+
+/**
+ * Classify gateway key denials from the error envelope so the composer can
+ * refresh its lists and request re-selection. Key 404s read lowercase
+ * `api key <id> not found` — distinct from `conversation ...` / `generation
+ * ... not found`, which never classify here. Disabled/expired keys stay that
+ * 404 oracle; budget, rate, and IP denials arrive as 403/429 carrying reason
+ * strings (budget_exceeded, rate_limited/rpm/…, model_not_allowed,
+ * ip_blocked). Matching is case-insensitive: the same reason can surface in
+ * the envelope message or a raw string body.
+ */
+export function classifyChatKeyProblem(status: number, data: unknown): ChatKeyProblem | null {
+  const raw = typeof data === "string" ? data : JSON.stringify(data ?? "");
+  const text = raw.toLowerCase();
+  if (status === 422 && text.includes("key_required")) return "key-required";
+  if (status === 404 && /api key \S+ not found/.test(raw)) return "key-invalid";
+  if (status === 403 || status === 429) {
+    if (text.includes("model_not_allowed")) return "model-not-allowed";
+    if (text.includes("ip_blocked")) return "ip-blocked";
+    if (
+      text.includes("budget") ||
+      text.includes("spend") ||
+      text.includes("overbudget") ||
+      text.includes("over budget") ||
+      text.includes("exhausted")
+    ) {
+      return "budget-exceeded";
+    }
+    if (
+      status === 429 ||
+      text.includes("rate_limited") ||
+      text.includes("rate limited") ||
+      text.includes("too many requests") ||
+      /\b(rpm|rph|rpd|tpm|tpd|model_rpm|model_tpm)\b/.test(text)
+    ) {
+      return "rate-limited";
+    }
+  }
+  return null;
+}
+
+export interface PolicyDenialCopy {
+  problem: ChatKeyProblem;
+  title: string;
+  description: string;
+  /** Show a "Manage API keys" recovery action alongside the message. */
+  manageKeys: boolean;
+}
+
+/**
+ * Friendly copy for unified gateway policy denials. One source of truth for
+ * stream toasts and composer banners — raw reason strings never reach the UI.
+ * Nothing is generated on denial, so every description says so.
+ */
+export function policyDenialCopy(
+  problem: ChatKeyProblem,
+  retryAfterSeconds?: number | null,
+): PolicyDenialCopy {
+  switch (problem) {
+    case "key-required":
+      return {
+        problem,
+        title: "An API key is required",
+        description: "Select a model above — its API key is selected automatically.",
+        manageKeys: false,
+      };
+    case "key-invalid":
+      return {
+        problem,
+        title: "This API key is no longer valid",
+        description:
+          "It was revoked, disabled, expired, or your org access changed. Your key list was refreshed — pick another model to continue.",
+        manageKeys: false,
+      };
+    case "model-not-allowed":
+      return {
+        problem,
+        title: "That model isn't allowed for this key",
+        description: "Pick another model to continue — your key is unchanged.",
+        manageKeys: false,
+      };
+    case "budget-exceeded":
+      return {
+        problem,
+        title: "Budget exhausted",
+        description:
+          "This API key hit its spending limit, so the request was blocked and nothing was generated. Raise the budget or pick another key.",
+        manageKeys: true,
+      };
+    case "rate-limited":
+      return {
+        problem,
+        title: "Rate limited",
+        description:
+          retryAfterSeconds != null
+            ? `This key hit its request limit. Retry in about ${retryAfterSeconds}s — nothing was generated.`
+            : "This key hit its request limit. Wait a moment and retry — nothing was generated.",
+        manageKeys: false,
+      };
+    case "ip-blocked":
+      return {
+        problem,
+        title: "Blocked by IP rules",
+        description:
+          "Your current network isn't allowed by this key's IP rules, so the request was blocked. Update the allowlist or pick another key.",
+        manageKeys: true,
+      };
+  }
+}
+
+/** Non-OK stream-setup response → user-facing message + optional key problem.
+ *  Classified policy denials surface the friendly copy (never the raw reason
+ *  string); anything else keeps the previous behavior. */
+async function readStreamFailure(res: Response): Promise<{ message: string; problem: ChatKeyProblem | null }> {
+  const retryAfterSeconds = parseRetryAfter(res);
+  const fallback = `stream failed with ${res.status}`;
+  const text = await res.text().catch(() => "");
+  if (!text) return { message: fallback, problem: null };
+  let data: unknown = text;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { message: `${fallback}: ${text.slice(0, 200)}`, problem: null };
+  }
+  const problem = classifyChatKeyProblem(res.status, data);
+  if (problem) return { message: policyDenialCopy(problem, retryAfterSeconds).description, problem };
+  const err = (data as { error?: { message?: unknown } })?.error;
+  const message = typeof err?.message === "string" && err.message ? err.message : fallback;
+  return { message, problem: null };
+}

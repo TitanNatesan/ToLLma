@@ -1,77 +1,101 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { LogOut, Settings } from "lucide-react";
-import { logout } from "@/services/api";
+import { ChevronsUpDown } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
-import { cn } from "@/lib/utils";
+import { useOrgStore } from "@/store/org";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui";
+import { WorkspaceMenuContent } from "./WorkspaceMenu";
 
-/** Persistent profile card: avatar, name, email, nav-toggle + logout actions. */
+/** Persistent profile card. Clicking the identity block toggles the workspace
+ * menu (Personal + accessible organizations + creation entry points). The
+ * footer chevron pins the bottom-anchored navigation open or closed;
+ * hovering it while hidden only peeks. Log out lives at the end of the
+ * navigation list. */
 export function SidebarProfile({
   navOpen,
   onToggleNav,
+  onPeekNav,
+  onUnpeekNav,
+  hideToggle,
 }: {
   navOpen: boolean;
   onToggleNav: () => void;
+  onPeekNav: () => void;
+  onUnpeekNav: () => void;
+  hideToggle?: boolean;
 }) {
-  const router = useRouter();
   const user = useAuthStore((s) => s.user);
-  const reset = useAuthStore((s) => s.reset);
-
-  async function onLogout() {
-    try {
-      await logout();
-    } finally {
-      reset();
-      router.push("/");
-    }
-  }
+  const context = useOrgStore((s) => s.context);
 
   if (!user) return null;
   const displayName = user.full_name?.trim() || "User";
   const email = user.email || "user@example.com";
   const initial = (email[0] ?? "?").toUpperCase();
+  const workspaceName = context.type === "personal" ? "Personal" : context.orgName;
 
   return (
-    <div className="flex items-center gap-2.5" data-testid="sidebar-profile">
-      <span
-        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-xs font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-        title={email}
-        data-testid="user-avatar"
-      >
-        {initial}
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-          {displayName}
-        </span>
-        <span className="truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={email}>
-          {email}
-        </span>
-      </span>
+    <div className="flex select-none items-center gap-2.5" data-testid="sidebar-profile">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Workspace menu, signed in as ${email}. Current workspace ${workspaceName}`}
+            data-testid="workspace-menu-trigger"
+            className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1 py-1 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <span
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-xs font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+              title={email}
+              data-testid="user-avatar"
+              aria-hidden
+            >
+              {initial}
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col leading-tight">
+              <span className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100" title={displayName}>
+                {displayName}
+              </span>
+              <span className="truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={workspaceName}>
+                {workspaceName}
+              </span>
+            </span>
+          </button>
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent
+          side="top"
+          align="start"
+          collisionPadding={12}
+          className="w-64 p-1.5"
+          data-testid="workspace-menu"
+        >
+          <WorkspaceMenuContent />
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <button
         onClick={onToggleNav}
-        className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-md transition-colors",
-          navOpen
-            ? "bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100"
-            : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
-        )}
+        onMouseEnter={onPeekNav}
+        onMouseLeave={onUnpeekNav}
+        onFocus={onPeekNav}
+        onBlur={(e) => {
+          if (e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) return;
+          onUnpeekNav();
+        }}
+        disabled={hideToggle}
+        aria-hidden={hideToggle}
+        tabIndex={hideToggle ? -1 : undefined}
+        className={`flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100${hideToggle ? " hidden" : ""}`}
         title={navOpen ? "Hide navigation" : "Show navigation"}
         aria-label={navOpen ? "Hide navigation" : "Show navigation"}
         aria-expanded={navOpen}
-        data-testid="profile-settings-btn"
+        data-testid="sidebar-collapse-btn"
       >
-        <Settings className="size-3.5" />
-      </button>
-      <button
-        onClick={onLogout}
-        className="flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-        title={`Log out (${email})`}
-        data-testid="logout-btn"
-        aria-label="Log out"
-      >
-        <LogOut className="size-3.5" />
+        <ChevronsUpDown className="size-3.5" aria-hidden />
       </button>
     </div>
   );

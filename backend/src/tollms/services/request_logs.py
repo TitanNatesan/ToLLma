@@ -14,6 +14,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from tollms.models.api_key import ApiKey
 from tollms.models.request_log import ExportEvent, RequestLog, RequestStatus
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ class RequestLogEntry:
     """Plain-data input so the generation driver can log without ORM objects."""
 
     user_id: uuid.UUID | None = None
+    org_id: uuid.UUID | None = None
+    api_key_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
     message_id: uuid.UUID | None = None
     provider_id: uuid.UUID | None = None
@@ -34,6 +37,9 @@ class RequestLogEntry:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
     input_cost: Decimal | None = None
     output_cost: Decimal | None = None
     total_cost: Decimal | None = None
@@ -41,12 +47,38 @@ class RequestLogEntry:
     error_code: str | None = None
     is_regeneration: bool = False
     is_streaming: bool = False
+    usage_estimated: bool = False
+
+
+def touch_key_last_used(
+    db: Session, api_key_id: uuid.UUID | None, *, completed_at: datetime | None = None
+) -> None:
+    """Stamp `ApiKey.last_used_at` = most recent SUCCESSFULLY COMPLETED request.
+
+    Callers gate on success-only; this just stamps. Never raises (freshness must
+    never fail the request it annotates) and never touches `enabled`/`is_deleted`.
+    The max-guard keeps out-of-order commits (streaming drivers) from moving the
+    stamp backwards. Joins the caller's commit — no commit here.
+    """
+    if api_key_id is None:
+        return
+    try:
+        key = db.get(ApiKey, api_key_id)
+        if key is None or key.is_deleted:
+            return
+        stamp = completed_at or datetime.now(timezone.utc)
+        if key.last_used_at is None or stamp > key.last_used_at:
+            key.last_used_at = stamp
+    except Exception:
+        logger.warning("request_logs: last_used_at touch failed (key=%s)", api_key_id, exc_info=True)
 
 
 def record(db: Session, entry: RequestLogEntry) -> RequestLog:
     """Insert one request-log row. Caller owns the transaction/commit."""
     row = RequestLog(
         user_id=entry.user_id,
+        org_id=entry.org_id,
+        api_key_id=entry.api_key_id,
         conversation_id=entry.conversation_id,
         message_id=entry.message_id,
         provider_id=entry.provider_id,
@@ -57,6 +89,9 @@ def record(db: Session, entry: RequestLogEntry) -> RequestLog:
         prompt_tokens=entry.prompt_tokens,
         completion_tokens=entry.completion_tokens,
         total_tokens=entry.total_tokens,
+        cache_read_tokens=entry.cache_read_tokens,
+        cache_write_tokens=entry.cache_write_tokens,
+        reasoning_tokens=entry.reasoning_tokens,
         input_cost=entry.input_cost,
         output_cost=entry.output_cost,
         total_cost=entry.total_cost,
@@ -64,8 +99,11 @@ def record(db: Session, entry: RequestLogEntry) -> RequestLog:
         error_code=entry.error_code,
         is_regeneration=entry.is_regeneration,
         is_streaming=entry.is_streaming,
+        usage_estimated=entry.usage_estimated,
     )
     db.add(row)
+    if entry.status == RequestStatus.SUCCESS:
+        touch_key_last_used(db, entry.api_key_id, completed_at=row.request_completed_at)
     return row
 
 

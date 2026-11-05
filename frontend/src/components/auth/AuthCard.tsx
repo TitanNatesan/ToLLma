@@ -4,10 +4,11 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, Loader2, Lock, Mail, User as UserIcon } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, Lock, Mail, ShieldCheck, User as UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { Logo } from "@/components/ui/Logo";
 import { ApiError, googleLoginUrl, login, signup } from "@/services/api";
+import { toast } from "@/lib/notify";
 import { useAuthStore } from "@/store/auth";
 
 interface AuthCardProps {
@@ -62,13 +63,104 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [signupError, setSignupError] = useState<string | null>(null);
   const [signupBusy, setSignupBusy] = useState(false);
+  const [capsOn, setCapsOn] = useState(false);
+
+  // Password strength (length + variety heuristic, client-side hint only —
+  // the backend still enforces its own minimum).
+  const signupStrength = (() => {
+    if (signupPassword.length === 0) return 0;
+    let s = 1;
+    if (signupPassword.length >= 12) s += 1;
+    if (/[A-Z]/.test(signupPassword) && /[0-9]/.test(signupPassword)) s += 1;
+    if (/[^A-Za-z0-9]/.test(signupPassword)) s += 1;
+    return Math.min(s, 4);
+  })();
+
+  const signupStrengthLabels = ["", "Weak", "Okay", "Strong", "Very strong"];
+  const onCapsKey = (e: React.KeyboardEvent) => {
+    try {
+      setCapsOn(!!(e.getModifierState && e.getModifierState("CapsLock")));
+    } catch {
+      /* keyboards without modifier state */
+    }
+  };
+
+  // Organization invite binding (Phase B): ?invite=<token>&email=<address>.
+  // The email field is prefilled and locked; the token survives mode flips
+  // and the signup→verify→login hop via sessionStorage, then lands on the
+  // invitations page. Google buttons intentionally stay untouched.
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const invite = params.get("invite");
+    const email = params.get("email");
+    if (invite) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setInviteToken(invite);
+      try {
+        window.sessionStorage.setItem("tollma_invite_token", invite);
+      } catch {
+        /* storage blocked: token still works for this page view */
+      }
+    } else {
+      try {
+        const stored = window.sessionStorage.getItem("tollma_invite_token");
+        if (stored) setInviteToken(stored);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (email && email.includes("@")) {
+      setInviteEmail(email);
+      setLoginEmail(email);
+      setSignupEmail(email);
+    }
+  }, []);
+
+  function consumeInviteToken(): string | null {
+    if (inviteToken) {
+      try {
+        window.sessionStorage.removeItem("tollma_invite_token");
+      } catch {
+        /* ignore */
+      }
+      return inviteToken;
+    }
+    try {
+      const stored = window.sessionStorage.getItem("tollma_invite_token");
+      if (stored) {
+        window.sessionStorage.removeItem("tollma_invite_token");
+        return stored;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function peekInviteToken(): string | null {
+    if (inviteToken) return inviteToken;
+    try {
+      return window.sessionStorage.getItem("tollma_invite_token");
+    } catch {
+      return null;
+    }
+  }
+
+  function afterAuth() {
+    const token = consumeInviteToken();
+    router.push(token ? `/organizations/invites?token=${encodeURIComponent(token)}` : "/");
+  }
 
   const switchToSignup = (e: React.MouseEvent) => {
     e.preventDefault();
     setLoginError(null);
     setMode("signup");
     if (typeof window !== "undefined") {
-      window.history.pushState(null, "", "/signup");
+      window.history.pushState(null, "", `/signup${window.location.search}`);
     }
   };
 
@@ -77,11 +169,12 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
     setSignupError(null);
     setMode("login");
     if (typeof window !== "undefined") {
-      window.history.pushState(null, "", "/login");
+      window.history.pushState(null, "", `/login${window.location.search}`);
     }
   };
 
   async function handleLogin(e: React.FormEvent) {
+    if (loginBusy) return;
     e.preventDefault();
     setLoginError(null);
     setLoginBusy(true);
@@ -91,7 +184,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       if (res.access_token) {
         setAccessToken(res.access_token);
       }
-      router.push("/");
+      afterAuth();
     } catch (err) {
       setLoginError(
         err instanceof ApiError && err.status === 401
@@ -104,6 +197,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   }
 
   async function handleSignup(e: React.FormEvent) {
+    if (signupBusy) return;
     e.preventDefault();
     setSignupError(null);
     setSignupBusy(true);
@@ -117,15 +211,32 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       if (res.access_token) {
         setAccessToken(res.access_token);
       }
-      router.push("/");
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 422) {
-        setSignupError(
-          "That email is already registered or password needs 8+ characters.",
+      // Email verification gate: 2xx with verification_sent !== false
+      // (absent on old backends, whose signup always initiates) means a
+      // verification mail went out — toast and land on the login form,
+      // preserving invite context. Flip the card explicitly as well: the
+      // post-signup URL change may not remount this component (in-app mode
+      // switches use history.pushState), which would leave the signup face
+      // visible. Explicit false keeps legacy auto-login.
+      if (
+        (res as { verification_sent?: boolean }).verification_sent !== false
+      ) {
+        toast.success("Verification email sent — check your inbox to continue.");
+        const invite = peekInviteToken();
+        setMode("login");
+        router.push(
+          `/login${invite ? `?invite=${encodeURIComponent(invite)}` : ""}`,
         );
-      } else {
-        setSignupError("Signup failed. Please try again.");
+        return;
       }
+      afterAuth();
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.status === 422
+          ? "That email is already registered or password needs 8+ characters."
+          : "Signup failed. Please try again.";
+      setSignupError(message);
+      toast.error(message);
     } finally {
       setSignupBusy(false);
     }
@@ -133,31 +244,34 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
 
   return (
     <main
-      className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-zinc-950 px-4 py-12"
+      className="relative flex min-h-dvh w-full items-center justify-center overflow-x-clip bg-zinc-950 px-4 py-4"
       data-testid={mode === "login" ? "login-page" : "signup-page"}
     >
       {/* Ambient background glow */}
-      <div className="pointer-events-none absolute -top-40 -right-40 size-96 rounded-full bg-violet-600/15 blur-3xl" />
+      <div className="pointer-events-none absolute -top-40 -right-40 size-96 rounded-full bg-tollma-600/20 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-40 -left-40 size-96 rounded-full bg-sky-500/15 blur-3xl" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:24px_24px] opacity-30" />
 
-      {/* 3D Flip Container */}
-      <div className="relative w-full max-w-md [perspective:1200px]">
+      {/* 3D Flip Container — grid stacks both faces so the shell sizes to
+          the taller card. Content hugs its height; only viewports shorter
+          than the card scroll internally (never shrink text for zoom users). */}
+      <div className="relative max-h-[92dvh] w-full max-w-md overflow-y-auto [perspective:1200px]">
         <motion.div
-          className="relative w-full [transform-style:preserve-3d]"
+          className="relative grid w-full [transform-style:preserve-3d]"
           animate={{ rotateY: isFlipped ? 180 : 0 }}
           transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
         >
           {/* ==================== FRONT: LOGIN CARD ==================== */}
           <div
-            className="w-full rounded-2xl border border-zinc-800 bg-zinc-900/90 p-8 shadow-2xl backdrop-blur-xl [backface-visibility:hidden]"
+            className="relative col-start-1 row-start-1 w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 pt-7 shadow-2xl backdrop-blur-xl [backface-visibility:hidden] sm:p-7"
             style={{
               pointerEvents: isFlipped ? "none" : "auto",
             }}
           >
+            <div aria-hidden className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-tollma-500/70 to-transparent" />
             {/* Header */}
-            <div className="mb-6 flex flex-col items-center text-center">
-              <Logo size="lg" className="mb-3" />
+            <div className="mb-4 flex flex-col items-center text-center">
+              <Logo size="lg" className="mb-2" />
               <h1 className="text-xl font-bold tracking-tight text-white">
                 Welcome back
               </h1>
@@ -176,9 +290,9 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                 {oauthNotice}
               </div>
             )}
-            <form onSubmit={handleLogin} className="space-y-4">
+            <form onSubmit={handleLogin} className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-300">Email</label>
+                <label htmlFor="login-email" className="text-xs font-medium text-zinc-300">Email</label>
                 <div className="relative flex items-center">
                   <Mail className="pointer-events-none absolute left-3 size-4 text-zinc-500" />
                   <input
@@ -188,14 +302,22 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     placeholder="name@company.com"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
+                    readOnly={inviteEmail !== null}
+                    title={inviteEmail ? "Email is locked to your invitation" : undefined}
+                    id="login-email"
                     data-testid="login-email"
-                    className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-xs text-white placeholder-zinc-500 transition-colors focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
+                {inviteEmail && (
+                  <p className="text-[11px] text-zinc-500" data-testid="login-invite-note">
+                    Locked to your invitation email. After login you&apos;ll land on the invitation.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-300">Password</label>
+                <label htmlFor="login-password" className="text-xs font-medium text-zinc-300">Password</label>
                 <div className="relative flex items-center">
                   <Lock className="pointer-events-none absolute left-3 size-4 text-zinc-500" />
                   <input
@@ -205,12 +327,16 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     placeholder="••••••••"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
+                    onKeyUp={onCapsKey}
+                    id="login-password"
                     data-testid="login-password"
-                    className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-xs text-white placeholder-zinc-500 transition-colors focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                   <button
                     type="button"
                     onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    aria-label={ showLoginPassword ? "Hide password" : "Show password" }
+                    aria-pressed={showLoginPassword}
                     className="absolute right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
                     {showLoginPassword ? (
@@ -220,6 +346,9 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     )}
                   </button>
                 </div>
+                {capsOn && (
+                  <p className="text-[11px] text-amber-400" role="status">Caps lock is on.</p>
+                )}
                 <div className="flex justify-end pt-1">
                   <Link
                     href="/auth/forgot-password"
@@ -234,7 +363,8 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               {loginError && (
                 <div
                   className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-400"
-                  data-testid="login-error"
+                  role="alert"
+                    data-testid="login-error"
                 >
                   {loginError}
                 </div>
@@ -243,7 +373,8 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <Button
                 type="submit"
                 disabled={loginBusy}
-                className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
+                size="lg"
+                className="w-full"
                 data-testid="login-submit"
               >
                 {loginBusy ? (
@@ -256,7 +387,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                 )}
               </Button>
 
-              <div className="relative my-4 flex items-center justify-center">
+              <div className="relative my-3 flex items-center justify-center">
                 <div className="w-full border-t border-zinc-800" />
                 <span className="absolute bg-zinc-900 px-2 text-[11px] text-zinc-500 uppercase">
                   or
@@ -294,7 +425,13 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               </Button>
             </form>
 
-            <div className="mt-6 text-center text-xs text-zinc-400">
+            <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-zinc-500">
+              <span className="inline-flex items-center gap-1"><ShieldCheck className="size-3 text-tollma-500" aria-hidden /> Encrypted credentials</span>
+              <span aria-hidden>·</span>
+              <span className="inline-flex items-center gap-1"><KeyRound className="size-3 text-tollma-500" aria-hidden /> SSO via Google</span>
+            </div>
+
+            <div className="mt-2.5 text-center text-xs text-zinc-400">
               No account?{" "}
               <button
                 type="button"
@@ -308,13 +445,14 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
 
           {/* ==================== BACK: SIGNUP CARD ==================== */}
           <div
-            className="absolute inset-0 w-full rounded-2xl border border-zinc-800 bg-zinc-900/90 p-8 shadow-2xl backdrop-blur-xl [backface-visibility:hidden] [transform:rotateY(180deg)]"
+            className="relative col-start-1 row-start-1 w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 pt-7 shadow-2xl backdrop-blur-xl [backface-visibility:hidden] [transform:rotateY(180deg)] sm:p-7"
             style={{
               pointerEvents: isFlipped ? "auto" : "none",
             }}
           >
+            <div aria-hidden className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-tollma-500/70 to-transparent" />
             {/* Header */}
-            <div className="mb-5 flex flex-col items-center text-center">
+            <div className="mb-4 flex flex-col items-center text-center">
               <Logo size="lg" className="mb-2" />
               <h1 className="text-xl font-bold tracking-tight text-white">
                 Create an account
@@ -325,9 +463,9 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
             </div>
 
             {/* Signup Form */}
-            <form onSubmit={handleSignup} className="space-y-3.5">
+            <form onSubmit={handleSignup} className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-300">
+                <label htmlFor="signup-name" className="text-xs font-medium text-zinc-300">
                   Full name <span className="text-zinc-500">(optional)</span>
                 </label>
                 <div className="relative flex items-center">
@@ -337,14 +475,15 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     autoComplete="name"
                     value={signupFullName}
                     onChange={(e) => setSignupFullName(e.target.value)}
+                    id="signup-name"
                     data-testid="signup-name"
-                    className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-xs text-white placeholder-zinc-500 transition-colors focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-300">Email</label>
+                <label htmlFor="signup-email" className="text-xs font-medium text-zinc-300">Email</label>
                 <div className="relative flex items-center">
                   <Mail className="pointer-events-none absolute left-3 size-4 text-zinc-500" />
                   <input
@@ -354,14 +493,22 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     placeholder="name@company.com"
                     value={signupEmail}
                     onChange={(e) => setSignupEmail(e.target.value)}
+                    readOnly={inviteEmail !== null}
+                    title={inviteEmail ? "Email is locked to your invitation" : undefined}
+                    id="signup-email"
                     data-testid="signup-email"
-                    className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-xs text-white placeholder-zinc-500 transition-colors focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
+                {inviteEmail && (
+                  <p className="text-[11px] text-zinc-500" data-testid="signup-invite-note">
+                    Locked to your invitation email. After signup you&apos;ll land on the invitation.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-300">Password</label>
+                <label htmlFor="signup-password" className="text-xs font-medium text-zinc-300">Password</label>
                 <div className="relative flex items-center">
                   <Lock className="pointer-events-none absolute left-3 size-4 text-zinc-500" />
                   <input
@@ -372,12 +519,17 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     minLength={8}
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
+                    onKeyUp={onCapsKey}
+                    id="signup-password"
                     data-testid="signup-password"
-                    className="h-10 w-full rounded-lg border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-xs text-white placeholder-zinc-500 transition-colors focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                    aria-describedby="signup-strength"
+                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                   <button
                     type="button"
                     onClick={() => setShowSignupPassword(!showSignupPassword)}
+                    aria-label={ showSignupPassword ? "Hide password" : "Show password" }
+                    aria-pressed={showSignupPassword}
                     className="absolute right-3 text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
                     {showSignupPassword ? (
@@ -389,10 +541,29 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                 </div>
               </div>
 
+              {signupPassword.length > 0 && (
+                <div className="flex items-center gap-1.5" id="signup-strength" aria-live="polite">
+                  <div className="flex flex-1 gap-1" aria-hidden>
+                    {[1, 2, 3, 4].map((i) => (
+                      <span
+                        key={i}
+                        className={`h-1 flex-1 rounded-full ${i <= signupStrength ? (signupStrength <= 1 ? "bg-red-500" : signupStrength === 2 ? "bg-amber-400" : "bg-tollma-500") : "bg-zinc-700"}`}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-[10px] text-zinc-500">
+                    {signupStrengthLabels[signupStrength]}
+                  </span>
+                </div>
+              )}
+              {capsOn && (
+                <p className="text-[11px] text-amber-400" role="status">Caps lock is on.</p>
+              )}
               {signupError && (
                 <div
                   className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-400"
-                  data-testid="signup-error"
+                  role="alert"
+                    data-testid="signup-error"
                 >
                   {signupError}
                 </div>
@@ -401,7 +572,8 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               <Button
                 type="submit"
                 disabled={signupBusy}
-                className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
+                size="lg"
+                className="w-full"
                 data-testid="signup-submit"
               >
                 {signupBusy ? (
@@ -452,7 +624,13 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               </Button>
             </form>
 
-            <div className="mt-5 text-center text-xs text-zinc-400">
+            <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-zinc-500">
+              <span className="inline-flex items-center gap-1"><ShieldCheck className="size-3 text-tollma-500" aria-hidden /> Encrypted credentials</span>
+              <span aria-hidden>·</span>
+              <span className="inline-flex items-center gap-1"><KeyRound className="size-3 text-tollma-500" aria-hidden /> SSO via Google</span>
+            </div>
+
+            <div className="mt-2.5 text-center text-xs text-zinc-400">
               Have an account?{" "}
               <button
                 type="button"

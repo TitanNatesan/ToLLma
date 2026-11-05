@@ -10,7 +10,7 @@ import { usePreferencesSync } from "@/hooks/useSettings";
 import { clearAuthAndCredentialCache, hasSessionCookie, useAuthStore } from "@/store/auth";
 import { Loader2 } from "lucide-react";
 
-const BARE_PATHS = ["/login", "/signup", "/verify", "/auth/callback", "/auth/forgot-password", "/auth/reset-password", "/share", "/health"];
+const BARE_PATHS = ["/login", "/signup", "/verify", "/invite", "/auth/callback", "/auth/forgot-password", "/auth/reset-password", "/share", "/health"];
 
 /** Loads server preferences into the settings store once a session exists.
  *  Lives inside QueryProvider (Shell itself renders outside it). */
@@ -61,8 +61,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
     content = children;
   } else if (!checked) {
     content = (
-      <div className="flex h-screen w-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950">
-        <Loader2 className="size-6 animate-spin text-zinc-400" />
+      <div role="status" className="flex h-dvh w-screen items-center justify-center gap-2 bg-zinc-50 dark:bg-zinc-950">
+        <Loader2 className="size-6 animate-spin text-zinc-400" aria-hidden="true" />
+        <span className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</span>
       </div>
     );
   } else if (!user) {

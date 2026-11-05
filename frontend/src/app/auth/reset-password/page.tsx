@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Eye, EyeOff, Loader2, Lock } from "lucide-react";
@@ -14,6 +14,15 @@ type TokenState = "checking" | "valid" | "invalid";
 
 /** Reset password: token-validated, policy-checked, single-use. */
 export default function ResetPasswordPage() {
+  // useSearchParams needs a Suspense boundary or the production build fails.
+  return (
+    <Suspense>
+      <ResetPasswordInner />
+    </Suspense>
+  );
+}
+
+function ResetPasswordInner() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token") ?? "";
@@ -216,9 +225,10 @@ export default function ResetPasswordPage() {
         )}
 
         <Button
-          className="h-10 w-full rounded-lg bg-tollma-500 text-xs font-semibold text-white transition-all hover:bg-tollma-600 disabled:opacity-50"
+          className="w-full"
           data-testid="reset-submit"
           disabled={busy || password.length === 0 || confirm.length === 0}
+          size="lg"
           type="submit"
         >
           {busy ? (

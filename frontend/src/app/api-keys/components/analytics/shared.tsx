@@ -123,6 +123,18 @@ export function fmtRelative(iso: string | null | undefined): string {
   return fmtDateTime(iso);
 }
 
+/** In-app chat-page traffic surfaces under this endpoint label (`RequestLog` has no endpoint column). */
+export const CHAT_ENDPOINT = "chat";
+
+/** Distinct series color for in-app chat traffic (outside the gateway palette). */
+export const CHAT_ENDPOINT_COLOR = "#0ea5e9";
+
+/** Friendly endpoint labels: the in-app `"chat"` row reads "Chat app"; public gateway endpoints keep raw values. */
+export function endpointLabel(endpoint: string | null | undefined): string {
+  if (!endpoint) return "unknown endpoint";
+  return endpoint === CHAT_ENDPOINT ? "Chat app" : endpoint;
+}
+
 /** Shared card shell: small uppercase label + optional actions. */
 export function SectionFrame({
   title,

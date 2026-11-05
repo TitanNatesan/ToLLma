@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { selectDropdown } from "../e2e/helpers";
 
 const BASE = "http://localhost:3000";
 
@@ -20,6 +21,7 @@ test.describe("Three-panel layout", () => {
   test("renders left sidebar, center chat, right panel", async ({ page }) => {
     await goto(page);
     await expect(page.getByTestId("left-sidebar")).toBeVisible();
+    await expect(page.locator("#main-content")).toBeVisible();
     await expect(page.getByTestId("message-list")).toBeVisible();
     await expect(page.getByTestId("right-sidebar")).toBeVisible();
   });
@@ -36,8 +38,8 @@ test.describe("Three-panel layout", () => {
     const box = await sidebar.boundingBox();
     expect(box?.width ?? 0).toBeLessThan(10);
 
-    // Reopen via the chat header affordance
-    await page.getByRole("button", { name: "Open sidebar" }).click();
+    // Reopen via the shared shell reveal rail (all pages use this control)
+    await page.getByTestId("rail-expand").click();
     await page.waitForTimeout(400);
     const boxOpen = await sidebar.boundingBox();
     expect(boxOpen?.width ?? 0).toBeGreaterThan(100);
@@ -122,7 +124,7 @@ test.describe("Chat composer", () => {
     await goto(page);
     await page.getByTestId("model-selector").click();
     // Dropdown opens — search input is present
-    await expect(page.getByPlaceholder("Search models or providers…")).toBeVisible();
+    await expect(page.getByPlaceholder("Search models or keys…")).toBeVisible();
     // Verify dropdown content is visible
     const content = page.locator("[data-testid^='model-option-']").or(page.getByText("No models found"));
     await expect(content.first()).toBeVisible();
@@ -193,13 +195,12 @@ test.describe("Provider page enhancements", () => {
 
   test("type filter dropdown is interactive", async ({ page }) => {
     await goto(page, "/providers");
-    // Select BEDROCK_CONVERSE filter
-    const select = page.getByTestId("provider-type-filter");
-    await select.selectOption("BEDROCK_CONVERSE");
-    expect(await select.inputValue()).toBe("BEDROCK_CONVERSE");
+    // Select BEDROCK_CONVERSE filter (custom popover dropdown)
+    await selectDropdown(page, "provider-type-filter", "BEDROCK_CONVERSE");
+    await expect(page.getByTestId("provider-type-filter")).toContainText("AWS Bedrock");
     // Reset
-    await select.selectOption("ALL");
-    expect(await select.inputValue()).toBe("ALL");
+    await selectDropdown(page, "provider-type-filter", "ALL");
+    await expect(page.getByTestId("provider-type-filter")).toContainText("All provider types");
   });
 
   test("add provider button is visible", async ({ page }) => {
@@ -259,13 +260,19 @@ test.describe("Conversation pinning", () => {
 // ============================================================
 
 test.describe("Intelligence panel", () => {
-  test("shows setup hint when nothing selected", async ({ page }) => {
+  test("shows empty-state card when nothing selected", async ({ page }) => {
     await page.addInitScript(() => localStorage.clear());
     await goto(page);
-    await expect(page.getByTestId("right-sidebar")).toBeVisible();
-    // No model selected → helpful prompt text, no Model card above conversation
-    await expect(page.locator("text=Select a provider and model in the chat composer")).toBeVisible();
-    await expect(page.getByTestId("intelligence-model")).toHaveCount(0);
+    const panel = page.getByTestId("right-sidebar");
+    await expect(panel).toBeVisible();
+    // Empty-state card (dashed border, icon + prompt text), scoped to the panel
+    await expect(panel.locator("div.border-dashed")).toBeVisible();
+    await expect(
+      panel.locator("text=Select a provider and model in the chat composer"),
+    ).toBeVisible();
+    // No model selected → no hero card, no context-usage bar (no context window)
+    await expect(panel.getByTestId("intelligence-model")).toHaveCount(0);
+    await expect(panel.getByTestId("intelligence-context-usage")).toHaveCount(0);
   });
 
   test("conversation card leads and panel is resizable", async ({ page }) => {
@@ -274,7 +281,7 @@ test.describe("Intelligence panel", () => {
     const panel = page.getByTestId("right-sidebar");
     await expect(panel.getByTestId("intelligence-conversation")).toBeVisible();
     await expect(panel.getByTestId("intelligence-reasoning")).toBeVisible();
-    // Conversation is the first card in the panel
+    // No model selected → hero absent, so conversation is the first card
     const firstCard = panel.locator("section").first();
     await expect(firstCard).toHaveAttribute("data-testid", "intelligence-conversation");
     // Conversation (usage) comes before Reasoning & Tooling in DOM order

@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
   Download,
   FileJson,
   FileText,
+  FlaskConical,
   GitBranch,
   Layers,
   MoreVertical,
@@ -29,6 +30,7 @@ import {
   DropdownMenuTrigger,
   Tooltip,
 } from "@/components/ui";
+import { BenchmarksDrawer } from "./chat/BenchmarksDrawer";
 import { useConversation, useConversationMutations, useUsage } from "@/hooks/useChat";
 import { useBranchTree } from "@/hooks/useIntelligence";
 import { ShareDialog } from "@/components/ui/ShareDialog";
@@ -63,6 +65,7 @@ export function ChatHeader() {
   const [titleInput, setTitleInput] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [benchmarksOpen, setBenchmarksOpen] = useState(false);
   const streaming = useChatStore((s) => s.streaming);
   const { data: branchTree } = useBranchTree(activeConversationId);
 
@@ -119,7 +122,7 @@ export function ChatHeader() {
   const costFormatted = fmtCost(usage?.total_cost);
 
   return (
-    <header className="flex h-12 w-full shrink-0 items-center justify-between border-b border-zinc-200 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/80">
+    <header className="flex h-12 w-full min-w-0 shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-zinc-200 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/80">
       {/* Left: Title & Inline Rename */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {!leftSidebarOpen && (
@@ -127,7 +130,8 @@ export function ChatHeader() {
             <Button
               size="sm"
               variant="ghost"
-              className="h-8 w-8 p-0 -ml-1 text-zinc-500 shrink-0"
+              // Mobile-only: desktop uses the shared shell reveal rail.
+              className="h-8 w-8 p-0 -ml-1 text-zinc-500 shrink-0 md:hidden"
               onClick={() => setLeftSidebar(true)}
               aria-label="Open sidebar"
               data-testid="left-sidebar-toggle"
@@ -175,8 +179,19 @@ export function ChatHeader() {
           </button>
         )}
 
+        {/* Mobile: single collapsed model · provider line */}
+        {(activeModel || activeProvider) && (
+          <span
+            className="ml-1 min-w-0 flex-1 truncate text-[11px] text-zinc-400 sm:hidden"
+            data-testid="header-model-provider-mobile"
+            title={[activeModel?.name, activeProvider?.name].filter(Boolean).join(" · ")}
+          >
+            {[activeModel?.name, activeProvider?.name].filter(Boolean).join(" · ")}
+          </span>
+        )}
+
         {/* Model & Provider Badges in Header */}
-        <div className="hidden sm:flex items-center gap-1.5 ml-2">
+        <div className="hidden sm:flex min-w-0 items-center gap-1.5 ml-2">
           {activeModel && (
             <Badge variant="secondary" className="gap-1 text-[10px] font-medium font-mono">
               <Sparkles className="size-2.5 text-zinc-400" />
@@ -267,6 +282,19 @@ export function ChatHeader() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          <Tooltip content="View benchmarks">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 w-8 p-0 ml-0.5 text-zinc-500"
+              onClick={() => setBenchmarksOpen(true)}
+              aria-label="View benchmarks"
+              data-testid="benchmarks-open"
+            >
+              <FlaskConical className="size-4" />
+            </Button>
+          </Tooltip>
+
           {/* Open Intelligence Panel (only shown when panel is closed) */}
           {!rightSidebarOpen && (
             <Tooltip content="Show Intelligence">
@@ -286,6 +314,8 @@ export function ChatHeader() {
       </div>
 
       <ShareDialog conversationId={activeConversationId} onOpenChange={setShareOpen} open={shareOpen} />
+
+      <BenchmarksDrawer open={benchmarksOpen} onClose={() => setBenchmarksOpen(false)} />
 
       <ConfirmDialog
         open={deleteOpen}

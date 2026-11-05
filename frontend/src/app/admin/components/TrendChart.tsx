@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { chartColor } from "@/components/charts/palette";
 import { ChartTooltip } from "./ChartTooltip";
+import { useChartHeight } from "@/components/charts/useChartHeight";
 
 export interface TrendSeries {
   key: string;
@@ -41,7 +42,7 @@ export function TrendChart({
   data,
   series,
   xKey = "bucket",
-  height = 260,
+  height: heightProp,
   stacked = false,
   valueFormat,
   labelFormat,
@@ -50,6 +51,8 @@ export function TrendChart({
   testId,
   ariaLabel,
 }: TrendChartProps) {
+  const fallbackHeight = useChartHeight(260);
+  const height = heightProp ?? fallbackHeight;
   const tooltipFormat = tooltipLabelFormat ?? labelFormat;
   return (
     <div

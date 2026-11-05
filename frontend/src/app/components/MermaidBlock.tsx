@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Code, Copy, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +33,9 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
           startOnLoad: false,
           theme: "dark",
           securityLevel: "loose",
+          // Never paint mermaid's own error diagram (the "boom" overlay):
+          // render() rejects instead and the inline cell error below shows.
+          suppressErrorRendering: true,
           fontFamily: "var(--font-geist-sans), sans-serif",
           themeVariables: {
             darkMode: true,
@@ -144,7 +147,7 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
       ) : (
         <div className="overflow-x-auto p-3">
           {error && (
-            <div className="mb-2 rounded border border-red-900/50 bg-red-950/20 px-2.5 py-1.5 text-xs text-red-400">
+            <div className="mb-2 max-h-32 overflow-y-auto rounded border border-red-900/50 bg-red-950/20 px-2.5 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-red-400">
               {error}
             </div>
           )}

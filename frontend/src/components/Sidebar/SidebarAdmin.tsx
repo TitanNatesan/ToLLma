@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import type { ComponentType, MouseEvent } from "react";
 import {
   Activity,
   AlertTriangle,
+  BookOpen,
   Coins,
   Gauge,
   Hash,
@@ -34,6 +36,7 @@ export const ADMIN_SECTIONS = [
   { id: "costs", label: "Costs", icon: Coins },
   { id: "tokens", label: "Tokens", icon: Hash },
   { id: "providers", label: "Providers", icon: Server },
+  { id: "catalog", label: "Catalog", icon: BookOpen },
   { id: "models", label: "Models", icon: Layers },
   { id: "users", label: "Users", icon: Users },
   { id: "api-keys", label: "API Keys", icon: KeyRound },
@@ -50,15 +53,18 @@ export const ADMIN_SECTION_IDS: readonly AdminSectionId[] = ADMIN_SECTIONS.map(
 );
 
 /**
- * Same-document anchors: the browser sets the hash and the `scroll-smooth`
- * scroll container performs the smooth scroll (scroll-margin on the sections
- * keeps the sticky header clear). Repeat clicks on the current section are a
- * browser no-op, so scroll manually in that case.
+ * Same-document anchors, driven natively: Next.js <Link> same-page hash
+ * navigation uses history.pushState, which does NOT fire `hashchange` — so
+ * every section subscriber (sidebar highlight, page content) would go stale.
+ * Assigning window.location.hash directly fires the event and keeps deep
+ * links, history, and all subscribers in sync.
  */
 function navigate(event: MouseEvent<HTMLAnchorElement>, id: AdminSectionId) {
+  event.preventDefault();
   if (window.location.hash === `#${id}`) {
-    event.preventDefault();
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } else {
+    window.location.hash = id;
   }
 }
 
@@ -85,27 +91,27 @@ export function SidebarAdmin({ activeId }: { activeId: AdminSectionId }) {
           {ADMIN_SECTIONS.map(({ id, label, icon: Icon }) => {
             const active = id === activeId;
             return (
-              <a
+              <Link
                 key={id}
                 href={`/admin#${id}`}
-                aria-current={active ? "location" : undefined}
+                aria-current={active ? "page" : undefined}
                 onClick={(event) => navigate(event, id)}
                 data-testid={`sidebar-admin-${id}`}
                 className={cn(
                   "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
                   active
-                    ? "bg-tollma-50 text-tollma-800 dark:bg-tollma-950/50 dark:text-tollma-200"
+                    ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                     : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
                 )}
               >
                 <Icon
                   className={cn(
                     "size-3.5 shrink-0",
-                    active ? "text-tollma-600 dark:text-tollma-400" : "text-zinc-400",
+                    active ? "text-white dark:text-zinc-900" : "text-zinc-400",
                   )}
                 />
                 <span>{label}</span>
-              </a>
+              </Link>
             );
           })}
         </div>

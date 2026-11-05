@@ -28,16 +28,16 @@ export function AnalyticsWidgetsPanel({ widgets }: AnalyticsWidgetsPanelProps) {
       description="Editing, regeneration, branching, sharing and export activity in this range."
       testId="analytics-widgets"
     >
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {COUNTERS.map((counter) => {
           const Icon = counter.icon;
           return (
             <div
-              className="rounded-lg border border-zinc-200 px-3 py-2.5 dark:border-zinc-800"
+              className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
               data-testid={counter.testId}
               key={counter.key}
             >
-              <span className="inline-flex items-center gap-1.5 text-[10px] tracking-wide text-zinc-400 uppercase">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-zinc-400 uppercase">
                 <Icon className="size-3" />
                 {counter.label}
               </span>

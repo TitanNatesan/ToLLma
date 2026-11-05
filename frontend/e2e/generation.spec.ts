@@ -162,11 +162,11 @@ test("user messages have no avatar, assistant keeps its icon", async ({ page }) 
   await sendMessage(page, "avatar check");
   const user = page.getByTestId("message-user").last();
   await expect(user).toContainText("avatar check");
-  await expect(user.locator(".rounded-full")).toHaveCount(0);
+  await expect(user.locator('div[aria-hidden="true"]')).toHaveCount(0);
   await expect(page.getByTestId("message-assistant").last()).toContainText("slow-word-20", {
     timeout: 25000,
   });
-  await expect(page.getByTestId("message-assistant").last().locator(".rounded-full").first()).toBeVisible();
+  await expect(page.getByTestId("message-assistant").last().locator('div[aria-hidden="true"]')).toBeVisible();
 });
 
 test("reasoning model shows collapsible Thinking pill, preserved on refresh", async ({ page }) => {

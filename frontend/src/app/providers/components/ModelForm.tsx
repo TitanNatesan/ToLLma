@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
-import { Button, Card, CardContent, Checkbox, Field, GhostButton, Input, Select } from "@/components/ui";
+import { toast } from "@/lib/notify";
+import { Button, Card, CardContent, Checkbox, Field, Input, Select } from "@/components/ui";
 import { lookupRepositoryModel } from "@/services/api";
 import type { AIModel } from "@/types";
 import { stripTrailingZeros } from "@/lib/utils";
@@ -150,6 +150,13 @@ export function ModelForm({
           CAPS.map(([k]) => [k, !!(suggested as Record<string, unknown>)[k]]),
         ),
         meta: metaFromRecord({ metadata: (suggested as Record<string, unknown>).metadata }),
+        // Top-level reasoning_options (see fromSuggested): preserve for chat.
+        existingMetadata: {
+          ...(((suggested as Record<string, unknown>).metadata ?? {}) as Record<string, unknown>),
+          ...(Array.isArray((suggested as Record<string, unknown>).reasoning_options)
+            ? { reasoning_options: (suggested as Record<string, unknown>).reasoning_options }
+            : {}),
+        },
       };
     });
       toast.success(`Imported ${entry.display_name ?? entry.model_key} from repository`);
@@ -185,7 +192,7 @@ export function ModelForm({
             Linked to repository: {form.repository_model_key} (edits are overrides)
           </p>
         )}
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 lg:grid-cols-2">
           <Field label="Model name">
             <Input
               value={form.name}
@@ -354,9 +361,9 @@ export function ModelForm({
           >
             Save model
           </Button>
-          <GhostButton onClick={onCancel} className="text-xs">
+          <Button variant="outline" onClick={onCancel} className="text-xs">
             Cancel
-          </GhostButton>
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -455,6 +462,14 @@ export function fromSuggested(
     repository_model_key: repositoryModelKey,
     caps: Object.fromEntries(CAPS.map(([k]) => [k, !!suggested[k]])),
     meta: metaFromRecord({ metadata: suggested.metadata }),
-    existingMetadata: { ...((suggested.metadata ?? {}) as Record<string, unknown>) },
+    // reasoning_options rides at the top level of the suggest payload
+    // (not inside metadata): carry it into existingMetadata so the
+    // submit payload preserves it for the chat reasoning controls.
+    existingMetadata: {
+      ...((suggested.metadata ?? {}) as Record<string, unknown>),
+      ...(Array.isArray(suggested.reasoning_options)
+        ? { reasoning_options: suggested.reasoning_options }
+        : {}),
+    },
   };
 }

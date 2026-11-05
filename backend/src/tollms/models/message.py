@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
 
 if TYPE_CHECKING:
+    from tollms.models.api_key import ApiKey
     from tollms.models.attachment import Attachment
 
 
@@ -47,6 +48,7 @@ class Message(SoftDeleteMixin, TimestampedModel):
         Index("ix_messages_created", "created_at"),
         Index("ix_messages_role", "role"),
         Index("ix_messages_user", "user_id"),
+        Index("ix_messages_api_key", "api_key_id"),
         Index("ix_messages_status", "status"),
         # Analytics: user-scoped time-range scans (always filtered to role=ASSISTANT).
         Index("ix_messages_user_role_created", "user_id", "role", "created_at"),
@@ -83,6 +85,10 @@ class Message(SoftDeleteMixin, TimestampedModel):
     role: Mapped[Role] = mapped_column(Enum(Role, name="message_role"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     provider_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("providers.id"), nullable=True)
+    # Attributing key for gateway-originated messages (NULL = web UI / legacy).
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
+    )
     model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=True)
     status: Mapped[MessageStatus] = mapped_column(
         Enum(MessageStatus, name="message_status"), nullable=False,
@@ -129,6 +135,7 @@ class Message(SoftDeleteMixin, TimestampedModel):
     conversation: Mapped["Conversation"] = relationship(
         back_populates="messages", foreign_keys="Message.conversation_id"
     )
+    api_key: Mapped["ApiKey | None"] = relationship(back_populates="messages")
     attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="message", cascade="all, delete-orphan", order_by="Attachment.created_at"
     )

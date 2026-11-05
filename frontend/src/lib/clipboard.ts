@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 
 /**
  * Best-effort text copy. The async Clipboard API fails on insecure origins,

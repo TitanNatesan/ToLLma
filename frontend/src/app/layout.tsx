@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import "sileo/styles.css";
 import { Shell } from "@/components/Shell";
 
 const spaceGrotesk = Space_Grotesk({
@@ -35,6 +36,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body className="min-h-full flex flex-col bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[200] focus:rounded-md focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg dark:focus:bg-zinc-900"
+        >
+          Skip to main content
+        </a>
         <Shell>{children}</Shell>
       </body>
     </html>

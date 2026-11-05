@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from tollms.core.exceptions import NotFoundError
 from tollms.models.api_key import ApiKey, ApiRequestLog
 from tollms.services.analytics import presets as preset_vocab
+from tollms.services.request_logs import touch_key_last_used
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +233,11 @@ class ApiLogEntry:
     ip_address: str | None = None
     user_agent: str | None = None
     is_streaming: bool = False
+    # Server-derived org attribution: the resolving key's org (None = personal).
+    org_id: uuid.UUID | None = None
+    # True when token/cost figures are locally estimated (provider silent)
+    # rather than provider-reported. Unknown stays NULL, never fabricated.
+    usage_estimated: bool = False
 
 
 def _derive_total(entry: ApiLogEntry) -> int | None:
@@ -260,6 +266,7 @@ def log_request(db: Session, entry: ApiLogEntry) -> None:
             request_id=entry.request_id,
             api_key_id=entry.api_key_id,
             user_id=entry.user_id,
+            org_id=entry.org_id,
             provider=entry.provider,
             model=entry.model,
             endpoint=entry.endpoint,
@@ -282,10 +289,17 @@ def log_request(db: Session, entry: ApiLogEntry) -> None:
             city=meta["city"],
             region=meta["region"],
             is_streaming=entry.is_streaming,
+            usage_estimated=entry.usage_estimated,
         )
         with _savepoint(db):
             db.add(row)
             db.flush()
+            # last_used_at = most recent SUCCESSFULLY COMPLETED request only:
+            # failed/cancelled rows (NULL tokens/cost) leave the stamp alone.
+            # Inside the same savepoint = same commit as the log row; the helper
+            # never raises so a stale key can never lose the usage row.
+            if entry.status == "success":
+                touch_key_last_used(db, entry.api_key_id)
         # The public gateway performs no other writes; commit here so the log
         # row survives the request-session teardown (callers never commit).
         db.commit()

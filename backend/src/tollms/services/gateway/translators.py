@@ -105,6 +105,9 @@ def _content_text(content: Any, field: str) -> str:
     return "\n".join(part for part in parts if part)
 
 
+_OPENAI_TOOL_KEYS = ("tool_calls", "function_call", "tool_call_id", "name", "call_id")
+
+
 # --- OpenAI chat completions -------------------------------------------------
 
 
@@ -115,10 +118,12 @@ def _openai_message(item: Any, index: int) -> ChatMessage:
     if not isinstance(role, str) or not role.strip():
         raise ValidationError(f"messages[{index}].role is required")
     content = item.get("content")
+    extra = {key: item[key] for key in _OPENAI_TOOL_KEYS if item.get(key) is not None}
     return ChatMessage(
         role=role.strip(),
         content=_content_text(content, f"messages[{index}].content"),
         media=media_parts_from_openai(content),
+        extra=extra,
     )
 
 
@@ -185,6 +190,7 @@ def _anthropic_message(item: Any, index: int) -> ChatMessage:
         raise ValidationError(f"messages[{index}].content must be a string or a list of blocks")
     texts: list[str] = []
     media: list[MediaPart] = []
+    tool_blocks: list[dict[str, Any]] = []
     for block_index, block in enumerate(content):
         field = f"messages[{index}].content[{block_index}]"
         if isinstance(block, str):
@@ -197,13 +203,17 @@ def _anthropic_message(item: Any, index: int) -> ChatMessage:
             image = _anthropic_image(block, field)
             if image is not None:
                 media.append(image)
+        elif block_type == "tool_use":
+            tool_blocks.append(dict(block))
         elif block_type == "tool_result":
+            tool_blocks.append({"type": "tool_result", "tool_use_id": block.get("tool_use_id"), "content": block.get("content")})
             texts.append(_content_text(block.get("content"), f"{field}.content"))
         elif block_type in _TEXT_BLOCK_TYPES:
             text = block.get("text")
             if isinstance(text, str):
                 texts.append(text)
-    return ChatMessage(role=role.strip(), content="\n".join(texts), media=media)
+    extra: dict[str, Any] = {"blocks": tool_blocks} if tool_blocks else {}
+    return ChatMessage(role=role.strip(), content="\n".join(texts), media=media, extra=extra)
 
 
 def from_anthropic_messages(payload: Any) -> UnifiedRequest:
@@ -241,14 +251,20 @@ def _responses_item(item: Any, index: int) -> ChatMessage | None:
         return ChatMessage(role="user", content=item)
     if not isinstance(item, dict):
         raise ValidationError(f"input[{index}] must be a string or an object")
+    item_type = item.get("type")
+    if item_type in ("function_call", "function_call_output"):
+        role = "assistant" if item_type == "function_call" else "tool"
+        return ChatMessage(role=role, content="", extra={"response_item": dict(item)})
     role = item.get("role") or "user"
     if not isinstance(role, str) or not role.strip():
         raise ValidationError(f"input[{index}].role must be a string")
     content = item.get("content", item.get("text"))
+    extra = {key: item[key] for key in _OPENAI_TOOL_KEYS if item.get(key) is not None}
     return ChatMessage(
         role=role.strip(),
         content=_content_text(content, f"input[{index}].content"),
         media=media_parts_from_openai(content),
+        extra=extra,
     )
 
 

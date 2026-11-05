@@ -1,7 +1,8 @@
 "use client";
 
+import { MessageSquare } from "lucide-react";
 import { fmtCost, fmtTokens } from "@/lib/utils";
-import { DataTable, ShareBar, num, type TableColumn } from "./shared";
+import { CHAT_ENDPOINT, DataTable, ShareBar, endpointLabel, num, type TableColumn } from "./shared";
 import type { AnalyticsEndpointRow, ApiKeyAnalyticsSummary } from "@/types/apiKeys";
 
 /** Per-endpoint traffic, spend and share of requests. */
@@ -15,11 +16,13 @@ export function EndpointTable({ summary }: { summary: ApiKeyAnalyticsSummary }) 
       header: "Endpoint",
       sortValue: (row) => row.endpoint ?? "",
       render: (row) => (
-        <span
-          className="block max-w-64 truncate font-mono text-[11px] text-zinc-700 dark:text-zinc-300"
-          title={row.endpoint}
-        >
-          {row.endpoint || "unknown endpoint"}
+        <span className="flex min-w-0 items-center gap-1.5" title={row.endpoint ?? undefined}>
+          {row.endpoint === CHAT_ENDPOINT && (
+            <MessageSquare className="size-3 shrink-0 text-tollma-500" aria-hidden="true" />
+          )}
+          <span className="block max-w-64 truncate font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
+            {endpointLabel(row.endpoint)}
+          </span>
         </span>
       ),
     },

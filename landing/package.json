@@ -8,11 +8,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "sync:providers": "node scripts/sync-models-dev.mjs"
   },
   "dependencies": {
-    "framer-motion": "12.43.0",
-    "lucide-react": "1.45.0",
+    "animejs": "^4.5.0",
+    "gsap": "^3.15.0",
     "next": "16.3.5",
     "react": "19.2.8",
     "react-dom": "19.2.8"

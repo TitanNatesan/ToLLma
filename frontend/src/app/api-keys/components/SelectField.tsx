@@ -119,7 +119,7 @@ export function SelectField({
             data-testid={testId}
             className={cn(
               "flex w-full items-center justify-between gap-2 rounded-md border border-zinc-300 bg-white text-left text-zinc-900 transition-colors",
-              "hover:border-zinc-400 focus-visible:border-tollma-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/40",
+              "hover:border-zinc-400 focus-visible:border-tollma-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60",
               "disabled:cursor-not-allowed disabled:opacity-50",
               "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
               size === "sm" ? "h-8 px-2.5 text-xs" : "h-9 px-3 text-sm",
@@ -284,7 +284,7 @@ export function Segmented<T extends string>({
             data-testid={testId ? `${testId}-${option.value}` : undefined}
             className={cn(
               "flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/40",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60",
               size === "sm" ? "px-2 py-1 text-[10px]" : "px-2.5 py-1.5 text-[11px]",
               active
                 ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"

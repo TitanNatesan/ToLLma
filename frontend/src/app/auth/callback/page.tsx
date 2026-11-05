@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import { AuthShell } from "@/components/auth/AuthShell";
+import { Button } from "@/components/ui";
 import { getCurrentUser } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
 
@@ -10,6 +13,7 @@ import { useAuthStore } from "@/store/auth";
 export default function OAuthCallbackPage() {
   const router = useRouter();
   const setUser = useAuthStore((s) => s.setUser);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     getCurrentUser()
@@ -17,13 +21,42 @@ export default function OAuthCallbackPage() {
         setUser(user);
         router.replace("/");
       })
-      .catch(() => router.replace("/login"));
+      .catch(() => setFailed(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <main className="flex min-h-screen items-center justify-center" data-testid="oauth-callback-page">
-      <p className="text-sm text-zinc-500">Signing you in…</p>
-    </main>
+    <AuthShell
+      title={failed ? "Sign-in didn't complete" : "Signing you in"}
+      description={
+        failed
+          ? "We couldn't load your session after Google sign-in."
+          : "Finishing Google sign-in…"
+      }
+      testId="oauth-callback-page"
+    >
+      {failed ? (
+        <div className="flex flex-col items-center gap-3">
+          <p role="alert" className="text-center text-sm text-zinc-300">
+            The sign-in didn&apos;t complete. Try again or use email login.
+          </p>
+          <Button
+            size="sm"
+            onClick={() => window.location.reload()}
+            data-testid="oauth-callback-retry"
+          >
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <p
+          role="status"
+          className="flex items-center justify-center gap-2 text-sm text-zinc-300"
+        >
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+          Signing you in…
+        </p>
+      )}
+    </AuthShell>
   );
 }

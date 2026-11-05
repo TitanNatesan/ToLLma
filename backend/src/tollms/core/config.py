@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_lockout_seconds: int = 900
 
+    # Gateway IP attribution: X-Forwarded-For is honored only when the direct
+    # peer is loopback/private (docker bridge) or listed here (IPs or CIDRs,
+    # comma-separated). Unlisted public peers fall back to the direct peer IP.
+    trusted_proxies: str = ""
+
     # CORS
     backend_cors_origins: str = "http://localhost:3000"
 
@@ -137,6 +142,10 @@ class Settings(BaseSettings):
     # Attachment storage (local filesystem; served only through owned endpoints)
     storage_dir: str = "storage/uploads"
     max_upload_mb: int = 25
+
+    # Laya guardrail evaluator (separately deployable FastAPI service, no creds).
+    laya_url: str = "http://laya:8001"
+    laya_timeout_ms: int = 5000
 
     # Logging
     log_level: str = "INFO"

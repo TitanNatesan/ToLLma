@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, Moon, Palette, Sun } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Input, SettingItem } from "@/components/ui";
 import { useUpdatePreferences } from "@/hooks/useSettings";
 import { ACCENT_BASES, ACCENT_ORDER, HEX_COLOR_RE, hslToHex, hexToHsl } from "@/lib/accent";

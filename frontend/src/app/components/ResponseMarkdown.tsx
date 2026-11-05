@@ -3,8 +3,10 @@
 import React, { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
+import remarkMath from "remark-math";
+import { toast } from "@/lib/notify";
 import {
   AlertCircle,
   AlertTriangle,
@@ -12,16 +14,24 @@ import {
   Copy,
   Download,
   ExternalLink,
+  Eye,
   Info,
   Lightbulb,
+  Pencil,
   ShieldAlert,
   Table,
   WrapText,
 } from "lucide-react";
 import { MermaidBlock } from "./MermaidBlock";
+import {
+  HtmlPreview,
+  HtmlPreviewFullscreen,
+  isPreviewableLanguage,
+} from "./HtmlPreview";
 import { InlineCitation, type CitationSource } from "./chat/citations/InlineCitation";
 import { cn } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
+import "katex/dist/katex.min.css";
 
 /** Minimal hast shapes for the citation transform (no unist dependency). */
 interface HastTextNode {
@@ -41,7 +51,43 @@ interface HastParentNode {
 type HastNode = HastTextNode | HastElementNode | HastParentNode;
 
 const CITATION_MARKER = /\[(\d{1,3})\]/g;
-const CITATION_SKIP_TAGS = new Set(["code", "pre"]);
+const CITATION_SKIP_TAGS = new Set(["code", "pre", "math", "annotation", "semantics"]);
+
+// Fenced blocks (```...```, possibly unterminated while streaming) and
+// inline code (`...`): math delimiters inside them are literal source text
+// and must never be rewritten.
+const CODE_SPAN_RE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/g;
+// remark-math only understands $...$ / $$...$$, but models frequently emit
+// LaTeX-style \(...\) and \[...\] (often multi-line). Normalize those to
+// dollar form in prose segments. Unmatched delimiters (mid-stream) pass
+// through untouched; an escaped \\[ stays literal.
+const LATEX_INLINE_RE = /(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g;
+const LATEX_DISPLAY_RE = /(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g;
+
+/**
+ * Convert LaTeX-style math delimiters to dollar form for remark-math.
+ * Code spans are preserved byte-for-byte; only prose is rewritten.
+ * Exported for unit tests.
+ */
+export function normalizeMathDelimiters(content: string): string {
+  return content.split(CODE_SPAN_RE).map((segment, i) => {
+    if (i % 2 === 1) return segment;
+    return segment
+      .replace(LATEX_DISPLAY_RE, (_, inner: string) => `$$${inner}$$`)
+      .replace(LATEX_INLINE_RE, (_, inner: string) => `$${inner}$`);
+  }).join("");
+}
+
+/**
+ * KaTeX renders math to `span.katex` trees (incl. an `annotation` with the raw
+ * TeX source). Citations must not rewrite inside them.
+ */
+function isSkippedElement(node: HastElementNode): boolean {
+  if (CITATION_SKIP_TAGS.has(node.tagName)) return true;
+  const raw = node.properties?.className ?? node.properties?.class;
+  const classes = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/\s+/) : [];
+  return classes.some((c) => c === "katex" || c === "math" || String(c).startsWith("katex"));
+}
 
 /**
  * Rehype plugin: turn `[n]` text markers into `<sup data-citation-index="n">`
@@ -51,7 +97,7 @@ const CITATION_SKIP_TAGS = new Set(["code", "pre"]);
 export function rehypeCitations({ maxIndex }: { maxIndex: number }) {
   function transform(node: HastNode) {
     if (!("children" in node) || !node.children) return;
-    if (node.type === "element" && CITATION_SKIP_TAGS.has((node as HastElementNode).tagName)) {
+    if (node.type === "element" && isSkippedElement(node as HastElementNode)) {
       return;
     }
     const next: HastNode[] = [];
@@ -194,20 +240,31 @@ function downloadCode(code: string, language: string) {
 function RichCodeBlock({
   className,
   children,
+  streaming = false,
 }: {
   className?: string;
   children: React.ReactNode;
+  /** While streaming, live preview is disabled to avoid reloading partial HTML. */
+  streaming?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [wrap, setWrap] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editedCode, setEditedCode] = useState<string | null>(null);
+  const [view, setView] = useState<"code" | "preview">("code");
+  const [fullscreen, setFullscreen] = useState(false);
   const rawCode = extractText(children);
+  // Local scratch edit: display + copy/download follow the edited text until
+  // cancelled. Never persisted — the stored message is untouched.
+  const code = editedCode ?? rawCode;
   const langMatch = className?.match(/language-([a-zA-Z0-9_-]+)/);
   const rawLang = langMatch ? langMatch[1] : "";
   const displayLang = rawLang ? getLanguageLabel(rawLang) : "Code";
-  const linesCount = rawCode.trim().split("\n").length;
+  const linesCount = code.trim().split("\n").length;
+  const previewable = isPreviewableLanguage(rawLang);
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(rawCode).then(() => {
+    void navigator.clipboard.writeText(code).then(() => {
       setCopied(true);
       toast.success("Code copied!");
       setTimeout(() => setCopied(false), 2000);
@@ -215,13 +272,13 @@ function RichCodeBlock({
   };
 
   const handleDownload = () => {
-    downloadCode(rawCode, rawLang || "txt");
+    downloadCode(code, rawLang || "txt");
   };
 
   return (
     <div className="group relative my-3 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 text-xs shadow-md">
       {/* Code Header Toolbar */}
-      <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/80 px-3.5 py-1.5 select-none">
+      <div className="flex flex-wrap items-center justify-between gap-y-1 border-b border-zinc-800 bg-zinc-900/80 px-3.5 py-1.5 select-none">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[11px] font-semibold tracking-wide text-zinc-300">
             {displayLang}
@@ -230,7 +287,50 @@ function RichCodeBlock({
             · {linesCount} {linesCount === 1 ? "line" : "lines"}
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {previewable && (
+            <button
+              type="button"
+              onClick={() => {
+                if (view === "preview") {
+                  setView("code");
+                } else {
+                  setEditing(false);
+                  setView("preview");
+                }
+              }}
+              disabled={streaming}
+              aria-pressed={view === "preview"}
+              title={streaming ? "Preview is available when the response completes" : view === "preview" ? "Show source code" : "Preview rendered website"}
+              data-testid="html-preview-toggle"
+              className={cn(
+                "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                view === "preview"
+                  ? "bg-zinc-800 text-zinc-100 font-medium"
+                  : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200",
+              )}
+            >
+              <Eye className="size-3" />
+              <span>{view === "preview" ? "Source" : "Preview"}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setView("code");
+              setEditing((v) => !v);
+            }}
+            className={cn(
+              "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition-colors",
+              editing
+                ? "bg-zinc-800 text-zinc-100 font-medium"
+                : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200",
+            )}
+            title={editing ? "Close editor" : "Edit code (local scratch, not saved to the message)"}
+          >
+            <Pencil className="size-3" />
+            <span>{editing ? "Editing" : "Edit"}</span>
+          </button>
           <button
             type="button"
             onClick={() => setWrap(!wrap)}
@@ -275,14 +375,60 @@ function RichCodeBlock({
         </div>
       </div>
       {/* Code Content */}
-      <pre
-        className={cn(
-          "p-3.5 text-xs text-zinc-100 font-mono leading-relaxed overflow-x-auto",
-          wrap && "whitespace-pre-wrap break-words",
-        )}
-      >
-        {children}
-      </pre>
+      {view === "preview" ? (
+        <>
+          <HtmlPreview
+            source={code}
+            onFullscreen={() => setFullscreen(true)}
+            onClose={() => setView("code")}
+          />
+          {fullscreen && (
+            <HtmlPreviewFullscreen
+              source={code}
+              title={`${displayLang} preview`}
+              onClose={() => setFullscreen(false)}
+            />
+          )}
+        </>
+      ) : editing ? (
+        <div className="p-3.5">
+          <textarea
+            value={editedCode ?? rawCode}
+            onChange={(e) => setEditedCode(e.target.value)}
+            spellCheck={false}
+            rows={Math.min(Math.max(code.split("\n").length + 1, 4), 24)}
+            className="max-h-[480px] w-full resize-y overflow-y-auto rounded-md border border-zinc-800 bg-zinc-900 p-2.5 font-mono text-xs leading-relaxed text-zinc-100 focus:border-tollma-500 focus:outline-none"
+          />
+          <div className="mt-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="rounded-md bg-zinc-800 px-2.5 py-1 text-[11px] font-medium text-zinc-100 transition-colors hover:bg-zinc-700"
+            >
+              Done
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditedCode(null);
+                setEditing(false);
+              }}
+              className="rounded-md px-2.5 py-1 text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            >
+              Revert
+            </button>
+          </div>
+        </div>
+      ) : (
+        <pre
+          className={cn(
+            "max-h-[480px] overflow-y-auto overflow-x-auto p-3.5 font-mono text-xs leading-relaxed text-zinc-100",
+            wrap && "whitespace-pre-wrap break-words",
+          )}
+        >
+          {editedCode ?? children}
+        </pre>
+      )}
     </div>
   );
 }
@@ -462,13 +608,30 @@ export function ResponseMarkdown({
   sources?: CitationSource[];
 }) {
   const sourceMap = new Map((sources ?? []).map((source) => [source.index, source]));
+  // Models emit \(...\) / \[...\] math; remark-math only parses $...$.
+  const normalized = normalizeMathDelimiters(content);
   return (
-    <div className={cn("prose text-sm leading-relaxed", isStreaming && "streaming-cursor")}>
+    <div className={cn("prose max-w-full break-words text-sm leading-[1.75]", isStreaming && "streaming-cursor")}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight, [rehypeCitations, { maxIndex: sources?.length ?? 0 }]]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex, rehypeHighlight, [rehypeCitations, { maxIndex: sources?.length ?? 0 }]]}
         components={{
-          pre: ({ children }) => <>{children}</>,
+          pre: ({ children }) => {
+            // Fenced block without a language tag: render a proper cell
+            // instead of falling through to the inline-code style below
+            // (which has no max-height and no copy/edit affordances).
+            // Note: child.type is the custom `code` component (a function),
+            // not the string "code", so the language tag is the only
+            // reliable discriminator.
+            const child = React.Children.toArray(children)[0];
+            if (
+              React.isValidElement<{ className?: string; children?: React.ReactNode }>(child) &&
+              !child.props.className
+            ) {
+              return <RichCodeBlock>{child.props.children}</RichCodeBlock>;
+            }
+            return <>{children}</>;
+          },
           code: ({ className, children, ...props }) => {
             const codeStr = extractText(children);
             const isMermaid =
@@ -481,14 +644,16 @@ export function ResponseMarkdown({
             if (isMermaid) {
               return <MermaidBlock chart={codeStr} />;
             }
-            const isBlock = className?.startsWith("language-");
+            // className arrives as "hljs language-<lang>" (rehype-highlight
+            // prefixes hljs), so match anywhere, not just at the start.
+            const isBlock = className?.includes("language-");
             return isBlock ? (
-              <RichCodeBlock className={className}>
+              <RichCodeBlock className={className} streaming={isStreaming}>
                 {children}
               </RichCodeBlock>
             ) : (
               <code
-                className="rounded-md border border-zinc-200/80 bg-zinc-100/90 px-1.5 py-0.5 font-mono text-[11px] text-zinc-900 shadow-2xs dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200"
+                className="rounded-md border border-zinc-200/80 break-all bg-zinc-100/90 px-1.5 py-0.5 font-mono text-[11px] text-zinc-900 shadow-2xs dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200"
                 {...props}
               >
                 {children}
@@ -543,7 +708,7 @@ export function ResponseMarkdown({
                 href={href}
                 target={isExternal ? "_blank" : undefined}
                 rel={isExternal ? "noopener noreferrer" : undefined}
-                className="inline-flex items-center gap-0.5 font-medium text-tollma-500 hover:text-tollma-600 dark:text-tollma-400 dark:hover:text-tollma-300 underline underline-offset-2 transition-colors"
+                className="inline-flex max-w-full items-center gap-0.5 break-all font-medium text-tollma-500 hover:text-tollma-600 dark:text-tollma-400 dark:hover:text-tollma-300 underline underline-offset-2 transition-colors"
                 {...props}
               >
                 <span>{children}</span>
@@ -581,9 +746,21 @@ export function ResponseMarkdown({
           hr: () => (
             <hr className="my-4 border-t border-zinc-200 dark:border-zinc-800" />
           ),
+          p: ({ children }) => <p className="my-2.5">{children}</p>,
+          ul: ({ children }) => (
+            <ul className="my-2.5 list-disc space-y-1.5 pl-5 marker:text-zinc-400 dark:marker:text-zinc-600">
+              {children}
+            </ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="my-2.5 list-decimal space-y-1.5 pl-5 marker:text-zinc-500 dark:marker:text-zinc-400">
+              {children}
+            </ol>
+          ),
+          li: ({ children }) => <li className="leading-[1.75]">{children}</li>,
         }}
       >
-        {content}
+        {normalized}
       </ReactMarkdown>
     </div>
   );

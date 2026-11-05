@@ -1,6 +1,6 @@
 // Provider registration wizard: mapping, edit drawer, bulk edit, summary.
 import { expect, test } from "@playwright/test";
-import { API, MOCK_URL, apiLoginAs } from "./helpers";
+import { API, MOCK_URL, apiLoginAs, selectDropdown } from "./helpers";
 import { startMockLLM } from "./mock-server";
 
 test.beforeAll(async () => {
@@ -19,10 +19,9 @@ test("wizard maps, edits and registers with match stats", async ({ page, request
   });
   await page.getByTestId("add-provider").click();
   await page.getByTestId("provider-name").fill(name);
-  await page.getByTestId("provider-type").selectOption("CUSTOM");
+  await page.getByTestId("provider-platform-CUSTOM").click();
   await page.getByTestId("wiz-next").click();
   await page.getByTestId("cred-base_url").fill(MOCK_URL);
-  await page.getByTestId("wiz-next").click();
   await page.getByTestId("wiz-validate").click();
   await expect(page.getByTestId("wiz-validation-result")).toContainText("Validation successful", { timeout: 20000 });
   await page.getByTestId("wiz-next").click();
@@ -31,10 +30,10 @@ test("wizard maps, edits and registers with match stats", async ({ page, request
   // Mapping ran: mock ids are unknown to the repository.
   await expect(page.getByTestId("wiz-selection-count")).toContainText("2 of 2");
   // Both mock ids matched as fallback (no repository entry).
-  await page.getByTestId("wiz-match-filter").selectOption("fallback");
+  await selectDropdown(page, "wiz-match-filter", "fallback");
   await expect(page.getByTestId("wiz-model-mock-disc-a")).toBeVisible();
   await expect(page.getByTestId("wiz-model-mock-disc-b")).toBeVisible();
-  await page.getByTestId("wiz-match-filter").selectOption("ALL");
+  await selectDropdown(page, "wiz-match-filter", "ALL");
 
   // Search narrows the list.
   await page.getByTestId("wiz-model-search").fill("disc-b");
@@ -66,4 +65,83 @@ test("wizard maps, edits and registers with match stats", async ({ page, request
   expect(parseFloat(renamed.output_price)).toBe(11);
   const untouched = models.find((m: { model_id: string }) => m.model_id === "mock-disc-b");
   expect(untouched.name).toBe("mock-disc-b");
+});
+
+test("org scope unified pages and legacy redirects", async ({ page }) => {
+  await apiLoginAs(page, "wizard-org");
+  const orgRes = await page.request.post(`${API}/api/v1/orgs`, {
+    data: { name: `WizScope ${Date.now()}` },
+  });
+  expect(orgRes.ok(), await orgRes.text()).toBeTruthy();
+  const org = await orgRes.json();
+  const provRes = await page.request.post(`${API}/api/v1/orgs/${org.id}/providers`, {
+    data: { name: `WizOrgProv ${Date.now()}`, provider_type: "CUSTOM", credentials: { base_url: "http://mock" } },
+  });
+  expect(provRes.ok(), await provRes.text()).toBeTruthy();
+  await page.goto(`/organizations/${org.id}`);
+  await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+  await expect(page.getByTestId("workspace-menu-trigger")).toContainText(org.name, { timeout: 20000 });
+  // ORG header block has no toggle; unified items use exact pathnames.
+  await expect(page.getByTestId("sidebar-org-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-org-nav").getByRole("button")).toHaveCount(0);
+  // Unified org nav: all 13 items (Chat second).
+  for (const section of ["overview", "chat", "providers", "keys", "analytics", "docs", "members", "teams", "sets", "operations", "budgets", "audit", "settings"] as const) {
+    await expect(page.getByTestId(`sidebar-org-${section}`)).toBeVisible();
+  }
+  await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");
+  await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("href", "/providers");
+  await expect(page.getByTestId("sidebar-org-keys")).toHaveAttribute("href", "/api-keys");
+  await expect(page.getByTestId("sidebar-org-analytics")).toHaveAttribute("href", "/analytics");
+  await expect(page.getByTestId("sidebar-org-docs")).toHaveAttribute("href", "/docs");
+  await page.goto("/providers");
+  await expect(page.getByTestId("provider-scope-org")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("provider-scope-org")).toContainText(org.name);
+  // Final nav rule: org scope shows ONLY the org nav (personal hidden).
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-org-nav")).toBeVisible();
+  await expect(page.getByTestId("sidebar-org-providers")).toHaveAttribute("aria-current", "page");
+  await page.goto("/api-keys");
+  await expect(page.getByTestId("api-keys-scope-chip")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-org-nav")).toBeVisible();
+  await expect(page.getByTestId("sidebar-org-keys")).toHaveAttribute("aria-current", "page");
+  await page.goto("/analytics");
+  await expect(page.getByTestId("analytics-scope")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-org-nav")).toBeVisible();
+  await expect(page.getByTestId("sidebar-org-analytics")).toHaveAttribute("aria-current", "page");
+  await page.goto("/docs");
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-org-docs")).toHaveAttribute("aria-current", "page");
+  await page.goto(`/organizations/${org.id}?section=analytics`);
+  await expect(page).toHaveURL(/\/analytics/, { timeout: 20000 });
+  await page.goto(`/organizations/${org.id}?section=operations&tab=keys`);
+  await expect(page).toHaveURL(/\/api-keys/, { timeout: 20000 });
+  await page.goto(`/organizations/${org.id}?section=operations`);
+  await expect(page.getByTestId("org-ops-tab-requests")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("org-ops-tab-invitations")).toBeVisible();
+  await expect(page.getByTestId("org-ops-tab-keys")).toHaveCount(0);
+  await expect(page.getByTestId("org-ops-tab-requests")).toHaveAttribute("aria-current", "page");
+  // Chat entry links home and highlights on "/" in org scope.
+  await page.goto("/");
+  await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("href", "/");
+  await expect(page.getByTestId("sidebar-org-chat")).toHaveAttribute("aria-current", "page");
+  // Collapsed rail mirrors the org nav set with active state.
+  await page.getByTestId("left-sidebar-toggle").click();
+  await expect(page.getByTestId("sidebar-reveal-rail")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("rail-expand")).toHaveAttribute("aria-label", "Expand sidebar");
+  await expect(page.getByTestId("rail-command-palette")).toHaveAttribute("aria-label", "Open command palette");
+  await expect(page.getByTestId("rail-notifications")).toHaveAttribute("aria-label", /Notifications/);
+  for (const section of ["overview", "chat", "providers", "keys", "analytics", "docs", "members", "teams", "sets", "operations", "budgets", "audit", "settings"] as const) {
+    await expect(page.getByTestId(`rail-org-${section}`)).toBeVisible();
+  }
+  await expect(page.getByTestId("rail-org-chat")).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("rail-nav-toggle")).toHaveAttribute("aria-label", "Hide navigation");
+  await page.getByTestId("rail-profile-menu").click();
+  await expect(page.getByTestId("workspace-menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("rail-expand").click();
+  await expect(page.getByTestId("sidebar-org-nav")).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
 });

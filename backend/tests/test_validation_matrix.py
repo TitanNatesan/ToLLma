@@ -127,8 +127,10 @@ def test_images_matrix_returns_single_image() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/images/generations")
         body = json.loads(request.read())
-        # Cheapest settings: one image, lowest quality.
-        assert body["n"] == 1 and body["quality"] == "low"
+        # Explicit caller-supplied params pass through; nothing is invented
+        # (no "n": the loop, not the provider, drives multi-image runs).
+        assert body["size"] == "1024x1024" and body["quality"] == "low"
+        assert "n" not in body
         return httpx.Response(
             200, json={"data": [{"b64_json": base64.b64encode(b"\x89PNGtiny").decode()}]}
         )

@@ -115,9 +115,14 @@ def read_user(user: User):
     return _read(user)
 
 
-async def signup(db: Session, email: str, password: str, full_name: str | None) -> tuple[User, str]:
+async def signup(
+    db: Session, email: str, password: str, full_name: str | None
+) -> tuple[User, str, bool]:
     """Create an UNVERIFIED user and dispatch the verification email.
-    Returns (user, verification_token)."""
+    Returns (user, verification_token, verification_sent).
+
+    A failed email send (SMTP down) never fails signup: the account and
+    session are still created and the caller reports sent=False."""
     address = normalize_email(email)
     if get_by_email(db, address) is not None:
         raise ValidationError("email already registered")
@@ -129,25 +134,34 @@ async def signup(db: Session, email: str, password: str, full_name: str | None) 
     set_password(user, password)
     db.add(user)
     db.commit()
+    try:
+        from tollms.api.keys import service as keys_service
+
+        keys_service.ensure_primary_key(db, user.id)
+    except Exception:
+        logger.exception("primary key provisioning failed")
     db.refresh(user)
-    token = await issue_verification(db, user)
+    token, sent = await issue_verification(db, user)
     logger.info("user signed up: %s", user.id)
-    return user, token
+    return user, token, sent
 
 
-async def issue_verification(db: Session, user: User) -> str:
-    """Mint a one-time verification token, store its hash in Valkey, email the link."""
+async def issue_verification(db: Session, user: User) -> tuple[str, bool]:
+    """Mint a one-time verification token, store its hash in Valkey, email the link.
+
+    Returns (token, sent). The email sender never raises — False just means
+    the SMTP send failed and the caller must surface sent=False."""
     token = security.create_verification_token(user.id, user.email)
     digest = hashlib.sha256(token.encode()).hexdigest()
     await get_manager().set(
         cache_keys.verify_email(digest), {"user_id": str(user.id)}, ttl=_verify_ttl_seconds()
     )
     url = f"{get_settings().frontend_url.rstrip('/')}/verify?token={token}"
-    send_verification_email(user.email, url)
-    return token
+    sent = send_verification_email(user.email, url)
+    return token, sent
 
 
-async def issue_email_change_verification(db: Session, user: User, new_address: str) -> str:
+async def issue_email_change_verification(db: Session, user: User, new_address: str) -> tuple[str, bool]:
     """Mint a change-verification token bound to the NEW address and email it there.
 
     The token's `email` claim is the pending address (never the old one), so
@@ -161,8 +175,8 @@ async def issue_email_change_verification(db: Session, user: User, new_address: 
         cache_keys.verify_email(digest), {"user_id": str(user.id)}, ttl=_verify_ttl_seconds()
     )
     url = f"{get_settings().frontend_url.rstrip('/')}/verify?token={token}"
-    send_verification_email(address, url)
-    return token
+    sent = send_verification_email(address, url)
+    return token, sent
 
 
 def send_email_change_notice_to_old(user_email: str, new_address: str, requested_at: datetime) -> None:
@@ -265,12 +279,12 @@ async def resend_verification(db: Session, user: User) -> tuple[bool, int]:
                 user.id, exc.retry_after,
             )
             raise
-        await issue_email_change_verification(db, user, pending)
+        _, sent = await issue_email_change_verification(db, user, pending)
         logger.info(
             "verification resend sent (pending change): user_id=%s masked=%s cooldown=%ds",
             user.id, mask_email(pending), cooldown,
         )
-        return True, cooldown
+        return sent, cooldown
     if user.email_verified:
         logger.info("verification resend skipped (already verified): user_id=%s", user.id)
         return False, 0
@@ -287,12 +301,12 @@ async def resend_verification(db: Session, user: User) -> tuple[bool, int]:
             "verification resend cooldown: user_id=%s retry_after=%s", user.id, exc.retry_after
         )
         raise
-    await issue_verification(db, user)
+    _, sent = await issue_verification(db, user)
     logger.info(
         "verification resend sent: user_id=%s masked=%s cooldown=%ds",
         user.id, mask_email(user.email), cooldown,
     )
-    return True, cooldown
+    return sent, cooldown
 
 
 async def login(
@@ -595,6 +609,7 @@ async def handle_google_callback(
     user = db.scalar(
         select(User).where(User.google_id == google_id, User.is_deleted.is_(False))
     )
+    is_new_user = False
     if user is None:
         user = get_by_email(db, email)
         if user is not None and email_verified:
@@ -604,6 +619,7 @@ async def handle_google_callback(
             else:
                 set_google_identity(user, google_id)
         elif user is None:
+            is_new_user = True
             user = User(
                 email=email,
                 password_hash=None,
@@ -625,6 +641,13 @@ async def handle_google_callback(
             )
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
+    if is_new_user:
+        try:
+            from tollms.api.keys import service as keys_service
+
+            keys_service.ensure_primary_key(db, user.id)
+        except Exception:
+            logger.exception("primary key provisioning failed")
     db.refresh(user)
     refresh_jti = security.generate_refresh_jti()
     session_id = await security.create_session(

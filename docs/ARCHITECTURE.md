@@ -76,17 +76,19 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Lite[LiteLLM data] --> SYNC[Sync engine]
-    OR[OpenRouter data] --> SYNC
+    MD[Models.dev api.json] --> SYNC[Sync engine]
     SYNC --> REPO[(model_repository)]
     REPO --> MAP[Mapping engine]
     MAP --> REG[Registered provider models]
     REG --> UI[Model intelligence UI]
 ```
 
-- Canonical keys (`{provider}/{model}`, lowercase, separator-unified) dedupe across sources; `openrouter/` prefixes recurse.
-- Sync is idempotent, per-record fault-isolated, lock-guarded, on a 24h schedule; raw payloads preserved per row.
+- Canonical keys (`{provider}/{model}`, lowercase, separator-unified) dedupe repeat syncs; failed runs keep the last-known-good catalog (no deactivation on error).
+- Sync is idempotent, per-record fault-isolated, lock-guarded, on a **startup + 6h** schedule; raw payloads preserved per row.
 - Repository is global (unowned); registered models link via `repository_model_key` + snapshot and may override pricing/caps.
+- Normalization: `provider_catalog` rows (per api.json provider slug, logo URL pattern `models.dev/logos/{slug}.svg`) → `model_repository` association rows (one per provider-scoped model, unique `model_key`) → optional `canonical_model` rows (one per models.json id, linked when the api entry's `canonical_model_id` resolves, else NULL). Pricing/caps/limits live on the association; `reasoning_options` (effort/budget/toggle) and unmodeled cost dims (`extra_cost`) are preserved verbatim and surfaced on model reads for the chat reasoning controls.
+- Failed or partial syncs change nothing except bookkeeping (fail-closed); canonical disappearance only NULLs links, never deletes rows.
+- **Provider catalog** (`provider_catalog`, sync-owned): every models.dev provider upserted by stable slug with logo/doc/api/npm metadata, gateway-family mapping, and capability flags; vanished providers deactivate (never delete); repository rows link via `catalog_slug`. Catalog metadata never holds credentials and never overrides ToLLma operational state (adapters, credential schemas, enabled flags).
 
 ## Jobs Architecture
 
@@ -95,7 +97,7 @@ flowchart LR
     SCHED[APScheduler] --> HEALTH[Provider health 5m]
     SCHED --> ROLL[Usage rollups 1h]
     SCHED --> CLEAN[Cleanup 1d]
-    SCHED --> REPO[Repository sync 24h]
+    SCHED --> REPO[Repository sync startup+6h]
     SCHED --> DEL[Account purge + orphan sweep]
 ```
 

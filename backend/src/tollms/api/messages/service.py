@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from tollms.api.conversations.schemas import MessageRead
 from tollms.api.conversations.service import get_message, list_messages
-from tollms.api.gateway.service import start_regeneration
+from tollms.api.gateway.service import start_regeneration, validate_key_for_model
 from tollms.api.conversations.schemas import BranchRead
 from tollms.api.messages.schemas import (
     GenerationRunRead,
@@ -127,14 +127,45 @@ def edit_message(
     message_id: uuid.UUID,
     content: str,
     user_id: uuid.UUID | None,
+    *,
+    key_id: uuid.UUID | None = None,
 ) -> tuple[Message, list[MessageVersion], Message | None]:
-    """Snapshot + replace a user message; returns the following assistant to regenerate."""
+    """Snapshot + replace a user message; returns the following assistant to regenerate.
+
+    When a regeneration will follow (a terminal assistant exists after this
+    message), the session-user key gate runs BEFORE the edit commits, so a
+    denied regen leaves the content — and its version history — untouched.
+    Edits with no following response stay owner-check-only, as before.
+    """
     message = get_message(db, message_id, user_id)
     if message.role != Role.USER:
         raise ValidationError("only user messages can be edited")
     cleaned = content.strip()
     if not cleaned:
         raise ValidationError("message content must not be blank")
+
+    # Regen target is position-dependent only: resolve it BEFORE mutating so
+    # the key gate fails closed without persisting a half-applied edit.
+    following = db.execute(
+        select(Message)
+        .where(
+            Message.conversation_id == message.conversation_id,
+            Message.role == Role.ASSISTANT,
+            Message.created_at > message.created_at,
+            Message.is_deleted.is_(False),
+        )
+        .order_by(Message.created_at.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    terminal = (
+        following is not None
+        and following.status in (MessageStatus.COMPLETED, MessageStatus.CANCELLED, MessageStatus.FAILED)
+        and following.provider_id is not None
+        and following.model_id is not None
+    )
+    target = following if terminal else None
+    if target is not None:
+        validate_key_for_model(db, key_id, user_id, target.model_id)
 
     versions = _versions(db, message.id)
     if not versions:
@@ -168,24 +199,7 @@ def edit_message(
     db.commit()
     _invalidate_conversation_caches(message.conversation_id, user_id)
 
-    following = db.execute(
-        select(Message)
-        .where(
-            Message.conversation_id == message.conversation_id,
-            Message.role == Role.ASSISTANT,
-            Message.created_at > message.created_at,
-            Message.is_deleted.is_(False),
-        )
-        .order_by(Message.created_at.asc())
-        .limit(1)
-    ).scalar_one_or_none()
-    terminal = (
-        following is not None
-        and following.status in (MessageStatus.COMPLETED, MessageStatus.CANCELLED, MessageStatus.FAILED)
-        and following.provider_id is not None
-        and following.model_id is not None
-    )
-    return message, _versions(db, message.id), following if terminal else None
+    return message, _versions(db, message.id), target
 
 
 async def regenerate_message(
@@ -195,12 +209,16 @@ async def regenerate_message(
     *,
     provider_id: uuid.UUID | None = None,
     model_id: uuid.UUID | None = None,
+    key_id: uuid.UUID | None = None,
     reasoning_level: str | None = None,
+    transport=None,
     session_factory=None,
     session_id: str | None = None,
+    client_ip: str | None = None,
 ):
     # Fail-closed ownership check + drop stale aggregates up front; the
     # generation engine re-invalidates on completion for the final totals.
+    # Key-gated exactly like chat send (422 when a session user omits it).
     message = get_message(db, message_id, user_id)
     _invalidate_conversation_caches(message.conversation_id, user_id)
     return await start_regeneration(
@@ -209,9 +227,12 @@ async def regenerate_message(
         user_id=user_id,
         provider_id=provider_id,
         model_id=model_id,
+        key_id=key_id,
         reasoning_level=reasoning_level,
+        transport=transport,
         session_factory=session_factory,
         session_id=session_id,
+        client_ip=client_ip,
     )
 
 

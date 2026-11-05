@@ -6,10 +6,15 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, model_validator
 
+from tollms.api.attachments.schemas import AttachmentRead
+
 
 class ChatRequest(BaseModel):
     provider_id: uuid.UUID
     model_id: uuid.UUID
+    # In-app API key serving this generation (session users). Required over
+    # HTTP; unscoped internal callers (user_id None) stay keyless (legacy).
+    key_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
     message: str = ""
     system: str | None = None
@@ -46,6 +51,7 @@ class ChatResponse(BaseModel):
     reasoning_cost: Decimal = Decimal(0)
     usage_estimated: bool
     latency_ms: float
+    attachments: list[AttachmentRead] = Field(default_factory=list)
 
 
 class GenerationStarted(BaseModel):
@@ -80,3 +86,18 @@ class RegenerateRequest(BaseModel):
     provider_id: uuid.UUID | None = None
     model_id: uuid.UUID | None = None
     reasoning_level: str | None = Field(default=None, max_length=32)
+    # Session-user key serving this regeneration (same gate as chat send:
+    # required for session users, None only on the legacy unscoped path).
+    key_id: uuid.UUID | None = None
+
+
+class ChatKeyRead(BaseModel):
+    """Session user's key picker entry. Never carries secrets or hashes."""
+
+    id: uuid.UUID
+    name: str
+    scope: str  # "personal" | "organization"
+    org_id: uuid.UUID | None = None
+    org_name: str | None = None
+    enabled: bool
+    model_count: int = 0

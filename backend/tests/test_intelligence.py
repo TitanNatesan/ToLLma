@@ -20,35 +20,68 @@ from tollms.api.models.service import get_model
 import uuid
 
 
+def _model(model_id: str, **overrides):
+    info = {
+        "id": model_id,
+        "name": model_id,
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "limit": {"context": 128000, "output": 4096},
+        "cost": {"input": 2.5, "output": 10.0},
+    }
+    info.update(overrides)
+    return info
+
+
+def _payload(*entries: tuple[str, str, dict]) -> dict:
+    """Build a models.dev payload from (provider, model_id, model_info) triples."""
+    payload: dict = {}
+    for provider, model_id, info in entries:
+        payload.setdefault(
+            provider, {"id": provider, "name": provider, "models": {}}
+        )["models"][model_id] = info
+    return payload
+
+
 def test_canonicalize_unifies_separators() -> None:
     variants = ["anthropic/claude-sonnet-4", "anthropic.claude-sonnet-4", "anthropic:claude-sonnet-4"]
     assert len({canonicalize(v) for v in variants}) == 1
 
 
 def test_separator_variants_merge_into_one_record(db: Session) -> None:
+    # Provider slug case differs ("ANTHROPIC" vs "anthropic"): one record.
     run_sync(
         db,
-        litellm_data={"anthropic.claude-x": {"litellm_provider": "anthropic", "mode": "chat"}},
-        openrouter_data={"data": [{"id": "anthropic/claude-x", "name": "Claude X"}]},
+        modelsdev_data={
+            "anthropic": {
+                "id": "anthropic", "name": "Anthropic",
+                "models": {"claude-x": _model("claude-x", name="Claude X")},
+            },
+            "ANTHROPIC": {
+                "id": "ANTHROPIC", "name": "Anthropic",
+                "models": {"claude-x": _model("claude-x", name="Claude X")},
+            },
+        },
     )
     rows, total = list_entries(db, active_only=False)
     assert total == 1
-    assert sorted(rows[0].sources) == ["litellm", "openrouter"]
+    assert rows[0].model_key == "anthropic/claude-x"
+    # Both provider spellings attribute the same source: one row, two rows kept.
+    assert set(rows[0].sources) == {"modelsdev"}
+    assert len(list(db.scalars(select(RepositorySource)))) == 2
 
 
 def test_source_rows_rebuilt_with_payloads(db: Session) -> None:
     run_sync(
         db,
-        litellm_data={"openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"}},
-        openrouter_data={"data": []},
+        modelsdev_data=_payload(("openai", "gpt-4o", _model("gpt-4o"))),
     )
     entry = list_entries(db, active_only=False)[0][0]
     rows = list(db.scalars(select(RepositorySource)))
     assert len(rows) == 1
     assert rows[0].model_repository_id == entry.id
-    assert rows[0].source_name == "litellm"
+    assert rows[0].source_name == "modelsdev"
     assert rows[0].source_url is not None
-    run_sync(db, litellm_data={"openai/gpt-4o": {"litellm_provider": "openai", "mode": "chat"}}, openrouter_data={"data": []})
+    run_sync(db, modelsdev_data=_payload(("openai", "gpt-4o", _model("gpt-4o"))))
     assert len(list(db.scalars(select(RepositorySource)))) == 1  # rewritten, not duplicated
 
 
@@ -56,17 +89,15 @@ def test_lookup_and_suggest(client: TestClient, db: Session, user_factory) -> No
     user_factory("lookup@tollma.ai")
     run_sync(
         db,
-        litellm_data={
-            "openai/gpt-4o": {
-                "max_input_tokens": 128000,
-                "input_cost_per_token": 2.5e-06,
-                "output_cost_per_token": 1e-05,
-                "litellm_provider": "openai",
-                "mode": "chat",
-                "supports_vision": True,
-            }
-        },
-        openrouter_data={"data": []},
+        modelsdev_data=_payload(
+            ("openai", "gpt-4o", _model(
+                "gpt-4o",
+                name="GPT-4o",
+                modalities={"input": ["text", "image"], "output": ["text"]},
+                limit={"context": 128000, "output": 16384},
+                cost={"input": 2.5, "output": 10.0},
+            )),
+        ),
     )
     assert lookup(db, "openai/gpt-4o") is not None
     assert lookup(db, "openai.gpt-4o") is not None  # canonical variant
@@ -86,7 +117,9 @@ def test_lookup_and_suggest(client: TestClient, db: Session, user_factory) -> No
 def test_calculate_covers_cache_and_reasoning() -> None:
     prices = PriceSet(input=Decimal(2), output=Decimal(10), cache_read=Decimal(1), reasoning=Decimal(0))
     out = calculate(UsageTokens(prompt=1_000_000, completion=1_000_000, cache_read=1_000_000, reasoning=500_000), prices)
-    assert out.input_cost == Decimal(2)
+    # prompt total is inclusive of cached tokens: input bills the uncached
+    # remainder (0 here), cache line bills its own discounted rate.
+    assert out.input_cost == Decimal(0)
     assert out.cache_read_cost == Decimal(1)
     # reasoning has no explicit price -> billed at output rate, excluded from plain output
     assert out.reasoning_cost == Decimal(5)
@@ -97,14 +130,13 @@ def test_calculate_covers_cache_and_reasoning() -> None:
 def _repo_priced_chat(db: Session, provider_factory, model_factory):
     run_sync(
         db,
-        litellm_data={
-            "openai/mock-model": {
-                "input_cost_per_token": 100e-06,  # repo: $100/1M in, nothing else
-                "litellm_provider": "openai",
-                "mode": "chat",
-            }
-        },
-        openrouter_data={"data": []},
+        modelsdev_data=_payload(
+            ("openai", "mock-model", _model(
+                "mock-model",
+                cost={"input": 100.0},  # repo: $100/1M in, nothing else
+                limit={"context": 128000, "output": 4096},
+            )),
+        ),
     )
     p = provider_factory("MockRepo", ptype="OPENAI", creds={"api_key": "k"})
     m = model_factory(p["id"], model_id="mock-model", input_price="0", output_price="0")
@@ -132,8 +164,9 @@ def _repo_priced_chat(db: Session, provider_factory, model_factory):
 
 def test_chat_uses_repository_pricing_and_cache_tokens(db: Session, provider_factory, model_factory) -> None:
     result = _repo_priced_chat(db, provider_factory, model_factory)
-    # repo $100/1M input x 10 tokens; model prices are 0 so any cost proves repo pricing
-    assert abs(float(result.input_cost) - 0.001) < 1e-9
+    # repo $100/1M input x 10 tokens with 4 cached: input bills the 6
+    # uncached tokens (cache price is 0, so any cost proves repo pricing).
+    assert abs(float(result.input_cost) - 0.0006) < 1e-9
     assert result.cache_read_tokens == 4
     assert result.reasoning_tokens == 2
 
@@ -150,8 +183,7 @@ def test_chat_uses_repository_pricing_and_cache_tokens(db: Session, provider_fac
 def test_model_create_snapshots_repository(client: TestClient, db: Session, provider_factory) -> None:
     run_sync(
         db,
-        litellm_data={"openai/gpt-4o": {"input_cost_per_token": 2.5e-06, "litellm_provider": "openai", "mode": "chat"}},
-        openrouter_data={"data": []},
+        modelsdev_data=_payload(("openai", "gpt-4o", _model("gpt-4o", cost={"input": 2.5, "output": 10.0}))),
     )
     p = provider_factory("Snap")
     r = client.post(

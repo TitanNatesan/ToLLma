@@ -118,6 +118,7 @@ def search(
     cleaned = (query or "").strip()
     if not cleaned:
         return {"query": cleaned, "total": 0, "results": []}
+    offset = min(max(offset, 0), 5000)
 
     tsquery = func.websearch_to_tsquery("english", cleaned)
     rank = func.ts_rank_cd(ConversationSearchEntry.tsv, tsquery).label("rank")

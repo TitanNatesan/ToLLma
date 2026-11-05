@@ -293,6 +293,24 @@ def _deletion_job() -> None:
 # /api/v1/conversations/{id} (existing API). Hidden empty conversations stay
 # hidden via the message_count filter (frontend behavior, untouched).
 
+def _promptlog_cleanup_job() -> None:
+    """Expire prompt-log bodies past their per-row expires_at (metadata kept)."""
+    from tollms.services.prompt_logging import retention as retention_engine
+
+    with locked_sync(cache_keys.LOCK_SCHEDULER, cache_ttl.LOCK_SCHEDULER * 1000) as acquired:
+        if not acquired:
+            logger.warning("promptlog cleanup skipped: lock held")
+            return
+        db = SessionLocal()
+        try:
+            count = retention_engine.expire_due_logs(db)
+            logger.info("promptlog cleanup finished: %d rows expired", count)
+        except Exception:
+            logger.exception("promptlog cleanup crashed")
+        finally:
+            db.close()
+
+
 # --- job definitions ---------------------------------------------------------
 # Module-level table consumed by start() so tests can assert the schedule
 # without starting the scheduler under pytest.
@@ -322,6 +340,12 @@ JOB_DEFS: tuple[dict, ...] = (
         "trigger": "interval",
         "days": 1,
     },
+    {
+        "id": "promptlog-cleanup",
+        "func": _promptlog_cleanup_job,
+        "trigger": "interval",
+        "days": 1,
+    },
 )
 
 
@@ -339,7 +363,7 @@ def start() -> None:
         sched.add_job(func, trigger, id=job_id, replace_existing=True, **options)
     sched.start()
     _scheduler = sched
-    logger.info("operations scheduler started (health 24h, rollup 1h, cleanup 1d, deletion 1d)")
+    logger.info("operations scheduler started (health 24h, rollup 1h, cleanup 1d, deletion 1d, promptlog 1d)")
 
 
 def shutdown() -> None:

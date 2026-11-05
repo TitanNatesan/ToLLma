@@ -9,6 +9,8 @@ export interface DonutDatum {
   name: string;
   value: number;
   hint?: string;
+  /** Fixed slice color; falls back to the palette order when absent. */
+  color?: string;
 }
 
 const MAX_SLICES = 7;
@@ -68,7 +70,7 @@ export function DistributionDonut({
               isAnimationActive={false}
             >
               {slices.map((entry, index) => (
-                <Cell key={entry.name} fill={chartColor(index)} />
+                <Cell key={entry.name} fill={entry.color ?? chartColor(index)} />
               ))}
             </Pie>
             <Tooltip
@@ -85,7 +87,7 @@ export function DistributionDonut({
             <span className="flex min-w-0 items-center gap-1.5 text-zinc-600 dark:text-zinc-400">
               <span
                 className="inline-block size-2 shrink-0 rounded-sm"
-                style={{ background: chartColor(index) }}
+                style={{ background: slice.color ?? chartColor(index) }}
               />
               <span className="truncate" title={slice.name}>
                 {slice.name}

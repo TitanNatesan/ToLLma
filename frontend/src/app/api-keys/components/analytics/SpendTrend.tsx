@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { fmtCost } from "@/lib/utils";
+import { useChartHeight } from "@/components/charts/useChartHeight";
 import {
   AnalyticsTooltip,
   ChartSkeleton,
@@ -31,6 +32,7 @@ export function SpendTrend({
   preset: AnalyticsPreset;
   loading?: boolean;
 }) {
+  const chartHeight = useChartHeight(210);
   const points = useMemo(
     () =>
       (timeseries?.dual ?? []).map((point) => ({
@@ -47,7 +49,7 @@ export function SpendTrend({
       testId="key-spend-trend"
     >
       {loading ? (
-        <ChartSkeleton height={210} />
+        <ChartSkeleton height={chartHeight} />
       ) : points.length === 0 ? (
         <EmptyHint label="No spend in this range" />
       ) : (
@@ -57,7 +59,7 @@ export function SpendTrend({
           className="w-full text-zinc-400 dark:text-zinc-500"
           data-testid="key-spend-trend-chart"
         >
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <LineChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid
                 strokeDasharray="3 3"

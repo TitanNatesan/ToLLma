@@ -19,6 +19,7 @@ async def call_endpoint(adapter: BaseProviderAdapter, endpoint: str, **kwargs: A
       chat*:               messages: list[ChatMessage]
       embeddings:          inputs: list[str]
       images/generations:  prompt: str, options: dict (size/quality)
+      images/edits:        prompt: str, options: dict (size/quality/image_bytes)
       audio/transcriptions: audio: bytes, filename: str, mime_type: str
       audio/speech:        text: str, voice: str
     """
@@ -26,8 +27,10 @@ async def call_endpoint(adapter: BaseProviderAdapter, endpoint: str, **kwargs: A
         return await adapter.chat(kwargs["messages"])
     if endpoint == "embeddings":
         return await adapter.embed(kwargs["inputs"])
-    if endpoint == "images/generations":
-        return await adapter.generate_image(kwargs["prompt"], **(kwargs.get("options") or {}))
+    if endpoint in ("images/generations", "images/edits"):
+        options = dict(kwargs.get("options") or {})
+        image_bytes = kwargs.get("image_bytes", options.pop("image_bytes", None))
+        return await adapter.generate_image(kwargs["prompt"], image_bytes=image_bytes, **options)
     if endpoint == "audio/transcriptions":
         return await adapter.transcribe(kwargs["audio"], kwargs["filename"], kwargs["mime_type"])
     if endpoint == "audio/speech":

@@ -56,6 +56,7 @@ export function ReasoningSelector({
   );
   const [position, setPosition] = useState<PanelPosition | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressTouchEnter = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   // Mouse clicks move focus to the indicator; that must cycle, not open the
@@ -128,6 +129,7 @@ export function ReasoningSelector({
   }, [expanded, levels, value, onChange]);
 
   function handleEnter() {
+    if (suppressTouchEnter.current) return;
     if (closeTimer.current) {
       clearTimeout(closeTimer.current);
       closeTimer.current = null;
@@ -153,6 +155,13 @@ export function ReasoningSelector({
   }
 
   function handleIndicatorClick() {
+    // Touch tap: explicit open/close toggle (no hover, no cycle).
+    if (suppressTouchEnter.current) {
+      suppressTouchEnter.current = false;
+      updatePosition();
+      setOpen((was) => !was);
+      return;
+    }
     const next = cycleReasoningLevel(levels, value);
     if (next) selectLevel(next);
   }
@@ -212,8 +221,16 @@ export function ReasoningSelector({
         aria-label={`Thinking level: ${current}`}
         aria-expanded={expanded}
         title="Click to cycle thinking level"
-        onPointerDown={() => {
+        onPointerDown={(event) => {
           pointerFocus.current = true;
+          // The tap's compatibility mouseenter would open the scale before
+          // click runs: suppress it so the tap toggles explicitly instead.
+          if (event.pointerType === "touch" || event.pointerType === "pen") {
+            suppressTouchEnter.current = true;
+            window.setTimeout(() => {
+              suppressTouchEnter.current = false;
+            }, 500);
+          }
         }}
         onClick={handleIndicatorClick}
         onKeyDown={handleIndicatorKey}

@@ -518,7 +518,7 @@ def test_purge_full_resource_user(
     assert audits[0].counts["providers"] == 1
     assert audits[0].counts["models"] == 1
     assert audits[0].counts["conversations"] == 1
-    assert audits[0].counts["api_keys"] == 1
+    assert audits[0].counts["api_keys"] == 2  # seeded key + auto-created primary
     assert audits[0].counts["usage_aggregates"] == 1
     # Final receipt mailed.
     purged = _mails_to(email)

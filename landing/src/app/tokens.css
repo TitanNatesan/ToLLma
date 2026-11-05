@@ -1,0 +1,162 @@
+/* ============================================================
+   ToLLma design tokens — SINGLE SOURCE OF TRUTH for all color,
+   radius, shadow, font, type-scale, rhythm, and motion values.
+
+   Imported by globals.css. Every later motion/section phase MUST
+   reuse these tokens — no new hex values after this file.
+   If a new surface/accent is ever needed, add it HERE, never
+   inline in a section or component.
+   ============================================================ */
+
+/* ---------- Light base theme (cool blue-tinted bands) ---------- */
+@theme {
+  /* Surfaces: warm white base, cool blue-tinted secondary bands */
+  --color-canvas: #fbfcfe;
+  --color-surface: #ffffff;
+  --color-surface-cool: #f4f7fc;
+  --color-surface-tint: #eef3fb;
+
+  /* Brand: confident electric blue + cyan/teal secondary,
+     violet used sparingly for accent marks only */
+  --color-brand: #1f5eff;
+  --color-brand-strong: #1747cc;
+  --color-brand-soft: #e7eeff;
+  --color-teal: #0bb8c8;
+  --color-teal-soft: #e0f7f9;
+  --color-violet: #7c5cff;
+
+  /* Ink: deep navy text, blue-grey muted */
+  --color-ink: #0b1b34;
+  --color-ink-soft: #2b3d5c;
+  --color-muted: #5d7091;
+  /* faint: darkened to meet WCAG AA (4.5:1) for 12px label text on
+     canvas/surface/surface-cool. Was #8aa0bf (2.6:1) — a contrast failure. */
+  --color-faint: #61708c;
+
+  /* -ink variants: AA-safe text colors for small text ON the soft
+     backgrounds (teal-soft / ok-soft). The bright --color-teal / --color-ok
+     stay for graphics, dark code panels, and strokes. */
+  --color-teal-ink: #0e7490; /* 4.8:1 on teal-soft */
+  --color-ok-ink: #0a7a45; /* 4.8:1 on ok-soft */
+  --color-danger-ink: #b91c1c; /* 5.6:1 on danger-soft */
+  --color-warn-ink: #9a5b06; /* 5.4:1 on white / warm tint */
+
+  /* Lines + status */
+  --color-line: #e3eaf4;
+  --color-line-strong: #cfdbeb;
+  --color-ok: #12a150;
+  --color-ok-soft: #e3f7ec;
+  --color-warn: #b7791f;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fdeaea;
+
+  /* Type */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-mono-code), ui-monospace, "SFMono-Regular", Menlo,
+    monospace;
+
+  /* Fluid radii */
+  --radius-card: 1rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
+
+  /* Motion tokens (JS primitives read the same values) */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-reveal: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 180ms;
+  --dur-base: 320ms;
+  --dur-slow: 700ms;
+
+  /* Depth / elevation (soft, realistic — no neon glows) */
+  --shadow-xs: 0 1px 2px rgba(11, 27, 52, 0.05);
+  --shadow-sm: 0 2px 8px -2px rgba(11, 27, 52, 0.08), 0 1px 2px rgba(11, 27, 52, 0.05);
+  --shadow-md: 0 12px 32px -12px rgba(11, 27, 52, 0.16), 0 2px 8px -4px rgba(11, 27, 52, 0.08);
+  --shadow-lg: 0 24px 64px -24px rgba(11, 27, 52, 0.22), 0 4px 16px -8px rgba(11, 27, 52, 0.1);
+
+  /* 3D / pointer depth */
+  --perspective: 1200px;
+  --tilt-max: 6deg; /* pointer-tilt cap — subtle, never dizzying */
+}
+
+/* ---------- Layout rhythm + fluid type scale ---------- */
+:root {
+  /* Wide layout system: fluid gutters, wide max widths.
+     Desktop compositions may reach 1440–1600px. */
+  --gutter: clamp(1.25rem, 4.5vw, 4.5rem); /* 20px → 72px */
+  --container: 84rem; /* standard sections: 1344px box / ~1200px content */
+  --container-wide: 86rem; /* major sections: 1376px box / ~1230px content */
+  --container-xwide: 109rem; /* full compositions: 1744px box / ~1600px content */
+
+  /* Section rhythm */
+  --section-y: clamp(4.5rem, 9vw, 8rem);
+
+  /* Fluid type scale (Major Third ~1.25) */
+  --t-display: clamp(2.5rem, 5.6vw, 4.25rem);
+  --t-h2: clamp(1.9rem, 3.6vw, 3rem);
+  --t-h3: clamp(1.35rem, 2.2vw, 1.75rem);
+  --t-lead: clamp(1.05rem, 1.4vw, 1.25rem);
+  --t-body: 1rem;
+  --t-sm: 0.9rem;
+  --t-xs: 0.8rem;
+
+  /* Nav morph (Phase A): fixed h-16 (4rem) at top, shrinks ~10% to
+     3.6rem across the first 120px of scroll; frost engages past 24px. */
+  --nav-h: 4rem;
+  --nav-h-scrolled: 3.6rem;
+  --nav-frost-at: 24px;
+  --nav-shrink-over: 120px;
+}
+
+/* ---------- Nominal editorial theme (cream + serif + square black CTAs) ---------- */
+/* Spec palette: cream #F7F7EE, secondary #EEF1E6, dark #10130F, ink #171914,
+   muted #74776D, dark-text #F5F4EA, mint #72DDB1, periwinkle #A9BDF4,
+   warm #E8B1A2, border #DCDDD1. Legacy section names (coal, night, cream-line,
+   parchment, peri, blush) are kept as stable aliases of the spec values so
+   sections don't churn; prefer the spec names in new code. */
+@theme {
+  /* Surfaces */
+  --color-cream: #f7f7ee;
+  --color-secondary: #eef1e6;
+  --color-parchment: #eef1e6;
+  --color-border: #dcddd1;
+  --color-cream-line: #dcddd1;
+
+  /* Ink */
+  --color-ink: #171914;
+  --color-coal: #171914;
+  --color-muted: #74776d;
+  --color-dark: #10130f;
+  --color-night: #10130f;
+  --color-night-line: #3a3f3a;
+  --color-dark-text: #f5f4ea;
+
+  /* Accents */
+  --color-mint: #72ddb1;
+  --color-periwinkle: #a9bdf4;
+  --color-peri: #a9bdf4;
+  --color-warm: #e8b1a2;
+  --color-blush: #e8b1a2;
+  --color-butter: #f5e6a3;
+  --color-sage: #dde8d0;
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+
+  /* Preview glass system (dashboard-stack windows): translucent ivory
+     hierarchy — window 5px blur, panels 3px, cards 2px. Content inherits
+     the frost; never blur the text itself. */
+  --preview-glass-bg: rgba(255, 255, 250, 0.78);
+  --preview-glass-bg-strong: rgba(255, 255, 252, 0.9);
+  --preview-glass-bg-soft: rgba(255, 255, 255, 0.52);
+  --preview-glass-border: rgba(255, 255, 255, 0.88);
+  --preview-glass-border-subtle: rgba(70, 78, 62, 0.12);
+  --preview-glass-highlight: rgba(255, 255, 255, 0.92);
+  --preview-glass-shadow:
+    0 20px 55px rgba(40, 48, 34, 0.1),
+    0 5px 16px rgba(40, 48, 34, 0.06),
+    0 1px 2px rgba(40, 48, 34, 0.04);
+  --preview-radius-window: 18px;
+  --preview-radius-panel: 13px;
+  --preview-radius-card: 11px;
+  --preview-radius-control: 8px;
+}

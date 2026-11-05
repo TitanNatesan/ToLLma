@@ -42,9 +42,12 @@ test("platform admin sees one section at a time with hash navigation", async ({ 
   if (!response.ok()) throw new Error(`admin login failed: ${response.status()}`);
 
   await page.goto("/admin");
-  // The app nav region is revealed by the profile-settings toggle.
-  await page.getByTestId("profile-settings-btn").click();
+  // Final IA: the admin nav renders directly on /admin — the profile gear
+  // is a plain link to /settings, never a nav toggle.
+  await expect(page.getByTestId("sidebar-nav-settings")).toHaveAttribute("href", "/settings");
   await expect(page.getByTestId("sidebar-admin-nav")).toBeVisible({ timeout: 20_000 });
+  // The bottom-anchored personal nav does not render on the admin page.
+  await expect(page.getByTestId("sidebar-personal-nav")).toHaveCount(0);
 
   // The sidebar is now a dedicated admin section navigator, not conversations.
   await expect(page.getByTestId("sidebar-admin")).toBeVisible({ timeout: 20_000 });
@@ -69,7 +72,7 @@ test("platform admin sees one section at a time with hash navigation", async ({ 
   await expect(page.getByTestId("admin-panel-tokens")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("[data-testid^='admin-panel-']")).toHaveCount(1);
   await expect(page.getByTestId("admin-panel-overview")).toHaveCount(0);
-  await expect(page.getByTestId("sidebar-admin-tokens")).toHaveAttribute("aria-current", "location");
+  await expect(page.getByTestId("sidebar-admin-tokens")).toHaveAttribute("aria-current", "page");
   await page.screenshot({ path: "test-results/admin-tokens.png", fullPage: false });
 
   // Deep sections are reachable the same way (health uses its own panel).

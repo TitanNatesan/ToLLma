@@ -1,6 +1,8 @@
 // ponytail: naive class join, clsx if this grows.
+import { twMerge } from "tailwind-merge";
+
 export function cn(...parts: Array<string | false | null | undefined>): string {
-  return parts.filter(Boolean).join(" ");
+  return twMerge(parts.filter(Boolean).join(" "));
 }
 
 /** Strip unwanted trailing zeros from numeric strings (e.g. "1.000000000000" -> "1", "0.100000000000" -> "0.1"). */

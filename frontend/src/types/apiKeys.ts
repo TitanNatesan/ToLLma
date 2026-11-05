@@ -25,6 +25,9 @@ export interface ApiKeyModelPermission {
   id: string;
   provider_id: string | null;
   model_id: string | null;
+  /** Display-only, resolved live by the backend. Null when the row was deleted. */
+  model_name?: string | null;
+  provider_name?: string | null;
   enabled: boolean;
   max_budget: Numeric | null;
   rpm: number | null;
@@ -62,6 +65,9 @@ export interface ApiKey {
   policy: ApiKeyPolicy | null;
   ip_rules: ApiKeyIpRule[];
   model_permissions: ApiKeyModelPermission[];
+  /** System auto key (automatic) vs current default (most-recent). Backend-additive. */
+  is_primary?: boolean;
+  is_default?: boolean;
 }
 
 /** Create + rotate responses: the raw key is shown exactly once. */

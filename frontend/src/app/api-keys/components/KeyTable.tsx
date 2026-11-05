@@ -16,8 +16,9 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import {
+  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -29,7 +30,7 @@ import {
   SearchInput,
   Tooltip,
 } from "@/components/ui";
-import { cn } from "@/lib/utils";
+import { cn, fmtPrice } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { BudgetBar } from "./BudgetBar";
@@ -184,7 +185,7 @@ function RowActionsInner({
             type="button"
             aria-label={`Actions for ${apiKey.name}`}
             data-testid={`key-actions-${apiKey.id}`}
-            className="flex size-7 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/40 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            className="flex size-7 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
           >
             <MoreHorizontal className="size-4" />
           </button>
@@ -376,7 +377,7 @@ export const KeyTable = memo(function KeyTable({
                   tabIndex={0}
                   aria-label={`Open details for ${apiKey.name}`}
                   className={cn(
-                    "group cursor-pointer transition-colors hover:bg-zinc-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-tollma-500/40 dark:hover:bg-zinc-900/50",
+                    "group cursor-pointer transition-colors hover:bg-zinc-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-900/50",
                     dimmed && "opacity-75 hover:opacity-100",
                   )}
                   data-testid={`key-row-${apiKey.id}`}
@@ -395,6 +396,38 @@ export const KeyTable = memo(function KeyTable({
                         <p className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
                           {apiKey.name}
                         </p>
+                        <p className="mt-0.5 truncate text-[10px] text-zinc-400 md:hidden">
+                          Budget 30d:{" "}
+                          {budgetLoading
+                            ? "…"
+                            : cost != null
+                              ? `${fmtPrice(cost)}${apiKey.policy?.max_budget_usd != null ? ` / ${fmtPrice(apiKey.policy.max_budget_usd)}` : ""}`
+                              : "—"}
+                        </p>
+                        {(apiKey.is_primary || apiKey.is_default) && (
+                          <span className="mt-1 flex flex-wrap items-center gap-1">
+                            {apiKey.is_primary && (
+                              <Badge
+                                variant="secondary"
+                                className="text-[9px]"
+                                data-testid={`key-badge-primary-${apiKey.id}`}
+                                title="Primary is your automatic system key"
+                              >
+                                Primary
+                              </Badge>
+                            )}
+                            {apiKey.is_default && (
+                              <Badge
+                                variant="success"
+                                className="text-[9px]"
+                                data-testid={`key-badge-default-${apiKey.id}`}
+                                title="Default is the most-recent key used for new requests"
+                              >
+                                Default
+                              </Badge>
+                            )}
+                          </span>
+                        )}
                         <CopyPrefix apiKey={apiKey} />
                         {apiKey.description && (
                           <p className="mt-0.5 line-clamp-1 max-w-52 text-[10px] text-zinc-400">
@@ -411,17 +444,18 @@ export const KeyTable = memo(function KeyTable({
                         className="mt-1 text-[10px] text-zinc-400"
                         title={fmtDateTime(apiKey.expires_at)}
                       >
-                        Expires {fmtUntil(apiKey.expires_at)}
-                      </p>
-                    )}
-                    {apiKey.expires_at && status !== "expired" && expiresSoon(apiKey.expires_at) && (
-                      <p
-                        className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
-                        title={`Expires ${fmtDateTime(apiKey.expires_at)} — rotate or extend soon`}
-                        data-testid={`key-expiry-soon-${apiKey.id}`}
-                      >
-                        <Clock className="size-3" aria-hidden="true" />
-                        Expiring {fmtUntil(apiKey.expires_at)}
+                        {expiresSoon(apiKey.expires_at) ? (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
+                            title={`Expires ${fmtDateTime(apiKey.expires_at)} — rotate or extend soon`}
+                            data-testid={`key-expiry-soon-${apiKey.id}`}
+                          >
+                            <Clock className="size-3" aria-hidden="true" />
+                            Expiring {fmtUntil(apiKey.expires_at)}
+                          </span>
+                        ) : (
+                          <>Expires {fmtUntil(apiKey.expires_at)}</>
+                        )}
                       </p>
                     )}
                   </td>
@@ -467,8 +501,12 @@ export const KeyTable = memo(function KeyTable({
         </table>
       </div>
       )}
-      <p className="border-t border-zinc-100 px-4 py-2 text-[10px] text-zinc-400 dark:border-zinc-800/80">
-        Budget usage reflects the last 30 days against each key&apos;s reset window.
+      <p
+        className="border-t border-zinc-100 px-4 py-2 text-[10px] text-zinc-400 dark:border-zinc-800/80"
+        data-testid="keys-primary-default-legend"
+      >
+        Budget usage reflects the last 30 days against each key&apos;s reset window. · Primary is your
+        automatic system key. Default is the most-recent key used for new requests.
       </p>
     </div>
   );

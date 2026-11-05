@@ -39,6 +39,11 @@ class ModelPermissionRead(BaseModel):
     id: uuid.UUID
     provider_id: uuid.UUID | None = None
     model_id: uuid.UUID | None = None
+    # Display-only, resolved live at read time (two batched queries per
+    # read path, never a migration): the model's `model_id` string and the
+    # provider's `name`. None when the referenced row was deleted.
+    model_name: str | None = None
+    provider_name: str | None = None
     enabled: bool
     max_budget: Decimal | None = None
     rpm: int | None = None
@@ -106,6 +111,8 @@ class KeyRead(BaseModel):
     expires_at: datetime | None = None
     last_used_at: datetime | None = None
     rotation_count: int
+    is_primary: bool = False
+    is_default: bool = False
     policy: PolicyRead | None = None
     ip_rules: list[IpRuleRead] = Field(default_factory=list)
     model_permissions: list[ModelPermissionRead] = Field(default_factory=list)
@@ -147,7 +154,7 @@ class AnalyticsCountryRow(BaseModel):
 
 
 class KeyAnalytics(BaseModel):
-    """Per-key usage roll-up from `api_request_logs` (never log payloads)."""
+    """Per-key usage roll-up from both ledgers (never log payloads)."""
 
     range: str
     range_start: datetime

@@ -45,6 +45,9 @@ class UserRead(BaseModel):
 class AuthResponse(BaseModel):
     user: UserRead
     access_token: str | None = None
+    # Whether the verification email was accepted for delivery. False means
+    # SMTP failed — the account/session still exist, the user just got no mail.
+    verification_sent: bool
     # Non-prod only: lets e2e/dev complete verification without an inbox.
     debug_verification_token: str | None = None
 

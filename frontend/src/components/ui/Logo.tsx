@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 interface LogoProps {
@@ -9,34 +9,63 @@ interface LogoProps {
   hideText?: boolean;
 }
 
+const markSizes = {
+  sm: { box: "size-6 rounded-md", px: 24 },
+  md: { box: "size-7 rounded-lg", px: 28 },
+  lg: { box: "size-8 rounded-xl", px: 32 },
+} as const;
+
+const textClasses = {
+  sm: "text-xs",
+  md: "text-sm",
+  lg: "text-base",
+} as const;
+
+/** ToLLma maze mark: light surface shows the black mark, dark the white mark. */
+export function ToLLmaMark({
+  size = "md",
+  className,
+}: {
+  size?: "sm" | "md" | "lg";
+  className?: string;
+}) {
+  const mark = markSizes[size];
+  return (
+    <span
+      className={cn(
+        "relative block shrink-0 overflow-hidden shadow-sm transition-transform group-hover:scale-105",
+        mark.box,
+        className,
+      )}
+    >
+      <Image
+        src="/tollma-light.png"
+        alt="ToLLma logo"
+        width={mark.px}
+        height={mark.px}
+        className="size-full dark:hidden"
+      />
+      <Image
+        src="/tollma-dark.png"
+        alt=""
+        aria-hidden
+        width={mark.px}
+        height={mark.px}
+        className="hidden size-full dark:block"
+      />
+    </span>
+  );
+}
+
 export function Logo({ size = "md", className, hideText = false }: LogoProps) {
-  const badgeClasses = {
-    sm: "size-6 text-[10px] rounded-md",
-    md: "size-7 text-xs rounded-lg",
-    lg: "size-8 text-sm rounded-xl",
-  }[size];
-
-  const textClasses = {
-    sm: "text-xs",
-    md: "text-sm",
-    lg: "text-base",
-  }[size];
-
   return (
     <div className={cn("flex items-center gap-2 group", className)}>
-      <div
-        className={cn(
-          "flex items-center justify-center bg-zinc-900 text-white font-black shadow-sm transition-transform group-hover:scale-105 dark:bg-zinc-100 dark:text-zinc-900 shrink-0",
-          badgeClasses,
-        )}
-      >
-        T
-      </div>
+      <ToLLmaMark size={size} />
       {!hideText && (
         <span
           className={cn(
             "font-bold tracking-tight text-zinc-900 dark:text-zinc-100",
-            textClasses,
+            textClasses[size],
           )}
         >
           ToLLma

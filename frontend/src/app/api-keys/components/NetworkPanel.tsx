@@ -276,6 +276,8 @@ export function NetworkPanel({ keyId }: { keyId: string }) {
     queryFn: () => getKeyNetwork(keyId, params),
     enabled: customReady,
     staleTime: 30_000,
+    // Returning from chat usage refetches the open detail when stale.
+    refetchOnWindowFocus: true,
   });
 
   const error = query.error;

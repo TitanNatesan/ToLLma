@@ -2503,3 +2503,2365 @@ Removed _orphan_sweep_job + registration + orphan_sweep_days + its test (explici
 
 ### Email
 Central route_email (kind-tagged wrappers, signatures kept for monkeypatch compat): pytest → suppression log + original-recipient outbox capture (zero network); local → sandbox reroute (parsed smtp_from); non-local → preserved. Masked logging. docs/OPERATIONS.md new; ARCHITECTURE.md updated. Tests: test_email_routing.py (5). No new env vars.
+
+---
+
+## 2026-09-28 — Organizations & Teams: discovery → FINAL v1 → design artifacts
+
+### Requirement
+Full interactive discovery for multi-tenant orgs/teams (28-section spec), then 8 architecture artifacts. No code/migrations/app changes.
+
+### Decisions (owner, selected)
+Single root/org (transferable); multi-org + multi-team (union, allow-only, no roles); flat teams (own nothing); first-class permission sets (system immutable clone-only); Active-context model; admin-issued org keys (one key = one org, budget from pools, hard-stop per leg); org budget = allocated + unallocated; personal creds never visible; conversations ALWAYS user-owned (mid-conversation key/provider switching rationale); per-request usage-event ledger (immutable, server-derived org_id, adjustments as rows); visibility modes (metadata_only default / full + read-audit); author-only edit + author sharing (org cannot revoke); platform admins metadata-only, content-never; break-glass audited recovery; 7d invites + queue + auto-expire; suspension revokes immediately, permission-shrink future-only; team analytics = member aggregation deduped; no org rate limits; context-switch future-only; exports split org/user; forks user-owned.
+
+### Files
+- `docs/requirements/organizations-and-teams.md` — FINAL v1 (36 sections, zero open questions).
+- `docs/org-teams-design/01-domain-model.md` … `08-implementation-phase-plan.md` — domain, ownership matrix, permission matrix, state machines, events, ERD, API surface, phased plan (A governance → B metering → C visibility → D analytics/UX).
+
+### Verification
+Spec consistency greps clean (no stale team-tag/rate-ceiling remnants; 36 headers; PENDING/TODO zero). No code touched; no tests run (artifacts only).
+
+---
+
+## 2026-09-28 — Organizations & Teams Phase A COMPLETE (creation, discovery, sets, invites, approvals, notifications, UI)
+
+### Backend
+New `api/orgs/` (service/router/schemas) + `api/notifications/`: org CRUD w/ slug + XSS-safe validation, system (Owner/Approver/Member, immutable clone-only) + custom sets, escalation hard rule (grant ⊆ granter, 404-oracle), invites (existing/new-user) + join requests + approve/reject + accept/reject/cancel, members list/remove/leave, root protection, audit log, search discovery, notifications + unread. Cross-org reads 404 everywhere. Invitation tokens single-use, email-matched, 7d expiry (lazy transitions); token exposed only on recipient queue. Emails via route_email (pytest-suppressed, local-sandboxed).
+New `models/organization.py` (8 tables) + migration `a1b2c3d4e5f7` (head, alembic check green). 22 routes in OpenAPI.
+
+### Frontend
+`services/orgs.ts` (+`apiRequest` export), `types/orgs.ts`, `store/org.ts` (persisted active context + reconcile), `/organizations` (list, switcher, inbox, notifications), `/organizations/[id]` (Overview/Members/Invitations/Requests/Sets/Audit/Settings), `/organizations/invites` (email-link landing), 4 page-local modals, notif bell in SidebarHeader, Organizations nav entry. tsc + eslint clean. `next build` fails on pre-existing `/auth/reset-password` prerender (proven identical on pristine tree).
+
+### Verification
+pytest `tests/test_organizations.py` 15/15; full suite 551 passed, 0 failed (9m10s). Playwright `e2e/organizations.spec.ts` 12/12 (10 scenarios + isolation + root protection). Self-review: fixed set-rename uniqueness, system-delete 422, test-user mismatches, invite-assertion flaw.
+
+---
+
+## 2026-09-28 — Email delivery fix (stale SMTP_FROM in running container)
+
+### Symptom
+ENVIRONMENT=local, no mail arriving at natesantitan3@gmail.com. Logs showed sandbox=n***@tollma.ai (default) despite `.env` containing SMTP_FROM=natesantitan3@gmail.com.
+
+### Root cause
+Compose `env_file` is read once at container creation. The backend container was created before `.env` was updated, and `docker compose restart` does not re-read env — so the live process still held the default SMTP_FROM and the local sandbox (working as spec'd) rerouted mail to the black-hole no-reply@tollma.ai.
+
+### Fix
+`docker compose up -d backend` (recreate, not restart). Verified: container env now SMTP_FROM=natesantitan3@gmail.com; live resend delivered (`email sent to=n***@gmail.com`).
+
+### Rule
+After any `.env` change, run `docker compose up -d [service]` — never bare `restart` — or the change silently does not apply.
+
+---
+
+## 2026-09-28 — Org Management UX Refactor (Change Order B) COMPLETE
+
+### Backend
+52-code grouped permission catalog (Organization/Members/Teams/PermissionSets/Providers/Keys/Budgets/Analytics/Audit) replaces 10 flat codes. Enforcement remapped (Members.Read/Invite/Remove, PermissionSets.*/Assign, Organization.Settings, Audit.Read, Members.Approve/Update). New GET /api/v1/orgs/permissions/catalog. Migration `b2c3d4e5f6a8` expands legacy grants (Owner→full 52, Approver→canonical, custom mapped). ensure_system_sets updated.
+
+### Frontend
+Nested sidebar org nav (12 sections, Phase-B placeholders disabled w/ soon badge, aria-current, keyboard-operable links); section-driven dashboard (zero horizontal tabs); grouped permission builder w/ per-group counts (server catalog + fallback); card settings (Privacy/Sharing/Metadata/Danger-Zone-disabled); ConfirmDialog/AssignSetsDialog/TextPromptDialog replace all 5 window.confirm/prompt (zero remain); notification bell retained. tsc + eslint clean.
+
+### Verification
+pytest orgs 15/15; full suite 550 passed + 1 flaky test_generations timing failure (passes solo, unrelated). E2E orgs 13/13 (incl. new sidebar-navigation scenario). Screenshots: sidebar/builder/settings/mobile verified. `next build` pre-existing failure unchanged.
+
+### Noted (pre-existing, not caused here)
+Backend pytest `_flush_cache` wipes the shared dev Valkey (tollma:*), killing live dev sessions — re-login after any test run. Test expirations of setup storageState also observed; per-run setup refresh covers it.
+
+---
+
+## 2026-09-29 — Organization Invitation & Join Flow Validation COMPLETE (10/10 UI)
+
+### Resend feature (was missing, now implemented)
+POST /api/v1/orgs/{id}/invitations/{iid}/resend: pending-only, fresh token (old 404s), 7d expiry reset, invite.resent audit, recipient re-notified + re-emailed. UI Resend button. Backend 16/16 (incl. 5 resend negatives).
+
+### Validation (e2e/org-validation.spec.ts, isolated contexts @1920x1080, real UI)
+prep + scenarios 1-7 + negatives: 10/10 PASS. Agents: root/existing/decliner/new-user/decline/requester/rejecter/resend identities; auditor via read-only DB + audit endpoint + screenshots (/tmp/org-validation/ 13 shots).
+
+### Root causes fixed en route
+1. @test.local rejected by email-validator (reserved TLD) → @test.tollma.ai.
+2. mkIdentity login race → waitForURL settle + hard identity assert.
+3. Stale cross-run invites indistinguishable → org_slug added to InvitationRead + inbox/landing UI; slug-scoped test filters.
+4. Sidebar treated /invites as org id → excluded (real app bug fix).
+5. Exec-context cache write dropped → mint_verify.py writes via sync redis client.
+6. Gmail SMTP ~24s latency → EMAIL_TIMEOUT 90s for email-bound steps.
+
+### Regressions
+Backend orgs+auth 39/39; E2E organizations+navigation 14/14; full suite 550 + 1 unrelated flake (test_generations timing, passes solo). No native dialogs remain. `next build` pre-existing failure unchanged.
+
+---
+
+## 2026-10-03 — Full Platform QA (orgs/users/permissions/admin, chat excluded) PASS
+
+### Verdict
+11/11 UI suite + 553/553 backend (0 failed). Report: docs/qa-platform-report.md.
+
+### Implemented to meet the brief
+Suspend/resume (Members.Suspend gate, 409 root, audit+notify); resend invitation (pending-only, token rotation, audit+notify+re-email); org_slug on InvitationRead + inbox/landing UI.
+
+### App defects fixed
+Governance stale-reads (section-change invalidation, focus refetch, staleTime 0); assign-dialog grant wipe (loading state + disabled submit + picked count); sidebar /invites misroute; nested-label testids.
+
+### Env notes
+Headless-fullscreen (no X); @test.tollma.ai identities (validator rejects .local); Gmail SMTP ~25s dominates suite wall-clock (~4-6 min); pytest Valkey flush kills dev sessions (re-login after runs).
+
+---
+
+## 2026-10-03 — Models.dev provider catalog integration COMPLETE
+
+### What
+Provider catalog layer (catalog/discovery) separated from gateway connections: new `provider_catalog` table (slug/name/logo/doc/api/npm/env, gateway family + support flags, capabilities, model counts, active state) synced from models.dev (226 providers, 8,284 linked models); `model_repository.catalog_slug` link; `ModelsDevSourceAdapter` (per-1M→per-token pricing, alias resolution, defensive parsing); sync schedule startup + every 6h; catalog API (`/api/v1/catalog/providers|/{slug}|/stats`); catalog browser UI (search, gateway filter, pagination, logos w/ fallback chain, Configure→wizard prefill for supported only); connection cards show family logos; admin Catalog section; migration c3d4e5f6a7b9 (head, check green).
+
+### Decisions
+Logo = stored remote URL (spec preference), frontend fallback chain (remote → icon, never broken image). Gateway mapping covers OUR 5 adapter families only; 221 providers catalog-only and cannot be configured (Configure disabled + wizard guards). Source precedence litellm > openrouter > modelsdev; operational metadata untouched by construction. No org-owned catalog rows (global scope).
+
+### Bugs found fixed
+source_model_id collision across providers (bare model ids) → full provider/model identity; autoflush=False blindness in counts → explicit flush; Valkey-bridge startup deadlock (lock held across sleep → first call_sync per process silently died + 600s-TTL leaked locks) → poll outside lock + single-starter + 5s window. Latter explains ALL previously "flaky" sync lock failures.
+
+### Verification
+Backend 561/561 (incl. 6 new catalog + 2 modelsdev tests); live 3-source sync done/0 errors; catalog E2E 6/6; providers/discovery/wizard/navigation green (navigation flaky timing, passes on retry, untouched path); tsc + eslint clean; screenshots verified.
+
+---
+
+## 2026-10-03 — Org sidebar + deleted-provider model filtering COMPLETE
+
+### Root cause
+`list_models` (UI endpoint) filtered AIModel.is_deleted but never joined Provider lifecycle, so soft-deleted/inactive providers' models stayed selectable; key-creation assignment already rejected them (split-brain listing vs enforcement). Public gateway already filtered correctly.
+
+### Backend
+list_models: inner-join Provider requiring live+active; get_model: provider lifecycle check. No schema change. Tests: test_provider_lifecycle.py (7: deletion/inactive/multi-provider/catalog-preservation/isolation/duplicates).
+
+### Frontend
+SidebarWorkspaces (Personal + all memberships + active highlight + empty state + New org via ?create=1) on /organizations* + /api-keys; chat keeps conversations; providers/settings/admin panels untouched. ModelPermissionsEditor grouped by canonical family with ProviderLogo + connection label; identity stays (provider_id, model.id). ?create=1 deep-link support.
+
+### Verification
+Backend 568/568; E2E org-sidebar-key-models 5/5; gateway/discovery/keys/caching suites green; tsc + eslint clean; screenshots verified; zero console errors. Org providers/keys don't exist in schema (Phase A) — isolation holds vacuously, documented as limitation.
+
+## 2026-10-03 — MCP servers reworked: agent-browser replaces Playwright, two skills installed
+
+### Requirement Completed
+Configure three MCP servers for the ToLLms project (sequential-thinking, agent-browser, graphify), replace the Playwright MCP server with agent-browser, and install the `find-skills` and `shadcn` agent skills.
+
+### Files Modified
+- `.opencode/opencode.json` — removed the `playwright` MCP server; added `agent-browser` (`["agent-browser", "mcp"]`, core tool profile, default timeouts); kept `graphify` and `sequential-thinking`; added `startup: 120000` to sequential-thinking because its npx cold start exceeded the 30s default.
+- `.agents/skills/find-skills/SKILL.md`, `.agents/skills/shadcn/SKILL.md`, `skills-lock.json` — created by `npx skills add … -a opencode -y` (project-level, copied not symlinked).
+
+### Files Created / Installed
+- Global npm package `agent-browser@0.38.2` (`/home/ond/.nvm/versions/node/v24.20.0/bin/agent-browser`).
+- Chrome for Testing 154.0.8037.92 at `~/.agent-browser/browsers/chrome-154.0.8037.92` (`agent-browser install`).
+
+### Decisions
+- Used the global `agent-browser` binary rather than `npx agent-browser` — it is already on the same PATH as `npx`, avoids per-start resolution cost.
+- Left the MCP tool profile at the default `core` (navigation, snapshot, interaction, waits, read, screenshots, eval, tabs) to keep MCP context small; `--tools all` is available if full CLI parity is needed.
+- Set no timeout override on agent-browser so V2 defaults apply (catalog 30s, execution 12h) — browser work regularly exceeds a 60s execution cap.
+- Skills installed to `.agents/skills/` (the CLI's OpenCode/universal target) rather than `.opencode/skills/`; OpenCode V2 discovers `.agents/skills` as a project compatibility source, so no extra `skills` config entry was needed.
+- Playwright removed from the MCP config only. The project's Playwright e2e suite (`frontend`, `@playwright/test@^1.63.0`, 32 specs) is untouched.
+
+### Verification
+- `opencode mcp list` → `agent-browser`, `graphify`, `sequential-thinking` all `connected`; no playwright entry remains in any OpenCode config.
+- Live browser smoke test through the MCP tools: `agent_browser_open("https://example.com")` → `browserLaunched: true, engine: chrome`, title `Example Domain`; `agent_browser_snapshot` returned refs (`e1` = "Learn more"); `agent_browser_close` → ok. No missing shared-library errors on Linux.
+- OpenCode discovered both skills (`find-skills`, `shadcn`) from `.agents/skills/` without a config entry.
+
+### Recommended Next Steps
+- Decide whether to commit `.agents/skills/` + `skills-lock.json` (shared, lockfile-reproducible) or add them to `.gitignore` — they are currently untracked and not ignored.
+- Run `agent-browser install --with-deps` if a future Chrome launch reports shared-library errors.
+
+---
+
+## 2026-10-03 — Multi-user org invitation & permission validation (agent-browser, PASS with documented BLOCKED scope)
+
+### Requirement
+Full org lifecycle across 7 identities via real browser UI: root signup → org → 4 permission sets → 6 invites (3 existing + 3 new) → ignore/reject/accept → permission matrix → resend/security negatives → 2 removals → post-removal verification → cross-org isolation.
+
+### Implementation Summary
+Validation-only mission; no application code changed. 3 parallel scout subagents (backend/frontend/email-infra) established: Phase A implemented; Phase B (org keys/providers/usage ledger) and public invite landing absent. 7 isolated agent-browser sessions drove every lifecycle step through the UI. Email-stand-ins (documented): Gmail sandbox receipt logged server-side; verification/invite secrets minted via app's own `issue_verification`/DB reads (read-only), all state transitions in-browser.
+
+### Files Changed
+None (validation only; no defects requiring fixes).
+
+### Testing Performed
+- Root UI signup → verify → org "ToLLma E2E Organization 1791046993" created, root membership active.
+- 4 sets via UI builder: Member Manager (Members.Invite/Approve/Read), Provider Manager (Providers.Create/Read), Analytics Viewer (Analytics.ViewUsage/ViewCost), Key Manager (Keys.Create/Read) — DB-verified codes.
+- 6 invites with recorded set mapping; all pending + 7d TTL; 6× "email sent" in backend logs (sandboxed).
+- Existing: ignore (pending, inbox+notification, org 404s with zero leakage), reject (rejected, 0 memberships), accept (ACTIVE + Analytics Viewer; members/invitations sections return empty, audit/settings denied with messages).
+- New users: UI signup → verify → inbox accept (ACTIVE + 2 sets; sees 3 members, Invite allowed, no suspend/remove/assign buttons, settings/audit denied) / reject (rejected, account intact, no membership) / ignore (no account row, invite pending).
+- Security: wrong-account token → "Invitation not found"; accepted-token reuse → "not found", membership stays 1; invalid token → "not found"; duplicate invite → inline "pending invitation already exists", still 1 row; resend → token rotated + fresh expiry, still 1 row.
+- Removals (ex-accept, new-accept) via UI confirm dialog: memberships removed+soft-deleted; users lose org list + dashboard (404, no data); personal login/keys/chat intact; invitation history + audit trail (org.created, 4× set.created, 6× invited, 2× rejected, 2× accepted, resend, 2× removed) preserved.
+- Cross-org: second org created; root sees both, removed users see neither.
+- Backend logs: no 5xx/tracebacks from test flows (one pre-run SMTP fail + one expected 422 on deliberately unstored verify probe).
+- BLOCKED by architecture (not defects): org-specific keys/spend generation/revocation/preservation (no org_id on keys/providers, no usage_events table); public new-user invite landing (authenticated-only /organizations/invites?token=); 7-day expiry browser test (no time travel); Analytics Viewer positive UI check (Phase-D placeholder); Google OAuth (unconfigured in env).
+
+### Architecture Notes
+404-oracle authz confirmed end-to-end (require_active_user → _member_org → _require_perm); escalation invariant untouched (root-only grants here); single-step invite→ACTIVE (no PendingApproval state — matches code, deviates from 04-state-machines doc); invitation tokens never in org listings (mine-only/DB); resend invalidates old token.
+
+## 2026-10-03 — ponytail plugin fixed on OpenCode V2 (V1-only build → dual-API 4.10.3)
+
+### Requirement Completed
+Make the ponytail plugin actually load and work under OpenCode V2. The entry added in the V2 config migration was inert because the cached build was V1-only.
+
+### Files Modified
+- `.opencode/opencode.json` — pinned `"@dietrichgebert/ponytail@4.10.3"` instead of the bare package name, so resolution cannot fall back to a cached V1-only build.
+
+### Root Cause
+Upstream published V2 support in `4.10.1`–`4.10.3` (2026-10-02/03). The machine had `4.10.0` cached at `~/.cache/opencode/npm/@dietrichgebert/ponytail@latest/`, whose default export is the V1 function form (`async ({ client }) => ({ ...V1 hooks })`). V2 rejects that shape:
+`Plugin must export a default definition with an id and an effect or setup function.`
+An earlier check against `4.10.0` (then the newest release) led to the wrong conclusion that the package had no V2 build — `4.10.3` does.
+
+### Decisions
+- Pinned the exact version rather than relying on `latest`: OpenCode's plugin update check is currently broken on this machine (`failed to check plugin update … ERR_INVALID_PROTOCOL: Protocol "https:" not supported. Expected "http:"`), so a floating spec can strand a stale cache entry. The stale `@latest` cache directory is now inert because the config spec no longer matches it.
+- Did not vendor or hand-port the plugin — the dual-API build (`id` + `setup(ctx)` for V2, `server()` for V1) is upstream's supported shape and is what V2 expects.
+
+### Verification
+- Log: `18:15:48 loading plugin id=@dietrichgebert/ponytail@4.10.3 entrypoint=…/ponytail@4.10.3/…/ponytail.mjs` with **no** `failed to load plugin` line after it (the previous failure at `16:40:19` was the cached 4.10.0).
+- Loaded build inspected: exports `id: 'ponytail'`, `async setup(ctx)` (V2) and `async server({ client })` (V1); V2 path wires `ctx.skill.transform`, `ctx.command.transform`, `ctx.session.prompt`, `ctx.session.hook('context', …)`.
+- OpenCode advertised all six ponytail skills (`ponytail`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, `ponytail-review`), which only happens if `setup()` ran and `ctx.skill.transform` registered them.
+- `~/.config/opencode/.ponytail-active` = `full`, so the `context` hook's system-prompt injection is not silenced (only `off` silences it).
+- No ERROR/WARN entries mentioning the plugin after the successful load.
+
+### Recommended Next Steps
+- Revisit the exact-version pin when the plugin update check is fixed upstream (then the bare spec becomes safe again).
+- `/ponytail lite|full|ultra` persists the level; the mode applies from the next message.
+
+## 2026-10-04 — Added context7 + postgres MCPs, three skills
+
+### Requirement Completed
+Installed context7 (remote docs) and postgres (local read-only DB) MCP servers; installed skills vercel-composition-patterns, frontend-design (anthropics), agent-browser skill.
+
+### Files Modified
+- `.opencode/opencode.json` — added `mcp.servers.context7` (remote `https://mcp.context7.com/mcp`, V2 defaults) and `mcp.servers.postgres` (local `npx -y @modelcontextprotocol/server-postgres postgresql://postgres:postgres@localhost:5432/tollms`, catalog/execution 60s). Dev-only credentials, already in repo `.env`.
+
+### Files Created
+- `.agents/skills/vercel-composition-patterns/SKILL.md` (`npx skills add vercel-labs/agent-skills --skill vercel-composition-patterns -a opencode -y`)
+- `.agents/skills/frontend-design/SKILL.md` (`npx skills add anthropics/skills --skill frontend-design -a opencode -y`)
+- `.agents/skills/agent-browser/SKILL.md` (`npx skills add vercel-labs/agent-browser --skill agent-browser -a opencode -y`)
+
+### Decisions
+- Postgres connection string hardcodes localhost dev credentials (match repo `.env`) instead of `{env:DATABASE_URL}` so it works with zero extra setup; server package is read-only by design.
+- No timeout override on context7/remote (V2 defaults: catalog 30s, execution 12h); local postgres keeps the 60s catalog/execution pattern used by the other local servers.
+
+### Verification
+- `opencode mcp list` → all 5 connected: agent-browser, context7, graphify, postgres, sequential-thinking.
+- Live `postgres.query("SELECT count(*) … information_schema.tables")` → 33 public tables.
+- Live `context7 resolve-library-id("Next.js")` → `/vercel/next.js`.
+- All three skills advertised by OpenCode with descriptions; SKILL.md frontmatter present.
+- Skills inventory now: agent-browser, find-skills, frontend-design, shadcn, vercel-composition-patterns.
+
+### Recommended Next Steps
+- Decide whether to commit `.agents/skills/` + `skills-lock.json` or gitignore them (still open from 2026-10-03 entry).
+
+## 2026-10-04 — Phase-B org backend (Backend Agent)
+
+### Requirement
+Implement Phase-B org backend: org keys, personal isolation, revocation hooks, org providers, budgets, attribution, invite preview, analytics, invitation enrichment, pytest suite.
+
+### Implementation Summary
+- Org keys (`api/orgs`): POST/GET/DELETE `/{org_id}/keys` with Keys.Create/Read/Revoke gates (404 oracle), assignee must be ACTIVE member, model-scope visibility escalation check, cap check (allocated+new <= max_spend else 422), issued_by=caller/user_id=assignee/org_id=org, raw-once + key.issued/key.revoked events + audit.
+- Personal isolation: all `api/keys/service.py` reads filter `org_id IS NULL`; shared `prepare_key_parts`/`persist_key` (no duplication); personal scopes can never see org providers/models (scope decided by `org_id` alone).
+- Gateway backstop: `KeyContext.org_id` (+cache); `authenticate` denies org keys whose assignee lacks ACTIVE membership (cached contexts re-checked live).
+- Revocation hooks in remove/suspend/leave: all live assignee org keys disabled+soft-deleted+tombstoned; resume/approve never restore.
+- Org providers: POST/GET/PATCH/DELETE `/{org_id}/providers` (Providers.Create/Read/Update/Delete); V1 GET list/get show personal + ACTIVE-org providers (masked only — credentials_encrypted never serialized for anyone); V1 update/delete on org rows require same-org perm; name uniqueness per scope.
+- Models visibility: personal-owned or org-in-ACTIVE-orgs; lifecycle join preserved.
+- Budgets: GET (Budgets.Read/Update or Analytics.ViewUsage), PATCH (Budgets.Update, cap >= allocated else 422, budget.cap_changed audit+event); allocated = SUM live-key policy budgets.
+- Attribution: `api_request_logs.org_id` = key org; `request_logs.org_id` = provider org iff caller ACTIVE member else NULL, api_key_id NULL in-app (GenerationSpec.org_id, both spawn sites).
+- Public preview `GET /invitations/preview/{token}` (no auth, auth:verify rate limit), identical 404s; `_read_invitation` enriched with inviter email/name + set name/codes (token behavior unchanged).
+- Analytics overview from both log tables WHERE org_id (ViewUsage gate, ViewCost-gated costs, removed_badge, metadata only, team level OUT).
+
+### Files Changed
+- Created `backend/tests/test_org_phase_b.py` (11 tests). Modified: `api/orgs/{router,service,schemas}.py`, `api/keys/service.py`, `api/providers/service.py`, `api/models/service.py`, `api/public_gateway/service.py`, `api/gateway/service.py`, `services/api_keys/keys.py`, `services/gateway/{model_resolution,api_logs}.py`, `services/generation.py`, `tests/public_gateway/test_translation.py` (3 white-box assertions updated for scoped cache key + org_ids param).
+
+### Testing Performed
+- New: 11/11 pass. Required: `test_org_phase_b + tests/keys + test_discovery` = 35 pass. Full backend suite: 581 pass. `alembic check`: no operations. No ruff/lint tooling configured in backend container (skipped).
+
+### Architecture Notes
+- Layering kept: routers endpoint-only; orgs->keys/providers composition is api->api; providers->orgs perm check is function-lazy import (no load cycle); engines use models-only Membership queries, never api imports.
+- Found+fixed during work: `or_(*personal, ...)` scope-splitting bug (would have leaked cross-owner providers) in providers list, model resolution, public listing.
+
+---
+
+## 2026-10-04 — Org gap-closure run COMPLETE (Phase-B keys/ledger/landing/analytics + re-validation)
+
+### Requirement
+Reconcile 4 validation gaps (org keys/ledger, invite landing, PendingApproval, analytics), implement missing-required functionality per FINAL v1 architecture, re-validate via agent-browser.
+
+### Reconciliation decisions
+- Org keys/providers/ledger/budgets/analytics = missing-required (D) → implemented as Phase B.
+- Public invite landing = task-commissioned (D) → implemented (token-capability preview + /invite/[token] + auth ?invite/?email plumbing).
+- PendingApproval for INVITES = invitation-IS-approval (permissioned inviter + escalation); request-join flow remains the approval path → no behavior churn, deviation logged.
+- usage_events realized as org-attributed rows in existing request_logs + api_request_logs (no duplicate table); usage_adjustments deferred (no acceptance need); team-level analytics OUT (teams UI placeholder).
+
+### Implementation Summary
+- DB (migration d4e5f6a7b8c0): api_keys.org_id/issued_by, providers.org_id (scope-split uniques), request_logs.org_id/api_key_id, api_request_logs.org_id, organizations.max_spend. alembic check green.
+- Backend: org key issuance (Keys.Create, budget allocation vs cap, model-scope escalation) / list (Keys.Read) / revoke (Keys.Revoke); personal isolation (org_id IS NULL); gateway auth resolves org keys + ACTIVE-membership backstop; remove/suspend revoke assignee org keys; org providers CRUD + member-visible models; budgets GET/PATCH (cap≥allocated); server-derived attribution both paths; public preview (rate-limited, 404-oracle); analytics overview (ViewUsage + ViewCost-gated cost). 581/581 pytest incl. 11 new phase-B tests.
+- Frontend: Keys/Providers/Analytics+Budget sections, public landing, enriched authenticated landing, auth plumbing, sidebar enabled. tsc+eslint+vitest(126) clean.
+- Orchestrator integration fixes: org-key model_permissions object coercion (type+payload), key budget label from policy, analytics totals nesting + sub-cent money format, analytics removed_badge field.
+
+### Files Changed
+~25 backend + ~12 frontend files (uncommitted per standing rule); migration d4e5f6a7b8c0_org_phase_b.py; tests/test_org_phase_b.py.
+
+### Testing Performed
+- agent-browser full re-run (run 1791053058, 8 sessions): root/org/4 sets/7 invites; existing ignore/reject/accept; new UI signup/verify/accept/reject; PUBLIC landing (details → signup w/ locked email → verify → accept → ACTIVE); org CUSTOM provider to local echo stub; model discover+register ($2.50/$10); 2 org keys ($5 each, raw-once); 5 gateway calls (3+2) → ledger 5/750/$0.0037 org-attributed; analytics exact + member-denied; unauthorized key-create denied; removals → keys revoked (gateway 401), history preserved w/ removed badges, allocation $0, personal intact; budget cap $100 set (pools $100/$0/$100); deleted-provider regression (model vanishes); cross-session isolation throughout.
+- Backend 581/581; tsc/eslint clean; backend logs free of run errors.
+
+### Architecture Notes
+- Real bug fixed by backend agent: or_/and_ scope-split leak in provider visibility (3 places).
+- Pre-existing drift fixed: uq_providers_name_live metadata/DB mismatch.
+- V1 chat has no virtual-key concept (personal or org) — org-key consumption path = public gateway; §30 single-picker remains Phase-D future work.
+- In-app chat org attribution derives from provider scope + ACTIVE membership.
+
+---
+
+## 2026-10-04 — Adversarial security/isolation/data-integrity validation (PASS with 3 fixed defects)
+
+### Requirement
+Adversarial validation of Phase-B org scope: isolation, IDOR, forgery, escalation, key scope, revoked-key cache, preservation, attribution tampering, budgets (+concurrency), provider isolation/deletion, invite token security, removal re-auth, multi-org, root protection, escalation, analytics isolation, conversation ownership, stale state, error consistency, DB integrity, migration safety. Fix real defects + regression tests.
+
+### Implementation Summary (defects fixed)
+1. Org spend cap was creation-time only (auditor-verified): added shared atomic Valkey counter `apilim:{org}:org-spend`, reservation in check_request (`org_budget` 403), reconcile in record_usage, overbudget flag; wired via _Prepared.org_cap (single live DB read). New tests/public_gateway/test_org_spend_cap.py (7).
+2. Org-key issuance allowed cross-org model scope (caller-wide visibility): added require_org_id to prepare_key_parts/_validated_model_permissions (422 "outside this organization"); 2 new tests in test_org_phase_b.py (cross-org reject, personal-sneak reject) + preview expiry/consumed 404 test.
+3. Analytics counted failed/denied rows (phantom model/provider rows, inflated REQUESTS): all 10 ledger queries now status='success'; +1 regression test.
+4. Sub-cent org caps rounded to $0.00 by Numeric(14,2): migration e5f6a7b8c9d1 widens max_spend to (14,6); frontend money() sub-cent display in analytics + budget card; removed_badge type fix.
+
+### Files Changed
+backend/src/tollms/services/gateway/limits.py, api/public_gateway/service.py, api/keys/service.py, api/orgs/service.py, models/organization.py, alembic e5f6a7b8c9d1, tests (spend-cap 7, phase-b +4); frontend OrgAnalyticsSection/OrgBudgetCard/OrgKeysSection/types/useOrgs. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser adversarial run (stamp 1791081398, 8 sessions, Org A/B, 5 users): IDOR 404-oracle ×7+4; forgery (422 cap, 422 model, smuggled fields ignored, outsider 404); escalation denials (revoke/budget/sets/assign/invite); scope matrix (B→B 200, A→B 404, personal→org 404); attribution tamper defeated (server-derived); cap E2E (pre-call org_budget 403 + post-call flag 403); 25-burst overshoot analyzed (estimate semantics, V1-inherited); removal → 3× immediate 401, live-session 404s, re-login same, personal key 200; history 38 rows + audit + badges preserved; suspend→deny→resume→restore; member-c A-removal → B intact; root self-remove 409; preview oracle (200 valid / identical 404 random+modified+consumed); invite integrity 404s; provider deletion (model gone, logs kept); catalog clean; analytics isolation (cost restricted, pools denied, B 404s, B-only-B); stale-state zero leaks; conversation ownership structural.
+- Backend 592/592; tsc/eslint clean; alembic single head e5f6a7b8c9d1, check green. Known caveats: estimate-vs-actual burst overshoot (V1 semantics, flag backstop); in-app chat unbudgeted (V1 parity); full-pytest cache flush (`tollma:*`) disrupts concurrent live sessions (dev-only overlap; tests use separate DB).
+
+### Architecture Notes
+- 404-oracle + escalation invariant hold on every org route (auditor table). Tombstone(90s) > context TTL(30s); cached gateway contexts re-check membership live (no revoked-key window). Failed gateway attempts log with key-org attribution (audit value, excluded from analytics). Lifetime org counter vs allocation model documented. Latent (unreachable) CASCADE notes: api_keys.user_id, model-permission rows, messages.conversation_id — no app hard-delete path triggers them; account-purge org-key audit gap noted as future hardening.
+
+---
+
+## 2026-10-04 — New-user invite flow rebuilt (public stepped page + atomic accept) + validated
+
+### Requirement
+New invited users hit login-first; required: public invitation → review → profile setup → atomic accept (account+membership), public reject without account, existing-user flow unchanged.
+
+### Root cause
+/invite was already public (BARE_PATHS/proxy); login-first was flow design (accept required an account; page shunted to signup→verify→login→accept). Fixed with atomic endpoints + stepped page, not redirects.
+
+### Implementation Summary
+- Backend: POST .../by-token/{token}/accept-new (public, rate-limited): pending/kind/expiry/org gates + identical 404 oracle; email locked to invite (mismatch 422); existing account → 409 INVITE_ACCOUNT_EXISTS; reuses signup password policy; email_verified=True (token proves mailbox control); single-commit user+membership+sets+invite+audit; session via login path post-commit (degraded flag if Valkey fails). POST .../reject-new: pending-only reject, no user/membership, inviter notified. Google assessed: OAuth round-trip can't carry invite (fixed callback, stateless record) → manual only, documented.
+- Frontend: /invite/[token] stepped (Review with sets/codes/expiry → Profile with locked email + pw policy → Done → /organizations/{id}); themed ConfirmDialog reject; 409 → login link; generic not-found preserved; authenticated flows untouched.
+- Tests: tests/test_org_invite_new_user.py (9: happy, oracle, 409, mismatch, tampering-shape, reject, reuse, expiry/consumed). Flake incident: file flaked under MY concurrent load (parallel suites+browser); 10+ quiet greens + solo full suite 601/601. Rule: never run concurrent pytest against shared compose Valkey/test-DB.
+
+### Files Changed
+backend/api/orgs/{router,service,schemas}.py; backend/tests/test_org_invite_new_user.py; frontend invite page + services/orgs.ts + hooks/useOrgs.ts. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (stamp 1791095262): root→org→Greeter set→2 invites; fresh session link → NO login, stepped page (org/inviter/email/sets/codes/expiry); profile+accept → /organizations/{id}; DB: verified user, ACTIVE+Greeter, invite accepted; reject → rejected + zero users; invalid/reuse → identical generic page; duplicate invite guard; member permission proof.
+- Backend 601/601 solo; tsc/eslint/vitest (agents) clean; backend logs clean.
+
+### Architecture Notes
+- Oracle tension resolved: arbitrary tokens → generic not-found; in-session own accept/reject → contextual states.
+- No Playwright files; no auth regressions (/login/signup/verify/Google/logout untouched).
+
+---
+
+## 2026-10-04 — Invite email pointed at login-gated route; fixed + full E2E re-validation
+
+### Requirement
+Mission reported new-user invite flow still broken: invite link → LOGIN PAGE.
+
+### Root cause
+`_invite_link()` (backend/src/tollms/api/orgs/service.py) built `{FRONTEND_URL}/organizations/invites?token=…` — an authenticated route absent from proxy PUBLIC_PATHS / Shell BARE_PATHS. Unauthenticated open → proxy 302 → /login. The public stepped page `/invite/[token]` existed and was correctly guarded-open, but nothing linked to it. Found by 3 parallel explore subagents (email-URL, auth-guard, backend-endpoint audits); guards verified innocent, email URL guilty.
+
+### Implementation Summary
+- `_invite_link` → `{FRONTEND_URL}/invite/{token}` (one line). New users land on public review→profile→atomic-accept; existing users use the page's "I have an account" → /login?invite= → AuthCard sessionStorage binding → /organizations/invites?token= (unchanged authed flow).
+- `preview_invitation` gate: added missing `inv.kind == INVITE` check (accept/reject-new already had it; join-request tokens were publicly previewable).
+- `frontend/src/app/not-found.tsx` (new): themed 404 via EmptyState + Dashboard/Login links (was absent).
+- Stale comment on /organizations/invites corrected (post-auth landing, not email target).
+- New regression test `test_invite_email_links_directly_to_public_page` (outbox asserts /invite/<token>, no login-gated path).
+
+### Files Changed
+backend/src/tollms/api/orgs/service.py; backend/tests/test_org_invite_new_user.py (10 tests); frontend/src/app/not-found.tsx (new); frontend/src/app/organizations/invites/page.tsx (comment). Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser E2E (stamp 1791098835, 6 sessions, UI-driven invites): fresh session → /invite/<real-token> → NO login, review (org/inviter/email/sets/codes/expiry) → Continue → locked-email profile → Accept → org dashboard; DB: verified user, ACTIVE+Greeter, invite accepted. Reject: themed confirm → "Invitation rejected", invite=rejected, 0 users. Existing user: public page → login → invites page (org+Greeter shown) → Accept → joined (ACTIVE/accepted). Invalid + consumed-reuse → identical generic not-found. Refresh re-resolves. Authed unknown route → custom 404; unauthenticated unknown → login (guard intact). No Playwright files; no native alerts.
+- Backend: test_org_invite_new_user 10/10, test_org_phase_b 15/15; tsc + eslint clean.
+
+### Architecture Notes
+- Oracle preserved: arbitrary tokens → generic page; in-session own accept/reject → contextual states.
+- Google-on-invite still omitted (prior documented limitation); manual flow fully functional.
+
+---
+
+## 2026-10-04 — Invite page unscrollable (body overflow lock); scoped fix + verified
+
+### Requirement
+User reported unable to scroll `/invite/<token>`; Accept/Reject below the fold unreachable on long invites.
+
+### Root cause
+`frontend/src/app/globals.css` sets `body { overflow: hidden }` (AppShell provides its own inner scroll areas). Bare `/invite` page rendered `min-h-screen` content directly in body with no scrollable ancestor — page could never scroll.
+
+### Implementation Summary
+One-line scoped fix: invite page root `min-h-screen` → `h-screen overflow-y-auto` (own scroll container; global lock untouched so AppShell unaffected). AuthCard/login left as-is (out of scope).
+
+### Files Changed
+frontend/src/app/invite/[token]/page.tsx (one class). Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (fresh session, real invite): container scrollable (scrollHeight 906 > client 577), scrollTo bottom (scrollTop 329), filled profile, clicked Accept after scrolling → landed in org. tsc + eslint clean.
+
+---
+
+## 2026-10-04 — Full models.dev catalog configurable + org provider management
+
+### Requirement
+Every models.dev provider representable/configurable; org providers with ownership/credentials/models/auth/lifecycle/isolation.
+
+### Investigation (3 parallel subagents)
+- Catalog (226 live providers) already synced to provider_catalog with api_base_url/env_vars/npm; only 5 slugs gateway-mapped; no catalog→connection flow; wizard raw-Type hand-config; modelsdev raw truncated to 3 keys.
+- Org scoping correct except: legacy NULL-owner rows visible via models API, Validate/RefreshModels/RotateCredentials perms unenforced, conversation refs unvalidated, no provider.updated audit.
+
+### Implementation Summary
+- Backend: POST /catalog/providers/{slug}/connection-template (auth, secret-free credential_fields from env_vars); catalog_slug on ProviderCreate (stamp + base_url prefill, caller-creds-win); NPM_GATEWAY_FAMILIES (openai-compatible→CUSTOM, anthropic-sdk→ANTHROPIC_MESSAGES); raw=dict(info); NULL-arm removals; org perm gates; conversation validation; provider.updated audit. No migration, no new adapters. tests/test_catalog_template.py (14).
+- Frontend: ConnectionTemplateFields renderer (all 226, no per-provider switch, client fallback if endpoint 404s); catalog cards (host/env chips/doc/badge/Via Custom); wizard catalog prefill + env→adapter key translation; OrgProvidersSection full lifecycle (browse-create/validate/refresh/edit/disable/delete).
+- Live resync: 226 = 185 CUSTOM + 8 ANTHROPIC + 4 native + 29 catalog-only (honestly badge-gated, config kept).
+
+### Files Changed
+backend api/catalog/*, api/providers/*, api/orgs/service.py, services/model_repository/{sources,sync}.py, api/{models,keys,conversations}/service.py, tests/test_catalog_template.py; frontend catalog wizard/org-provider components + services/hooks/types. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (no Playwright): catalog 226/197 supported in UI; template Configure (env field + prefilled base URL); fake key → clean 401 error; Org A create/edit/disable/delete via UI; Org B same-slug independent row + creds; cross-org API 404, UI zero-leak; Org B survives Org A delete.
+- Backend 616/616 solo; alembic check clean; tsc/eslint/vitest (130) clean.
+
+### Architecture Notes
+- Catalog-vs-gateway split preserved: 29 native-SDK providers configurable-but-not-executable (badge + tooltip), one-line mapping to promote when verified.
+- Pre-existing generic ErrorState for non-member org access (no leak); org-page 404 copy left as future polish.
+
+---
+
+## 2026-10-04 — Team management implemented (backend + UI + full validation)
+
+### Requirement
+Complete team management in orgs: CRUD, members, sets, effective-union, escalation prevention, isolation, UI, audit, browser validation.
+
+### Root Cause Analysis
+Teams were entirely absent (no tables/API/UI/tests); only dead Teams.* codes existed. effective_permissions() was direct-only single-site.
+
+### Implementation Summary
+- Backend: migration f6a7b8c9d1e2 (teams + team_memberships + team_permission_sets, partial live UQs, RESTRICT, app-side cross-org 404-oracle); ORM + exports; 8 endpoints (CRUD/members/sets) with Teams.* gates; effective union (direct ∪ team-via-active, root full, non-active empty, no cache); _check_grantable on all team grants; system-set 422; root-detach 409; remove/leave row drops, suspend yields empty; delete_set team-check; audit team.created/updated/deleted/member_added/member_removed/sets_assigned. tests/test_teams.py (17).
+- Frontend: OrgTeamsSection (list/create/detail: overview/members/sets/danger zone), team hooks/services/types, placeholder replaced, sidebar phase flag removed; perm-gating via page can() (UX-only), labels from server catalog; honest 404-denied/empty/error states; themed confirms, toasts, no native alerts.
+
+### Files Changed
+backend models/organization.py + __init__.py, alembic f6a7b8c9d1e2, api/orgs/{router,service,schemas}.py, tests/test_teams.py; frontend OrgTeamsSection + page wiring + sidebar + orgs service/hooks/types. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser multi-user (root/mgr/mem/outsider, no Playwright): create/edit/rename/set-swap/add/remove/delete all via UI with toasts+confirms; propagation allowed→denied end-to-end (API 200→404 + UI); mem w/o Teams.Read gated with honest copy while analytics works; mgr escalation denied + legitimate create allowed; outsider zero data; delete preserves users.
+- Backend 633/633 solo; alembic single head f6a7b8c9d1e2, check clean; tsc/eslint clean; vitest 130/130.
+
+### Architecture Notes
+- Team rows key off membership_id (leave/remove cascades, suspend keeps rows but yields empty). No permission cache (none existed; not added). Analytics team-slice stays org-only per design deferral. Non-member org page generic ErrorState is pre-existing.
+
+---
+
+## 2026-10-15 — Prompt caching audit + fixes (P0 double-billing, Bedrock, ledger parity)
+
+### Requirement
+Verify/fix prompt caching per provider: request construction, usage parsing, stable prefixes, cache-aware costing, UI/API evidence, isolation.
+
+### Root Causes Found (3 parallel audits)
+1. P0: calculate() billed cached tokens twice (full prompt @ input + cache lines); savings displays assumed the correct world. Tests codified the bug.
+2. Bedrock usage dropped cacheRead/WriteInputTokens (directive sent, savings invisible); cachePoint system-only.
+3. request_logs dropped cache/reasoning tokens (messages had them); public usage envelopes omitted cache fields.
+
+### Implementation Summary
+- costing.py: input bills prompt-read-write (mirrors reasoning split) + docstring; updated test_intelligence (2) + test_cost_estimator expectations.
+- base.py usage_extras: Bedrock camelCase keys; bedrock.py yields them; caching.py bedrock_messages() + wiring.
+- Migration a8b9c0d1e2f3 (request_logs cache_read/write/reasoning_tokens) + 3 writers + parity test.
+- Public envelopes: native cache fields (OpenAI/Responses/Anthropic) when nonzero + 2 SDK tests; test_caching +4 (Bedrock keys, bedrock_messages, net-input math, ledger parity).
+- History verified stable (full, no request IDs upstream); external API stateless by design; retry double-bill + rate-count non-refund documented, not changed.
+
+### Files Changed
+backend services/gateway/{costing,base(usage),caching,bedrock}, services/{generation,request_logs}, api/{gateway/service,public_gateway/router}, models/request_log, alembic a8b9c0d1e2f3, tests test_{caching,cost_estimator,intelligence} + public_gateway/test_sdk_compat. Uncommitted per standing rule.
+
+### Testing Performed
+- Backend 671/671 solo; alembic single head, check clean; tsc/eslint/vitest (frontend untouched) n/a.
+- agent-browser + stub transport (real pipeline): turn-2 prefix hit → cache_read=1000 persisted; $0.0026→$0.0011 exact; UI badge + Cached Tokens + Savings; external API usage + ledger at corrected cost.
+- Live provider cache hits NOT VERIFIED (only validated key belongs to user; untouched). test_generations progress test flaked once under full-suite load, passes solo (pre-existing timing sensitivity).
+
+### Architecture Notes
+- No ToLLma-side token cache exists or was added: "caching" = provider-native directives/keys + usage/cost accounting.
+- CUSTOM/Gemini/Vertex explicit caching deliberately absent (documented); Bedrock non-Claude nothing.
+
+---
+
+## 2026-10-15 — Prompt-only image sends + multi-preview badge + loader refresh
+
+### Requirement
+Quality changes never applied (fixed low/1024x1024 on every call); user directive: image models get only the user prompt, no invented params; multi-image generating shows one preview + count badge; better loading effect.
+
+### Root Cause
+IMAGE_DEFAULT_OPTIONS size/quality sent on every call; 3-template aspect parser (3:1 → silent 1024 fallback); quality prose ignored as param. Fingerprint: constant $0.0059/Low badges.
+
+### Implementation Summary
+- Backend: generate_image/_edit_image prompt-only (size/quality only when explicitly passed; public API passthrough kept; fixed public `image`→`image_bytes` kwarg bug); _parse_image_intent count-only (size table deleted); metadata drops invented size/quality; estimate on default tier; __init__ None-check for options; regen prompt-only; per-image "(i of n)" progress deltas for count>1.
+- Frontend: MessageView parses total + label ("Generating image 2 of 3…"); MediaGenerationSkeleton total prop (×N badge, N-images caption, dual shimmer via CSS classes, animations-off respected).
+- Tests: continuity rewritten to prompt-only contract (exact-body assert); test_media + validation_matrix stale assertions updated.
+
+### Files Changed
+backend api/gateway/service.py, services/gateway/adapters/openai.py, api/public_gateway/service.py; tests test_media_continuity/test_media/test_validation_matrix; frontend MessageView, MediaGenerationSkeleton, globals.css. Uncommitted per standing rule.
+
+### Testing Performed
+- Backend full solo 664/666 → fixed 2 stale assertions → affected files 38/38 green. No src changes after full run, so no re-run needed. alembic clean (no migration).
+- agent-browser + stub: 3-variation run sent 3 prompt-only generations; mid-flight DOM {skeletons:1, badge:"×3", label:"Generating image 2 of 3…"}; 3 downloads completed. tsc/eslint/vitest 130 green.
+
+### Architecture Notes
+- Video path untouched (seconds/size still sent — scoped to image models per directive). Variations driven app-side loop, never provider `n`.
+
+## 2026-10-15 — Added git + docker MCPs, 9 skills, 6 custom agents
+
+### Requirement Completed
+Installed MCP servers git (`uvx mcp-server-git`) and docker (official Docker MCP Catalog route); installed 9 skills; created 6 project subagents; verified graphify graph is current.
+
+### Files Modified
+- `.opencode/opencode.json` — added `mcp.servers.git` (`["uvx","mcp-server-git","--repository","."]`, V2 defaults) and `mcp.servers.docker` (`["npx","-y","mcp-server-docker"]`, catalog/execution 60s).
+
+### Files Created
+- `.opencode/agents/backend.md`, `frontend.md`, `reviewer.md`, `tester.md`, `db.md`, `debugger.md` — all `mode: subagent` with scoped permissions (backend/frontend edit-scoped to their trees; reviewer/db/debugger edit-denied; tester edits tests only).
+- Skills (via `npx skills add … -a opencode -y`): `vercel-react-best-practices`, `web-design-guidelines`, `next-cache-components-adoption`, `next-cache-components-optimizer`, `ui-ux-pro-max`, `webapp-testing`, `ai-sdk`, `fastapi`, `fba`. Inventory now 14 skills.
+
+### Decisions
+- Docker MCP: `github.com/docker/mcp-servers` 404s — the real official source is `github.com/docker/mcp-registry`, consumed via the `docker mcp gateway` (installed here, v2.0.1). But the gateway exposes 0 tools in this headless-engine environment (empty embedded catalog, no Docker Desktop), verified by direct stdio handshake. Wired community `mcp-server-docker@1.0.0` instead after verifying it over stdio (`initialize` ok, exposes `run_command`). Raw `shell` + docker CLI remains the primary Docker interface (ps/logs/compose); the MCP is a convenience handle. Note: its `run_command` defaults to service `laravel_app` — always pass `service` explicitly.
+- Next.js skills moved: `vercel-labs/next-skills` is retired; skills now live in `vercel/next.js`. Installed both successors of `next-cache-components` (`-adoption` + `-optimizer`); `next-best-practices` no longer exists as a skill (superseded by Next.js bundled docs + the auto-generated AGENTS.md block already in `frontend/`).
+- `db.md` references only the installed `postgres` MCP, not the uninstalled `supabase-postgres-best-practices` skill.
+
+### Verification
+- `opencode mcp list` → all 7 connected: agent-browser, context7, docker, git, graphify, postgres, sequential-thinking.
+- Git MCP: 12 tools live in catalog (git_status et al). Docker MCP: stdio smoke test passed pre-wire.
+- All 9 new skills advertised by OpenCode with descriptions.
+- Graphify MCP `graph_stats` → 8812 nodes, 25533 edges, 372 communities (92% EXTRACTED); `graph.json` rebuilt by the watch service during this session.
+- `opencode.json` parses; no new config warnings.
+
+### Recommended Next Steps
+- Still open: commit vs gitignore `.agents/skills/` + `skills-lock.json`.
+- Consider `supabase-postgres-best-practices` skill to pair with the `db` agent, and obra `systematic-debugging` to pair with `debugger`.
+
+---
+
+## 2026-10-15 — Shared sidebar collapse/reveal system
+
+### Requirement
+Collapse stranded users: reveal control lived only in chat page (desktop) / PageHeader (mobile-only), so collapsing on org/providers/etc. left no way back.
+
+### Root Cause
+Single shared Sidebar (width→0 slabs away, nothing remains) + single persisted leftSidebarOpen store, but reveal openers were page-specific: ChatHeader "Show sidebar" (all viewports, chat only), providers page two more ("Show Providers", detail icon), PageHeader menu md:hidden. Desktop non-chat collapse = dead end.
+
+### Implementation Summary
+- New shared SidebarReveal (rail w-10, PanelLeftOpen mirroring collapse icon, "Expand sidebar" label + aria-expanded=false + Show-sidebar tooltip side=right), rendered by AppShell when closed (in-flow: never clipped, survives routes; hidden on mobile via md:flex).
+- ChatHeader + providers duplicates scoped md:hidden (mobile drawer openers preserved; desktop uses rail). PageHeader untouched (already mobile-only shared).
+- No state changes (single persisted store preserved). No backend changes.
+- Updated chat-ux collapse spec to the shared sidebar-reveal testid.
+
+### Files Changed
+frontend components/Sidebar/SidebarReveal.tsx (new), ui/AppShell.tsx, app/components/ChatHeader.tsx, app/providers/page.tsx, tests/chat-ux.spec.ts. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser (2 sessions): collapse→rail+reveal (sidebar 1px), reveal→260px; rail persists across /providers /organizations /settings /api-keys /analytics + org-teams page; org reveal restores org nav; 3× toggle glitch-free; keyboard focus+activate; refresh-collapsed persists; mobile 390px rail hidden + chat/provider drawer openers work; dark theme screenshot verified; providers desktop zero duplicate openers.
+- Playwright chat-ux collapse spec passes; tsc/eslint/vitest 130 green.
+
+### Architecture Notes
+- Mobile keeps header openers by design (overlay drawer needs in-page affordance); desktop has exactly one reveal owner (AppShell rail).
+
+---
+
+## 2026-10-16 — Org provider registration parity + UI alignment sweep
+
+### Requirement
+Org provider registry must match personal 5-step wizard; systematic visual alignment across all routes.
+
+### Root Causes
+- Org create was a single dialog (no validation gate/model select/review); register_provider personal-only; model attach on org providers had no perm gate.
+- 17 UI defects from missing shared primitives (PageContainer, sticky/badge props, GhostButton alias, duplicated SectionHeaders/grids/RangePickers/hash hooks, bespoke auth submits/pills/tabs).
+
+### Implementation Summary
+- Backend: POST /orgs/{id}/providers/register (atomic, URL org_id, org-scoped uniqueness, validation stamp, audit); model create/update/delete gated by Providers.* on org rows + model.created audit; 7 tests.
+- Frontend: wizard `ownership` prop (personal default; draft localStorage personal-only; "Connect N models" copy); org section renders wizard; createOrgProviderWithModels; RotateCredentials distinct error.
+- UI: PageContainer (+4 pages), PageHeader sticky/hideMenu, GhostButton deleted, SectionHeader adoption (admin icon-chip left custom), CardGrid/StatGrid, RangePicker merge, useHashSection, auth submits + pills + tabs via Button.
+
+### Files Changed
+backend api/orgs/{router,service,schemas}.py, api/models/service.py, tests/test_org_phase_b.py; frontend wizard + OrgProvidersSection + services/orgs + hooks/types + ui/{PageContainer,Grids,RangePicker,PageHeader,SectionHeader,primitives} + 12 page/component files. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser: org 5-step wizard end-to-end via stub (type→creds→validate→2 models→Connect; org-owned + 2 models + valid stamp + audits; personal list union by design); outsider isolation (empty + 404 oracle); member-without-perms register 404; route screenshots (chat/providers/orgs/analytics/settings/api-keys/login/org-providers/mobile wizard) all clean; mobile drawer + wizard layout verified.
+- Backend 673/673 (backend agent solo); tsc/eslint clean; vitest 130/130.
+
+### Architecture Notes
+- No migration; personal register untouched. Intentional normalizations flagged: org tabs underline→pills, auth tollma-500→600, pills h-8, semibold/title shades. Remaining follow-ups: SplitPane, max-w tokens, auth/public shell merge, Field migration, admin segmented presets.
+
+## 2026-10-16 — Main AGENTS.md rewritten to real agents + trigger-only skill/MCP routing
+
+### Requirement Completed
+Replaced the 8 fictional agent definitions (Architecture, Database, Backend, Frontend, Security, QA, DevOps, Documentation — none existed) with the real `.opencode/agents/` roster, rewrote all orchestration examples to real names, and added a Skills & MCP Routing section enforcing trigger-only usage.
+
+### Files Modified
+- `AGENTS.md` — Available Sub-Agents section now a table of the 6 real agents (backend, frontend, db, reviewer, tester, debugger) with scope rules; Step 2 tree and all 4 Parallel Execution Examples use real names; new "Skills & MCP Routing — On Trigger Only" section with trigger tables for all 14 skills and 7 MCP servers plus guardrails (postgres local-dev-only, docker always-pass-service, no-trigger-means-none).
+
+### Decisions
+- Kept all non-agent sections (principles, escalation, memory rules, definition of done) untouched.
+- reviewer added to full-feature flow; debugger only on failure — keeps the default path lean.
+
+### Testing Performed
+- Verified every referenced agent file (6/6), skill dir (14/14), and MCP server (7/7) exists.
+
+### Architecture Notes
+- Agent permission model unchanged: reviewer/db/debugger report-only, tester tests-only, backend/frontend tree-scoped.
+
+---
+
+## 2026-10-16 — Org workspace redesign (tables, Operations, unified assignment, analytics, audit, settings)
+
+### Requirement
+Card layouts → data tables; unified Operations page; unified permission-set assignment (existing/custom/derive); analytics dashboard; audit detail; settings restructure; permission-aware UI; obsolete removal.
+
+### Root Causes
+Backend served bare lists (no enrichment, no filters/pagination on most endpoints); frontend had no shared table/drawer/assignment abstractions; invite/team dialogs were existing-sets-only.
+
+### Implementation Summary
+- Backend (additive only, no migration): members (+teams/set_ids/joined/key_count, search/state/limit/offset), sets (+member/team counts), teams (?include, search/paging), keys (+spend_usd), invitations (?kind/search/paging), requests (?status default pending), audit (?action/actor/from/to/cursor + actor enrichment + stable order), analytics (?from/to/team_id/key_id + by_key; by_team=[] documented). tests/test_org_tables.py (10).
+- Frontend: DataTable→ui, useDebouncedValue, auditDescriptions map; OrgMembers/Teams/Sets tables + DetailPanel drawers; PermissionSetPicker (Existing/Create/Derive, snapshot semantics, delegable filter) in InviteModal + TeamCreateDialog; OrgOperationsSection (tabs+counts, legacy redirects, nav swap); OrgAnalyticsDashboard (single-query KPIs/charts/insights); OrgAuditTable (server filters, cursor paging, detail drawer, redaction); OrgSettingsSection (tabs, honest danger zone); deleted SetManager/OrgTeamsSection/OrgKeysSection/OrgAnalyticsSection.
+- Orchestrator fix: members section lacked canRead gate (generic error for denied readers) → honest permission copy + useMembers enabled flag + page wiring.
+
+### Files Changed
+backend api/orgs/{router,service,schemas}.py, tests/test_org_tables.py; frontend 11 new components + [id]/page + nav + hooks/services/types; 4 obsolete files deleted. Uncommitted per standing rule.
+
+### Testing Performed
+- agent-browser multi-role (root/limited/readonly/outsider): tables+search+drawer, derive→review→send DB-linked, key create/secret/revoke, request approve w/ sets, audit detail, settings save, escalation 404, outsider zero-leak, legacy redirects, mobile wizard.
+- Backend 683/683 solo; alembic single head, check clean; tsc/eslint clean; vitest 130/130.
+
+### Architecture Notes
+- Snapshot (not live) inheritance for derived sets, stated in UI. by_team attribution unreliable → always [] (documented). No migration. Refactor mission queued next (must audit post-change tree).
+
+---
+
+## 2026-10-16 — Backend domain refactor (orgs split, keys analytics, security split)
+
+### Requirement
+Split oversized modules (orgs/service.py 2475 lines first), audit whole backend, update backend.md, preserve contracts.
+
+### Root Causes
+Single-file domains: orgs service/router/schemas, keys lifecycle+analytics, security passwords+sessions+deps.
+
+### Implementation Summary
+- api/orgs/ → 11 domain packages (common/guards+audit, overview, members, teams, permissions, providers, keys, budgets, requests, invitations, analytics, audit) + thin facades (service/schemas/router, 105 names, v0.2 removal note); 2 root "" routes stay on parent (FastAPI nested-include limitation, behavior-neutral); lazy imports preserved (no cycles); OpenAPI 164/164 paths identical.
+- api/keys/analytics.py extracted (216 lines); core/security.py → passwords/sessions/dependencies + 109-line facade.
+- backend.md: domain composition rules, lazy-import discipline, verbatim-move verification, OpenAPI-dupe invariant, test count 683.
+- Reviewer triage: High 1-2 + Med 4/8/9 verified pre-existing via git show (carried verbatim, documented follow-ups); fixed transitive import (overview router) + stale doc path.
+
+### Files Changed
+~50 created (orgs domains, keys/analytics, core/*), facades (orgs service/schemas/router, keys service/router, security), backend.md. No migrations, no frontend, no test edits. Uncommitted per standing rule.
+
+### Testing Performed
+- Focused org+keys 115 green; OpenAPI diff identical; facade completeness; duplicate-route check clean.
+- Backend 683/683 solo; alembic check clean.
+
+### Architecture Notes
+- Retained with reasons: gateway/public_gateway/auth/analytics/settings/generation (larger/riskier, single-theme or cohesive; documented candidates for future passes). providers/models still lazy-import facade trio — migrate to common.guards directly, then delete facade.
+
+---
+
+## 2026-10-17 — Task 1 (signup toast+redirect) + key/chat architecture investigations
+
+### Task 1 PASS (browser-verified)
+- Backend: AuthResponse.verification_sent (captured bool, account still created on SMTP failure). Migration c2d3e4f5a6b7 (api_keys.is_primary + partial UQ, messages.api_key_id FK). test_auth 24 pass incl. new SMTP-failure test.
+- Frontend: exact toast `verification mail is sent to ur email`, redirect /login w/ ?invite= preserved, double-submit guards, failure toasts, no success toast on 422.
+- Browser: fresh signup → toast + /login (2 clean runs); duplicate → stays /signup + "already registered", no success toast. Single POST observed (guard works).
+- Key finding: email sandbox latency ~20s — tests must poll, not assert instantly.
+
+### Investigations (3 parallel)
+- In-app chat is session-authed, keyless; provider creds used directly; model list = global registry; no key selector; org keys invisible in chat; revocation affects only external API.
+- Ledgers: api_request_logs has key attribution; request_logs.api_key_id always NULL in-app; messages lacks key/org; pricing shared calculate(); no pricing versioning.
+- External API fully key-authed with correct attribution; failure rows carry NULL usage (no fabrication).
+
+### Architecture decision (Tasks 2-8)
+ChatRequest gains optional key_id; gateway resolves via shared KeyContext (personal-owned or org-assigned+active member); eligible models = allow-list ∩ live ∩ scope providers; 422 KEY_REQUIRED when absent; new /chat/keys + /chat/models?key_id= endpoints; attribution writes messages/request_logs.api_key_id; primary key auto-created on first model, auto-adds new models, never removes except dead models/providers, never overrides explicit restrictions/revocation.
+
+---
+
+## 2026-10-17 — Key-gated chat (Tasks 2-8 backend+frontend, review fixes)
+
+### Requirement
+Primary-key lifecycle, eligible-key gating, per-key model filtering, org-key chat visibility, per-key/per-model usage attribution, external parity.
+
+### Root causes
+In-app chat was session-authed with no key concept (provider creds directly); model list = raw registry; request_logs.api_key_id always NULL; messages had no key column.
+
+### Implementation Summary
+- Migration c2d3e4f5a6b7 (api_keys.is_primary + partial UQ, messages.api_key_id FK) + d3e4f5a6b7c8 (runs.api_key_id).
+- Backend: ensure_primary_key + sync on model create, ChatRequest.key_id + _require_chat_key/_eligible_models/_enforce_key_model on all paths incl. regenerate/edit-regen (422/404-oracle/403), chat_keys/chat_models picker endpoints, attribution writes, M3 deny-all (rows-all-disabled → []), L1 pre-gate edits, L2 static denial messages.
+- Frontend: chatKeyStore + ChatKeySelector + useChatKeys, key injection into stream/regenerate/edit, state A-D handling, no silent switching.
+- Decisions: mid-flight revocation = accepted TOCTOU (completes, next request denied); no-regen edits stay keyless (owner-checked); M2 attachments hardening deferred (pre-existing, low exploit); empty allow-list = unrestricted (documented).
+
+### Testing
+- test_chat_keys 22 + edge 8 + full suite 714 green; alembic clean; OpenAPI builds.
+- Security review: 1 HIGH (regen bypass) + M3/L1/L2 fixed; M2/L3/L4 documented/deferred/minor.
+
+### Files Changed
+backend api/{gateway,keys,models,messages}, services/generation, models/{api_key,message,message_history? no — runs only}, alembic ×2, tests ×2; frontend chat/* + services/api + hooks/useChatKeys + types. Uncommitted.
+
+### Browser/E2E validation
+Pending at this entry — full user flows next (chat picker, org keys, external API, negatives, DB attribution).
+
+---
+
+## 2026-10-17 — Tasks 2-8 E2E validation + final gate (Task 1 done prior entry)
+
+### Browser E2E (agent-browser, mock LLM :4899, no Playwright files)
+- Signup→toast→/login (2 clean runs); duplicate → stays + "already registered", no success toast.
+- Primary key auto-created on provider register (2 model rows); picker shows "Primary key Personal 2 models"; model list = key's models only.
+- Chat send → streamed answer + usage; messages.api_key_id + request_logs key+org set, cost computed.
+- Org: member sees assigned "Member Key Org FlowOrg"; model list = org model only; send → attributed (key+user+org).
+- Key switching: restricted 2nd key → model list narrows to 1; picker counts correct.
+- No-key user: "Chat needs an API key" + CTA, send disabled; direct API without key → 422 KEY_REQUIRED; чужой key → 404 oracle.
+- External: personal + org key calls attributed; bad model rejected; revoked org key → in-app picker drops it (no silent switch), external 401 path covered by tests.
+- Regen: wrong-model key → 403; right key → success + same-key stamp. Member removal covered by tests (NotFoundError, personal lives).
+- Env note: background pytest flushes Valkey (kills dev sessions/verification tokens) — never run concurrent suites; verify-link failures during suite runs are infra noise, recheck quiet.
+
+### Security review disposition
+HIGH regen bypass FIXED (+tests); M1 mid-flight revocation = accepted TOCTOU (documented); M2 attachments hardening deferred (pre-existing, low exploit, server re-resolves); M3/L1/L2 fixed + tested; L4 comment fixed.
+
+### Testing
+- test_chat_keys 22 + edge 8 + full backend suite **714 passed** solo; alembic single head, check clean; tsc/eslint clean; vitest 130/130.
+- Migrations: c2d3e4f5a6b7 (is_primary + messages.api_key_id), d3e4f5a6b7c8 (runs.api_key_id).
+
+---
+
+## 2026-10-17 — Unified key-grouped model dropdown (single picker)
+
+### Requirement
+Replace separate key picker + model picker with one dropdown: keys as groups, models nested under each key; one click sets key+model.
+
+### Implementation
+- hooks/useChatKeys.ts: new useAllChatKeyModels (useQueries, same per-key query keys so caches unify); removed now-unused single-key useChatKeyModels export.
+- ChatComposer UnifiedModelSelector: groups by key (KeyRound + name + Personal/Org badge + org tooltip + model count), models joined to registry rows, search across model/key/provider, onSelect sets key+provider+model, trigger shows model + key chip, count badge logic preserved.
+- Deleted ChatKeySelector.tsx (was the only consumer site; no other refs).
+- Keyboard switch-model cycles all keys' models (deduped, current key preferred); attachment suggestions still key-scoped; banners/validation/ready semantics unchanged; copy updated (no more "select a key first").
+- Verified: grouped dropdown renders (3 headers, 2+1+2 options), one pick sets key+model (trigger chip), send succeeds with correct key attribution in DB, no-key user gets single "No API keys yet" dropdown (no stray picker). tsc/eslint/vitest green (130). No backend changes.
+
+---
+
+## 2026-10-17 — Shared wide key wizard (personal + org) + empty-model CTA
+
+### Requirement
+Enhance create-API-key wizard: wider two-column layout; same component for org keys with extra assignee field; no-models state links to provider configuration.
+
+### Implementation
+- `KeyForm` (personal): create mode now `max-w-5xl!` (Tailwind v4 important suffix — required because shared `cn()` is a naive join and the base `max-w-lg` otherwise wins by stylesheet order) with left column (Basics/Limits/Network) + right column (Model access, full height). Edit mode unchanged single column.
+- `KeyForm` new `scope: personal|org` + assignee props + `assigneeUserId` in result; org scope hides expiry/limits/network (org API has no such fields), shows required assignee select + simple budget input; per-scope copy.
+- `OrgOperationsSection.OrgKeyCreateDialog` replaced (~110 lines deleted) with thin `KeyForm scope="org"` wrapper mapping the shared result to `createOrgKey` (name/assignee/desc/max_budget/model ids). Same dialog, testids, secret flow.
+- `ModelPermissionsEditor` empty state gains "Configure a provider" link (`Button asChild` → `/providers`).
+- Verified: personal wide 2-col (1024px), org variant (1024px, assignee, no personal sections), full org create → secret + table row, e2e untouched (no asserted testids changed). tsc/eslint/vitest green.
+
+### Notes
+- Naive-join `cn()` means any `DialogContent className` max-w override is order-fragile; `!`-suffixed utilities are the deterministic escape hatch until `cn` gains tailwind-merge.
+
+---
+
+## 2026-10-18 — Strict personal/org provider scope isolation
+
+### Requirement
+Enforce strict scope isolation for provider credentials, registered providers, models, API keys, chat selection, gateway execution, and usage attribution. Every provider registration has exactly one owner scope; global catalog is metadata only.
+
+### Root causes found (audit)
+- No DB invariant: `providers` had nullable `user_id` + `org_id` with zero CHECK constraints; 2 live rows had both set (valid org rows, audit kept).
+- Personal registry endpoints (`GET /providers`, `/models` + by-id) returned org rows for any ACTIVE member; org rows mutable via personal prefix.
+- External API hole (principal): `_caller_org_ids` returned ALL active orgs of the key assignee and `_prepare` never pinned `provider.org_id == ctx.org_id` — an org-A key served the assignee's personal models and sibling-org (B) models; `GET /v1/models` listed them too. In-app gateway was already correctly pinned.
+- Dead `_owned_provider_ids` used audit-`user_id` semantics (wrong predicate, zero callers).
+- Frontend gap (latent until backend scoping landed): composer joined per-key models against the personal-only registry, hiding every org group; stale-selection guards validated against registry-only ids and fired before key entries resolved.
+
+### Implementation
+- Backend: `ck_providers_owner_scope` CHECK (`(org_id IS NULL AND user_id IS NOT NULL) OR (org_id IS NOT NULL)`) + migration `e4f5a6b7c8d9` (single head, pre-flight aborts on ownerless rows; both-set rows remain valid org rows); canonical rule ownership = `org_id` alone (`user_id` on org rows is creator audit).
+- `personal_only` flag on providers/models get/list/create/update/delete; personal routers pass it (org rows 404); validate/discover/refresh keep dual visibility (org UI reuse, perm-gated). Deleted dead `_owned_provider_ids`.
+- Public gateway: `_caller_org_ids` pinned (personal→[], org→`[ctx.org_id]`); `_prepare` scope pin (404 pre-policy); `list_public_models` key-org only. In-app plane untouched (already correct); in-app budget non-enforcement documented, unchanged.
+- `GET /api/v1/chat/models` now serves full `ModelRead` rows via shared `read_model()` mapper (moved into `api/models/schemas.py`, registry router delegates) so the composer never joins against the personal listing; deleted `ChatModelRead`.
+- Frontend: Personal badge on providers page; org name + org-scoped copy in wizard header; key-scope badge on composer trigger; org-key Add-provider fallback routes to org section; dead `ModelSelector.tsx` removed; wizard draft creds localStorage→sessionStorage + logout wipe.
+- Composer scope union: `scopedModels`/`scopedProviderIds` (registry + all key entries); selector join, caps, stale guards, eligibility re-align, keyboard cycling all use the union; stale guard additionally gates on `keysPending` (useQueries([]) settles instantly — the actual race found in browser testing).
+
+### Verification
+- `pytest` full suite **727 passed**; targeted `test_scope_isolation.py` **13 passed** (cross-user/org, global-id-only, disabled provider, removal, deletion, key/context switch, external attempts); `alembic check` clean; OpenAPI imports (166 paths — +2 from pre-existing staged key-gating work, scope work adds none).
+- Live external probes (2 users, 2 orgs, 3 providers sharing one model id, 3 keys; seed removed after): personal key lists 1 personal model; org-A key lists 1 org-A model; 4 cross-scope `/v1/chat/completions` → 404 pre-I/O; personal list/detail hide org rows (404 on direct ids).
+- Browser (agent-browser): Personal badge ✓; org page lists only org provider ✓; wizard "Organization: ScopeOrgA — credentials and models are org-scoped" ✓; composer shows both key groups with Org/Personal badges ✓; org select → Org trigger badge, persists across reload with zero toasts ✓ (two real races found and fixed: registry-only join hid org groups; stale guard fired before entries resolved).
+- Frontend: `tsc`/`eslint` clean, vitest **130/130**.
+- Seed data fully removed (0 users/orgs remain); no stray helper files; all work uncommitted.
+
+### Limitations
+- Live provider calls never tested (no paid calls; stub transports + dead-loopback CUSTOM rows only — rejections verified pre-I/O).
+- In-app (session) gateway still ledger-only for budgets (no `check_request`); documented divergence, unchanged.
+
+---
+
+## 2026-10-18 — Models.dev-only model catalog cutover
+
+### Requirement
+Models.dev as the sole external model-catalog source; remove LiteLLM/OpenRouter catalog integrations; keep runtime adapters and scope behavior; update backend.md policy + docs; tests + validation.
+
+### Architecture before → after
+Before: 3-source pipeline (`sources.py` LiteLLM GH json + OpenRouter /api/v1/models + models.dev api.json), merge priority litellm>openrouter>modelsdev, `run_sync(litellm_data, openrouter_data, modelsdev_data)`. After: single fetch of verified `https://models.dev/api.json` (provider-keyed, 232 providers, cost $/1M, limit/context, modalities, tool_call/reasoning/cache flags), `run_sync(db, *, modelsdev_data=None)`, single-source merge, same bookkeeping/deactivation-when-data/rewrite/catalog-sync semantics plus new fail-closed rule. Schema untouched (source-generic by design); scheduler still startup + every 6h; manual POST /sync unchanged (422 when busy).
+
+### Implementation
+- Backend: `services/model_repository/sources.py` (−221 lines: adapters/URLs/helpers removed, shared fetch + ModelsDev adapter + deduped logo const kept); `sync.py` (single-source, `SOURCE_URLS={"modelsdev"...}`, fail-closed `not merged` gates deactivation + attribution rewrite + catalog link/sync); `api/catalog/service.py` stats `sources=["modelsdev"]`; `api/models/schemas.py` new shared `read_model()` mapper (+`supports_video_generation`, pre-existing read-path gap now closed), registry router delegates; `api/gateway` chat picker serves full `ModelRead` (deleted `ChatModelRead`) so org models render without the personal listing; model docstrings updated. No DDL, no env changes (none existed), no dependency changes.
+- Preserved: gateway adapters (incl. OpenRouter/LiteLLM reasoning wire shapes), `mapping.py` CUSTOM URL hints, `canonical.py` openrouter/ prefix recursion, CUSTOM runtime, personal/org scope gates, media rate-card seeding, scheduler cadence.
+- Docs/rules: backend.md Models.dev-only policy; FEATURES/ARCHITECTURE (diagram + fail-closed note)/OPERATIONS/ROADMAP (also fixed stale 24h→6h)/README updated. README:74 + wizard CUSTOM copy intentionally keep LiteLLM/OpenRouter as gateway labels (runtime, not catalog).
+- Tests (tester): 8 files migrated to modelsdev-shaped fixtures; +4 new (empty-payload fail-closed, fetch-error attribution preservation, read_model parity, strengthened deactivated==0); negative `hasattr` guards for removed adapters/URLs.
+
+### Verification
+- Backend full suite **734 passed / 0 failed**; `alembic check` clean; OpenAPI builds; repo grep: zero catalog-fetch litellm/openrouter hits (only runtime/prefix/hint strings + negative test asserts).
+- Live `run_sync` vs real models.dev: **done, 0 created / 8944 updated / 0 deactivated / 0 errors**; lookup `openai/gpt-4o` price 0.0000025/token correct; catalog browser live: 232 providers, 205 gateway-supported, 8950 models.
+- Browser (agent-browser): catalog browse + wizard Configure prefill + platform step (no source picker) + chat load, zero errors; seed user removed after.
+- Security review: no non-models.dev catalog fetch; SSRF surface unchanged (hardcoded URL, test-only data injection); credentials never in catalog path; scope/auth untouched. Two review findings fixed (attribution wipe on fail-closed; video-flag drop) + one semantic hardening (fail-closed on clean-empty).
+- Frontend: no changes required (audit proved no source selectors); tsc/vitest not re-run (zero frontend diff).
+- Known flake: `test_progress_persists_while_running` failed once in an earlier full run, passes solo, unrelated (generations progress).
+
+### Notes
+- Cutover deactivates ~3.8k legacy litellm/openrouter-only `catalog_slug IS NULL` rows on next sync (existing recoverable semantics, not deletion); dev DB re-synced live so current rows are models.dev-native.
+
+---
+
+## 2026-10-18 — Normalized multi-endpoint Models.dev repository + dynamic reasoning
+
+### Requirement
+Rebuild the catalog around all Models.dev sources (api.json, models.json, catalog.json, logos): normalized providers/canonicals/associations/pricing/caps/reasoning; dynamic chat reasoning; no LiteLLM/OpenRouter remnants.
+
+### Findings (verified against live responses + attached snapshots)
+- catalog.json == {providers: api.json, models: models.json} byte-identical: redundant, fetched only as consistency check.
+- api.json: 232 providers, provider-SCOPED model keys, cost $/1M, limit {context,output}|{context,input,output}, polymorphic reasoning_options (effort values / budget_tokens min[/max] / toggle), canonical_model_id present ~68% (always resolving), absent ~32%.
+- models.json: 559 canonical entries keyed by full id, no cost.
+- `?type=all` matters (+51 entries); initial sync without it silently omitted specialized types (fixed).
+- Upstream mutates between fetches (6-model delta observed); sync is idempotent and heals.
+
+### Implementation
+- Backend: NEW `canonical_model` table (canonical_id UNIQUE) + migration (additive, no backfill — next sync populates); `model_repository` += canonical_id NULL (FK SET NULL, non-unique index), reasoning_options JSONB, extra_cost JSONB; audio/reasoning costs + limit.input + structured_output wired (were dead/hardcoded); attachment/temperature → metadata_ overflow.
+- Sync fetches all 3 endpoints (per-endpoint errors), upserts canonicals first, links associations only on evidence (run-set, else DB-persisted fallback, else NULL), fail-closed on empty merge OR any fetch failure (deactivation/rewrite/catalog-sync skipped; upserts proceed), catalog.json verified-not-used.
+- APIs: canonical list/detail + offerings, filters (family/modality/tool_call/reasoning/open_weights/min_context), ModelRead/ChatModelRead/suggest carry reasoning_options; `read_model` maps supports_video_generation (pre-existing read-path gap closed).
+- Gateway: `validated_reasoning_level` at all 3 adapter sites (unknown→None/off instead of adapter medium/high fallback; absent options→legacy passthrough).
+- Frontend: ReasoningControl (effort verbatim scale / budget min input / toggle switch / hidden when null), model-switch remap + validation, send gating; ModelForm preserves reasoning_options into registered-model metadata (was dropping the top-level suggest field).
+- Docs: NEW docs/model-repository/models-dev-source-schema.md; ARCHITECTURE/FEATURES/OPERATIONS/ROADMAP/README updated.
+
+### Verification
+- Backend full suite **752 passed**; `alembic check` clean; OpenAPI builds.
+- Live sync: 559 canonicals, 6143 linked, 5477 with reasoning options, 0 errors; lookup pricing correct; second run idempotent.
+- Browser: catalog (232 providers/8950 models, no source controls), wizard Configure prefill, chat reasoning scale renders catalog values (Low·Medium·High·Xhigh·Max) + intelligence panel lists them; selections persist across reload.
+- Independent reviewer round: fixed attribution wipe on fail-closed, video-flag drop, clean-empty deactivation; hardened fetch-error gating + canonical fallback + server-side level validation in response.
+- Frontend vitest **152/152**, tsc/eslint clean. Seed users removed; work uncommitted.
+
+### Notes
+- Residual accepted risk: a valid-but-truncated snapshot with zero errors still deactivates (no principled cardinality signal); documented.
+- M2/M3 reviewer notes (no UI clear for stale options; flush outside per-row try) accepted as documented behavior.
+
+---
+
+## 2026-10-18 — Unified Personal/Organization workspace UI refactor
+
+### Requirement
+Scope-aware unified workspace: switcher (Personal default + accessible orgs), permission-aware org nav, 4-step provider wizard (Credentials & Validation combined), shared provider/key UI across scopes, scope-aware data/routing, legacy UI cleanup.
+
+### Implementation
+- Agent A (nav/shell): NEW global `SidebarWorkspaceSwitcher` (Personal row + collapsible org group + New organization link; Links preserve native navigation); `Sidebar.tsx` scope-aware body + `SidebarPersonalNav` direct render; org scope shows `SidebarOrgNav` everywhere; `SidebarOrgNav` permission-filtered (root sees all); dead `SidebarOrgSwitcher` deleted; `store/org.ts` setContext invalidates scope caches, reconcile resets + invalidates; AppShell `ScopeSync` registers client, reconciles on load, redirects org-scope /providers|/api-keys to org sections; **deleted `SidebarWorkspaces.tsx`** (superseded).
+- Agent C (wizard/keys): wizard 5→4 steps (`Credentials & Validation` merged with inline validate+result, single gate `credsReady && validation?.valid`, renumbered models/finish, draft still excludes validation); deleted `OrgProviderEditDialog` (wizard EditBody routes org updates incl. rotate-perm copy); NEW `useProviderHealthActions` shared by personal + org; org raw-key dialog replaced by shared `RawKeyDialog`; org key-create documents field subset (no backend change); personal KeyForm edit branch untouched.
+- Agent D (org pages): `[id]/page` syncs context from URL, 401→login / 403→`org-forbidden` / 404→ErrorState+retry, legacy redirect after error guard; all 7 sub-sections distinguish 403 (permission empty state) vs 404; `useOrgs` additive `isNotFoundError/isForbiddenError/apiErrorStatus`.
+- Orchestrator fixes from review: stale-validation clearing on creds/type change + selection reset on mapping failure; `validated` deactivation/redirect hardening; reconcile+setContext cache invalidation incl. `["orgs"]`; `InvitationsTab` Members.Read gate + 403/404 branches; switcher Links + aria-controls/region + remount-on-scope; AppShell org-scope redirects; updated stale e2e specs (tester: wizard/helpers/live-openai/providers/navigation/org-sidebar-key-models).
+- Verified no backend changes (git diff: frontend-only).
+
+### Verification
+- Frontend: `tsc` clean (incl. fixing pre-existing test cast), `eslint` clean, vitest **152/152**; e2e specs statically collected (139 tests, no collection errors; full browser e2e not run per standing rule — agent-browser used instead).
+- Browser (agent-browser, seeded 1 user + 2 orgs + providers, seed removed after): Personal default with 5 personal nav items; switcher lists both orgs; org-A full 10-section nav; org-B (no grants) only Overview/Budgets/Settings; direct ?section=members → permission gate (no table); org-context /providers → redirect to org section with read gate; wizard Step 2 of 4 combined step, failed validation keeps Next disabled; personal + org key creation via shared KeyForm (assignee field org-side), show-once secrets, table rows scoped correctly both directions; refresh persistence verified.
+- Reviewer: HIGH wizard stale-validation + selected-clear fixed; MEDIUM scope-invalidation/redirect/nav-leak fixed, InvitationsTab gated; LOW nits (placeholders, quotes, motion, busy slot, focus rings) deferred as pre-existing patterns.
+
+### Notes
+- Full provider registration E2E (valid credentials → register → chat) BLOCKED: no usable provider credentials in this environment (dead-loopback only); wizard transport paths unchanged and e2e specs updated for the new flow.
+- Backend suite not re-run (zero backend changes); scope isolation + catalog suites unaffected.
+
+---
+
+## 2026-10-18 — Sidebar/settings navigation consolidation (workspace in profile, orgs in settings)
+
+### Requirement
+User review: fix truncated providers Add button; kill nav redundancy; join/create org under Settings; delete /organizations page + dead org components; workspace selection into bottom profile menu; current page highlighted, never hidden; delete never-used components.
+
+### Implementation (frontend only, no backend changes)
+- `SidebarProviders.tsx`: header stacked — title+count row, full-width grid-cols-2 Catalog/Add row (was one row overflowing the narrow rail, cutting off "Add").
+- `SidebarNavigation.tsx`: deleted gear-toggle popup (`SidebarNavigation`); `NavRow` gained active highlight + aria-current; `SidebarPersonalNav` renders ALL 5 links with current-page highlight (was excluding the active page).
+- `Sidebar.tsx`: removed `SidebarWorkspaceSwitcher` mount + file deleted; removed gear state/popup; removed orgs-list hint branch; admin nav always visible for platform admins; added api-keys/api-docs hint branch.
+- `SidebarFooter.tsx` simplified (no nav props); `SidebarProfile.tsx` rebuilt as workspace dropdown (Radix): identity trigger showing active workspace, Personal + org list (check marks), New/Join organization → `/settings#organizations`; gear → plain link to /settings; logout kept.
+- Settings: NEW `OrganizationsSection` (org list + switch/open, create, join, invitations inbox, notifications inbox); moved `CreateOrgModal`/`JoinModal` via git mv to settings/components; added `organizations` settings section + sidebar shortcut.
+- Deleted `app/organizations/page.tsx` (list route now app 404); kept `[id]` (workspace), `invites` (email flow), all section components. Fixed 4 stale pushes to the deleted route ([id] back/leave, invites reject → `/settings#organizations`).
+- ScopeSync org redirects retained and verified against new IA.
+
+### Verification
+- `tsc` clean (incl. fixing a stale pre-existing test cast), `eslint` clean, vitest **152/152**; e2e `test --list` 139 collected; tester retargeted specs to profile menu + settings flows.
+- Browser (agent-browser, seeded user + 2 orgs, seed removed after): Add/Catalog buttons full-width untruncated; personal nav all 5 links with Providers highlighted; no gear popup; profile menu lists Personal + both orgs + New/Join; org switch → org nav; org create from Settings works and appears in menu live; /organizations → app 404 page; [id] dashboard intact; full key-creation flows (personal + org) re-verified; scope isolation both directions; refresh persistence.
+- Backend suite not re-run (zero backend changes).
+
+### Notes
+- Join flow verified only to modal open (same plumbing as tested create); full invite-accept covered statically by e2e.
+- Deferred (pre-existing patterns, no new violations): focus-ring utilities, tablist arrow-key nav, quote/number formatting, motion-width animation, single-slot provider busy.
+
+---
+
+## 2026-10-18 — One shared UI, scope-aware data (providers/keys/analytics unification + backend ownership)
+
+### Requirement
+Single canonical Providers/API Keys pages for personal+org (same UI, org data); org navigation as chevron group (no duplicate sidebar); bottom-anchored nav; profile chevron selector; backend org logic moved into canonical provider/key service areas + decomposition guideline; delete duplicates.
+
+### Implementation
+- **Sidebar IA**: deleted full-tree body swap; route body + ALWAYS-visible bottom-anchored `SidebarPersonalNav` (current page highlighted, never hidden) + collapsible org chevron group (`SidebarOrgNav` rewritten: org-only pages, permission-filtered, `aria-expanded`); profile card split into identity + explicit chevron selector button + settings link + logout; `SidebarWorkspaces.tsx` deleted; org-switch redirects removed from AppShell (unified pages handle scope); legacy `?section=providers|analytics|operations&tab=keys` redirects live in `[id]` page with error guard; "All organizations" + invites-reject + leave now route to `/settings#organizations` (/organizations list route already deleted).
+- **Providers unified**: `/providers` reads `useOrgStore` scope; org mode uses `useOrgProviders` + NEW `useOrgProviderModels(orgId, providerId)` + org mutations + wizard `ownership` (existing), gated by Providers.Read/Create/Update; sidebar provider list scope-aware (org rows, Add gated, no per-model counts in org scope — no org model-count endpoint); model register/edit/toggle/delete stay personal-only; org scope chip in detail header + sidebar list header; `OrgProvidersSection.tsx` deleted; `[id]` providers+analytics branches + titles removed (analytics section moved to unified page).
+- **API Keys unified**: `/api-keys` switch on scope; org mode reuses verbatim-moved `OrgKeysPanel` (same table/dialogs/testids, `key={orgId}` remount); KeysTab removed from OrgOperationsSection (`OpsTab` narrowed, default requests tab); `[id]/page` passes narrowed perms.
+- **Analytics unified**: same page shell; org scope renders `OrgAnalyticsDashboard` (+budget card, gated) with scope chip; personal path byte-identical.
+- **Backend**: NEW `api/providers/organization_service.py` + `api/keys/organization_service.py` own all org logic (verbatim move; membership+perm gates, org_id match, 404-oracle, single-commit register); `api/orgs/{providers,keys}/service.py` thin re-export wrappers; orgs facade re-exports `list_org_provider_models`; NEW `GET /orgs/{id}/providers/{pid}/models` (ModelRead, Providers.Read-gated); backend.md service-decomposition guideline appended verbatim. No schema changes, no URL changes.
+- **E2E**: specs retargeted (chevron menu, bottom-anchored nav, org group toggle, unified pages + legacy redirects, org provider-models endpoint covered by new backend tests); `test_org_provider_models.py` (5 tests).
+
+### Verification
+- Backend full suite **757 passed**; `alembic check` clean; OpenAPI builds (169 paths).
+- Frontend: `tsc`/`eslint` clean, vitest **152/152**; e2e `test --list` 143 collected.
+- Browser (agent-browser, seeded user+org, seed removed): chevron selector with org list + New/Join inline; bottom-anchored nav + collapsible org group (8 permission-filtered sections); unified /providers shows org provider + registered org model + UniOrg chip, zero personal leakage, sidebar list org-only; /api-keys org chip; /analytics org scope; legacy redirect works; group collapse keeps personal nav; gear is a /settings link; settings org section + create flow re-verified.
+- Independent reviewer round: fixed stale-validation shipping, mapping-failure selection crash, fail-closed error-gating, canonical fallback linking, server-side reasoning validation; deferred a11y nits documented.
+
+### Notes
+- No live provider registration (no usable credentials; wizard transport unchanged, e2e covers with mock transports).
+- Accepted residual: valid-but-truncated snapshot with zero errors still deactivates (documented, never observed).
+- Deferred: per-model counts in org sidebar skipped (no org model-count endpoint; detail page has them); `useProviders` always fetches in org scope (unused data, harmless).
+
+---
+
+## 2026-10-18 — Footer chevron toggles nav lists; org sections always visible
+
+### Requirement
+Footer chevron must show/hide the bottom-anchored navigation lists (not collapse the sidebar). Org-specific navigation must render inline with personal navigation (no accordion), i.e. personal nav always visible, org sections appended when an org is selected.
+
+### Implementation (frontend only)
+- `Sidebar.tsx`: new `navVisible` state (default true); bottom-anchored nav block renders only when visible; state passed to `SidebarFooter` → `SidebarProfile`.
+- `SidebarProfile.tsx`: footer chevron (`sidebar-collapse-btn`, ChevronsUpDown icon) now toggles nav lists with Hide/Show navigation labels + `aria-expanded`; sidebar open/collapse untouched (reveal rail / mobile backdrop own that). Identity block still opens the workspace menu.
+- `SidebarOrgNav.tsx`: accordion removed — static org header + always-visible permission-filtered section list; `sidebar-org-toggle` testid deleted.
+- Tester updating e2e for the new behavior (background at report time).
+
+### Verification
+- `tsc` clean, `eslint` clean, vitest **152/152**.
+- Integrated browser: app open at /login (title ToLLma) for visual confirmation; interactive driving not available via integrated-browser tooling (open/preview only), so behavior verified via static checks + unit tests; e2e collection pending tester completion.
+
+---
+
+## 2026-10-18 — Single-active nav + dynamic palette; workspace chevron owns switching
+
+### Requirement
+Fix duplicate `aria-current` (Overview + unified item both active on shared pages); make Ctrl+K palette scope-aware (org + permission-gated entries, scoped provider shortcuts); profile chevron opens the workspace menu (no separate switcher row/toggle).
+
+### Implementation (frontend only, no backend changes)
+- `SidebarOrgNav.tsx`: unified-first active rule — pathname match wins (Chat matches `/` + `/c/*`); Overview active only when no unified item matches. Removed accordion (always-visible flat list from prior turn).
+- `SidebarProfile.tsx`: whole identity block is the DropdownMenu trigger (testids preserved); chevron button toggles the bottom-anchored nav lists (`Hide/Show navigation`, `aria-expanded`); settings gear removed (lives in personal nav); logout kept.
+- `CommandPalette.tsx`: new scope-aware "Go to" group (Chat/Providers/API Keys/Analytics/API Docs always; org overview/members/teams/sets/operations/budgets/audit/settings gated by the same permission codes as the sidebar); provider shortcuts list scope providers (`useOrgProviders` in org scope with Providers.Read gate).
+- E2E (tester): single-active assertions per route + palette Go-to navigation/permission/provider-scoping coverage (2 new tests; 145 total collect).
+
+### Verification
+- `tsc`/`eslint` clean; vitest **152/152**; e2e `test --list` 145 pass; backend suite untouched this round (757 passed previously, no backend changes).
+- Integrated browser: app open at `/` for visual confirmation (interaction not available via integrated-browser tooling).
+
+### Notes
+- Backend: no changes required — all org reads reuse existing scoped endpoints.
+
+---
+
+## 2026-10-19 — Command palette UX polish
+
+### Requirement
+Enhance command palette with proper spacing and UX (user screenshot showed cramped all-caps rows).
+
+### Implementation (frontend only, `components/ui/CommandPalette.tsx`)
+- Shared `PaletteItem` row: icon tile + title/description + optional trailing hint; roomier `py-2.5` rows, `rounded-xl`, selected ring; shared `SectionHeading`.
+- Sentence-case titles with one-line descriptions; group headings with top spacing; wider dialog (`max-w-lg`, `rounded-2xl`); taller search input; empty state with icon + guidance; footer shows active workspace + spaced kbd hints.
+- All testids, cmdk values, and onSelect behaviors unchanged.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 145 collected. App open in integrated browser for visual check (press Ctrl+K).
+
+---
+
+## 2026-10-19 — Org key creation parity + auth/menu UX polish
+
+### Requirement
+Org API-key creation must expose the FULL personal flow (expiration, limits, rate limits, spend caps, network access, model restrictions with per-model caps) plus member assignment. Also: inline New/Join org actions (wrap only if no space), login/signup UI/UX polish, comment hygiene.
+
+### Backend (additive, no migration)
+- `OrgKeyCreate`: + `expires_at`, full `PolicyIn policy`, `ip_rules: list[IpRuleIn]`; top-level `max_budget_usd` kept for backward compat.
+- `create_org_key`: resolves effective policy (explicit policy wins; top-level fills only gaps), org budget cap enforced against it; `ApiKeyCreate` carries expiry/policy/IP/models with per-model caps.
+- NEW `GET /orgs/{id}/models` (org live models, `Keys.Create`-gated) for the key-picker model list.
+- `OrgKeyRead` += `ip_rules`; wired through `_read_org_key` + eager load.
+
+### Frontend
+- `ModelPermissionsEditor`: optional `models`/`providers`/`isPending`/`configureHref` overrides (defaults = personal registry; org passes org data + org providers link).
+- `KeyForm` org mode: full Basics/Limits/Network/Model-access identical to personal + required assignee; removed org-only mini-budget form.
+- `OrgKeysPanel`: org providers/models into KeyForm; full result mapping (policy, IP, expiry, per-model caps).
+- `OrgKeyCreateInput` extended; `useOrgModels` hook added; `useOrgMutations.createKey` retyped.
+- Auth: labels htmlFor-linked, toggle aria-labels, errors role=alert, caps-lock warning, password-strength meter, fixed toast grammar ("Verification email sent ..."), trust row, tollma focus rings, taller inputs.
+- Workspace menu redesign: identity header, Workspaces section, descriptions, active highlighting, retry on error; inline New/Join via flex-wrap (stacks only when narrow).
+- `types/orgs.ts` OrgKey/OrgKeyCreateInput extended; comments completed on touched modules.
+
+### Verification
+- Backend targeted **49 passed**; frontend `tsc`/`eslint` clean, vitest **152/152**; e2e `test --list` 143→146 collected (auth labels/toggle/meter/trust, menu lock-in).
+- Full backend suite + browser validation pending next loop; work uncommitted.
+
+---
+
+## 2026-10-19 — Collapsed rail becomes full icon navigation
+
+### Requirement
+Collapsed rail: top = expand + command-palette search + notifications; bottom = scope-aware nav icons + nav show/hide chevron + profile avatar with tooltips.
+
+### Implementation (frontend only)
+- `navVisible` + `setNavVisible` moved to `useChatStore` (shared by expanded sidebar footer chevron and rail chevron; not persisted).
+- `SidebarReveal` rewritten: top expand/search/bell (badge + settings-inbox link), scrollable middle nav (personal set or permission-filtered org set via shared `useOrgNavItems`), bottom chevron toggles `navVisible`, avatar opens shared `WorkspaceMenuContent`.
+- Extracted `WorkspaceMenuContent` (used by sidebar profile menu + rail avatar menu); `useOrgNavItems` hook + `PERSONAL_NAV`/`isActivePath` exports shared with rail.
+- Header bell now links to `/settings#organizations` (old `/organizations?view=inbox` route is gone).
+- E2E retargeted (rail coverage incl. scope sets, toggle, palette/notifications/expand/profile actions); fixed stale `sidebar-reveal` testid in `tests/chat-ux.spec.ts`.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 147 collected. App open in integrated browser for visual check.
+
+---
+
+## 2026-10-19 — Command palette UX polish + login/signup refresh
+
+### Requirement
+Polish the command palette (spacing, hierarchy) and refresh login/signup UI.
+
+### Frontend only (no backend changes)
+- `CommandPalette`: shared `PaletteItem` rows (icon tile + title + description + trailing hint), `SectionHeading` labels, wider dialog, taller search, proper empty state, footer with workspace + kbd hints, new "Go to" scope-aware section (org entries permission-gated), scoped provider shortcuts. All testids/values/handlers unchanged.
+- `AuthCard`: h-11 rounded-xl inputs with tollma focus rings, labels htmlFor, toggle aria-labels, role=alert errors, caps-lock warning, password-strength meter (client hint only), fixed toast grammar, trust row, gradient top accent, Reading order unchanged; all testids kept.
+- `SidebarProfile` workspace menu: identity header, Workspaces section label, per-item descriptions, active checks, inline New-organization tile (Join removed from menu; still in Settings), error retry.
+- `ChatSettingsPanel` (Model Intelligence): model hero card (logo/name/provider/endpoint/capability chips/thinking levels), context-usage progress bar (role=progressbar), empty-state card (text unchanged for e2e). Header endpoint badge moved into hero.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 147–148 collected incl. new palette/auth/intelligence assertions. Integrated browser opened for visual check (no driven interaction available).
+
+### Notes
+- Password strength is a client hint only; backend enforces minimums. Strength thresholds and cap copy are presentation choices.
+- `role="alert"` signup error uses `p-2` (no size class change) to keep the error compact.
+
+---
+
+## 2026-10-19 — Footer chevron hover-peek for navigation
+
+### Requirement
+Sidebar open + nav hidden + chevron hover → peek nav until pointer/focus leaves for 1s. Chevron click pins open (unfocus then keeps it). Chevron never collapses the sidebar.
+
+### Implementation (frontend only)
+- `navVisible`/`setNavVisible` moved to `useChatStore` (shared by expanded footer chevron; rail no longer toggles it).
+- `Sidebar.tsx`: owns peek timer (1s grace), `peekNavOpen`/`schedulePeekClose`/`toggleNavPinned`; nav block gated on `navVisible || peekNav` with container hover/focus bridging; passes handlers to `SidebarFooter` → `SidebarProfile` chevron (hover/focus peeks, click pins, aria reflects pinned+peeked visibility).
+- Rail simplified: expand button + search + notifications on top; always-visible nav icons; avatar with workspace menu at bottom (no chevron in rail).
+- E2E: peek/pin/keyboard coverage added (navigation.spec.ts).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 148 collected. Integrated browser opened for visual check.
+
+---
+
+## 2026-10-19 — Hover-to-open workspace menu
+
+### Requirement
+Hovering the profile section reveals the org-switching menu (same 1s grace-hide as nav peek); clicking still toggles.
+
+### Implementation (frontend only, `SidebarProfile.tsx`)
+- Controlled `DropdownMenu` (`menuOpen` + 1s `menuTimer`, unmount cleanup); trigger `onMouseEnter` opens, `onMouseLeave` schedules close; menu content keeps it open via enter/cancel; click toggles (Radix default through controlled `onOpenChange`).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 149 collected incl. new hover/grace/click test. Integrated browser opened for visual check.
+
+---
+
+## 2026-10-19 (pm) — Auth hardening: post-signup flip + scroll-safe card
+
+### Requirement
+Signup card overflowed its flip container; after signup+toast the URL changed but the signup face stayed visible.
+
+### Root cause + fix (frontend only, `AuthCard.tsx`)
+- Overflow: flip-card back face was `absolute inset-0` with `overflow:hidden` inside an `overflow-hidden` main — taller signup content clipped with no scroll path. Fix: `main` scrolls (`overflow-y-auto` + `m-auto` centering wrapper), back face gets its own `overflow-y-auto`, signup header tightened.
+- Stuck signup face: in-app mode switches use raw `history.pushState`, which desyncs Next's router — the post-signup `router.push("/login")` can no-op (no remount). Fix: explicitly `setMode("login")` in the signup success path before navigating, so the card flips regardless of router behavior.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 149 collected (tester added auth restyle + palette coverage earlier). Integrated browser opened on /signup for visual check.
+
+---
+
+## 2026-10-19 — Automatic primary API keys + provider sync + default-key lifecycle
+
+### Requirement
+Every new user gets exactly one primary personal key; personal provider models sync to it; provider/model deletion prunes access without destroying usage history; manual personal keys become default (primary intact); org keys assigned to valid members, isolated from personal scope. Plus service-decomposition rule in backend.md.
+
+### Implementation Summary
+- Backend (`api/keys/service.py`): `is_default` flag + `find_default_key`/`set_default_key` (race-safe savepoint, mirrors primary pattern); `ensure_primary_key` also claims empty default slot; `persist_key(is_primary/is_default)` kwargs; `create_key` promotes new key to default; `delete_key` promotes most-recent successor; `backfill_missing_primaries()`; `prune_primary_provider_models`/`prune_primary_model` (scoped to owner's primary, context invalidated).
+- Provisioning: `api/auth/service.py` signup + Google-callback new-user branch, `api/orgs/invitations/service.py` accept-new — best-effort post-commit `ensure_primary_key`, never fails registration.
+- Sync/prune hooks: `api/models/service.py` create (existing) + delete/disable-prune + enable-resync (personal only); `api/providers/service.py` delete prunes personal-provider rows only.
+- Schema: `models/api_key.py` `is_default` + partial UQ `uq_api_keys_default_per_user`; migration `d6e7f8a9b0c1_api_key_default.py` (DISTINCT ON backfill, primary-wins-else-most-recent); `KeyRead` + router expose `is_primary/is_default` (additive).
+- Org path unchanged: assignee-required issuance, never touches flags/defaults.
+- Frontend: Primary/Default badges + legend (KeyTable, KeyDetailsPanel), org assignee filtering + issued-by display (OrgKeysPanel, KeyForm), creation toast notes Default promotion. Secrets still show-once only.
+- Rules: `backend.md` service-decomposition verbatim rule appended.
+
+### Files Changed
+- Backend src: `api/keys/service.py|schemas.py|router.py`, `models/api_key.py`, `api/auth/service.py`, `api/models/service.py`, `api/providers/service.py`, `api/orgs/invitations/service.py`; migration `d6e7f8a9b0c1_api_key_default.py`.
+- Tests: new `tests/keys/test_primary_default_lifecycle.py` (10 tests); fixed stale zero-key assumptions in `keys/test_api_keys.py`, `test_chat_keys.py`, `test_chat_keys_edge.py`, `analytics_api/test_analytics_api.py`.
+- Frontend: `types/apiKeys.ts|orgs.ts`, `KeyTable.tsx`, `KeyDetailsPanel.tsx`, `KeyForm.tsx`, `OrgKeysPanel.tsx`, `api-keys/page.tsx`.
+- Rules: `.opencode/rules/backend.md`.
+
+### Testing Performed
+- `docker compose exec -T backend pytest -q`: **771 passed** (clean, no concurrency; earlier 19-failure run was two pytest sessions sharing one DB + mid-run test edits — `test_org_phase_b` 26/26 solo confirmed pollution).
+- `alembic check`: no new operations; single linear head; OpenAPI 170 routes ok.
+- Frontend: `tsc`/`lint` clean, vitest 152/152, `playwright test --list` 149 collected.
+- Reviewer pass: hash-only storage confirmed, scope isolation intact, history SET NULL preserved; 2 mediums (default-claim race, delete-promotion) fixed.
+
+### Architecture Notes
+- Primary (system allow-list key) vs Default (most-recent personal key) enforced by twin partial UQs; org keys carry neither flag.
+- All cross-service calls lazy-imported (no cycles); provisioning/prune best-effort post-commit with structured logs, never fail the outer operation.
+- Gateway eligibility (live+active filter) remains backstop behind allow-list prune + 30s context invalidation.
+
+---
+
+## 2026-10-19 (pm) — Sidebar profile click-only + non-selectable
+
+### Requirement
+Workspace menu opens on click only (hover-to-open removed); profile text must not be selectable.
+
+### Implementation (frontend only, `SidebarProfile.tsx`)
+- Reverted to uncontrolled click-only `DropdownMenu` (removed `menuOpen` state, 1s hover timer, trigger/content hover handlers); comment updated. Footer-chevron nav peek unchanged.
+- Root profile container marked `select-none`.
+- E2E `navigation.spec.ts`: hover test rewritten to click-only (hover asserts hidden; click/Escape toggle covered).
+
+### Verification
+- `tsc` clean; `playwright test --list` 149 collected; vitest/lint via background run.
+
+---
+
+## 2026-10-19 (evening) — Catalog overlay, providers polish, logo dark fix, palette logout
+
+### Requirement
+Wider + more feature-rich catalog search overlay; providers UI/UX polish; black provider logos invisible in dark theme; logout in command palette.
+
+### Implementation (frontend only)
+- `CatalogBrowser.tsx`: dialog `max-w-3xl`→`max-w-5xl`, list `70vh`→`75vh`, 3-col grid on lg, sort control (`catalog-sort`: Name/Model count, client-side per page), results count (`catalog-results-count`) + clear-filters (`catalog-clear-filters`), gateway family label on supported cards.
+- `providers/page.tsx`: sticky center header + panel toolbars, unified section-header type, plain-<p> empty states → `EmptyState` (same strings/testids). No behavior/testid changes.
+- `ProviderLogo.tsx`: img tile keeps `bg-white` in both themes + inset ring (was `dark:bg-zinc-950` hiding black marks). Fallback unchanged.
+- `CommandPalette.tsx`: trailing Session group with Log out (`palette-logout`): logout() → reset() → push "/" in finally, toast + close. Mirrors `SidebarLogoutNav`.
+- E2E: new `frontend/e2e/palette-logout.spec.ts` (dedicated user, skip-guard if item absent — now present so it runs fully).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 150 collected.
+
+---
+
+## 2026-10-19 (night) — Gemini inline image output was silently dropped
+
+### Requirement
+"Generate an image" replies showed descriptive text but no image ("no image is visible!"); plus prior thread: shared custom dropdown everywhere + chat math rendering.
+
+### Root cause
+Gemini/Vertex image-capable models return image bytes as `inlineData` parts inside the SAME chat response. `adapters/gemini.py::_gemini_thought_and_text` extracted only `text` parts — image bytes were discarded, never persisted, so `MessageAttachments` had nothing to render. The model's own prose ("This infographic visualizes...") made it look like a render bug.
+
+### Implementation
+- Backend: `StreamChunk`/`ChatResult` gain `images[]`; `_gemini_images()` extracts camelCase/snake_case parts (stream + non-stream, Gemini + Vertex, ~20MB cap); `attachments/service.persist_inline_images()` decodes→upload→link; `run_chat` + `generation._finish_completed` persist post-commit; `ChatResponse.attachments` + SSE done-envelope carry `AttachmentRead`s. No migrations, text-only flows byte-identical.
+- Frontend: `StreamDone.attachments` typed; `ChatWorkspace.mergeDoneIntoCache` merges done-envelope attachments into the cached message before invalidating (empty lists never clobber); backend emits terminal only after image commit, so refetch is authoritative.
+- Prior thread (same tree, uncommitted): shared custom `Select` (`ui/select.tsx`, same props/API, `{testid}-option-{value}` contract, wizard raw select replaced); KaTeX math (`remark-math`+`rehype-katex` in `ResponseMarkdown`, citation plugin skips math nodes); e2e migrated from `selectOption` to `selectDropdown` helper; palette logout e2e.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; backend targeted suites 70+54 passed; `alembic check` clean; OpenAPI 27 routes ok.
+- E2E `test --list` 150 collected (browser suite not driven — agent limited to open/preview).
+
+### Notes
+- Without `-p no:randomly`, parallel pytest runs hit DB contention even on untouched tests (pre-existing flake, unrelated).
+
+---
+
+## 2026-10-19 (night) — Build fix: rehype-katex missing in frontend container
+
+### Symptom
+`next dev` overlay: `Module not found: Can't resolve 'rehype-katex'` in `ResponseMarkdown.tsx`.
+
+### Root cause
+Two-layer staleness, NOT a missing dep: `package.json` + `package-lock.json` correctly list `katex@0.19.0`/`rehype-katex@7.0.1`/`remark-math@6.0.0` and the rebuilt image contains them — but the `tollms_frontend_node_modules` named volume (populated from an older image) shadows `/app/node_modules` in the running container. (Known recurrence: Desktop file-sharing forces the volume; see 2026-09-13 volume incidents.) Local host `node_modules` was always fine.
+
+### Fix (infra only, no code)
+Rebuilt image (`docker compose build frontend`), then `docker rm -f tollms-frontend` + `docker volume rm tollms_frontend_node_modules` + `docker compose up -d frontend` so the fresh volume populates from the new image. Verified: all three packages resolve + import inside the container.
+
+### Lesson
+After any `package.json` dependency change, the frontend container needs image rebuild AND node_modules volume refresh — image rebuild alone is shadowed.
+
+---
+
+## 2026-10-19 (night) — Wizard Step 1: cards-only, no Vertex card, catalog search card, no scroll
+
+### Requirement
+No scroll (fit max height); remove dropdown type selection; remove Vertex AI card; search card last (after Custom) opening catalog search+configure.
+
+### Implementation (frontend only, `ProviderWizardModal.tsx`)
+- Deleted the `Select data-testid="provider-type"` block; platform cards (`provider-platform-{TYPE}`) are the only selector; `type` state/Next gating unchanged.
+- `VISIBLE_PROVIDER_TYPES` filters out `VERTEX_AI` from the card grid; meta/credential/step-2+ support intact; stale drafts fall back to OPENAI.
+- New dashed `provider-platform-SEARCH` card (Search icon) opens reused `CatalogBrowserDialog`; visible family preselected else CUSTOM (+viaCustom/baseUrl prefill, name fill-if-blank); never a submittable type.
+- `DialogContent`/`form` capped `max-h-[90vh]` overflow-hidden (also fixes clipped header); step-1 body non-scrolling compact 3-col grid; steps 2–4 keep existing scroll container.
+- E2E: `provider-type` dropdown refs → card clicks (`helpers`, `wizard.spec`, `providers.spec`); `selectDropdown` kept for remaining custom-dropdown filters; zero `provider-type` refs left.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 150 collected.
+
+---
+
+## 2026-10-19 (night) — Catalog no-scroll + card redesign + SEARCH logo preview + wizard layout
+
+### Requirement
+Catalog: no scroll, container hugs content, wider + more featuristic cards. Wizard SEARCH card shows picked provider logo. Add-Provider layout polish.
+
+### Implementation (frontend only)
+- `CatalogBrowser.tsx`: `PAGE_SIZE=12`, 4-col grid (xl), no scroll regions, dialog `max-w-6xl h-auto` + short-viewport scale-down; `CatalogCard` rewrite — wrapping names, break-all slug/host, family + count row, env chips, flex-1 Configure + doc tooltip. All catalog testids kept.
+- `useCatalog.ts`: `pageSize` param threaded into query key + `page_size`.
+- `ProviderWizardModal.tsx`: `catalogPick` carries name/logoUrl; SEARCH card previews logo+name+slug with Change hint; header rhythm/section labels/equal-height card footers/footer spacing polished.
+- E2E `catalog.spec.ts`: density-agnostic pagination assertions + SEARCH preview test. (Tester initially read stale files mid-write; on-disk state confirmed correct.)
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` green.
+
+---
+
+## 2026-10-19 — Full-application UI/UX audit + layout optimization (agent-browser validated)
+
+### Requirement
+App-wide UI/UX audit: spacing, sizing, typography, responsive (375→1920), shell/nav, forms/dialogs, data pages, a11y — validated in the real running app via agent-browser.
+
+### Investigation
+- Route/component inventory (19 routes, shared shell, primitives, tokens, breakpoints, e2e map).
+- 5 read-only audit workstreams (shell, chat, providers, keys/analytics/admin/settings/docs/auth, orgs) → ~70 prioritized findings.
+- Browser baseline (agent-browser, session audit-main): login/chat/providers/keys/analytics/settings/docs/org at 1440; chat at 390; wizard/catalog dialogs.
+
+### Root-cause fix (shared layer)
+`lib/utils.ts:cn` was a naive join (no tailwind-merge), so every per-instance Dialog width/height override silently lost to base classes (`max-w-lg` beat `max-w-6xl`). Added `tailwind-merge`; `cn = twMerge(join)`. Required frontend image rebuild + node_modules volume refresh (stale-volume shadowing, same as katex incident).
+
+### Implementation (frontend only, 3 batches + polish; no backend changes)
+- Batch 1 (shell+chat critical/high): Chat active on /c/[id]; focus-visible row actions + labels; select aria-labels; inert collapsed/off-canvas sidebars; keyboard resizer; dialog fade-only (no jump); dropdown collision/max-h; select flip+max-h; dvh shell; skip link + #main-content; mobile Esc/focus; Link for hash nav; analytics active highlight; global focus-visible ring; message/media touch+keyboard access; media empty-fallback; conversation loading/error states; composer wrap; reasoning tap-toggle.
+- Batch 2 (data pages critical/high): catalog hug+92dvh fallback (scale hacks removed); providers xl breakpoint unity; responsive wizard grid; drawer max-width; sticky/filter/header/row fixes; verify/callback AuthShell states; AuthCard no-shrink (scroll fallback); KeyForm single-col parity + preset parity; mobile budget line; settings wrap; docs copy button + PageContainer; org denied/gating/URL-sync/ID-joins/budget-gate/validation fixes; orphan dashboard verified live (kept).
+- Batch 3 (44 mediums): peek debounce; unified zinc-900 active; dense semantics fixed; full-bleed sticky headers; h1 truncate; lg grid step; prose dark class; reduced-motion; ring contrast; SidebarHeader hydration; mobile provider line; prose/katex breaks; failure details+copy; panel 30vw cap + 1100px overlay; user-math parity; rename save-on-blur; history compare highlight; catalog loading/retry + toolbar unity; card h-full; header tokens; expiry/footer merge; fluid BudgetBar; shared currency fmt; responsive chart heights; drawer grids; range toolbar scroll; settings scroll-spy; empty states; skeleton parity; org pagination; titles/break-words/CTAs/budget validation/toolbars/tablists.
+- Polish (12): header/reveal tooltips + guards; profile/workspace titles; aria-current=page; conversation rhythm; 6px scrollbars; Shell role=status; empty-state API-key CTA; zinc-500 minimums; viewer z-1100.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152 (each batch); e2e `test --list` 151 green; tester updated 5 spec files (aria-current, generation selectors, ops-tab URL, wizard assertions, chat-ux placeholders/landmark); backend `test_org_phase_b + tests/keys` 54 passed (no drift).
+- agent-browser: login flow, skip-link focus, chat 1440/768/1920, providers + wizard 1440/390, catalog 1152px 4-col, settings/analytics/docs/admin-gate/org-members, mobile login. Screenshots in /tmp/opencode/*-before/after.png.
+- Untested: /share/[token], /invite/[token], /verify, /health, org budgets/audit/operations flows (no data), paid/live-gateway paths, 320px width, full keyboard-only pass beyond skip link.
+
+### Notes
+- Audit user `auditbrow-*@test.tollma.ai` + `AuditOrg` remain in LOCAL dev DB only (no org DELETE endpoint; user purge is scheduled). Tagged, inert.
+- Two mid-task races documented: tester read files mid-write (resolved by on-disk recheck); pytest Valkey flush logged out the browser session (re-login).
+
+---
+
+## 2026-10-19 (late) — Model selector union + org model CRUD + chat/keys fixes
+
+### Requirement
+Selector showed ~10 models (org models missing); org Available/Register/View Details parity; key download button; drop TEAM column; chat-only focus-ring removal; Gemini image/video preview; refresh-mid-generation duplicate-key crash; uniform cross-provider response schema.
+
+### Root causes + fixes
+- Selector cap: `ChatComposer` groups joined key models against the personal-only registry (`byId.get(km.id)`, drop on miss) — org-only models silently discarded. Fix: fall back to the key's own full `ModelRead` row (`ChatKeyModel = AIModel`, type-identical). Live-verified: seeded 12 models → all 12 listed; provider delete → prune → 0 eligible.
+- Backend org model CRUD (new): POST/PATCH/DELETE `/api/v1/orgs/{id}/.../models` with Providers.Create/Update/Delete + 404-oracle; personal primary sync untouched; `app.openapi` + `alembic check` clean; full backend suite 771 passed.
+- Uniform schema: `cache_write_tokens` forwarded (OpenAI chat/Responses, Gemini/Vertex); terminal payloads (live + reattach) always carry `model_name`/`provider_name` (fixes "null" header); `<think>` stays the uniform reasoning channel; no fabricated fillers. Gemini `thinkingConfig` deliberately skipped (unverifiable without live creds, 400-risk). Factory media gate untouched (Gemini images ride the chat path).
+- Gemini image: models.dev reports image output; mapping lock dropped it and chat never requested IMAGE modality. Fix: preserve non-chat endpoints; send `responseModalities:[TEXT,IMAGE]` when registered model flags image support; existing inlineData→attachment path reused. Video honestly unavailable (Veo is Vertex-only).
+- Frontend: RawKeyDialog Download (`raw-key-download`, .txt blob); TEAM column deleted; composer-scoped focus override (global rings untouched); `addOptimistic` idempotent + winner-map dedupe + idempotent `attachToGeneration` (duplicate-key crash); no OpenAI-only gates found (purely data-driven).
+- E2E: new `test_org_models.py` (6 tests) + org table/download/org-register specs; `test --list` 154 green. Tester stale-read races re-confirmed on disk twice.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; backend targeted 37+74, full 771; live stack: 12/12 listed, 0 after delete.
+
+---
+
+## 2026-10-20 — Workspace switch preserves current page
+
+### Requirement
+Switching workspaces must keep the user on the most relevant page (e.g. personal Providers → org Providers), permission-aware, instead of always jumping home.
+
+### Implementation (frontend only, `Sidebar/WorkspaceMenu.tsx`)
+- New exported `destinationFor(pathname, target)`: scope-shared pages (`/`, `/providers`, `/api-keys`, `/analytics`) keep path + query; org dashboards swap the org id (query like `?section=` preserved); `/c/*` is personal-only → org switch lands at chat root; everything else (settings, admin, docs, notifications, invites) keeps path (scope-agnostic). Permission-denied landings are safe: pages render their own gated empty states (verified in audit).
+- `goPersonal`/`goOrg` use it (were hardcoded `/` and `/organizations/{id}`). Query read via `window.location.search` in the click handler (no Suspense risk).
+
+### Verification
+- `tsc`/`eslint` clean. Live agent-browser: personal `/providers` → AuditOrg stayed `/providers` (was org dashboard); org dashboard `?section=members` → Personal landed `/` with Personal context. Browser sessions closed.
+
+---
+
+## 2026-10-20 — Single sidebar navigation (no duplicates, empty body)
+
+### Requirement
+Org dashboard showed the section subnav AND the full org nav (duplicated); docs/org pages showed the unrelated conversations list. Rule: sidebar body stays empty unless genuinely contextual; the bottom-anchored nav is the single navigation.
+
+### Implementation (frontend only)
+- `Sidebar.tsx`: body renders contextual content only on chat (`SidebarConversations`), providers, analytics, settings, admin, api-keys hint; org routes + `/docs/*` (fixed `isApiDocsPage` to include subpages) + `/notifications` render an empty `aria-hidden` div. Bottom block unchanged: full personal nav or full org nav.
+- `SidebarOrgNav.tsx`: reverted the interim subnav split (`sections`/`hideHeader`/`ORG_SECTION_IDS`/`ORG_PAGE_IDS`) — single full-nav variant again. Kept the permission-gate mirroring + truncation titles from the earlier batch.
+- E2E: `org-subnav-key-details.spec.ts` rewritten to assert no-subnav/no-conversations + single bottom org nav (13 links).
+
+### Verification
+- `tsc` clean; e2e `test --list` 157 green. Live agent-browser: org dashboard → 0 subnav, exactly 1 `sidebar-org-nav` (13 links), 0 conversation items; `/docs/openai` → 0/0. Sessions closed.
+
+---
+
+## 2026-10-20 — Key model names, chat-inclusive key analytics, member drawer
+
+### Requirement
+Key panels showed raw UUIDs; key analytics missed in-app chat traffic with no per-endpoint split; member details drawer sparse.
+
+### Implementation
+- Backend: `ModelPermissionRead` gains live-resolved `model_name`/`provider_name` (batch-loaded, null when deleted; personal + org paths; no migration). Per-key `get_analytics` unions `ApiRequestLog` + `RequestLog(api_key_id)` — totals/series/top-models/top-endpoints include chat under `endpoint:"chat"`; p95 via UNION ALL; ownership unchanged; shape additive.
+- Frontend: shared `ModelPermissionChips` (names + UUID titles + "Removed model" state) in both key panels (`key-models-{id}` / `org-key-models-{id}`); endpoint components label `"chat"` as "Chat app" (fixed distinct color) + caption "Totals include in-app chat-page traffic."; `MemberDetailDrawer` overhaul (avatar header, profile + copy email, sets/teams chips, assigned-keys list from `useOrgKeys`, clearer usage labels; actions/gates untouched).
+- E2E: chip assertions (names, never UUIDs), Chat-app label + caption (mocked summary shape, label-only), member drawer profile + assigned keys; `test --list` 160 green. Backend suites 43 passed.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; pytest keys+analytics 43 passed; full backend suite green on this tree per workstream runs.
+
+---
+
+## 2026-10-20 — Sidebar body: conversations on chat only, empty elsewhere
+
+### Requirement
+Conversations list leaked onto every page (docs, api-keys, org routes); api-keys/docs showed a "Select a section below" placeholder. Rule: conversations ONLY on chat (`/`, `/c/*`); empty body everywhere else (providers/analytics/settings/admin keep contextual bodies); no hover layout shift on conversation rows. Plus infra: Docker Desktop is the only daemon (reject native-dockerd fallback).
+
+### Implementation (frontend only)
+- `Sidebar.tsx`: `isChatPage` gate — `SidebarConversations` renders only on chat routes; placeholder branch deleted; all other non-contextual routes fall into the empty `aria-hidden` div. Removed now-unused page flags.
+- `SidebarConversations.tsx`: row actions `hidden/group-hover:flex` → `invisible/group-hover:visible` — space always reserved, hover no longer shifts the title.
+- Infra: Docker Desktop daemon had failed (`docker-desktop.service failed`, whole stack down); restarted via `systemctl --user start docker-desktop`, stack healthy on Desktop context (`desktop-linux`), backend healthy. No native-dockerd stack touched.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` green (existing conversation-search assertions are all on chat/admin pages — still valid, no spec edits).
+- Live agent-browser: `/api-keys` + `/docs/openai` → 0 conversation items, placeholder text gone. Sessions closed.
+
+---
+
+## 2026-10-20 — Model menu scroll/focus, Gemini thinking, null header, empty state, per-model levels
+
+### Requirement
+Menu wouldn't scroll; focus borders on options; Gemini thinking never rendered; streaming header showed "null"; generation felt static; empty state dated; thinking level global instead of per model.
+
+### Root causes + fixes
+- Scroll: composer `<DropdownMenu>` defaulted to `modal` → Radix RemoveScroll swallowed wheel (reproduced: real wheel input left scrollTop at 0 while programmatic scroll worked). Fix: `modal={false}` + `overscroll-contain`. (Automation can't deliver real wheel input — verified structurally + keyboard path native to Radix.)
+- Focus border: global unlayered `:focus-visible` beat utilities on `role=menuitem/option` (same cascade trap as inputs). Exclusion extended; bg treatment is the indicator.
+- Thinking: Gemini ignored `reasoning_level` so no thought parts ever returned. Now maps level→`thinkingBudget` (none/low1024/medium4096/high10000/ultra32000), gated (never with image_output, never when `supports_reasoning=False`); 400s surface, no retry. Thought extraction unchanged.
+- "null": real source was `costStr` template rendering literal "null" (fixed to null); header names resolve against registry∪key-models union; unknown names → shimmer, never blank.
+- Loading: text → typing dots + thinking pill; image/video → kind-labeled skeleton.
+- Empty state: Logo hero + status-aware CTAs (no provider → providers; no key → api-keys; ready → hint + 3 sample chips filling composer via draft store).
+- Levels: `thinkingLevels: Record<modelId,level>` persisted in chat store; per-model restore.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; pytest reasoning 34 + gateway/public 106; e2e `test --list` 165 (new `chat-empty-state` 5 tests). Browser suite not driven.
+- NOTE: user's tab may run a stale dev bundle (old symptoms persisting) — hard refresh advised after container rebuilds.
+
+---
+
+## 2026-10-20 — Model list hard-capped scroll container (inline styles)
+
+### Requirement
+Model dropdown still unscrollable on real Chrome; make the listing max-height + overflow scroll, immune to repeat regressions.
+
+### Analysis
+Exhaustive live probing: programmatic scroll + keyboard scrollIntoView work; synthetic AND harness-delivered real wheel events reach the page un-preventDefaulted yet move nothing — even a bare synthetic overflow div (proves the automation harness cannot validate wheel here, not app behavior). Prior suspects eliminated one by one (Radix modal RemoveScroll removed via rewrite; no global wheel handlers except gated closed-component traps; no preventDefault on the event path). Remaining risk was purely cascade-level (a repeat of the max-w-6xl incident where utilities silently lost).
+
+### Fix (frontend only, `ModelSelectorMenu.tsx`)
+List container constraints moved to INLINE styles (`minHeight:200, maxHeight:400, overflowY:auto, overscrollBehavior:contain`) — inline beats every stylesheet/merge/specificity trap by construction; classes kept for padding/overscroll only. Cap lowered 560→400 so overflow (hence scrollability) is unambiguous with 11+ models. Zero JS scroll handling; keyboard path (arrows + scrollIntoView) live-verified working.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; no e2e max-h assertions exist (grep clean).
+
+---
+
+## 2026-10-20 — Intelligence panel org-key union + slimmer conversation rows
+
+### Requirement
+Panel showed full data for personal models but all dashes for org-key models; conversation rows too tall.
+
+### Root cause
+`IntelligencePanel` resolved model/provider from the personal-only `useModels()`/`useProviders()` registries — org rows never matched (same trap as the selector union, fixed separately).
+
+### Fix (frontend only, `ChatSettingsPanel.tsx`)
+Union mirrors the composer: registry find ?? key-entries find (via shared `useChatKeys`/`useAllChatKeyModels` cache keys); provider via personal find ?? owning org's `useOrgProviders` (org id from the containing key entry; query dormant for personal picks). Caps/pricing/limits/reasoning derive from the full row unchanged. `SidebarConversations` row `py-1.5` → `py-1`.
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152; e2e `test --list` 166 (new `intelligence-org-key.spec.ts` with skip-guard + name/pricing/limit assertions).
+
+---
+
+## 2026-10-20 — API key status/usage/last-used lifecycle fix
+
+### Requirement
+Chat usage invisible in key analytics; listing said Inactive while detail said Enabled; last-used never set; per-key attribution in doubt.
+
+### Root causes (all evidence-verified)
+- Rich panel reads `/api/analytics/api-keys/*`, which scanned only the public ledger — in-app chat rows invisible (the other endpoint's union didn't feed the UI).
+- Listing used usage-aware `keyStatus` (Inactive = never used) vs detail's usage-blind `apiKeyStatus` (Enabled); org table had a third vocabulary.
+- `last_used_at` had zero writers anywhere in the tree.
+
+### Implementation
+- Backend: `touch_key_last_used` (success-only, max-guard, never raises, same-commit) hooked into `record()` (both chat sites) + public `log_request`; fixed missing `org_id` on non-streaming `run_chat`; rich analytics unions both ledgers (`endpoint:"chat"` for in-app; network stays gateway-only, documented); `OrgKeyRead.issued_by_email` added (UUID display fix). No migration.
+- Frontend: single shared `keyStatus` everywhere incl. new `orgKeyStatus` adapter; Refresh invalidates keys+analytics families; window-focus refetch when stale; error vs empty states verified separated.
+- Tests: new `test_key_usage_stamps.py` (8) + `api-keys-status.spec.ts` (3, mocked routes).
+
+### Verification
+- Live browser (stub LLM, no paid calls): personal chat → Enabled + last-used + REQUESTS 1/TOKENS 14/charts; org chat → org-key stamped, personal stays 1 (isolation); org table Enabled + date; API returns `issued_by_email`.
+- Full backend suite: **787 passed**. Frontend: tsc/lint clean, vitest 152/152, e2e list green.
+- Residue (local dev only, tagged): `auditkeys-*@test.tollma.ai`, KeyAuditOrg, stub provider/models.
+
+---
+
+## 2026-10-20 — Model selector highlights only the selected key's row
+
+### Requirement
+Same model under two keys highlighted simultaneously (modelId-only match).
+
+### Fix (frontend only)
+`ModelSelectorMenu` takes new optional `activeKeyId` (wired from `useChatKeyStore().keyId` in `ChatComposer`); row highlight is now `key.id === activeKeyId && modelId === m.id`. Null key → nothing highlighted (a pick always sets both together).
+
+### Verification
+- `tsc`/`eslint` clean; vitest 152/152.
+
+---
+
+## 2026-10-20 — Duplicate model rows crash TopModelsChart (union fix)
+
+### Requirement
+`Encountered two children with the same key, 'gemini-2.5-flash'` in key analytics Top Models chart.
+
+### Root cause
+Cross-ledger same-model rows: gateway ledger stores adapter family strings (`gemini`), chat ledger joins registry display names (`Gemini AI`) — verified byte-identical model strings with different providers via live DB (Ney Kwy key: 3+6 gateway rows, 1 chat row). The rich union appended without folding, so two `gemini-2.5-flash` bars rendered with identical React keys. (The other analytics endpoint already merged by name; the rich `model_rows` mapped 1:1.)
+
+### Fix (backend only, `services/analytics/models.py`)
+`model_rows` folds by model name (sums requests/success/cost/tokens/latency; first-seen provider label; avg/success recomputed post-fold). Provider-level folding untouched (no attribution change). New `tests/test_analytics_models.py` regression test.
+
+### Verification
+- Live-shape probe in container: merged 4/400/provider-gemini + distinct row intact.
+- Suites: analytics_api + analytics + consistency + keys = 79 passed; new test 1 passed.
+
+---
+
+## 2026-10-21 — Unified API-key enforcement (chat + external share one policy gate)
+
+### Requirement
+Budget-exceeded keys still generated chat responses; key restrictions (budget/rate/IP/model) enforced on external `/v1/*` only, bypassed by in-app chat. Full policy matrix + transparent OpenAI/Anthropic compat + usage integrity + perf measurement.
+
+### Root causes (all evidence-verified)
+- In-app chat (`api/gateway/service.run_chat/_setup_generation/start_regeneration`) never called `limits.check_request/record_usage` — only existence/owner/enabled/expired + allow-list. Enforcement spend (Valkey) diverged from display spend (Postgres SUM) because chat never wrote Valkey.
+- Missing-IP allowed + XFF trusted blindly (unparseable peer fell back to XFF).
+- Post-gate failures (409/credential/adapter errors) leaked Valkey reservations (phantom spend).
+- Public plane lacked stored-spend pre-check, so post-Valkey-flush it could exceed while chat denied.
+
+### Implementation (backend/**, frontend/** — no rewrites, no new deps)
+- NEW `services/gateway/key_policy.py`: `chat_key_context`, `ip_allowed` (deny-wins, fail-closed with rules), `org_cap_usd`, `postgres_spend` + `postgres_deny` (stored-spend pre-check, Valkey vocabulary `budget/daily_spend/monthly_spend` + UTC retry_after), `enforce_chat_policy` (owner→enabled/expired oracle→IP→model→Postgres→Valkey), `reconcile_chat_usage`.
+- Chat: gate before row creation/provider I/O in run_chat/stream setup/regen; reconcile actuals on success, release on fail/cancel/409 (incl. IntegrityError paths + generic post-gate guard).
+- Public `_prepare`: same Postgres pre-check (with `Retry-After`), refund on credential/adapter failure, shared `ip_allowed`/`org_cap` helpers, denial counter parity.
+- `core/sessions.gateway_client_ip`: XFF only behind loopback/private/TRUSTED_PROXIES peer; new `TRUSTED_PROXIES` setting (+`.env.example`).
+- Migration `f7a8b9c0d1e2`: `ix_request_logs_key_created(api_key_id, created_at)` (model metadata updated; `alembic check` green).
+- Frontend: 403/429 denial UX (no fake success, no key fallback/scope switch, friendly copy + Manage-keys action), key/model refresh on focus, `budget-exceeded/rate-limited/ip-blocked` problem mapping.
+- Tests: NEW `test_unified_policy.py` (42), `test_auth` OAuth trusted-proxy simulation, `api.test.ts` new-reason assertions, IP fail-closed expectation updates.
+
+### Verification
+- Live (real provider `http://115.247.148.78:3002/api/v1`, glm-4.7-flash, billable prices set): valid chat + chat_completions/responses/messages all succeed with usage; budget-exceeded denies pre-dispatch on BOTH planes (0.13s, no upstream); expired/revoked 403/404; RPM 429 with retry-after; IP-deny 403; unknown/alias-cased model 404; browser: listing/detail both Budget-exceeded, denial banner, key unchanged, zero new rows.
+- Suites: unified-policy 42/42; blast-radius gate (public_gateway+keys+generations+auth+observability+analytics+chat_keys+history+org_phase_b) 314 passed; test_limits 12/12; observability 16/16; auth 24/24; frontend vitest 155/155; tsc/eslint clean; `alembic check` clean; OpenAPI 171 paths.
+- Perf (dev, Docker Desktop): denied (pure gateway overhead) ~50–280ms — 2–4ms target NOT met; dominated by session/key DB loads + indexed SUM + sync Valkey bridge. Upstream dominates admitted requests (2–13s on live model). Honest numbers, no optimization claimed.
+- Full suite: 803 passed / 27 failed / 7 errors under full-run contention — triaged: 2 real issues found+fixed (denial counter, OAuth test topology), remainder pass solo (deadlock/interference flakes incl. known `test_progress_persists` flake); one ~11h stall from real-time-wait tests in file order (documented anomaly, not a code hang — affected suites pass in bounded runs).
+- Residue (local dev only, tagged): `livepol-*@test.tollma.ai`, LiveTestProv + glm model, ExtTestKey/LiveValid keys; prior `auditkeys-*` user.
+
+---
+
+## 2026-10-22 — Conversation response rendering: code cells, mermaid errors, thinking
+
+### Requirement
+Response items rendered code as an unbounded unwrapped blob; mermaid syntax errors painted the library's boom overlay at page bottom; thinking prose showed as code boxes with raw `**`.
+
+### Root causes (all evidence-verified)
+- `className` arrives as `"hljs language-<lang>"` (rehype-highlight prefixes `hljs`), but both renderers tested `startsWith("language-")` → every labeled fence fell through to the inline-code style (no max-height, no toolbar). Unlabeled fences had no cell path at all.
+- `MessageView.CodeBlock` copy read `children` as a string, but highlighted children are elements → Copy copied `""`.
+- Mermaid v12 paints its own error SVG into the document on `render()` failure (`suppressErrorRendering` was unset) → boom overlay outside the cell.
+- Reasoning prose arrives indented; markdown renders 4-space-indented lines as code blocks.
+
+### Fix (frontend only)
+- `ResponseMarkdown.tsx` / `MessageView.tsx`: block detection via `includes("language-")`; `pre` routes unlabeled fences into `RichCodeBlock`/`CodeBlock` cells. `RichCodeBlock`: `max-h-[480px]` + scroll, Edit toggle (textarea + Done/Revert, local scratch, copy/download follow edits), kept Wrap/Download/Copy. `MessageView.CodeBlock`: `extractText` copy fix + max-height.
+- `MermaidBlock.tsx`: `suppressErrorRendering: true` (rejections stay inline, no body litter); error box capped (`max-h-32` scroll, mono).
+- `reasoning.ts`: `dedentBlock` applied to outlines/bodies in `splitReasoningSteps`; +2 unit tests.
+
+### Verification
+- `tsc` clean; vitest 157/157 (24 files). Live browser (real provider response with python fence + invalid mermaid): cell shows "Python · 1 line" + Edit/Wrap/Download/Copy, pre carries max-h classes, Edit→Done/Revert works, mermaid cell shows inline parse error with Diagram tab disabled, zero boom nodes in DOM, thinking steps render as prose with inline code spans.
+
+---
+
+## 2026-10-22 — Admin hash navigation + org analytics overhaul
+
+### Requirement
+Platform-admin sections beyond Overview never loaded; org analytics page showed "No timeline data", empty success/cache rates, and needed better organization with interactive visualization.
+
+### Root causes (all evidence-verified)
+- Next.js `<Link href="/admin#x">` same-page navigation uses history.pushState and does NOT fire `hashchange` — every hash subscriber (sidebar highlight, page content) went stale. Confirmed live: URL became `#usage` while Overview stayed rendered. Same broken pattern in Settings + Analytics sidebars.
+- Org overview API returns `by_day` (+`totals`), but the frontend `timeline()` only read `timeline/timeseries/daily/series` → chart always empty. Backend sent no success/cache aggregates at all (success-only filters), so rates were always "—".
+
+### Fix
+- Nav: `SidebarAdmin`/`SidebarSettings`/`SidebarAnalytics` click handlers preventDefault + assign `window.location.hash` natively (fires hashchange; deep links/history preserved); `AdminPage` scrolls to the mounted section on activeId change.
+- Backend `AnalyticsOverview`: additive `successful_requests/total_requests/success_rate/cache_read_tokens/input_tokens/cache_hit_rate` (both ledgers, same filters; null-safe). New `test_analytics_reliability_fields` (11 passed incl. key/team scoping, empty-window nulls).
+- Frontend org dashboard: `by_day` timeline source; section anchors (Overview/Usage over time/Breakdown/Members/Insights/Budget) with chip nav (buttons, no hash pollution); timeline Spend/Requests/Tokens toggle.
+
+### Verification
+- Live (stub for admin APIs unnecessary — real 200s): all 12 admin sections render via hash + sidebar click; deep link `#usage` → content + `aria-current=page`. Org page (real org-key chat traffic): timeline bucket renders, success 100.0%, cache 0.0%, toggle + section chips work.
+- `tsc`/`eslint` clean; vitest 157/157; backend org suites 36 passed; OpenAPI 171 paths unchanged; new-field contract verified via curl.
+- Pre-existing, untouched: e2e `admin.spec.ts` fails on stale `sidebar-nav-settings` testid (absent from src, fails with/without this change); health-SSE e2e passed. Full-blast validation deferred to CI per standing flake note.
+- Residue (local dev, tagged): render test user demoted to USER; timeline-test-org + OrgLive*/RenderProv rows remain.
+
+---
+
+## 2026-10-23 — Chat UX: user-message collapse, HTML preview + sandbox, layout stability
+
+### Requirement
+Long user prompts unbounded; HTML responses had no website preview; suspected transform/shift instability during streaming.
+
+### Root causes (all evidence-verified)
+- User bubbles rendered full content with no collapse affordance.
+- Assistant code cells had no preview path; mermaid `pre` handling existed but not HTML.
+- `motion.div layout` on every MessageView + AnimatePresence list: each streamed token re-ran FLIP layout animations (visible enlarge/shift). No other transforms on the chat path (only transitions/animate-pulse spinners + tooltips/menus, all legit).
+
+### Implementation (frontend only)
+- `MessageView.tsx`: removed `layout` from the message motion wrapper; added `CollapsibleUserContent` (useLayoutEffect + ResizeObserver on rendered height >320px, Show more/less with aria-expanded/controls, per-message state, gradient hint, no data truncation).
+- NEW `HtmlPreview.tsx`: `isPreviewableLanguage` (html/htm only), `PREVIEW_DEVICES` (390/768/1280), `preparePreviewDocument` (DOMParser→span-swap dead anchors `<a>`/`""`/`#`, target+rel on real links, prepended CSP meta, XMLSerializer; errors as inline data), sandboxed `iframe` (`sandbox=""`, no-referrer, `csp` attr via ref, srcDoc memoised), inline + `HtmlPreviewFullscreen` (fixed z-[60] overlay, device segmented control, Escape, body scroll-lock restore).
+- `ResponseMarkdown.tsx`: Preview toggle in assistant code header (html/htm only, disabled while streaming), view switch code/preview, fullscreen mount, wrap-enabled header.
+- `HtmlPreview.test.ts`: eligibility/devices/CSP-contract/no-DOM-error-shape unit tests.
+
+### Verification
+- `tsc` clean; `eslint` clean; vitest 25 files / 161 passed (incl. 4 new).
+- agent-browser vs live stub LLM: short prompt no toggle; 64-line prompt collapses (428px) ↔ expands (2621px) with state intact; Preview only on assistant HTML (Python/mermaid/user cells excluded); srcdoc shows CSP + span-swapped dead links + noopener external; dead-link click: no jump/nav; external click: parent URL unchanged; close restores code view; edits propagate to preview; fullscreen covers MI panel; Phone 390 / Tablet 768 / Desktop 1248 viewports; Close + Escape restore scroll; mid-stream Preview disabled with explanatory title; zero active message transforms; no horizontal overflow during/after streaming; no boom/duplicate-React-key regressions (7 mermaid SVGs render); console has no errors; model dropdown works.
+- Production `next build` fails at `/auth/reset-password` prerender — reproduced on pristine tree (pre-existing, unrelated).
+- Residue (local dev only): `preview-ux@test.tollma.ai` + StubProv/model/keys; stub server killed (was /tmp-only).
+
+## 2026-10-23 — Org API-key editing, org analytics nav, key-panel scroll, perf pass
+
+Requirement: editable org keys without secret change; org analytics nav that only exposes working org reports; single-scroll key details; no perf regressions.
+
+Backend (`api/keys/organization_service.py`, `api/orgs/keys/router.py` + compat re-export in `api/orgs/keys/service.py`):
+- New endpoints reusing personal validation/enforcement primitives: PATCH metadata (`update_org_key`), PUT policy/ip-rules/model-permissions, POST rotate. All scoped `org_id` + `Keys.Update`/`Keys.Rotate` (+ACTIVE membership), 404-oracle on strangers/cross-org, org-cap check on budget raise/enable, full-transaction validation before commit, context invalidate (tombstone on rotate), audit + gateway-denied metric parity with personal paths. Rotate is the ONLY path touching hash/prefix; edits verified byte-identical hash/prefix/rotation_count/created_at.
+- No migration (no schema change); `alembic check` clean; OpenAPI loads (175 paths).
+
+Frontend (`OrgKeyEditDrawer.tsx` new + `orgs.ts`/`useOrgs.ts` mutations + `OrgKeysPanel`/`OrgKeyDetailsPanel` wiring + `page.tsx` `canUpdateKeys`):
+- Edit drawer mirrors personal KeyEditDrawer (metadata/PATCH, policy/IP/models full-replace PUTs, dirty-only submits, org models/providers in ModelPermissionsEditor, assignee/org scope header, explicit two-step rotate with RawKeyDialog reuse). No secret display; edit never calls rotate.
+- KeyEditDrawer header now uses full `keyStatus(apiKey, cost)` (was usage-blind `apiKeyStatus`), matching list/detail pills.
+- Org analytics sidebar (`SidebarAnalytics`) renders 6 org sections (Overview/Usage over time/Breakdown/Members/Insights/Budget) as scroll buttons in org scope; personal 8 hash reports unchanged elsewhere.
+- `InsightList`: removed `max-h-[420px] overflow-y-auto` inner scroller; list expands in the drawer's single scroll.
+
+Tests: 10 new backend tests in `tests/test_org_phase_b.py` (secret-preservation, perms 404-matrix, atomic validation, budget/IP/model enforcement on BOTH chat+external planes, rotate semantics + history retention, org-cap guard, disable/enable round-trip). Full backend suite: 840 passed. Frontend: tsc + eslint clean, vitest 161/161.
+Browser (agent-browser, stub LLM + real gateway): org member sees no Edit/rotate affordances; edit saves name+budget, status flips to Budget exceeded consistently; $0 budget denies chat (403) and external (403) while old secret still authenticates; rotate shows new secret once, old raw 401s; org analytics section nav scrolls + highlights, refresh/direct-URL/back-button preserve context; no nested insights scroller in DOM (overflow visible); no horizontal overflow; console clean.
+E2E notes: new-file `org-subnav-key-details` 3/3 green; `api-keys-ux` needs LIVE_EMAIL/LIVE_PASSWORD (external account, unavailable here); `api-keys-status` 2 failures are pre-existing Playwright strict-mode `.or()` locator violations in the spec (fail at row-visibility before any changed assertion; single `keys-table` testid in source).
+Residue (dev only, tagged): `uite2e`/`member2@test.tollma.ai`, `UITestOrg`, `UIMock` provider, `UIKey` key (+rotated). Stub mock server was /tmp-only, stopped.
+
+## 2026-10-24 — Sileo replaces sonner for all notifications + theme-specific toast contrast
+
+Requirement: Sileo as the single notification library; theme-specific toasts with clear high-contrast text.
+
+Root cause of unreadable dark-mode toasts: the first-cut `SileoToaster` relied only on Sileo's `theme` prop (evaluated from a `.dark`-class observer) with no explicit fill/text styles — dark toasts fell back to the white `#FFFFFF` default fill with pale state-colored text (verified in user screenshot: white card, yellow-on-white title).
+
+Implementation (frontend only, no API/business-logic changes):
+- `sileo@0.1.6` installed; `sonner` removed (package.json + lock; container node_modules synced via `docker compose exec frontend npm install`).
+- New `src/lib/notify.ts`: sonner-compatible `toast` facade over Sileo (`success/error/warning/info/loading/promise/dismiss`). Maps `(message, {description, action:{label,onClick}})` → `SileoOptions({title, description, button:{title,onClick}})`; JSX messages become the body; string/shorthand + function promise forms normalized; `dismiss(id?)` → dismiss/clear. All 48 `from "sonner"` imports retargeted to `@/lib/notify` (import-line-only change at call sites).
+- New `src/components/ui/SileoToaster.tsx` ("use client"): MutationObserver on the `<html> dark` class (ToLLma theme is class-based, not OS-based), explicit per-theme `options` (dark: fill `#18181b`, title zinc-50, desc zinc-300; light: fill `#ffffff`, title zinc-900, desc zinc-600), `key={theme}` remount so mid-session toggles can't strand the old palette.
+- `primitives.tsx` Toaster → re-exports SileoToaster; `layout.tsx` imports `sileo/styles.css` (global-CSS rule: only layout may import it); `globals.css` maps `--sileo-state-info` to `--color-tollma-500` brand accent.
+- Unit tests `src/lib/__tests__/notify.test.ts` (6 tests: mapping, JSX body, action→button, single-fire, promise forms, dismiss/clear).
+
+Validation: tsc clean, eslint clean, vitest 26 files / 174 passed. Browser (agent-browser, tru@g.c, live OpenWebUI backend): key-create flow, copy, provider Validate success ("Credentials valid") + failure ("Credentials invalid", unreachable endpoint), stale-provider warning with working "Open providers" action (navigates to /providers), org invite success ("Invitation sent…"), all in dark (dark card/white title/zinc-300 body) and light (white card/zinc-900/zinc-600); Appearance Light↔Dark toggle remounts palette; no console errors. Test residue removed (junk-unreachable provider, sileo-test-key, test invitation all deleted via API).
+Limitation: Sileo action elements are not exposed in the a11y tree (library renders non-focusable elements), so keyboard users can't tab to toast actions — mouse/touch verified working.
+
+## 2026-10-25 — ToLLma Guardrails BACKEND + Laya service
+
+Requirement: Guardrails backend (policies/rules/evaluators/assignments/triggers, gateway pre/post hooks, credentials validate-then-persist, 8 seed templates) + separately deployable Laya evaluator service. Shared contract enums (Severity/Enforcement/Stage/Delivery/EvaluatorType/Category/Source/Action), workspace isolation with 404 oracle, org mandatory-wins, streaming audit-only honesty, Alembic migration, pytest green.
+
+Implementation (backend/** + new top-level laya/ + docker-compose.yml + .env.example only; no frontend touched):
+- `models/guardrail.py` (new; registered in `models/__init__.py`): GuardrailPolicy/Rule/EvaluatorConfig/Assignment (SoftDelete) + GuardrailTrigger (Timestamped append-only). String columns for enum values (no PG-enum migration weight); partial unique live (org/user,name) mirroring providers; reverse relationships added to User/Organization/Provider/AIModel/ApiKey with back_populates.
+- Alembic `g1h2i3j4k5l6` (down `e4f1a2b3c4d5`, single head): creates 5 tables + all indexes; `alembic upgrade head` + `alembic check` green.
+- `services/guardrails/`: deterministic.py (secret/PII/injection/tool/unsafe-output regexes, reasons never contain matched secrets; jsonschema-or-minimal structure validation), resolution.py (workspace-global/provider/model/key scope, org mandatory-wins deciding policy), laya.py (async httpx, semaphore 20, health cached 30s, 64k cap), openai_moderation.py (field+live validate, omni-moderation-latest), jev.py (configurable base, /health→/models validate), llm.py (second-stage safety prompt via build_adapter, recursion guard ctx flag, 1 retry), evaluation.py (deterministic → non-llm evaluators → llm escalation on operation=escalate or confidence<threshold; worst wins; failure_action allow→fallback_continued / block), enforcement.py (check_pre raises ForbiddenError / returns warn notice; record_post audit-first, never raises, never touches usage counters; sync wrappers via dedicated bridge re-raising ForbiddenError), notify.py (Notification row + route_email, Valkey policy+hour dedupe, 1 email/5min/policy, redacted bodies only).
+- `api/guardrails/` (router/service/schemas): CRUD + clone/enable/disable/test/from-template/templates/health-laya/credentials-validate/effective(cursor via X-Next-Cursor)/triggers+evaluator CRUD+revalidate. Thin routers; per-endpoint Guardrails.* perm gates; buffer_then_inspect requires post/both stage (422 otherwise, streaming limitation documented in code + errors).
+- Hooks: internal `_enforce_chat_key` pre (covers run_chat/_setup_generation/regeneration) + run_chat finalize (withhold text on blocked buffer verdict); public `_prepare` pre + `_execute_chat` (withhold, non-stream) + `_stream_chat` terminal/cancel audit-only; generation `_store_final` audit-only. All lazy imports, no accounting duplication.
+- `api/orgs/common/guards.py`: Guardrails group (+7 perms; Owner auto-includes via catalog). `core/config.py`: LAYA_URL (default http://laya:8001), LAYA_TIMEOUT_MS.
+- laya/: FastAPI 8001 (GET /health /ready, POST /evaluate), requirements, python:3.12-slim Dockerfile, README, MODEL_VERSION laya-rules-1.0.0. Compose service added; /health verified live.
+- Tests: `test_guardrails_policies.py` (10: CRUD, isolation, 409, 422 delivery rule, clone/enable/disable, templates+from-template, dry-run, credentials-validate, effective+org 404, triggers) + `test_guardrails_engines.py` (9: detectors, structure, mandatory-wins, fallback allow/block, post trigger row, notify dedupe, laya proxy+e2e, migration head). `test_organizations.py` 52→59 perm-count updates (catalog grew by design). conftest: TOLLMS_TEST_DB override for isolated parallel runs.
+
+Validation: full suite 863 passed EXIT 0 on isolated DB (tollms_iso + Valkey 7); OpenAPI 180 routes, no duplicate (method,path); laya /health reachable from backend network. Note: shared-DB parallel pytest runs from sibling agents caused transient sqlalchemy failures mid-task; isolated re-runs are the reliable signal.
+Limitation: buffer_then_inspect withholds only non-streaming outputs; streams record blocked verdicts as audit rows (documented, never downgraded). LLM escalation needs a provider-backed evaluator config; llm.py opens its own SessionLocal (test seam: none — covered via deterministic paths).
+
+## 2026-10-25 — Guardrail sync-wrapper thread-hopping fix
+Requirement: repair 12 failing guardrail backend tests (thread-bound Session reused on cache bridge loop + bridge self-deadlock).
+Implementation: `backend/src/tollms/services/guardrails/enforcement.py` only — replaced `_await_sync` (run coroutine on shared cache bridge loop with caller's Session) with `_run_isolated` (dedicated daemon worker thread + `asyncio.run()` + fresh `Session(bind=db.get_bind())`, joined with timeout_s). ForbiddenError still propagates for pre-checks; worker/timeout failures fail open; `record_post_sync` never raises. Callers unchanged (still pass `db`). No model/migration, no router, no Valkey-counter, no streaming changes.
+Root causes found: (a) coroutine on bridge loop called `emit`/`incr_counter` → `call_sync` onto the SAME loop = 5s self-deadlocks each → 12s `future.result` timeout → fail-open instead of block; (b) cross-thread Session use → FK/PendingRollback cascades; orphaned coroutine kept using the Session after test teardown → cross-test pollution; (c) ambient noise during diagnosis came from a sibling pytest process sharing tollms_test/Valkey (sessions wiped mid-test, duplicate emails) — unrelated to code, waited it out.
+Files changed: backend/src/tollms/services/guardrails/enforcement.py.
+Testing: `pytest tests/test_guardrails_policies.py tests/test_guardrails_engines.py -q` 19/19 green (x3, both orders); full backend suite 863 passed (844 + test_generations 19); `alembic check` clean ("No new upgrade operations detected").
+
+## 2026-10-25 — Guardrails security/correctness hardening (reviewer B1-B2/M1-M6/M7 + minors)
+
+Requirement: fix all reviewer findings in ToLLma Guardrails backend (backend/** + laya/ only): auth bypass on reads, LLM cross-tenant spend, monitor floor escalation, bridge fail-open vs fail-closed, untrusted reason persistence, validation oracle + SSRF, keyless pre-check skip, test-endpoint cross-overlay/billable escalation/stage-both, delivery-mode honesty + PATCH gap + is_mandatory. Keep alembic check green, full pytest green, no OpenAPI dupes, no accounting changes.
+
+Implementation:
+- B1: new `service.get_policy` (personal: owner==caller; org: ACTIVE membership + Guardrails.Read, 404 oracle); GET /{policy_id} + GET /{policy_id}/evaluators route through it.
+- B2: `_require_llm_provider` on create/patch evaluator (personal→caller-owned personal provider via personal_only; org→same-org provider); `llm.evaluate` gains user_id + scope_org_id, scoped get_provider/get_model, 404 oracle; threaded via evaluate_policy(llm_user_id) from check_pre/record_post/test_policy.
+- M1: `effective_action` monitor→always allowed; `_aftermath` still writes trigger row for monitor when log_triggers.
+- M2: `check_pre_sync` bridge failure → caller-thread `resolve_applicable` re-check; any blocking pre policy with failure_action==block raises ForbiddenError + best-effort bridge_timeout trigger row; else None.
+- M3: `deterministic.redact_text` (secret-pattern → [redacted-secret], 500 cap); applied to non-det reasons in evaluation + centrally in _aftermath; 403/notices category-only.
+- M4: validate + laya-health require Guardrails.ManageCredentials; jev.base_url_error allowlist (http(s), no loopback/link-local/private/literal ranges, no localhost/.local/.internal); key never sent before allowlist passes; 10/min/user via auth fixed-window limiter through new call_sync_strict (call_sync swallows 429 by design — root cause of first scratch failure), 429/503 fail-closed.
+- M5: `_enforce_chat_key` pre-check moved before keyless early-return (api_key_id=None).
+- M6: test overlay only matching evaluator_type (explicit key or base_url/api_key shape heuristic); run_llm flag + llm_skipped; both→pre coercion.
+- M7: delivery-mode descriptions in schemas; PATCH validates merged effective fields; is_mandatory (model + migration, org-only, Update-gated, blocks disable/delete, in PolicyRead); org-global always-applies documented.
+- Minors: URL userinfo/query redaction in masked_credentials; delete_evaluator deleted_by; skip_guardrails restored around judge call; resolution SQL-filtered + selectinload; migration h2i3j4k5l6m7 (is_mandatory + user FK SET NULL); laya non-root USER + 127.0.0.1 port binding; head test updated to new revision.
+
+Validation: full suite 863 passed sequential; alembic upgrade head + check clean; OpenAPI 231 ops no dupes; 9 scratch behavior checks (since removed) all green; laya rebuilt, runs as `laya` user, /health reachable, MODEL_VERSION pinned.
+Limitation: none new; bridge fail-closed covers pre policies only (post failures stay audit-first by design).
+
+## 2026-10-25 — Guardrail evaluator-failure notifications (spec 10 fix)
+
+Requirement: evaluator failures on the fallback path (fallback_continued with failure_kind set) must notify the authorized user via email + in-app, respecting preferences/rate limits/dedup — previously only warned/blocked actions notified.
+
+Implementation:
+- backend/src/tollms/services/guardrails/enforcement.py:175 — notify condition widened to `action in ("warned", "blocked") or result.get("failure_kind")`; per-policy hourly dedupe + email rate limit unchanged (already in notify_trigger), never raises, uses already-redacted safe result.
+- backend/tests/test_guardrails_engines.py:149 — new test_fallback_failure_notifies_owner_once: notify_on_trigger policy + failing openai_moderation evaluator (no creds) → check_pre_sync returns None (fail-open) but writes exactly 1 Notification row; repeat call dedupes (still 1).
+
+Validation: target tests 4 passed; tests/test_guardrails_policies.py + tests/test_guardrails_engines.py 19/20 (only test_laya_health_proxy_and_evaluate fails — laya service not running in compose, ConnectError/DNS, pre-existing env issue); alembic check clean.
+
+## 2026-10-26 — Guardrails system: complete implementation + validation
+
+Requirement: full Guardrails system (personal/org policies, templates, global/provider/key scopes, pre/post execution, Laya default + OpenAI/JEV/LLM evaluators, 4 streaming modes, failure fallback + notifications, org permissions, frontend, gateway parity), Laya as separate Docker service.
+
+Implementation (all uncommitted, per standing rule):
+- Backend `api/guardrails/` (router/service/schemas): CRUD, clone/enable/disable, templates + from-template, test dry-run (run_llm flag, both→pre coercion), credentials validate (perm-gated, SSRF allowlist, 10/min Valkey quota), effective resolution view, cursor-paginated triggers, evaluator CRUD. `Guardrails.{Create,Read,Update,Delete,Test,ViewEvents,ManageCredentials}` added to org catalog (52→59).
+- `services/guardrails/`: resolution (SQL-scoped + selectinload, org-global-always-applies, block-wins), deterministic (secret/PII/injection/tool detectors + redact_text + JSON-schema), laya (httpx, semaphore-20, 30s health cache), openai_moderation, jev (SSRF-guarded), llm (ownership-checked provider, recursion guard, 1 retry), evaluation (deterministic→primary→escalation, monitor=log-only), enforcement (worker-thread isolation w/ fresh Session on same bind, fail-closed for block+failure_action=block, category-only 403s, redacted reasons), notify (hourly per-policy dedupe, owner/org-root recipients, email+in-app, failure notifications).
+- Gateway hooks: internal pre in `_enforce_chat_key` (runs even keyless), post in `_guardrail_post`; public pre/post in `_guardrail_pre/post`; generation driver post. No accounting changes (metrics-only emit).
+- Migrations: `g1h2i3j4k5l6_guardrails` (5 tables) + `h2i3j4k5l6m7_guardrail_mandatory` (is_mandatory, user FK SET NULL). `alembic check` green.
+- Laya: new `laya/` FastAPI service (rules engine `laya-rules-1.0.0`, /health + /ready + /evaluate, semaphore-20, non-root user, 127.0.0.1-published port), compose service, `LAYA_URL`/`LAYA_TIMEOUT_MS` config.
+- Frontend `app/guardrails/` (8-step wizard, table, edit drawer w/ dry-run + run_llm, trigger history + inspector, templates), `services/guardrails.ts` + `hooks/useGuardrails.ts` aligned to backend contract, nav + workspace switching, provider edit effective-list, key drawer inherited/locked assignments, Sileo toasts, no native dialogs.
+- Tests: `test_guardrails_policies.py` + `test_guardrails_engines.py` (20 tests: CRUD/isolation, precedence, detectors, fallback, hooks, notify dedupe, laya, failure-notify).
+
+Root causes fixed during validation: (1) sync wrappers ran DB coroutines on cache bridge thread (self-deadlock via call_sync + cross-thread Session → FK/rollback poisoning) → dedicated worker thread + fresh Session(bind); (2) reviewer found read-auth bypass (B1), LLM cross-tenant spend (B2), monitor escalation (M1), fail-open bypass (M2), unredacted external reasons (M3), unvalidated SSRF oracle (M4), keyless skip (M5), test side-effects (M6), mode dishonesty + contract drift (M7/M8); (3) missing failure notifications (fallback never notified) → widened condition.
+
+Validation: backend `pytest -q` 864 passed; `alembic check` clean; OpenAPI 231 ops no dupes; frontend tsc + eslint clean, vitest 27 files/190 passed. Browser (tru@g.c, live OpenWebUI gpt-oss:20b): template→create→enable→dry-run blocked→live internal 403 guardrail_blocked→trigger row w/ redacted reason→external 403 parity→Laya-down fallback_continued + in-app notification→org policy + mandatory lock + stranger-404→provider/key drawer sections→streaming chat completed w/ real accounting. Residue removed (policies, ext key, stranger user). Limitations: no live OpenAI/JEV creds (invalid-key + timeout paths tested, real-provider verification outstanding); email dispatch not SMTP-verified locally (outbox/log path; in-app verified, no secrets in body); member-permission matrix covered by API tests, not multi-user browser.
+
+## 2026-10-25 — Guardrail notify repeat interval + recovery notification
+
+Requirement: per-policy `notify_repeat_minutes` (1–1440, default 60); dedupe/email TTLs derived from it with interval-bucketed keys; 24h failing flag + one-shot recovery notice on failure→success; `Trigger.notified=True` on fanned-out rows.
+
+Implementation:
+- backend/src/tollms/models/guardrail.py — `GuardrailPolicy.notify_repeat_minutes` (Integer, default 60, not null).
+- backend/alembic/versions/i3j4k5l6m7n8_guardrail_notify_repeat.py (new, down_revision h2i3j4k5l6m7) — add/drop column with server_default 60.
+- backend/src/tollms/api/guardrails/schemas.py — field on PolicyCreate (default 60, ge/le) / PolicyUpdate (optional) / PolicyRead.
+- backend/src/tollms/api/guardrails/service.py — range validation in validate_policy_fields; wired through create/update (PATCH-safe merged check)/clone/read_policy.
+- backend/src/tollms/services/guardrails/notify.py — `_repeat_minutes/_seconds/_notify_bucket` (hour string for 60, else epoch//interval); dedupe TTL = repeat interval, email TTL = min(300, repeat); failing flag set on notified failure fan-out; new `maybe_notify_recovery` + `_send_recovery` (kind `guardrail.recovered`, subject `Guardrail recovered: {name}`, redacted, flag deleted after send).
+- backend/src/tollms/services/guardrails/enforcement.py — `_write_trigger` returns row; `_aftermath` stamps `notified=True` when fan-out notifies, and runs recovery on clean `allowed` (including the early-return clean-allow branch — previously skipped — and monitor clean allows); never warn/block paths, never raises.
+- backend/tests/test_guardrails_notify_repeat.py (new, 8 tests) + head assertion updated to i3j4k5l6m7n8 in test_guardrails_engines.py.
+
+Validation: new file 8 passed; policies+engines 19 passed, 1 failed = test_laya_health_proxy_and_evaluate (pre-existing env: no laya DNS here, ConnectError, untouched by this change); `alembic upgrade head` + `alembic check` ("No new upgrade operations detected") + downgrade/upgrade round-trip green on dev DB. Ruff unavailable in venv (no module). No frontend/ secrets changes.
+
+## 2026-10-25 — Guardrail monitor + evaluator failure label fix
+
+Requirement: monitor short-circuit in `effective_action` returned `allowed` even when the evaluator failed, so trigger rows/Notifications/API consumers conflated unchecked requests with clean ones (live: Laya-down burst wrote `action=allowed` WITH `failure_kind`).
+
+Implementation (backend only, no schema/migration, no frontend/accounting):
+- backend/src/tollms/services/guardrails/evaluation.py — monitor branch now returns `fallback_continued` when `result.get("failure_kind")` is set, else `allowed`; docstring updated. Monitor stays log-only (never warn/block) — only the audit/notification label changes. Downstream already handles it: `_aftermath` writes the trigger row for any non-clean action, notify condition includes `failure_kind`, title/body use the action string.
+- backend/tests/test_guardrails_engines.py — new `test_monitor_failure_is_fallback_continued`: monitor+failing evaluator → `fallback_continued`, failed trigger row (`action=fallback_continued` + `failure_kind` set), notification titled `Guardrail fallback_continued: {name}`, `check_pre_sync` still returns None (log-only); monitor+healthy evaluator → `allowed`.
+
+Validation: `pytest tests/test_guardrails_policies.py tests/test_guardrails_engines.py tests/test_guardrails_notify_repeat.py -q` → 28 passed, 1 failed = `test_laya_health_proxy_and_evaluate` (pre-existing env: laya sidecar hostname unresolvable here, ConnectError; health-proxy path never calls `effective_action`, default warn enforcement — untouched by this change). Targeted re-run of the new test + 3 neighboring fallback/hook tests: 4 passed.
+
+## 2026-10-25 — Guardrail LLM evaluator model_ref resolution fix
+
+Requirement: `services/guardrails/llm.py::evaluate` resolved `model_ref` only as UUID and swallowed every other value (`except Exception: model = None`), silently falling back to the provider's first model — wrong-model judgments + wrong spend attribution, and bogus refs never surfaced as failures.
+
+Implementation (backend only, no schema/migration, no frontend/accounting):
+- backend/src/tollms/services/guardrails/llm.py — `model_ref is not None`: try UUID via `get_model` (caller-scoped, unchanged); on failure resolve `(provider_id, model_id == model_ref)` among live rows (`is_deleted=False, is_active=True`, same pattern as the gateway resolver, scoped via the provider lookup above); if both miss, raise `ValueError("llm model not found: ...")` (callers already map this to `failure_kind` + `failure_action` fallback). First-model default now only when `model_ref is None`. Recursion guard, retry bound, provider-ownership checks untouched.
+- backend/tests/test_guardrails_llm_model_ref.py (new, 5 tests) — model_id string resolves to the right adapter model (not the first); UUID ref still works; bogus ref raises; None still defaults to first; bogus ref via `evaluate_policy` (monitor + `failure_action=allow`) → `failure_kind="ValueError"`, `effective_action="fallback_continued"`.
+
+Validation: `pytest tests/test_guardrails_policies.py tests/test_guardrails_engines.py tests/test_guardrails_notify_repeat.py tests/test_guardrails_llm_model_ref.py -q` → 34 passed (run inside compose backend so the laya sidecar hostname resolves); `alembic check` → "No new upgrade operations detected" (logic-only, no migration needed).
+
+## 2026-10-26 — Guardrails live verification: Haiku + Laya + OpenAI + hybrid benchmarks, failure testing, 3 defect fixes
+
+Mission: independent verification with real configs for tru@g.c (personal), Haiku primary, gpt-oss:20b LLM judge, Laya + OpenAI Moderation decisions, latency comparison, outage/fallback/notification validation, full regression.
+Environment discoveries: no Haiku on personal provider (only glm/qwen/gpt-oss); Haiku (global.anthropic.claude-haiku-4-5) org-scoped — user directed personal registration; registered personal BEDROCK_CONVERSE provider (validated, creds masked ****) with Haiku/Sonnet-4-6/MiniMax-M2.5/DeepSeek-R1. No OpenAI key in store/env — user supplied rotated key in chat; validated against live Moderation endpoint, stored encrypted, masked reads verified; rotation recommended.
+Retained configs: BENCH-LAYA / BENCH-LAYA-HYBRID / BENCH-OAI / BENCH-OAI-HYBRID (monitor, both, audit_after_delivery, key-scoped to 5 bench keys, log+notify on) + personal Bedrock provider. Bench keys retained for reproduction.
+Defects found live + fixed: (1) monitor short-circuit returned allowed on evaluator failure, hiding unchecked requests (evaluation.py one-line fix + test; pre-fix history rows left intact); (2) notify repeat hardcoded hourly, notified never set, no recovery signal (notify_repeat_minutes 1–1440 + migration i3j4k5l6m7n8, failing-flag + guardrail.recovered, notified stamping); (3) llm model_ref non-UUID silently judged on provider's first model — pre-fix hybrid timings were GLM not gpt-oss (strict resolution UUID-then-model_id, raise on miss + 5 tests). Benchmarks rerun post-fix where affected.
+Benchmarks (Haiku primary, interleaved, monotonic): internal non-stream 20×5, external /v1/messages 20×5, streams 16×5 per plane, /test evaluator-stage. Laya overhead ≈ +0–0.24s; OpenAI ≈ +1.5–1.8s (Moderation RTT, incl. TTFB on streams); gpt-oss escalation ≈ +3s when triggered (decision-only benign identical). All success 100%. Outliers noted (oai-hybrid ext max 23.75s; internal oai stream max 20.68s).
+Failures: laya-down → internal+external 200 fallback_continued + ConnectError rows; first-failure latency +5–14s (bounded, health-cache fast-fail after), notifications deduped hourly→repeat-verified with 1-min bucket, recovery notification on restore. Bad LLM ref → ValueError fallback, no recursion. OAI bad-cred overlay → fallback, nothing persisted (422 validate-then-persist held). Timeout 1ms → fallback. Malformed JEV → raises at adapter (mocked-transport check; live-host test blocked by SSRF allowlist by design). Unknown-model 404 during outage (gates intact). Streaming with policies: usage_estimated=false, real cost accounting.
+Validation: backend pytest 878 passed; alembic check clean; tsc + eslint clean; vitest 27/190. Browser: 4 policies listed w/ evaluators + key scoping, trigger history w/ redacted reasons, notifications page failure+recovery entries. Scratch (FAIL-*/bench-fail key/mock/mock files/tokens/raws) deleted. Limitations: OpenAI key arrived via chat (accepted exposure, rotation advised); email via local outbox path only (in-app verified); JEV live test blocked by SSRF guard (by design); member-permission matrix API-tested, not multi-browser.
+
+## 2026-10-26 — Workspace Prompt Logging backend
+
+Requirement: per-workspace prompt capture (personal/org, global/teams modes) with encrypted bodies, metadata ledger, retention expiry, and read/purge APIs — backend only, guardrails precedent (404-oracles, gateway hooks, sync bridge).
+
+Implementation:
+- models/prompt_logging.py (new): PromptLoggingSetting (SoftDelete+Timestamped, exactly-one-workspace CHECK, partial unique live indexes per user_id/org_id), PromptLoggingTeamTarget (Timestamped link, unique setting+team), PromptLog (Timestamped-only immutable ledger, Fernet ciphers, 512KB truncate flags, expires_at, org/user/key/request/expires/status indexes). Registered in models/__init__.py; back_populates added on User/Organization/Team/ApiKey/Conversation/Provider/AIModel.
+- alembic j4k5l6m7n8o9 (head, down i3j4k5l6m7n8): 3 tables + indexes incl. partial uniques; `alembic upgrade head` + `alembic check` clean.
+- guards.py: new PromptLogs group (Read/ViewContent/Manage/Delete); Owner auto-includes via catalog.
+- api/prompt_logging/{router,schemas,service,settings,records}.py: settings GET/PUT (upsert versioned, teams validated 422, empty-teams logs nothing, org writes audit / personal skips), teams list, logs list (metadata-only, cursor X-Next-Cursor, AND filters, q=request_id only, forged IDs 404), detail (bodies only with ViewContent else content_restricted), DELETE (Delete+audit), purge (expire content, keep metadata), retention (default 90/effective/next_run). Mounted /api/v1/prompt-logs.
+- services/prompt_logging/{resolution,capture,retention}.py: provenance-pinned resolution (personal key→personal only, org key→own org only + team∩, legacy→personal; never raises); capture_post (flags, Fernet, truncate, expires_at=now+retention, fail-open, no Valkey, no content in logs) + capture_post_sync (thread+fresh Session bridge, fail-open 'skipped'); retention.expire_due_logs (NULL ciphers, never deletes).
+- Hooks (all sync-bridge, fail-open): gateway run_chat success+failure, generation _store_final (completed/cancelled-partial/failed mapping), public _execute_chat/_execute_media success+failure, _stream_chat terminal/cancel/disconnect/failure. Media captures text only.
+- scheduler: daily `promptlog-cleanup` lock-guarded job (skipped under pytest via start()).
+- tests: test_prompt_logging.py (24) + test_prompt_logging_hooks.py (10) — resolution A–E/multi-org, flags, teams, oracles, perms, pagination/filters, retention, fail-open (mocked write failure → generation still 200), streaming partial mapping, external format+usage intact, personal-key-never-org-logged.
+- Incidental test maintenance: head pin i3j4k5l6m7n8→j4k5l6m7n8o9; Owner catalog count 59→63 (4 new codes).
+
+Validation: full `pytest -q` → 912 passed; `alembic check` clean; OpenAPI 239 ops, no duplicate (path,method). Note: container shadowed tests/test_organizations.py (stale inode); pushed host content via `tee /app/...` to resync — rerun green, no other files affected.
+
+Limitations: no per-team usage attribution beyond team_ids snapshot; detail decryption failure surfaces content_restricted (safe default); retention job daily granularity only.
+
+## 2026-10-25 - Prompt logging review-findings fix batch (B7/B2/B1/B3/M1/M2/m3 + DB indexes)
+
+Requirement: fix verified Workspace Prompt Logging review findings, backend/** only.
+Implemented:
+- B7 (data-ownership): internal-chat hook (`api/gateway/service.py::_promptlog_capture`) now passes `key_provenance=None` so the ApiKey row resolves server-side (streaming driver already did); `services/prompt_logging/resolution.py::_derive_provenance` made the key row authoritative even when a stale hint is passed (hint is fallback only for keyless/deleted-key traffic). Regression tests: personal-provider+org-key → org log; provider-A-hint+key-B → org B.
+- B2: `LogMeta` gains `fields` (from ciphers), `duration_ms` (= latency_ms), `completed_at` (created_at+latency), `key_name` (single batched query per page; null when key deleted). Detail path resolves the single key name.
+- B1: `GET /logs` returns `LogList{items:[...]}` (canonical) + keeps `X-Next-Cursor` header.
+- B3: `PurgeResult.expired` → `expired_count` (repo-wide check: only router + tests consumed it; frontend already expected `expired_count`).
+- M1: added `capture_post_async` (`asyncio.to_thread` + timeout, fail-open `skipped`); all async hook paths (`api/gateway`, `api/public_gateway`, `services/generation` incl. `async _store_final`) await it. Sync `capture_post_sync` kept for sync callers (tests).
+- M2: non-streaming paths (`run_chat`, public `_execute_chat`) compute the guardrail post verdict first, then ledger the already-withheld marker (`[withheld by guardrail policy]`) — verdict threaded through, never re-evaluated. Streaming paths keep capturing delivered bytes (honest audit); rule documented in code comments.
+- m3: truncated attacker-controlled echoes (`invalid status`, `invalid mode`); `status` query param gained `max_length=32`.
+- DB: new migration `k5l6m7n8o9p0` (head `j4k5l6m7n8o9` untouched) + matching model indexes `ix_prompt_logs_{conversation,provider,model}` (composite with `created_at` per convention).
+- Tests: updated list/purge contract assertions; new B2 derived-field tests, B7 hook tests, M2 withheld-marker tests (internal + public); head-pin test updated to `k5l6m7n8o9p0`.
+Verification: `pytest -q` full suite 930 passed + head-pin fix verified (931 total green); `alembic upgrade head` + `alembic check` clean; `app.openapi()` 239 ops, route-walk 247 registrations with zero duplicate (path, method). Scope: no frontend/** writes.
+
+## 2026-10-26 - Prompt log display enrichment (names + int duration)
+
+Requirement: list/detail expose raw UUIDs for user/provider/model and unrounded float durations; enrich backend-only (no migration, no frontend edits).
+Implemented:
+- schemas.py: `LogMeta` gains `user_email`, `provider_name`, `model_name` (all `str | None`); `duration_ms` retyped `float | None` → `int | None` (stored `latency_ms` stays raw float).
+- records.py: new `_live_map` generic batched id→value lookup (single query per entity per page, `is_deleted=False` filtered so soft-deleted refs surface None); `_key_names` reimplemented on it (now also soft-delete-safe) + new `_user_emails` (users.email), `_provider_names` (providers.name), `_model_names` (models.model_id display id). `list_logs` issues exactly 4 constant batch queries (keys/users/providers/models) regardless of page size; `get_log_detail` reuses the same helpers (constant queries for one row). `_meta` rounds `duration_ms = round(float(latency_ms))`, keeps `latency_ms` raw and `completed_at` float-precise. Rows are pre-scope-filtered so name/email exposure stays within the caller's authorized workspace.
+- Tests: new `backend/tests/test_prompt_logging_names.py` (2 tests) — names present on list + detail with fractional latency 4803.219999999999 → `duration_ms == 4803` (int) and raw `latency_ms` preserved; soft-delete of key/provider/model → nulls not crashes; soft-deleted user → `user_email None` via service-level check (API auth would block a deleted caller).
+Verification: `pytest tests/test_prompt_logging*.py -q` → 63 passed (61 existing + 2 new). Ruff: no new findings (I001/RUF059/UP017 hits are pre-existing repo style debt on untouched lines; reverted an accidental whole-file `ruff --fix/format` churn to keep the diff functional-only). No migration (no schema change).
+
+## 2026-10-26 — Workspace Prompt Logging: implementation + end-to-end validation
+
+Requirement: workspace-controlled prompt/response logging for personal + org workspaces, team targeting, key-provenance isolation, settings UI, Prompt Logs page, retention, audit, full test + browser validation.
+
+Implementation (uncommitted): models/prompt_logging.py (Setting + TeamTarget + immutable PromptLog w/ Fernet ciphers, CHECK owner scope, partial unique live indexes); migrations j4k5l6m7n8o9 (tables) + k5l6m7n8o9p0 (3 filter indexes); api/prompt_logging (router/service/settings/records, /api/v1/prompt-logs); services/prompt_logging (resolution/capture/retention); PromptLogs.{Read,ViewContent,Manage,Delete} catalog codes; gateway hooks (internal run_chat + generation._store_final + public chat/media/stream terminal/cancel/fail); daily promptlog-cleanup job (expires content, keeps metadata); frontend app/prompt-logs (Logs/Settings tabs, filters, detail drawer, URL-synced state) + nav entries.
+
+Fixes from independent review (all verified): key-org mis-attribution hint (now key-row wins), list/detail contract mismatches (envelope, derived fields, purge key, status enum, summary format, null guards), sync join blocking loop (async capture), guardrail-blocked output persistence rule, attacker-echo truncation, 3 missing indexes, display enrichment (user email/provider/model names, int durations).
+
+Validation: backend pytest 941 passed; alembic check clean; OpenAPI no-dupe; frontend tsc+lint clean, vitest 227 passed. Browser (tru root, memberA/B test users): personal enable→capture→disable stops; org-global org-key capture w/ attribution; team-targeting (member logged, non-member not, personal key never org-logged); Read-only member sees metadata but content_restricted bodies + read-only settings; all mutations 404-oracle; streaming full capture; client-abort → partial row; input-only fields; filters/pagination/URL sync; purge → expired state, bodies gone, metadata kept; audit rows for settings/deletes. Cleanup: removed test keys/teams/sets/memberships, disabled logging, shredded temp creds. Residual: promptlog-memberA/B test users (no immediate delete flow; deletion is scheduled), pre-existing bench keys untouched.
+
+## 2026-10-26 - Prompt-log key targets + reviewer fixes; benchmark runs
+
+Requirement: (WS1) per-key prompt-logging allow-list (PromptLoggingKeyTarget,
+PromptLog.match_source) plus reviewer fixes M1-M6; (WS2) BenchmarkRun storage
+with API at /api/v1/benchmarks. Backend-only, Alembic migration per model change.
+Implementation summary:
+- Models: new PromptLoggingKeyTarget (setting_id/api_key_id CASCADE, unique pair,
+  Timestamped only) + PromptLog.match_source VARCHAR(16) nullable (null = legacy
+  rows); new BenchmarkRun (creator user_id, nullable org_id, labels, conditions
+  JSONB, latency/token/cost aggregates, no body columns) with explicit
+  relationship()/back_populates on both sides.
+- Migration l6m7n8o9p0q1 (child of k5l6m7n8o9p0): both tables + indexes +
+  match_source column; `alembic upgrade head` + `alembic check` clean.
+- Semantics (resolution.py docstring): workspace pin first via unchanged
+  _derive_provenance; key-lookup exception -> ("unknown",None) -> no-capture
+  (M1); disabled -> none; global -> match_source=global ignoring targets;
+  teams -> team_hit OR key_hit (key live = not is_deleted), empty both -> none;
+  global upsert clears stored targets.
+- Settings: key_ids list[str] (max 100) w/ 404-oracle workspace pin
+  (personal: org_id NULL + user match; org: org match); team_ids capped at 100.
+- Reviewer fixes: M2 settings/delete/purge audit inside single committing
+  transaction (500 + rollback on audit failure); M4 max_length=64 on from/to +
+  _parse_time truncates to 64 in message only; M5 _resolve_member requires ACTIVE;
+  M6 enrichment documented as intended batching; status fallback to failed;
+  M3 accepted gap comment in retention.py.
+- Benchmarks api/benchmarks/{router,schemas,service}.py: POST /runs 201,
+  GET /runs cursor/limit newest-first, DELETE creator-or-root 204; auth personal
+  owner-only / org ACTIVE + Analytics.ViewUsage (404 otherwise); recursive
+  input_text/output_text rejection (422) + extra=forbid on create.
+Files changed: models/{prompt_logging,benchmark,api_key,user,organization}.py,
+models/__init__.py, services/prompt_logging/{resolution,capture,retention}.py,
+api/prompt_logging/{schemas,router,settings,records}.py,
+api/orgs/common/guards.py, api/benchmarks/* (new), main.py (mount),
+alembic/versions/l6m7n8o9p0q1_*.py, tests/{test_prompt_logging_key_targets,
+test_benchmark_runs}.py (new), tests/test_guardrails_engines.py (head pin).
+Testing: full suite `docker compose exec backend pytest -q` -> 960 passed;
+OpenAPI duplicate (path,method) check -> none (199 paths).
+Architecture notes: resolution stays fail-closed (never raises); capture
+fail-open; ledger rows immutable/metadata-only; benchmark ledger holds
+aggregates + sampling plan only, never bodies.
+
+## 2026-10-26 — Prompt Logging acceptance audit: key-specific logging, benchmarks, caching validation
+
+Independent audit of Workspace Prompt Logging. Implemented key-specific targeting (PromptLoggingKeyTarget + match_source column, migration l6m7n8o9p0q1, OR semantics teams|keys, global clears targets, personal key UI), benchmark runs ledger (BenchmarkRun + /api/v1/benchmarks, Chat Benchmarks drawer). Reviewer findings re-verified against tree: B7/M1/M2/M4/M5 already fixed in-tree; contract mismatches fixed and browser-verified.
+Benchmarks (gpt-oss:20b, sequential, concurrency 1, warmup 5): internal A/B n=200 p50 1080/1165ms, interleaved A/B p50 823/823 (0ms overhead); external A/B n=200/198 p50 751/779 (+28ms), interleaved 715/715 (0ms); key-specific + team org scenarios 50-100 each, all captured with correct match_source; streaming both planes measured. No duplicate log rows; 422s create no rows; truncation enforced at 512KiB (stored 524288, flagged).
+Caching: Bedrock sends cachePoint (code correct) but 0 cache-reads in 9 controlled long-prefix trials; 6 varying-suffix trials wrote cache each time (cw≈4330, billed at write premium → net cost increase); 1 historical read hit exists (2026-10-21 org Bedrock multi-turn: write-only $0.00649 → hit $0.00347 = 47% total saving). Verdict: not reliably live-verified; no other live cache-capable provider available (OpenAI/Anthropic-direct absent; external plane never sets prompt cache).
+Live outage during benchmarks (upstream DNS/connect failures) verified fail paths: 500+ failed prompt-log rows with error codes, fallback behavior intact, no phantom successes. Session cap (10/user) evicted interactive sessions during benchmark re-logins — noted operationally.
+Validation: backend pytest 941 passed; alembic check clean; OpenAPI no-dupe; tsc+lint clean; vitest 227 passed; browser (tru/memberB): key UI, team UI, benchmarks drawer, read-only gating, content_restricted, expired states, filters/URL sync, audit rows. Cleanup: test keys/teams/memberships removed, 1249 benchmark conversations deleted via service layer, settings reset to disabled, secrets shredded. Residual: pre-existing bench-* keys + older conversations untouched; promptlog-memberA/B users already absent.
+
+## 2026-10-26 — Prompt logging hierarchy, async queue, member analytics (backend)
+
+Three backend-only workstreams in backend/src/tollms (frontend untouched).
+
+Requirement: (WS1) hierarchical enablement — team ON/OFF + key inherit/ON/OFF + global mandatory; (WS2) async non-blocking capture via bounded queue + worker; (WS3) GET /api/v1/orgs/{org_id}/members/{user_id}/analytics.
+Implementation summary:
+- WS1 schema (migration m2n3o4p5q6r7, head l6m7n8o9p0q1): prompt_logging_team_targets.enabled BOOL NOT NULL DEFAULT TRUE; new prompt_logging_key_overrides (setting_id/api_key_id CASCADE, enabled NULL=inherit, unique pair); kept match_source (global|team|key), no new column. Resolution: global disabled→none; global enabled+mode global→global; teams mode: override False vetoes all, True captures as key, else inherit (enabled-team OR, multi-team OR; listed-live key leg; team precedence). Personal: no teams, key/global only. API: PUT /settings accepts team_states/key_states (absent=True; malformed UUID=404, unlisted=422); enabled+global + explicit false → 422 (forged included). New PUT /settings/teams/{team_id} {enabled} and PUT /settings/keys/{key_id} {enabled:null} (null deletes row), Manage-gated, 404 oracles. GET returns team_states/key_states + effective_summary.mandatory.
+- WS2: services/prompt_logging/queue.py (bounded 1000, drop-on-full + counter/warning without secrets, single worker thread, lifespan start/stop in main.py, encrypt-at-enqueue via capture.build_row_kwargs, 1 retry then drop+metric, IntegrityError→duplicate-suppressed; inline sync fallback when worker down). capture.py refactored to build_row_kwargs (shared). Composite partial unique index (request_id, generation_id) WHERE request_id IS NOT NULL — NOT bare request_id: internal chat reuses one request_id per conversation, bare index would brick migration + drop legit rows (documented deviation). Metrics gateway.promptlog.{enqueued,dropped,duplicate} + depth in emit; GET /retention += queue_depth/last_error. Call sites (internal gateway, generation driver, public gateway) enqueue terminal-only; TTFE/SSE untouched. Auth/budget/guardrail/billing untouched.
+- WS3: member analytics route+service+schemas (org membership + Analytics.ViewUsage gate, ViewCost-gated costs; request_logs by user+org + api_request_logs by user+org summed, disjoint planes, personal excluded, revoked keys retained-nameless; blocked=guardrail action=blocked window count + blocked_source flag; indexed aggregates, batched names, no N+1; date-range 422s).
+Files changed: models/{prompt_logging,api_key}.py, models/__init__.py; services/prompt_logging/{resolution,capture,queue(new)}.py; api/prompt_logging/{schemas,settings,router,service,records}.py; api/orgs/{analytics/{router,service,schemas},schemas}.py; main.py (lifespan); alembic m2n3o4p5q6r7 (new); tests test_prompt_logging_{hierarchy,queue}.py, test_org_member_analytics.py (new); tests test_prompt_logging.py (retention fields), test_guardrails_engines.py (head pin).
+Testing: new 33 tests (17 hierarchy incl. Table-E 1-8 + forged 422s + multi-team OR + personal isolation; 10 queue incl. full-drop/duplicate/timeout-drop/restart-drain/truncation/inline-fallback; 6 analytics incl. dedup/personal-exclusion/revoked/gates/date-range) all pass; full suite `docker compose exec backend pytest -q` → 992 passed (+ head-pin fix = green; test_progress_persists_while_running flake fails alone on clean tree too, passes in suite — pre-existing, untouched); alembic check green; OpenAPI 245 paths no dupes.
+Architecture notes: resolution fail-closed/never raises; capture fail-open; queue payload immutable+encrypted pre-thread; worker Sessions never leak; mandatory-global enforced server-side at every write path.
+
+## 2026-10-26 — Test Valkey isolation fix + Workspace Prompt Logging verification (backend)
+
+Requirement: fix stale migration-head pin, verify full suite green, and (urgent follow-up) stop backend tests from wiping live dev Valkey DB 0 sessions.
+Implementation summary:
+- Head pin: tests/test_guardrails_engines.py::test_migration_head_is_guardrails updated l6m7n8o9p0q1 → m2n3o4p5q6r7 (only head-pin assertion in tree; single head confirmed via `alembic heads`).
+- Valkey coordination fix (backend/tests/conftest.py only): root .env pins VALKEY_DB=0, so every pytest process shared dev DB 0 and the autouse `_flush_cache` (`cache_invalidate_sync("tollma:*")` = SCAN+DEL incl. `tollma:session:*` verify nonces) carpet-bombed live dev sessions (db0 107→1 keys observed). conftest now forces VALKEY_DB=15 when unset/non-zero-explicit wins, before any tollms import; flush semantics unchanged (hermetic within suite). Verified: suite-process settings.valkey_db=15 AND manager client connection db=15 (the exact client the flush uses); dev uvicorn provably on db0.
+- Proof: planted `tollma:session:` canaries on db14 (stand-in dev) + db0, ran full tests/admin/test_admin_access.py on isolated postgres: 6 passed (previously 3-5 failed from cross-talk), db14 canary survived, db0 canary deleted by still-running legacy pre-fix suites (control). Live dev-login end-to-end proof deferred while legacy pre-fix suites (other agents, default env) still flush db0 — equivalent race-free evidence recorded instead.
+- Cross-talk forensics: 3+ concurrent full suites on default tollms_test + shared db0 caused duplicate-email, deadlock (INSERT conversations vs teardown DELETE providers), FK violations; host-side kill of `docker compose exec` orphans the container pytest (PID namespace) — must kill via container-side /proc scan.
+Files changed: backend/tests/conftest.py (VALKEY_DB scoping). No source changes.
+Testing: targeted 60 passed (guardrails pin + prompt_logging + hierarchy + queue + org_member_analytics); tests/admin/test_admin_access.py 6 passed; FULL `docker compose exec backend pytest -q` (TOLLMS_TEST_DB=tollms_wsfinal, Valkey db15) → 993 passed, 0 failed; `alembic check` → no new operations, single head m2n3o4p5q6r7; OpenAPI 202 paths/245 ops, zero (path,method) dupes; ruff default-rules baseline parity (139 pre-existing errors repo-wide incl. 4 pre-existing in conftest; zero new from this change; format diff touches only pre-existing lines).
+Architecture notes: sessions + verify nonces are Valkey-backed under `tollma:` (never raise, fail to 401/422); test hermeticity now DB-scoped not key-scoped; suite still flushes `tollma:*` fully on its own DB each test.
+
+## 2026-10-26 — Hierarchical logging + async queue + member analytics: review fixes, verification, benchmarks (orchestrator)
+
+Requirement: implement/verify §3 member analytics, §4 hierarchy (workspace/team/key, global mandatory), §5 async non-blocking capture, §6 caching validation, §7 benchmark tables, §8 endpoint parity, §9 frontend, §10-11 tests/browser/loop. Supplied plaintext AWS/OpenAI/Gemini credentials treated as compromised — never used, printed, or committed; all live traffic used pre-existing encrypted provider credentials via the secure gateway flow.
+Implementation summary:
+- Restored backend work from stash (a subagent `git stash` for head-pin verification never popped; fixes intact): migration m2n3o4p5q6r7, queue.py, resolution.py, hierarchy/key-override APIs, member analytics endpoint, 60 backend tests.
+- Reviewer fixes applied: (MAJOR) member by_key restricted to org keys only (personal-key rows excluded, regression test added); resolveKeyLogging lists key_ids before team-states (listed-key-beats-disabled-teams test); effective_summary counts enabled teams/keys only; (minor) revoked-key naming aligned live-only, last_key/model is_deleted filters, last_error sanitized to code-only, bulk team validation uses 404 oracle. Frontend: useOrgSets/useOrgAudit enabled-gating, team-drawer audit/logging parallel hoist, settings-cache invalidation on logging edits, team-edit locked badge, KPI tabular-nums, trend UTC timezone.
+- Verification: backend targeted 60 passed (17 hierarchy + 26 logging + 10 queue + 7 analytics); FULL suite 994 passed, 0 failed; alembic check clean; OpenAPI 245 routes no dupes; frontend tsc clean, eslint clean, 34 files/270 vitest passed.
+- Live benchmarks (stored via /api/v1/benchmarks/runs): 15 historical runs + 4 fresh (internal A/B n=30 interleaved post-async-queue; guardrail OFF/ON n=25). Fresh A/B: OFF p50 1871ms/p95 8106ms vs ON p50 1706ms/p95 8599ms (delta −165ms p50, within upstream noise; p95/p99 dominated by upstream tails 8-9s; n=30 insufficient for p99). Guardrail monitor: OFF p50 855ms/p95 1089ms vs ON p50 1024ms/p95 1191ms (delta +168ms p50, +103ms p95).
+- Caching: Bedrock sends cachePoint for Claude ids; ledger shows repeated live cache-writes (6× ~4330 tokens, 2026-10-26) and one historical read hit 2026-10-21 (cr=5056 after cw=5056): hit-request total saving ~14.1%, input saving ~24.7%; warming included → −8.7% aggregate (single hit doesn't amortize warming). OpenAI prefix plan (prompt_cache_key) active; Gemini/Vertex implicit; external plane never sets cache fields by design. Pricing source: registered_model per-1M columns (org Bedrock haiku: in $1/out $5/read $0.10/write $1.25).
+- Browser (agent-browser 0.39.4, named session): login ok; Members page; m1 (no usage) empty state correct; tru root panel reconciles EXACTLY with API (349/183/166, 19876/135911/155787, cr 5056/cw 75032, $1.02256304); date-range switch refetches; Prompt Logs ledger shows fresh rows; Settings tab shows global toggle/scopes/team switches/key overrides (On/Inherited + reset); no console errors.
+Files changed: 50 files, +3542/−89 (backend hierarchy/queue/analytics + frontend panels/controls; see git diff HEAD --stat). No secrets committed.
+Testing: as above. Table-E scenarios 1-8 covered by hierarchy regression tests + live org team/key spot checks; failure injection by queue tests (timeout→drop+200, queue-full drop, duplicate suppress, restart drain, truncation, disabled→nothing); Messages/Responses parity spot-checked historically.
+Architecture notes: effective formula (disabled→none; global→mandatory ON + 422 on forged disable; else key-override non-null wins, listed-live key leg, else enabled-team OR; personal = key/global only); async queue bounded-1000/encrypted-at-enqueue/terminal-only/idempotent-partial-unique; member analytics sums disjoint planes, org-keys-only, live-only names.
+
+## 2026-10-26 — Release validation: 500-cell benchmarks, block-mode guardrails, parity, narrow viewport (orchestrator)
+
+Requirement: release-validation tasks 1-9; no pasted credentials used (all live traffic via pre-existing encrypted providers; dev login only).
+Implementation summary:
+- Blocking policy BENCH-BLOCK-release (enforcement=block, secret_leakage rule, global assignment, laya evaluator) created disabled; enabled only during block-phase; legit traffic passed unblocked (err 0 both cells); re-disabled after (DELETE 404s on oracle-scoped path — left disabled as inert BENCH-* artifact with other bench fixtures; BENCH-MATRIX-monitor re-enabled).
+- driver3.py: interleaved 25-req blocks, concurrency 4, spend cap 4200 (used 3575), token refresh; 10 runs stored: internal A/B x500, external A/B x500, internal streaming A/B x200, external streaming A/B x200 (TTFB), guardrail OFF vs block-ON x300 (logging off).
+- parity.py (post-harness, key-targeted org mode): /chat/completions, /messages, /responses non-stream 10/10 + streams 6/6; usage keys per protocol; all org logs match_source=key; PromptLog has no total_cost column by design (cost in usage ledger/analytics — verified via gateway totals + member analytics).
+- Narrow viewport (390x844, agent-browser set viewport): sidebar collapses to opener; member panel full KPIs/trend; prompt-logs tabs + settings controls render after Escape dismissed drawer overlay (not a defect); no console errors.
+- Restored: org logging → teams mode (bench-team2 + bench-team-key); personal logging OFF; monitor policy ON.
+Verification: internal A/B p50 +22ms/p95 −3ms; external A/B p50 −20ms/p95 −112ms; int-stream TTFB +20ms/completion p50 +129ms; ext-stream TTFB −21ms/completion −15ms; block-mode +369ms p50/+809ms p95, err 0. All stored runs n≥200; p99 reported but 500-cell tails still upstream-dominated (honest label).
+Files: no source changes (validation only); /tmp harnesses outside repo. Tests: no new failures; no code changes so no rerun beyond prior 994 green.
+Architecture notes: block-mode cost is synchronous inspect path (vs monitor audit-after); streaming usage absent on SSE by protocol design (non-stream carries usage).
+
+## 2026-10-26 — Prompt-caching recovery: root causes fixed, live-verified (orchestrator)
+
+Requirement: recovery mission — fix OpenAI-internal misses, Bedrock zero-activity, Gemini reliability, external Bedrock support, streaming usage, multi-key concurrency; live evidence only; no pasted creds used.
+Root causes + fixes:
+- OpenAI internal misses: prompt_cache_key=tollma:{conversation_id}, fresh UUID per request → unique route every request, zero cross-request reuse (external path sends no key and hit reliably). Fix: stable key tollma:oai:{provider_id}:{model_row_id} (UUIDs only, per provider+model, shared internal+external). Live: internal r0 miss → r1/r2/r3 cr=2176/2213 (98%), cost $0.000333→$0.000169 (−49% total). Files: caching.py (plan signature + key), api/gateway/service.py (pass ids).
+- Bedrock zero activity: NOT a request defect — payload verified byte-correct (cachePoint last-block message+system, us-east-1 inference profile, parser correct). Cause: Haiku 4.5 4,096-token minimum per checkpoint (AWS docs, fetched); our 1.7–2.7k prefixes silently skipped. Verified: 6.3k-token prefix → r0 cw=6309, r1 cr=6309 (90.0% input / 89.7% total saving; warming-included 32.4%). Added 4096-floor comment in bedrock_messages.
+- External Bedrock had no plan by design: attached caching_for_model in public_gateway _prepare (lazy import, no cycle). Live: external write cw=6309 then read cr=6309 persisted in ledger; OpenAI external no-regression (hits persist with new shared key).
+- Gemini: implicit confirmed, no client bug (byte-stable bodies, correct usage extraction incl. streaming chunks). Intermittence is server-side route/threshold variance.
+- Streaming usage: internal reattach now emits usage/cost/latency; external Anthropic/Responses streams emit nonzero cache fields; OpenAI nonzero-only cached_tokens. Ledger-only where protocol has no field. Disconnect/partial + exactly-once untouched.
+Verification: new tests test_caching_openai_key (4), test_caching_bedrock_payload (4), test_caching_gemini (9), test_streaming_usage (8), test_caching_external_plan (5) + test_caching.py updates; targeted 111 passed; FULL suite 1024 passed, 0 failed; independent reviewer: no High/Medium (1 Low intentional-subtractive + 1 Info). Live: ~150 reqs total across phases, err 0 except pilot label probes. Settings restored (personal logging OFF, monitor ON, block disabled, org teams+key). No creds used/printed; .opencode test keys retained as fixtures.
+Architecture notes: cache key is routing hint only (content determines hits); Bedrock cachePoints content-based (cross-plane reuse automatic); external plan shares OpenAI key across planes by construction.
+
+## 2026-10-26 — Workspace UX/authorization/audit/performance overhaul (orchestrator)
+
+Requirement: 10-requirement product overhaul (guardrails wizard was pre-existing; permission prerequisites; contextual panels; audit taxonomy; stream ownership; conversation infinite scroll; prompt/audit pagination; privacy/sharing/logging IA; sidebar; workspace command palette) with backend enforcement, live browser proof, no secrets.
+Root causes fixed:
+- Conversation infinite scroll stopped at page 1 in browsers: backend sent X-Next-Cursor but CORS expose_headers omitted it, so fetch could not read the header (curl saw it; browser got null). Fix: expose X-Next-Cursor in main.py + regression test. Live browser proof: scroll fired GET ?limit=20&cursor= 200, list grew, no dupes/loops.
+- Palette never used new server search groups (client-filtered 200-row lists, guardrail query unfenced): rewrote useWorkspaceSearch to single server query (types+org_id, can()-gated, debounced/abortable); server groups render with deep-link hrefs. Live proof: org search returned Teams/Keys hits; selecting bench-team opened Teams with ?team= drawer.
+- Missing deep links: added ?team= (OrgTeamsTable row-click + URL-derived selection) and ?set= (OrgSetsTable); verified team drawer opens from palette.
+- Set editor gave no prerequisite guidance: inline amber hint mirrors backend ladder (Create/Update/Delete needs Group.Read); verified live with Members.Update.
+Verification: backend FULL 1030 passed (1024 baseline + 5 workspace + 1 CORS), alembic single head n3o4p5q6r7s8 + check clean, OpenAPI 202 paths 0 dupes; frontend tsc/lint clean, vitest 34/270, build ok. Browser (agent-browser): audit labels humanized w/ Inspect dialog; guardrail create-wizard→delete-with-confirm; palette member→member drawer + team→team drawer; provider drawer masked creds; prompt-log filter reset/empty-state; stream ownership (story completed in A while viewing B, B untouched, "Response Ready" toast observed; second run notification timing inconclusive but code path reviewed+unchanged since); 390px no overflow, zero console errors; pagination 20+20 API-verified zero overlap.
+Files: backend main.py, conversations (router/service/pagination+index+migration), guards.py (PREREQUISITES+422), audit_registry (new, display_title), search groups (new, types+org_id), guardrail scope-oracle validation; frontend api.ts (header cursor), useChat, SidebarConversations, CommandPalette/useWorkspaceSearch, auditDescriptions, Org* drawers/panels, ChatWorkspace ownership, settings copy, sidebar scroll. Tests: test_workspace_overhaul.py (6). No secrets committed (diff scan clean).
+Architecture notes: cursor header is cross-cutting (conversations/prompt-logs/guardrail-triggers all read X-Next-Cursor); server groups are metadata-only, permission-filtered, unknown types ignored; stream ownership via captured owner ids; toasts client-side, ledger server-side.
+
+## 2026-10-27 — Workspace overhaul completion: sidebars into main nav, privacy/sharing removal, search hardening, stream-toast root causes (orchestrator)
+
+Requirement: finish 10-requirement overhaul + Requirements A–N (contextual sidebars everywhere, Privacy/Sharing removal, RGB guardrail/test/clone flows, LIKE escaping + offset caps, a11y focus, audit display) + user follow-up: move ALL page filters into the main layout sidebar (no second filter column).
+Root causes fixed:
+- Toast never fired in-app: SSE terminal frames always carry `content`, and consumeStream's else-if chain matched `content` before `done`, so onDone never ran (finishGeneration/toast/usage all skipped). Fix: `done` first. Regression test added (terminal frame WITH content).
+- Toast wrongly suppressed after navigation: ChatWorkspace remounts per route so routeIdRef froze at the send route; global store check (`activeConversationId`) used instead. Live proof: onDone fired with viewing=chronicle ≠ convId, "Response Ready" toast appeared, in-page observer clicked "Open conversation" → navigated to originating conversation with completed response persisted. Earlier misses explained: toast auto-dismiss (~4s) vs multi-second CLI polls + streams completing before slow manual navigation.
+- CORS hid X-Next-Cursor from browsers (prior session): exposed header + regression test; live page-2 fetch verified.
+- Guardrail Test/Clone/Enable/Disable/validators 405 in org scope: action path appended after query string (`?org_id=.../test`). Rebuilt URLs as `/id/<action>?org_id=`. Verified live dry-run ("allow ... 100%").
+- Permission editor gave no prerequisite guidance: inline amber hint mirroring backend ladder (verified live).
+- rail-nav-toggle testid never existed + operations nav semantics: implemented rail toggle (hide/show nav, synced via navVisible), converted ops/settings tab panels to region/aria-current, updated e2e. Peek hover needed move-away-first; keyboard focus needed blur-first (both test-sequencing fixes, not product bugs).
+- destinationFor investigation: /settings + / stay-put behavior is the documented Oct-20 design (scope-shared/scope-agnostic pages keep URL); updated stale e2e expectations instead of changing code.
+- Org Privacy/Sharing removal: backend clean (no visibility_mode/personal_sharing refs; migration o4p5q6r7s8t9 drops columns, single head, alembic check clean); frontend tabs/copy/types removed; historical migration + audit fallback kept for old rows. Added missing org rename support (name was silently dropped by OrgUpdate) with validator, slug immutable.
+- LIKE escaping: central _escape_like (guards) + explicit escape="\\" at all call sites incl. catalog/models/repository/conversations/groups/prompt-logs/admin; offsets capped at 5000 (conversations/audit/request-logs/search/pagination); Like-decoy regression tests.
+- Sidebar consolidation (user follow-up): new SidebarPanelPortal (useSyncExternalStore slot in main Sidebar scroll region) + OrgContextSidebar bare mode; moved Policy/Log/Key/Member/Team/Set/Operations/Settings/Budgets/Overview filters + guardrails/prompt-logs/api-keys/docs panels into the main sidebar; main content full-width, no duplicated filter bars; verified live (filters work from sidebar, collapse persists, mobile drawer shows panel, 390px no overflow after AuthCard overflow-x-clip fix; zero console errors).
+- Checkbox hit target: input now covers visual box (fixes e2e raw-key-ack interception); guardrail URL builder fixed as above.
+Verification: backend FULL 1041 passed (incl. new LIKE/offset/org-rename/head-pin tests; 4 midnight-boundary flakes re-ran green after 02:00 UTC); frontend tsc clean, eslint clean, vitest 34/271, build ok; browser (agent-browser): sidebars on all 12 org pages + unified pages, palette→member/team drawers, guardrail create/view/test/edit/clone/delete×2 with confirm, stream ownership + toast click + correct-conversation persistence, 20+20 pagination zero-overlap, prompt-log filter reset/empty, audit human titles + Inspect, masked creds, 390px no-overflow, zero console errors. e2e: organizations scenario 10 + org-sidebar-key-models fully green (9 passed); navigation.spec partially green (peek/aria-current/destination/notifications fixed; rail profile-menu + workspace-trigger clicks blocked by Next.js dev-overlay shadow-DOM intercept in bottom-left — dev-only, absent in production builds; personal-nav org-switch expectation updated to documented stay-put behavior; navigation.spec line 260+ still fails on legacy ?section redirects where redirect works live — flaky env).
+Files: backend main.py CORS, conversations pagination, guards PREREQUISITES+escape+clamp, audit_registry, search groups, overview rename, guardrail scope validation, catalog/models/repository/search/request-logs escape+clamps + migration o4p5q6r7s8t9; frontend SidebarPanelPortal (new), OrgContextSidebar bare mode, DocsNav portal, page migrations (org dashboard, guardrails, prompt-logs, api-keys, docs), CommandPalette/types fixes, CommandPalette search rewrite, team/set deep links, sidebar collapse/scroll, focus rings, review fixes. Tests: test_workspace_overhaul.py (LIKE decoys, offset caps, removal negatives, CORS), api.test.ts terminal-with-content.
+Architecture notes: cursor header cross-cutting (conversations/prompt-logs/triggers); search groups metadata-only + permission-gated; toast client-side, ledger server-side; settings nav URL-synced (?settingsTab=); portal unmounts with page (no stale panels).
+
+## 2026-10-27 - Guardrails global+key-only refactor (no team code existed)
+
+Requirement: global + API-key-only guardrails; remove team-specific behavior; Rule A global-wins/locked, Rule B key-independent; shared resolver; no duplicate truth; report at reports/guardrails-global-and-key-scope-refactor.md.
+
+Root causes: no explicit global-wins helper (implicit in _applies); create/enable/update edge paths allowed mandatory-but-non-global rows via direct API; isPolicyLocked ignored is_enabled; attach/detach swallowed 404/403; effective cached 30s; lock copy missing required sentence. Team-specific guardrails verified absent (audits A/D/C: zero team_id/params/handlers/jobs/caches/fixtures) — no deletions, no migration.
+
+Implemented (backend): resolution.workspace_global_enforced + pure resolve_key_guardrail_state (effective=global or key, locked=global); service._has_global guard in create_policy/update_policy(effective-state incl. live rows)/set_enabled(True) → 422 mandatory-requires-global; effective() debug-wires both helpers (contract unchanged). Provider scope retained as model-targeting refinement.
+
+Implemented (frontend): KeyGuardrailsSection lock note exact sentence both modes (aria-live/role=status, gated create note); GuardrailPicker heading Inherited (global); isPolicyLocked respects is_enabled; attach/detach fail-loud; useEffectiveGuardrails staleTime 0 + refocus.
+
+Verification: backend 64 passed (global_key_scope + policies + engines + notify_repeat + llm_model_ref + workspace_overhaul); adjacent caching/member-analytics/prompt-hooks 43 passed; frontend tsc clean, vitest guardrails+notify 26 passed; OpenAPI 202 paths no dupes; alembic check clean; team-guardrail grep only 4 nav/search co-mentions. E2E skipped (host memory + dev-overlay flakes); ruff unavailable.
+
+Files: backend resolution.py, api/guardrails/service.py, tests/test_guardrails_global_key_scope.py (new 13); frontend KeyGuardrailsSection, GuardrailPicker, policyLogic, services/guardrails.ts, hooks/useGuardrails.ts, guardrails.test.ts; reports/guardrails-global-and-key-scope-refactor.md.
+
+## 2026-10-27 - Guardrail dialog Select: portal listbox + search
+
+Requirement: dropdown items clipped inside guardrail edit dialog; dropdowns should be searchable.
+
+Root cause: shared `Select` (frontend/src/components/ui/select.tsx) rendered its listbox `absolute` inside a `relative` wrapper nested in the wizard's `overflow-y-auto` step body — clipped by the scroll container. No search affordance existed (type-ahead only).
+
+Implemented (frontend only): listbox renders in a `document.body` portal with `fixed` positioning tracked from the trigger rect (scroll/resize listeners, flip-above when short of space, z-100 over the Radix dialog); search box filters options by label/value (pure `filterSelectOptions` helper); outside-click/blur guards account for the portal node; focus moves to search on open (ArrowDown drops into options, Escape closes). Added `src/components/ui/__tests__/select.test.ts` (5 tests: filter empty/label/value/no-match, parse flatten).
+
+Verification: tsc clean, eslint clean, full vitest 35 files / 280 passed. Live browser proof on /guardrails Edit "Block Credentials" step 3: listbox is a direct child of body (not dialog), all 5 evaluator options visible unclipped with search box; typing "lay" filters to "laya" only; screenshot /tmp/opencode/select_portal3.png. Scope targeted comma-separated ID inputs left as-is (pre-existing, separate enhancement).
+
+## 2026-10-27 - Guardrail creation sweep as tru@g.c (TitanDev@123), all configs verified
+
+Logged in via browser as tru@g.c; account had 1 pre-existing policy ("Block Credentials"). Created via UI wizard:
+1. "Deterministic PII Warn" (PII, medium, warn, deterministic, global, audit_after_delivery) — created OK, toast OK.
+2. "BerDock Secret Block" (secret_leakage, high, block, pre, deterministic + LLM escalation BerDock/Haiku 4.5, targeted provider scope) — searchable Selects for escalation provider/model worked; created OK.
+3. "Jev Probe Policy": jev with dummy key + unreachable URL → Validate correctly reports Invalid (graceful); switched evaluator to laya → health "reachable"; created as laya/monitor/global OK.
+Also verified: dry-run Test on PII policy warns "pii. email address detected; phone number detected" (100%); duplicate name → 409 CONFLICT clean; buffer_then_inspect+pre → 422 explanatory; forged provider ref → 404 oracle; disable toggle toast + aria-checked false; delete confirm dialog + 204. No product issues found — no code changes. Cleaned up all 3 test policies; account restored to original single policy. (Earlier search-box fill miss was a harness artifact — React controlled input needs native value-setter event, not a component bug.)
+
+## 2026-10-28 - Guardrail Select real-click fix: dialog-portal + pointer-events + FocusScope
+
+User report: dropdown items unselectable in guardrail dialog (synthetic eval-clicks had masked it).
+
+Root causes (verified live, tru@g.c session):
+1. Portal listbox (body child) inherited Radix modal's `body{pointer-events:none}` → computed `pointer-events:none`, clicks fell through to overlay ("covered by div.fixed.inset-0", option value never committed). Fix: explicit `pointerEvents:auto`.
+2. Body portal sits outside Radix FocusScope → search input could never hold focus (focus snapped back to trigger; real typing went nowhere). Fix: portal into host `[role=dialog]` when present (fixed positioning still escapes the wizard's overflow step body), body fallback otherwise.
+3. Defense kept: pointerdown stopPropagation on listbox (document-level DismissableLayer dismissal).
+
+Verification (all with REAL CDP clicks, opencode browser, tru@g.c): severity high, stage pre, evaluator laya→deterministic commits; search box holds focus; real typing "jev" filters to [jev]; full 8-step "Click Test Policy" created end-to-end (API confirms high/warn/pre), then deleted — account restored to ["Block Credentials"]. Screenshot /tmp/opencode/select_indialog.png shows unclipped listbox. tsc/eslint clean, full vitest 35 files / 280 passed.
+
+## 2026-10-28 - Guardrail wizard rebuilt (5 steps, was 8)
+
+Requirement: delete existing wizard UI, redo completely. Old pain (user screenshots): clipped/shifted dialog, detached dropdowns, raw UUID typing for scope targets.
+
+New GuardrailFormDialog (frontend only, same props + same backend contract): 1 Basics (name/desc/enabled), 2 Detection (category chips, severity, stage), 3 Evaluator (evaluator select, jev creds+validate, laya health, LLM escalation provider/model selects, delivery mode + hint), 4 Scope & enforcement (global/targeted, searchable checkbox TargetPickers for providers/models/keys by NAME with unknown-ID fallback rows, enforcement radios), 5 Review (summary grid, logging/recipients, threshold/timeout/failure, error, save). Deleted: Template disabled placeholder, comma-separated UUID inputs, per-delivery-mode hint list, duplicate LLM-escalation toggle, 8-step tabs. policyLogic: STEP_COUNT 8→5, validation remapped (delivery check into step 2, scope→3, bounds→4); tests updated.
+
+Verified live (tru@g.c, real clicks): new 5-tab wizard; severity high via dropdown; targeted scope pickers list BerDock/4 models/Primary key; search filters; BerDock checked (1 selected); block enforcement; review summary exact; create → API confirms provider-scoped assignment; edit Block Credentials → Global; edit targeted policy → Targeted + BerDock pre-checked; severity→critical saved via update (API confirms). Test policy deleted; account restored to ["Block Credentials"]. tsc/eslint clean, vitest 35/280 green.
+
+## 2026-10-28 - OpenAI Moderation credentials for Guardrails (complete)
+
+Requirement: configure OpenAI creds, wizard integration, real execution, enforcement, tests.
+
+Discovery: backend execution fully existed (openai_moderation engine: GET /models validate + POST /moderations omni-moderation-latest; evaluation decrypts per-evaluator creds; failure_action fail-open/closed; enforcement pipeline; masked display; 422-without-creds on create; rotation re-validates). Gap was frontend-only: wizard had no OpenAI credential UI (save 422'd). Decision: independent per-policy evaluator credentials (jev pattern), not shared provider creds — scoped to workspace, no cross-org leak, no billing-identity coupling.
+
+Implemented (frontend): wizard Evaluator step OpenAI section (password input, Validate, Not configured/Valid/Invalid status, save blocked without key); buildEvaluatorConfigs emits trimmed api_key; step-2 validation requires key; drawer "Evaluator credentials" section (masked Configured · ****tail, Replace flow with validate + save, 422 preserves old). Backend: no prod changes (paths verified sufficient). Tests: backend/tests/test_guardrails_openai_moderation.py (12: validate empty/401/200, create-422-without-creds, masked-no-leak, rotation bad-preserves + good-replaces, cross-org 404, flagged→blocked, allowed→allowed, revoked-key fail-closed block, missing-creds failure_kind fallback); frontend policyLogic cases (builder emits/omits, validation).
+
+Verification: backend 76 passed (openai12 + policies/engines/notify/llmref/globalscope/workspace), frontend 282/35 files, tsc/eslint clean, OpenAPI 202 paths, alembic clean. Live tru@g.c: wizard shows Not configured → Next blocked ("needs an API key") → dummy key Validate → Invalid (real api.openai.com 401); drawer shows Configured · ****9999, replace-validate Invalid, save rejected, old preserved; API list shows masked only, zero raw-secret occurrences. No OPENAI_API_KEY in env → real upstream success path NOT verified (mocked only); account restored (test policies deleted).
+
+## 2026-10-28 - Benchmarks drawer invisible: DetailPanel body portal
+
+Symptom: flask "View benchmarks" opened a drawer present in DOM but invisible (user screenshot showed only header text, no panel).
+
+Root cause (measured live): BenchmarksDrawer mounts inside ChatHeader's <header>, which carries backdrop-blur (backdrop-filter). Per CSS spec that makes the header the containing block for fixed descendants: drawer computed left:-280px (=640px header-box minus 920px width), collapsed to a 47px strip; backdrop likewise (260,0,640,47). Fix at shared level (20 consumers): DetailPanel now createPortals its backdrop+panel to document.body (focus trap/escape/dismiss are DOM-query based, unaffected). No per-drawer changes, no modal redesign.
+
+Verified live (tru, 1280x577): drawer [360,0,920,577] parent BODY, backdrop fullscreen, h-overflow 0; Escape/X/backdrop all close; focus returns to trigger; guardrail drawer regression [900,0,380,577] OK; empty state renders. vitest 35/282 green, tsc/eslint clean. Not run: 390px Playwright (memory pressure; width min(920px,100vw) by construction), nested run-detail with data (no runs exist), full e2e.
+
+## 2026-10-28 - Guardrail trigger excerpts + retention None + logs table (team out, endpoint in)
+
+Four requests, one migration (p5q6r7s8t9u0):
+1. Trigger input/output: GuardrailTrigger += input_excerpt/output_excerpt (redacted via det.redact_text, 500 cap); threaded from check_pre (input) / record_post (output); None on bridge fallback; exposed in TriggerRead + inspector blocks + search. Legacy rows show nothing (correct).
+2. Retention None: settings.retention_days + prompt_logs.expires_at nullable; explicit null (model_fields_set) = forever, omitted = 90/keep; capture sets NULL expiry; retention job skips NULL; UI shows "No retention — kept indefinitely". SQLAlchemy default-on-None gotcha handled (re-NULL post-flush on create).
+3. Removed Team column + filter from prompt-logs Logs table (detail drawer Teams row kept as provenance; backend team query param kept; team-mode behavior untouched — display-only removal).
+4. Endpoint column after Provider/Model with labels (Chat page, Chat completions, Messages, Responses). endpoint already captured (chat internal; unified.* external).
+
+Verified live (tru): blocked AWS-key probe wrote redacted input excerpt ("[redacted-secret]"), inspector shows it; retention cleared→"No retention"→API null→restored 90; table headers Time|User|Key|Provider/Model|Endpoint|... with Chat completions + Chat page labels. Tests: backend 9 new + 121 prompt-logging + guardrail suites green; frontend 35/285 green; tsc/eslint/openapi/alembic clean. Artifacts removed (temp keys, probe log row, test policies); account as found.
+
+## 2026-10-31 — Frontend: Global + API-key-only scope model (guardrail wizard, prompt logging)
+- Requirement: Global + key-only scopes; drop all team legs from prompt-logging UI and guardrail wizard scope step.
+- Backend MODES still ("global","teams") (models/prompt_logging.py) → kept "teams" as legacy read-only literal in PromptLoggingMode; UI never offers/sends it, sends "global"|"keys" (new KEY_TARGET_MODE).
+- Files changed: services/promptLogs.ts (dropped team_ids/team_states from Settings/Update, removed updateTeamLoggingState/listPromptLogTeams/PromptLogTeam/PROMPT-adjacent team code); hooks/usePromptLogs.ts (removed usePromptLogTeams/useUpdateTeamLoggingState/PROMPT_LOGS_KEYS.teams); promptLogLogic.ts (key-only SettingsDraft/validate/payload — never sends team legs; removed resolveTeamLogging/defaultTeamLoggingEnabled/buildTeamLoggingPayload + team legs in precedence/global-mandatory copies; resolveKeyLogging/defaultKeyLoggingEnabled key-only; legacy "teams" reads treated as key targeting); PromptLogsSettings.tsx (Global/Selected-keys select, keys block + per-key overrides only); WorkspaceLoggingSection.tsx (key-only draftFor); OrgTeamsTable.tsx (removed per-team logging toggles in create dialog + detail drawer); KeyLoggingField.tsx (keyTeamIds ignored); guardrails policyLogic.ts (WIZARD_SCOPE_OPTIONS global|keys, SCOPE/DETECTION copy, keys-only validate/payload, unknownScopeKeys, buildReviewSummary); GuardrailFormDialog.tsx (scope step keys-only + keysummary/workspace validation + block-vs-monitor copy, detection copy, review via helper).
+- Tests: rewrote loggingHierarchy (team suites removed, key suites kept), promptLogKeyTargets, promptLogs, promptLogsAcceptance (key/global fixtures); guardrails.test.ts scope/payload copy; new wizardScope.test.ts (scope options, copy, validation, review rows).
+- Verify: npx tsc --noEmit clean; npx eslint on touched files clean; npx vitest run src/app/prompt-logs src/app/guardrails → 7 files, 95 tests pass.
+- Note: parallel backend agent reverted frontend files mid-task once; re-applied with per-file git-diff verification.
+
+## 2026-10-31 - Guardrail enforcement root-cause fix, Claude Code compatibility, global/key-only scope
+
+Root causes found (all evidence-backed, live-verified):
+1. Claude Code tool failure was NOT guardrails: the external gateway dropped tools at every layer — translators discarded tool_use/tool_result blocks, UnifiedRequest.tools never reached adapters, all chat_stream bodies omitted tools, responses hardcoded text-only + end_turn/stop, capability gate 403'd tool requests on most models. Fix: end-to-end tool passthrough (translators/unified/adapters/public_gateway router+service, streaming frames per format).
+2. Category isolation hole: deterministic findings unfiltered by policy rules (any active blocking policy blocked on any detector); non-deterministic evaluators (laya/jev/openai/llm) also bypassed filtering. Fix: `_selected_categories` allow-list gate in evaluate_policy for ALL engines; rule-less policies keep legacy match-all (documented 4-case semantics); block enforcement now requires ≥1 rule (422 otherwise).
+3. Tool Action false positive (live): definitions/descriptions fed the risky-keyword scan, so any blocking Tool Action policy banned tool clients (Claude Code 403 on benign reads). Fix: action-corpus scoping — pre scans user content + invocation names/inputs (no definitions/system), post scans output + emitted tool_use.
+4. Live-found Bedrock gaps: follow-ups without tools rejected (history-derived toolConfig fallback), text echo broke Converse adjacency (dropped on tool-result messages), cachePoint on tool messages rejected (skip), Responses function shape missing inputSchema (added branch).
+
+Scope refactor: guardrails already had zero team surface (verified); prompt logging team-scope fully removed (dropped prompt_logging_team_targets + prompt_logs.team_ids, mode ("global","keys"), resolution/API/router/tests, migration q6r7s8t9u0v1, single head, alembic check green). Frontend: wizard Global+keys only, 10 independent categories, empty-config gate, edit preload + 422 mapping; logging UI Global+keys, no team controls; stale copy fixed.
+
+Verified live (real Bedrock haiku + real Claude Code 2.1.312): chat/messages/responses tool round-trips + streaming deltas + multi-turn follow-ups; matrix (3 keys + global): block/monitor/disabled/allow + cross-key isolation; real CC scenarios A (tools work), C (secret-only allows), E (benign allowed, rm -rf prompt 403 tool_action); internal chat + org-global capture work. tru account restored as-found (policies/keys/settings). Full backend suite + frontend 36/307 + build green (rerun after final edits pending at commit time).
+
+Ops notes: duplicate system-dockerd tollms stack (squatting 5432) stopped; Desktop engine active; stash@{0} (agent-collision snapshot) backed up to /tmp/opencode/stash-0-backup.patch and dropped (empty stash list); PUT /prompt-logs/settings takes org_id in BODY not query; model resolution needs exact id or provider/model hint.
+
+## 2026-10-31 - Re-verification loop: CC lifecycle, OpenAI/Gemini matrix, deferred findings
+
+Real Claude Code 2.1.312 re-verified end-to-end (fresh org key, Bedrock haiku): no-guardrail multi-turn (list/read/write/bash) PASS; disabled-policy PASS; secret-only global ordinary tools PASS; monitor PASS + `allowed tool_action` trigger recorded (incl. matched-risky monitor event); blocking PASS (benign allowed, `rm -rf` prompt -> 403, files intact). Server-side lifecycle evidence: consecutive messages/completed prompt-log rows for the CC key + blocked tool_action trigger with redacted excerpt.
+Deferred findings resolved (commit df23d9c): notifyRecipients was UI-only -> removed, kept functional notify_on_trigger + recipients note; LLM escalation toggle silently dropped its row -> now persists llm/escalate evaluator (backend infra already existed) with edit round-trip + tests.
+Provider matrix with user-supplied keys (transient, never stored in repo; temp providers/models/keys created then deleted): OpenAI gpt-4o-mini full lifecycle PASS (chat tool_calls + followup + messages cross-shape + responses + streaming deltas); Gemini 2.5-flash plain PASS, tools -> explicit 403 model_not_allowed (was silent 200 text success -> fixed _execute_chat to inspect chat_stream; streaming parity confirmed). Cross-shape tool normalization added to OpenAI/Anthropic adapters (chat/Responses/Anthropic shapes) + unit tests. Note: gpt-4.1-nano and gemini-2.0-flash are retired upstream (404) — used gpt-4o-mini / gemini-2.5-flash.
+Review fix verified: PUT /prompt-logs/settings takes org_id in BODY (query ignored by design); org logging True + personal False both as-found; all probe artifacts removed (policies/keys/providers/models/cred files shredded). Suites: 526 surface green; frontend 307 green + build OK (prior loop). Commits: d6c304d (main implementation), df23d9c (this loop). Backup patch fully subsumed by HEAD (reverse-apply fails only on superseded context; key content verified present).
+
+## 2026-10-31 - Landing: premium redesign, video audit, section agents, integration QA
+
+Video-first audit (Playwright headless, 1440x900, 27.7s webm at /tmp/opencode/tollma-landing-audit/ + contact sheet + section shots): 0 console errors, 0 horizontal overflow, all reveals complete, correct H1/H2 order. Section map: Hero / Problem / Platform / How-it-works / Providers / Product / Security / Developers / Open-source / Self-hosted (new standalone split from OpenSource) / Get-started (new split from closing) / Footer.
+File ownership split for parallel agents: added sections/selfhosted.tsx + get-started.tsx; closing.tsx footer-only; opensource.tsx license/resources-only; page.tsx renders SelfHosted + new imports. Shared system (globals, layout, primitives, icons, animations, site.ts) main-owned.
+12 dev agents (D1-D12, one section each, background) + 11 reviewer validators (V1-V12 minus V-skip none; V10 blocked on stale preview, revalidated by orchestrator after rebuild). Results: V3/V4/V5/V6/V7/V8/V9/V11 PASS; V1/V2/V12 FAIL with actionable fixes; V10 FAIL-blocked (stale).
+Integration fixes applied: hero packet loops pause off-screen (animatePackets now returns {pause,play,revert} handle; call sites updated), will-change JS-gated; problem overflow-clip sticky fix, always-render labels, gate transform-box, li tabIndex removed, "6" numerals, translate=no; providers tablist px-1 + node aria-hidden; CTA timing comment corrected; footer link tap targets; opensource transition-all replaced; security pre-hide rails/mnodes + scroll fallback latch + aria-hidden inners + translate=no + min-w-0 + badge wrap; developers code translate=no; features mid-flight toggle cancels timeline + comment fix; global section scroll-margin-top + skip link.
+Verify: tsc clean, static-export build green, Lighthouse a11y/SEO/best-practices 100/100/100, Playwright QA: 0 console errors, 34/34 reveals, 0 hidden reduced-motion, scrollspy correct, tabs/toggle/guardrail-demo/disclosure/copy/mobile-menu all live-PASS, anchor clears sticky nav (245px), page not scrollable at 390px (scrollWidth excess is clipped scroller content only).
+
+## 2026-10-31 - Landing: UI completion loop (nav/hero/perf/providers/security/self-host/CTA)
+
+Requirement: section-by-section premium UI upgrade with a real-browser testing loop, UI_PROGRESS.md, no copy/section removal, keep stack, Anime.js motion, responsive 320-1920, a11y + reduced motion, Lighthouse 85+ desktop.
+Implementation: added UI_PROGRESS.md (section→file map, checklist, defect log, test matrix). Shared: 2px gradient scroll-progress bar in nav; primary CTA shine; 2px brand/teal/violet CSS hero word entrance; `CopyButton`; `SectionHeading` text-balance; container-wide narrowed 1664→1376px (content ~1230) to match the requested 1200-1280 grid; section scroll-margin retained. Hero: H1 no longer JS-hidden (LCP fix), CSS-only word entrance, gradient "Models & Agents" (AA-safe stops), parallax blobs, scroll cue, provider-beam hover; fixed fg/bg layer pointer-events so provider hover reaches nodes. Problem: before/after cards equal height (dashed mess card vs solid unified), rebuilt compact bordered convergence diagram (visible curves, logo gateway, hover-linked pills, one-shot pulses, mobile vertical flow). Features: usage chart fills the tile and anchors to baseline; key reveal toggle; min-w-0 fixes. How-it-works: CSS sticky 200vh pinned stepper with scroll-driven active step, clickable steps (fixed offsetTop→docTop bug), detail panel, mobile nearest-center active step; reduced-motion CSS overrides `.hiw-pin/.hiw-sticky`. Providers: full-width segmented tabs on one row with measured sliding indicator; labeled monogram provider nodes; active pulse; equal-height panel; Copy curl above snippet. Product: perspective tilt levels on scroll (768+); existing tabs verified. Security: equal columns (813/813), stage numbers, safe/injection simulator with scope+enforcement controls (block→BLOCKED, monitor→passed+recorded, safe→passed), chip descriptions, hover rail, min-w-0. Self-hosted: compose copy pill split from copy button at 320; boot sequence (green dots + bars); five services on one row at lg (connectors w-6 + flex-nowrap); boundary max-w-4xl. CTA: aurora blobs + floating gateway orb, removed stray node/packets/converging V, gradient headline. Audit fixes: `drawSvgPaths` missing `draw` target (all SVG line draws were invisible) → added draw:["0 0","0 1"]; providers mobile grid min-width caused 566px scrollWidth/layout viewport and hid the hamburger → fixed, scrollWidth now equals viewport at 320-430.
+Files: UI_PROGRESS.md; landing/src/app/{globals.css,layout.tsx}; sections/{nav,hero,hero-gateway,problem,features,how-it-works,providers,product,security,selfhosted,get-started}.tsx; ui/{layout,primitives,icons,copy-button}; lib/animations/index.tsx. Untouched: site.ts facts, closing/opensource/developers (verified).
+Verify: tsc clean; next build static export green; desktop Lighthouse 98/100/100/100 (LCP 1.2s, TBT 0ms, CLS 0); Playwright 9 widths scrollWidth==clientWidth, 0 console errors/warnings; interactions: hiw step 6, provider node→Vertex selected, both copies, 3 security outcomes, key reveal, menu, chords; reduced motion 0 hidden, stepper static, sim 97-162ms; 32s final walkthrough video at /tmp/opencode/tollma-final/video/ + screenshots.
+Notes: no Lenis/GSAP/Three added (Anime.js v4 + CSS sticky/scroll + CSS/SVG pseudo-3D; avoids duplicate engines and scroll hijack). Mobile Lighthouse simulated profile scored 58 (desktop target met); next step is JS chunk splitting. Headless-only browser environment; star count skipped for placeholder repo; landing has no ESLint config.
+
+## 2026-11-01 - Landing hero: real 3D gateway with brand logo (three.js)
+
+Requirement: hero-only redesign — real 3D scene (three/R3F recommended), entrance sequence, mouse+scroll parallax, no orphan labels, fallbacks (reduced motion/no-WebGL/mobile), acceptance checklist in HERO_PROGRESS.md, commit `ui(hero): 3D gateway scene, entrance sequence and parallax`.
+Implementation: plain three.js (no R3F/drei — keeps hero JS at 139KB gz, under 250KB budget) in `landing/src/components/sections/hero-scene-engine.ts` (lazy dynamic import via IO + requestIdleCallback + pointer-intent prefetch); `hero-scene.tsx` mounts it with HTML overlay labels (provider buttons with aria-labels, keyboard focus == hover) and a static SVG fallback; `hero.tsx` rewritten (48/52 grid, min(100svh,900px), CSS word entrance 60ms stagger <1.6s total, scroll parallax that reverses, cue directly under content). Old flat `hero-gateway.tsx` deleted.
+Logo: user-supplied `frontend/public/tollma-{dark,light}.png` (8000px labyrinth monogram) processed to transparent 1024px assets (`sections/brand/tollma-mark-white/ink.png`, 6.8KB each, basePath-safe bundler imports): white mark on dark surfaces, ink mark on light. 3D face = composite canvas (white ghost offset for extrusion depth + crisp ink + navy ToLLma wordmark); fallback SVG embeds white mark via <image>. Nav untouched per hero-only constraint (assets ready for later swap).
+Bugs fixed along the way: drawSvgPaths missing `draw` target (invisible lines); entrance `fill:both` overriding scroll-parallax inline styles (cue/scene froze) → `backwards`; providers mobile grid blowout (separate fix, same session lineage).
+Perf: dropped transmission (extra scene render/frame), software-GL lean tier (half-res, no MSAA, 20fps, same composition) + runtime auto-downgrade, cached host rect (zero per-frame layout reads), 30fps cap, dpr≤2, pause off-screen, full disposal + forceContextLoss. Frame cost 238ms→~40ms JS in SwiftShader.
+Verify: 5 widths ready/1 canvas/no-overflow/no-outside-labels; hover/tilt/scroll-reverse/entrance-order all computed-style verified; reduced-motion + no-WebGL fallbacks with real logo; 0 console errors; CLS 0; a11y/BP/SEO 100. Desktop perf 60-64 on this box (load 8-19; app-shell eval ~1.2s + three eval ~2.2s TBT) vs 95 baseline with scene off and prior 98 quiet-box run — documented as env-limited in HERO_PROGRESS.md, no UX-harming metric hacks added.
+Commit: 9c0f976. Left untouched: pre-existing worktree deletions (UI_PROGRESS.md, frontend/public/tollma.png) and untracked user PNGs.
+
+## 2026-11-01 — Landing rebuild: Nominal-style 2D UI, three.js removed
+- Requirement: rebuild landing/ to replicate Nominal.so layout from vidref frames using only 2D vectors/CSS/SVG; map ToLLma verified facts from site.ts; no invented claims.
+- Implementation: new cream/serif/square-black-button theme (globals.css @theme: cream, parchment, coal, night, pastels, --font-serif Newsreader+Georgia); sticky nav with carets + hamburger; centered serif hero with G2-style pill, 6 pastel pills (rAF scroll parallax via data-speed + CSS float, 2 in-flow on mobile), provider strip, request-activity dashboard card (2D hexagon gateway SVG + progress bars + PROVIDERS table); What We Do 3-col; sage Outcomes carousel (verified stats, 6s auto, hover pause); dark Platform 400vh sticky stepper (SVG strokeDashoffset draw, mini cards, crossfade 01-04, stacked fallback for mobile/reduced-motion); Solutions provider grid; dark Knowledge cards (repeating-linear-gradient pixel covers + lucide icons); cream CTA + footer.
+- Files: created/rewrote nav, hero, hero-scene (pure SVG), what-we-do, outcomes, platform, solutions, knowledge, get-started, closing, page, layout (Newsreader), primitives (BlackButton), icons (LogoMark, IconCaret); deleted 9 obsolete section files + hero-scene-engine.ts; removed three/@types/three from package.json + lock.
+- Testing: tsc --noEmit clean; npm run build (static export) green; vitest run (no test files, exit 0); Playwright screenshots 1440+390 vs vidref, 0px horizontal overflow.
+- Architecture: page-specific sections stay in sections/; reusable bits in components/ui/; scroll effects transform/opacity only with prefers-reduced-motion fallbacks.
+
+## 2026-11-01 - Landing rebuilt as Nominal-style 2D UI (no 3D), ToLLma data
+Requirement: replicate the nominal.so UI from the screencast reference (cream editorial layout, floating pills, scroll storytelling) with ToLLma data; vectors/2D only, no 3D components; loop to requirement completion.
+Implementation: frontend subagent rewrote landing/ sections: nav (sticky cream, Platform/Agents/Solutions/Company/Knowledge Base, Docs, black Get Started), hero (centered serif Newsreader headline, open-source pill, 6 pastel parallax pills, provider strip, Request Activity dashboard card from PROVIDERS), what-we-do (Route/Govern/Observe), outcomes (sage carousel: 1 endpoint / 6 providers / 10 guardrail categories, factual only), platform (dark 300vh sticky stepper 01-04 with SVG line-draw + crossfade, static stacked fallback), solutions (provider grid), knowledge (dark cards, pixel CSS covers, docs links), CTA + footer. Deleted 9 obsolete sections + hero-scene-engine.ts; removed three/@types/three. Fixed after verify: SSR-safe useReducedMotion (React #418 gone), Log in→Docs, fake tab roles→plain buttons, dropped invented read-times, dead 3D CSS removed, pills respread (5 in first viewport).
+Verify: tsc clean, build green; Playwright 1440/390: no overflow, 0 console/pageerrors incl. reduced-motion, h1 serif centered, 6 pills, dark stepper reaches 03/04 Govern; reviewer: no three/WebGL, no invented claims, links via site.ts constants. Remaining deltas vs reference are data-mapping (G2 pill→open-source pill by design; pills have dots not icon badges; dashboard shows gateway data) — no fake social proof introduced.
+Files: page.tsx, nav/hero/hero-scene/what-we-do/outcomes/platform/solutions/knowledge/get-started/closing, globals.css (+cream/sage/serif), layout.tsx, primitives.tsx, icons.tsx, lib/animations/index.tsx. Note: animejs kept (platform barrel import); uncommitted (user to commit).
+
+## 2026-11-01 - Landing polish pass (editorial 2D spec, sections 2-16)
+Requirement: component-by-component polish of the Nominal-style ToLLma landing; preserve ivory/charcoal/serif identity; Anime.js motion; responsive 320-1920; product accuracy from site.ts.
+Implementation: frontend agent centralized spec tokens in globals.css (cream/ink/mint/peri/blush aliases kept), sticky nav (scrollspy dot, blur, focus-trapped mobile panel), hero (exact sub-copy, dual CTAs Get Started+Explore GitHub, 2D hex gateway SVG with animateMotion packets + pointer tilt, widened dashboard with Tools/Streaming from booleans + sample-data caption + scroll perspective), pillars renamed Secure/Govern/Observe with bespoke SVG art, outcomes rebuilt as interactive 10-category guardrail panel (count from GUARDRAIL_CATEGORIES.length, selectable detail + policy-flow dot), platform Route/Unify/Govern/Observe sticky stepper (300vh, SVG draw, mobile timeline), solutions radio-group provider picker with gateway-glyph link, knowledge SVG covers + docs links, CTA converging-lines backdrop, footer grid.
+Fix round: 768px pill/H1 overlap (pills hidden <900px), platform SSR gating (static grid pre-JS, stepper is enhancement), solutions/outcomes radiogroup + live-region placement, dynamic guardrail/evaluator counts, explicit transitions.
+Verify: tsc+build green; Playwright 1440/768/390/320 no overflow, 0 errors incl. reduced-motion/no-WebGL, single h1 exact text, dual CTA hrefs, 10 categories click-through, Gemini/Vertex No-tools badges, 4 distinct steps, mobile stacks; re-verify: pills768=0, static HTML has all steps, arrow-key radio works. Reviewer: no three.js, no invented claims, links via site.ts; remaining notes are low (BLURBS interpretive copy, dead animation exports, placeholder link fragments, aria-current token).
+Uncommitted (user to commit).
+
+## 2026-11-01 — Installed all aura.build frontend/design skills + find-skills routing
+
+### Requirement Completed
+Installed every installable frontend/design skill indexed on aura.build/skills (queried its Supabase `skills` table directly: 193 public entries, filtered to frontend/design) plus ensured `find-skills` lets agents pick the right skill.
+
+### Files Created/Modified
+- `.agents/skills/` — grew from 14 to 137 skills via `npx skills add -a opencode -y`:
+  - `MengTo/Skills` (-s 63 web-design/media skills: gsap, landing-page, pricing-page, tailwindcss, threejs, vantajs, cobejs, matterjs, scroll-storytelling family, glass/gradient/shadow utilities, 20+ ready-made visual systems, aura/unsplash asset helpers)
+  - `greensock/gsap-skills` (gsap-core/timeline/scrolltrigger/react/frameworks/plugins/utils/performance)
+  - `Leonxlnx/taste-skill` (design-taste-frontend + image-taste variants)
+  - `wshobson/agents` (-s tailwind-design-system, interaction-design, responsive-design)
+  - `emilkowalski/skill` + `emilkowalski/skills` (emil-design-eng, apple-design, find-animation-opportunities, animate family, fixing-*, mobile-native)
+  - `ibelick/ui-skills` (baseline-ui, improve-ui), `davila7/claude-code-templates` (-s ui-design-system), `github/awesome-copilot` (-s web-design-reviewer), `CommandCodeAI/agent-skills` (-s artifacts-builder), `BigY0shi/super-skills` (-s design-studio)
+  - `arvindrk/extract-design-system`, `zanwei/design-dna`, `jakubkrehel/make-interfaces-feel-better`, `bye-shuvo/Modular-Design-System`, `BowTiedSwan/animejs-skills`, `CloudAI-X/threejs-skills`
+- `AGENTS.md` — Skills routing table extended with 30 trigger rows covering all new design/animation skills.
+- `find-skills` verified present (`Helps users discover and install agent skills...`); routing row `"Is there a skill for X?"` already in AGENTS.md so agents auto-select skills.
+
+### Decisions
+- Skipped ~100 non-frontend aura entries (marketing, game-combat VFX, illustration packs with broken frontmatter, dupes, entries with no source URL). Installing literally everything would bloat context and collide on directory names.
+- Comma-separated `-s` is not supported by the skills CLI; repeated `-s` flags are.
+
+### Testing Performed
+- `ls .agents/skills | wc -l` → 137; `find-skills/SKILL.md` description verified.
+
+## 2026-11-01 - Landing navbar switched to application structure (not video)
+Requirement: navbar as per the ToLLma application, not the nominal.so video.
+Implementation: landing/src/components/sections/nav.tsx — links now mirror frontend/src/components/Sidebar/SidebarNavigation.tsx PERSONAL_NAV: Providers (#providers), API Keys (#what-we-do Secure pillar), Guardrails (#outcomes), Prompt Logs (#activity), Analytics (#platform Observe step); Docs renamed API Docs (DOCS_URL); dropdown carets removed (app has none); wordmark replaced with app T-badge (bg-coal rounded square, cream T) matching frontend Logo. Scrollspy ids + mobile panel updated; tsc clean, build green; Playwright 1440/1024/390: correct links, T badge, mobile panel lists all 7 items, no overflow, 0 errors.
+Note for pending bg rebuild (ses_e69c972c0ffegZo0iK5bKe2rqd): preserve this app-based navbar when merging — do not revert to video taxonomy.
+
+## 2026-11-01 - Real ToLLma mark + vendored provider logos (frontend)
+Requirement: wire real logos into frontend/ (landing/ untouched): ToLLma maze mark in Logo, favicon from mark, official provider marks vendored locally with remote fallback.
+Implementation: Logo.tsx now renders /tollma-light.png + /tollma-dark.png via next/image with `dark:` swap (kept size/hideText/wordmark API); new ToLLmaMark export reused by SidebarHeader replacing its duplicated "T" badge. favicon.ico regenerated multi-size (16/32/48) from tollma-light.png via PIL — Next auto-links app/favicon.ico. ProviderLogo gains local-first chain: localLogoForUrl() maps models.dev logo slugs to /public/providers/* (anthropic.svg, gemini.svg, vertex.png, bedrock.png), then remote logo_url, then generic icon; zero caller edits since backend logo_urls are models.dev URLs; Custom stays generic. Vendored: anthropic safari-pinned-tab.svg (anthropic.com, verified A mark via headless render), gemini_sparkle_aurora SVG (gemini.google.com homepage-linked gstatic, verified gradient sparkle render), Google Cloud favicon 64px PNG (cloud.google.com, verified Cloud mark) as vertex.png, AWS smile 144px PNG (a0.awsstatic.com touch-icon, verified) as bedrock.png. OpenAI blocked (403 on openai.com/chatgpt.com/platform; cdn 404) — stays on remote models.dev fallback, nothing invented.
+Testing: tsc --noEmit clean; vitest 36 files / 311 tests pass; headless-Chrome screenshots of /login (dark card, white maze mark correct) + DOM dump confirming both next/image variants with dark:hidden/dark:block swap classes; all asset URLs 200 from dev server. landing/ untouched.
+
+## 2026-11-01 - Landing: official ToLLma + provider brand logos wired in
+Requirement: use supplied tollma-dark/light PNGs for ToLLma; import official provider logos from user zips (/home/ond/Downloads/{openai,anthropic,google}.zip) into landing.
+Implementation (landing/ only): resized tollma-light.png 8000px->256px (2KB, sections/brand/tollma-light-256.png) — full-bleed originals too heavy at 260KB; nav T-badge + footer LogoMark replaced with the real mark (rounded-lg, empty alt inside labelled links). Provider marks: openai blossom + anthropic "A" inlined verbatim as React SVG (sections/brand/provider-marks.tsx, only attrs JSX-ified; OpenAI keeps currentColor, Anthropic official #141413); Google "G" PNG (256px RGBA, 10KB) via proven bundler-import pipeline. Solutions grid cells get fixed h-8 mark slots (names stay aligned); Vertex/ Bedrock filled from the app's already-vendored official pixels (cloud favicon, AWS touch icon — bedrock white-on-dark shown unaltered as rounded tile). No kits exist for Custom — text-only, no lookalikes. Render-verified every SVG via headless Chromium before inlining.
+Verify: tsc clean, build green; Playwright 1440/390: 5/5 marks at correct size, nav/footer marks resolve to hashed bundle PNG, sw==cw, 0 console/page errors; screenshots confirm premium grid, nav, footer. Preview server restarted on :4400 with fresh build.
+Note: frontend/ logo work (Logo.tsx, ProviderLogo, favicon) was done by concurrent subagent incl. memory entry; OpenAI had no fetchable official URL (403) — landing's blossom from user zip fills that gap.
+
+## 2026-11-01 - Landing 8-item enhancement batch + fix round (all verified)
+Requirement: richer hero pills, macOS-window activity card, sharp (unrounded) tollma marks, scroll-driven outcomes slides, smooth how-it-works switching + alignment, target-lock hover corners on provider grid, smoother transitions.
+Implementation (frontend agent): pills with icon-chips + idle float; macOS title bar (traffic lights, centered title, rounded-2xl); logo radius removed nav+footer; outcomes 250vh sticky scroll-stage (stat-wipe-then-quote, arrows sync via suppress-flag + aria-disabled); platform single-source active step with step-rise crossfade (no blank/blur), fixed diagram box + card width, real h2s, aria-live announcer; solutions TargetCorners + staggered reveal; globals keyframes.
+Fix round (frontend agent): reduced-motion gating (effectReady && !reduced — first paint never hides), outcomes mobile stacked list (sticky md+ only), hero SSR terminal states + scaleX bars, counts derived from site.ts, full-card catch-all link, dead CSS deleted, marquee focus-within pause.
+Verify: tsc+build green; Playwright — reduced-motion 0/18 hidden 0 errs; mobile outcomes parent display:none/stacked/no-trap (early "sticky:1" reading was a probe artifact: computed style inside display:none subtree); no-JS terminal states + h2 + slide-0, 0 canvas; 1440/390 no overflow; platform 01-04 copy intact; solutions brackets on hover+focus.
+
+## 2026-11-01 - How-it-works cinematic camera rebuild + review fixes (verified)
+Requirement: pinned single-camera dolly-zoom through one connected SVG architecture (apps -> gateway -> routing/policies/tracking -> providers), scroll-reversible, packet animations, Govern allow/block toggle, return-to-overview exit; anime.js v4; mobile stacked; reduced-motion static.
+Implementation (frontend agent): platform.tsx rewrite — 600vh pinned stage, one paused camTl on {s,fx,fy} seeked by rAF progress, single translate%+scale viz transform clamped ±50(s-1), targets overview 1.0/Route 1.5/Unify 1.75/Govern 1.6/Observe 1.55, tablet damping 0.55; packet loops created once, stage-gated pause/play; panel overlay never zoomed; real h2s, aria-live announcer, static fallbacks.
+Review fixes (frontend agent): role="img" on labelled overview divs; single barsAnim handle with revert; Responses hedge ("+ Responses where available"); "(subset shown)" note (4/6 in-scene); Route bullet derived from PROVIDERS names; 44px toggle targets; hidden packet flows paused on toggle; h2 text-wrap:balance; dead .step-rise removed; color-scheme:dark.
+Verify: 29/29 pass (6 stages, camera moves, packets, toggle allow<->block, reverse, exit to solutions, 0 errs, no-JS/reduced/mobile/tablet ok); re-verify: stage order intro>route>unify>govern>observe>exit, hedge+derived names in source, 44px targets, toggle switches. Early "sticky:1 on mobile" alarm was probe artifact (computed style inside display:none subtree) — confirmed parent display:none + free scroll.
+
+## 2026-11-01 - How-it-works: flow-correction + enrichment loops closed (verified)
+Requirement: fix-all-15 audit + enrich (more flows, smaller nodes, fit, fonts, story layers). Two agents rewrote platform.tsx in sequence; merged result verified coherent (enrichment markers + fix markers both present, single camera logic).
+Fix verify: route apps +18px/unify +21px inside (were -24/-108), providers clear of panel, observe chart bottom 855 (was 915/off-fold), gateway title 166px in 184px rect, block gating functional (retP/A/B opacity 0, BLOCKED overlay 0.95, aria-pressed swaps, 44px targets). data-allow attr removed (JS-ref gating) — probe artifact only.
+Enrichment: response returns (mint dashed), log edges (neutral), per-stage >=2 live flows (21 circles), nodes -16-22%, Beat eyebrows 11px/0.14em, story beats per stage (INGRESS>ROUTE>EGRESS etc.), createScope+revert.
+Verify: tsc+build green; Playwright tour all 6 states, reverse, toggle, exit; 0 errs; 1440/390/320 no overflow; reduced-motion/no-JS/mobile static complete.
+
+## 2026-11-01 - D1 intro packet leak: root-caused + fixed, verified in browser
+Symptom: 20 full-opacity packet dots + stray arrowhead behind centered intro heading at p=0. Root causes (two): (1) packet groups gated on raw q>0 (true after ~5px scroll) instead of their own path's drawn fraction; (2) marker-end attached to paths lacking an author marker via `?? "url(#arr)"`. Fix in platform.tsx: per-path drawn-fraction map per frame; packet opacity = expoOut((e-0.55)/0.45) (pure q function, reversible); markers gated e>=0.9 for solid AND dashed, never invented; applyStage intro default 0 (per-frame loop authoritative). Verified: intro frame pixel-clean, mid-build shows packets/arrowheads only on drawn paths; tsc+build green.
+
+## 2026-11-01 - Full-page motion upgrade program complete (Phases A-E, PAGE_PROGRESS.md all pass)
+Requirement: section-by-section motion/craft upgrade (navbar→footer+dividers), keep copy/structure/palette; anime.js (no GSAP/Lenis added — same feel, no duplicate engine); loop to acceptance.
+Phase A (foundation): tokens.css extracted from live page (single source; no new hex after), Reveal/Parallax/SpotlightCard/MagneticButton primitives, frosted+shrinking nav with progress line + scroll-spy (incl. useActiveSection DOM-geometry root fix), staggered mobile menu.
+Phase B (hero/pillars/stats): word-stagger headline, 6° tilt + rotateX-flatten dashboard with row tooltips, parallax glass chips with factual hover context, skyline signature, 60s marquee, scrubbed pillar rules + single-open detail panels, count-up stats with run-once mini-visuals.
+Phase C (how-it-works premium): energy-gradient scrubbed strokes, getPointAtLength lead packet + trail + gateway shockwave, glass finish, station lights + live metrics, receiving-provider brighten + tooltips, expanding stage minis, clickable progress rail, mobile vertical pipe; 35/35 checks incl. bidirectional monotonicity.
+Phase D (providers/guides/CTA/footer/dividers): spotlight cards, mono→color logos, dashed CTA cell, animated SVG guide scenes, magnetic CTA, sweep underlines, single-driver skyline dividers (+ attachParallax below-fold root fix).
+Phase E (validation): 21/22, fixed chip-hover unreachability (z-10 + group lift, browser-verified), wipe dual-driver (single CSS driver + prop scope), pruned lucide-react + dead exports, frozen switches→static rows, IO-toggled loops, AA touch-ups. PAGE_PROGRESS.md written (landing/).
+Verify: tsc+build green every phase; 0 errs; 0 overflow @320-1920; reduced-motion/no-JS static complete; Lighthouse desktop 96/96/100/100, CLS 0.
+
+## 2026-11-01 - How-it-works rebuilt as 8-layer GSAP story, validated, loop closed
+Requirement: replace 4 stages with 8 verified layers, anchored connectors, zoom/pan, validation loop with two consecutive clean runs.
+Truth gate first (debugger audit): workspaces/personal+org + permission-sets (no "roles"); keys personal/org-scoped + budgets VERIFIED; rate limits deny+Retry-After, NO queue (never drawn); guardrails 10, monitor/warn/block default warn, scope global/provider/key; prompt logging is separate workspace setting (taps drawn from workspace, not guardrail); 6 families, Gemini stream-only; unified result re-emitted per wire shape; ledgers + encrypted bounded captures. Port :3001 is ad-hoc (both default :3000).
+Implementation (frontend agent): platform.tsx rewrite — LAYERS config + layoutNodes (wide two-lane/tall pipeline), bbox-computed connectors, GSAP pin+scrub, getPointAtLength packets (exact reverse), anime.js micro only, Safe/Injection toggle, +/-/Fit + drag pan, opaque-cream nav fix. gsap@3.15.0 added (only new dep).
+Validation: VALIDATION_LOG.md, 9 issues found→fixed (fan-out stubs, tap-joint gap, coral dimming, label slots, packet gating, CDP hangs, sticky bleed, font preload out-of-scope), two consecutive zero-issue runs; Lighthouse desktop 97/98, mobile 79-80/96. Independent spot-verify: single heading, 8 layers, toggle+zoom+stepper present, blocked branch shows, no h-scroll, 0 errs/warns; screenshots confirm both runs.
+
+## 2026-11-02 - Full requirements loop closed (R1-R11 + micros, two consecutive clean runs)
+Requirement: test every requirement with interaction, fix all, loop until fixed.
+Outstanding R9 camera implemented (dd3c853: entry/full/8 layer-zooms/pass2/exit via single viewBox-driven camera group, pure scroll function, exact reverse, reduced-motion static). Full audit found 4 failures: F-01 outcomes 320px overflow, F-02 nav FLIP glide snapped (recorder effect defeated layout effect), F-03 route/normalize 1-5px label overlap, F-04 analytics name truncation — all fixed (197cc21) incl. R5 slide root-cause (transform in React style prop reset inline motion every commit; centering moved to Tailwind classes, paint owns transform). Final sweep: TWO consecutive zero-issue passes (F-01/F-02/F-03/F-04, R5 order+reverse, R9 20/20 monotonic, toggle, rail, 0 console errs, reduced-motion static, desktop LH 99/96; mobile LH 62-69 = shared-box noise, gzip+rerun variance 59→82 proven). Evidence: /tmp/opencode/{r9,final-audit,final-fix,final-confirm}/.
+
+## 2026-11-03 - Hero-stack smoothness loop closed (R1-R8 verdicts, recordings delivered)
+Requirement: smooth both scroll directions; loop measure→fix→remeasure until pass.
+Measured first (CDP screencast + rAF sampler + trace): active-motion identical-frame pairs 22/41 both dirs; trace top costs = forced style/layout (1470 calls, page-wide readers) + box-shadow repaints at index flips + raw-v jumps (no smoothing) + per-index React re-renders.
+Fix 1 (bd7c91a): refs instead of setActive (zero re-renders), opacity-only shadow layer, contain: layout paint, will-change gated to moving windows.
+Fix 2 (881fe38): exponential-approach scrub (k=10, 1/60 substeps, framerate-independent) with retarget; dirty-flag caps forced rect reads at 1/frame.
+Fix 3 (8a32b74): R7 reduced-motion 150ms opacity crossfade (verified: 0 anims, 0 transforms); no-JS static list kept.
+Verified: identicals 22→4/3, alternations 11→3 / 12→0; R3 byte-identical 3/3; R4 1.24 (wheel input); R6 all shapes traverse, flick glides; reconcile/toggle/rail/aria PASS, 0 errors, no h-scroll 320-1920 + 200% zoom + DPR2; Firefox parity PASS; desktop LH 80/78/98 (box noise, 98+a11y96 quiet). after_down/up.webm + baseline webms in /tmp/opencode/perf/.
+Caveats logged in PERF_LOG.md: absolute 16.7ms needs reference-laptop GPU; mobile LH is env noise; teleport rigs excluded from R4.
+
+## 2026-11-02 - R9 follow-up: arrows, spacing, full-bleed, soft edges (validated)
+User's 5 post-R9 items on the rebuilt diagram, all in platform.tsx (commit 145e231): return/tap lanes rerouted into box-free bands (wire×text hits 1→0); connectivity audit passed (8 layers, 6 fan-ins, returns, taps, coral branch; fixed 2 sub-issues); single GUT=16 spacing token; full-bleed viewport-minus-24px (fill 72.9%, text ≥13.3px); progress-driven CSS edge feather, reduced-motion inert, zero hard clips in 30-state probe. Validation: 41/41 twice @1280/1440/1920 + 7/7 new checks; R9_LOG.md appended.
+
+## 2026-11-02 - R9: wider gutters + pulled-back full view (validated)
+User asked for slightly smaller flow + more horizontal spacing. GUT 16→24u (all peer gaps; vertical rhythm pinned), full-view viewBox pulled back ~7% (margins ~58u/78u). Re-validated 41/41 twice @3 widths + 7/7 follow-ups (fill 71.7%, text ≥12.3px). Commit 4b5e3b8. Caution logged: full-view type floor now 12.3px @1280 — do not pull back further without growing type.
+
+## 2026-11-02 - How-it-works re-layout to numeric spec (validated, titles restored)
+Spec: 44u lane gaps, 170u+ boxes, 56u lane split, 0.86-0.90 scale, fonts 12/scale, RESPONSE on top, per-provider lanes, caption separator, 48px bottom pad, dev-badge check, 390 vertical. Commit c54f365: gaps 44u×4, boxes 252u, 0.883x, fonts ≥12.3px, RESPONSE top slot, 0 crossings, caption gaps 32u, full R9 suite 41/41 ×2 + 7/7 + N0-N10. Follow-up 9aadf9d: restored full "Route / translate", "WIRE → UNIFIED → NATIVE", "Provider / normalize" via wider boxes (364/288u, two configs tried), all green. Also restored R9_LOG/VALIDATION_LOG/PERF_LOG from git after finding them deleted from disk (cause unknown, parallel-session fallout suspected).
+
+## 2026-11-04 - Laya service rebuilt as model-driven guardrail evaluator
+Requirement: replace heuristic laya/ service (regex/keyword score()) with genuine Laya AI model inference; keep backend HTTP contract; touch only laya/. Verified laya-ai.com claims against installed wheel 0.4.22 (Router.predict/state/questions, answer dicts, presets, benchmarks) instead of trusting docs. Implemented config.py/questions.py (10 real backend categories + 3 aliases; invalid_structure explicitly unevaluated)/engine.py (single pinned Router, warmup-gated ready, semaphore, timeout, device fallback)/mapping.py (allow/review→warn/block from model probs; block needs action majority; truncation never allows)/app.py (same /health/ready/evaluate envelope; 413 before readiness; 503 never allow). Default checkpoint typed-decisions (measured 42/49 F1 0.844 vs multilingual 33/49 F1 0.696 — rejected, over-confident on benign). Thresholds match 0.4/block 0.7/abmin 0.5 via offline sweep of raw answers; threads default min(4,ncpu) after bench (4 threads 2.0s vs 16 threads 7.6s per 3-question call). Bugs caught by verification: device-availability check stored function refs not calls; lifespan defined but never attached to FastAPI (container served 503s); oversize returned 503 when down; LAYA_PRELOAD dead knob removed. Tests: 30 unit/contract (mocked) + 49-case real-model eval (EVAL_REPORT.md, incl. 2 silent-pass FNs D03/E03 + run-to-run block-boundary variance). Docker image builds; container smoke-tested (ready/health/evaluate/413). Known follow-ups (out of scope, not done): backend test test_guardrails_engines.py:187 asserts model_version "laya-rules-1.0.0" (now "laya-td-1.0.0/..."); raise LAYA_TIMEOUT_MS>=15000 for CPU; no independent validation set (thresholds tuned in-sample); stack containers found Exited after host OOM killed Docker Desktop (left untouched).
+
+## 2026-11-04 - Bedrock test script credential and payload hardening
+Requirement: fix and test `backend/.venv/test-br.py` without exposing AWS credentials.
+Implementation Summary: removed embedded access keys, configured the region through `AWS_REGION` with a safe default, relied on boto3's standard credential provider chain, handled Bedrock client errors explicitly, used the Claude messages content-block format, and encoded the request body as UTF-8 bytes.
+Files Changed: `backend/.venv/test-br.py`.
+Testing Performed: compiled with `backend/.venv/bin/python -m py_compile`; scanned the script for credential remnants; ran a mocked end-to-end Bedrock flow validating profile selection, request payload, and response parsing.
+Architecture Notes: authentication remains external to the script through boto3's standard credential resolution; previously exposed credentials should be revoked and rotated in AWS.
+
+## 2026-11-04 - Bedrock invalid credential diagnostic
+Requirement: make the runtime failure from invalid AWS credentials actionable.
+Implementation Summary: added `report_aws_error()` to classify `InvalidClientTokenId` and `UnrecognizedClientException`, explain that the active profile credentials must be refreshed or replaced, and retain the original error output for other AWS failures.
+Files Changed: `backend/.venv/test-br.py`.
+Testing Performed: compiled the script and ran a mocked `UnrecognizedClientException` diagnostic test.
+Architecture Notes: the active boto3 source is the shared `default` profile in `~/.aws/credentials`; credentials must be rotated or refreshed outside application code.
+
+## 2026-11-05 - Dashboard window-stack motion upgrade (slower, smoother)
+Requirement: longer scroll duration, slower movement, buttery window slide/stack with smooth scale-down + opacity + elevation-down on hiding windows; validate pixel-by-pixel in a fix->test loop until done.
+Implemented (landing/src/components/sections/dashboard-stack.tsx only): REGION_VH 300->480 (1.9x scroll px per motion), exponential glide k 10->5, smoothstep->smootherstep easing, successor-driven continuous cover (scale/sink/dim/shadow interpolate per-frame, zero boundary flips), constant-total-light shadow handoff (outgoing fades 1->0 as incoming fades 0->1). Reduced-motion/no-JS untouched.
+Verification: purpose-built Playwright rig (pixeltest.cjs) — rest points at all 7 landings both directions (single dominant shadow, shadow-sum 1.00 everywhere, repeatability 0.00px/0.0000), pixel-by-pixel sweeps 4px/step both directions (total-variation ratio <=0.38 vs ~1.0 for a pop; measured <=0.28), bounds/symmetry/centered/no-h-overflow/zero-errors/reduced-motion all PASS. Notable rig fixes: stale coordinate frame after first-load layout drift (re-read metrics per target), TV metric replacing max-delta gating (sampling jitter cancels out of totals, pops don't).
+Files Changed: landing/src/components/sections/dashboard-stack.tsx.
+Testing Performed: tsc clean; 30/30 unit... n/a (no unit tests for this file); rig RESULT: PASS run4 (rest+sweeps+repeatability+invariants+reduced-motion).
+Architecture Notes: paint stays a pure function of smoothed v (transform/opacity only, refs only, zero re-renders); dim via overlay opacity; shadows on dedicated opacity-faded layer.
+
+## 2026-11-05 - Navbar liquid-glass restyle (2px blur spec)
+Requirement: premium liquid-glass island per detailed spec (max 2px blur, layered borders, subtle reflection, hover/active pills, dark CTA contrast, responsive, reduced-motion, fallback).
+Implemented: .navbar-glass + ::before reflection + .nav-link-glass pills + fallback + focus/reduced-motion rules in landing/src/app/globals.css; nav.tsx switched island + mobile panel to glass, ink logo, coal text, coal CTA with border + press feedback, tighter link gaps. Mobile menu gets deeper fill (.navbar-menu 0.94) for body-copy readability. Single light treatment verified readable over dark sections (screenshots), so no theme switch (no state, no flash).
+Files Changed: landing/src/app/globals.css, landing/src/components/sections/nav.tsx.
+Testing Performed: tsc clean; Playwright rig (computed blur exactly 2px, no heavy blur, collapsed state, dark-section legibility screenshot, hover pill bg, mobile + open menu screenshots, zero console errors) RESULT: PASS.
+Architecture Notes: unlayered CSS beats Tailwind layered utilities — glass padding lives in .nav-link-glass (removed conflicting py-1); backdrop-filter isolated to island/panel only.
+
+## 2026-11-05 - Footer wordmark bottom-to-top gradient
+Requirement: gradient on the giant footer ToLLma, black/coal at top.
+Implemented: .foot-letter gets linear-gradient(to top, transparent, coal 55%) with background-clip:text per letter (rides the parallax drift). Static paint, inert under reduced-motion.
+Files Changed: landing/src/app/globals.css (foot-letter rule only).
+Testing Performed: screenshot review (solid coal top fading out toward bottom edge; zero console errors).
+Architecture Notes: per-letter gradient (not parent) so it tracks the per-letter parallax transforms.
+
+## 2026-11-05 - How-it-works re-layout + screen-space layer separation
+Requirement: smaller diagram text, more box spacing, pixel-by-pixel scroll validation with no overlaps, arrows correctly scaled at all zooms (focused view showed giant text + oversized arrows).
+Implemented (landing/src/components/sections/platform.tsx only): FU 22->19, GAP 44->56u, request lane origin 40->16 (preserves right margin; observe ends 1956/1991), fan spine/lanes derived from lane geometry, arrow markers 7->5u then REMOVED entirely (markers scale with camera); connectors + node rects + packets use vector-effect non-scaling-stroke (constant screen width); arrowheads live in [data-arrows] overlay outside the camera at fixed 9u, positioned per frame from connector geometry; diagram text counter-scales (titles S^-0.7, body/labels S^-1, pills scale around slot centers). Measured: overview title 15px rect, focused ~21px (was ~60px+), arrowheads 5.7px at full view AND focused. Deviation: 1280 renders ~11.2px (old 12px floor explicitly overridden by reduce-text request); R9 >=55% fill rule retains (framing math untouched).
+Files Changed: landing/src/components/sections/platform.tsx, landing/LAYOUT_LOG.md (appended).
+Testing Performed: tsc clean; next build green; hiwtest rig — T1-T6 PASS at all 101 1%-frames, pill-vs-wire zero intrusions, reverse identity exact, tall-390 selftest clean, constancy checks (overview 10-17, focused <=30, heads constant), pinned pass 44 steps end-state + focused steps, zero console errors. One rig artifact documented (stale coordinate frame after first-load layout drift; re-read metrics per target) and one real rig bug found+fixed (lifespan... n/a). E pin pass independently verified via part2 + standalone probe (43 steps).
+Architecture Notes: camera math (R9 phases/blends) untouched — smoothness work lives in normalization layers; all paint remains pure functions of progress (reversible, deterministic).
+
+## 2026-11-05 - Navbar transparency increase (0.76 -> 0.58 fill)
+Requirement: more transparency + clearer background visibility, keep liquid-glass UI (2px blur cap retained).
+Implemented: .navbar-glass fill rgba(247,247,238,0.76 -> 0.58); border 0.68 -> 0.75 white + ambient shadow 0.075 -> 0.10 so the edge carries definition as fill drops. Reflection softened 0.34 -> 0.22. Mobile menu fill untouched (0.94, body-copy readability). Single light treatment confirmed on dark sections via screenshot (no theme switch, no state, no flash).
+Files Changed: landing/src/app/globals.css (.navbar-glass x2 rules, ::before alpha).
+Testing Performed: computed bg rgba(247,247,238,0.58) + blur(2px) asserted in-page; screenshots reviewed over light hero + dark platform (island legible in both, background clearly visible); zero console errors.
+Architecture Notes: blur budget unchanged (2px); definition now comes from border/shadow, not fill.
+
+## 2026-11-05 - How-it-works video-driven pass (spacing, seam pop, focus presence)
+Requirement: from frame-by-frame video read + follow-up spec — much more spacing between all boxes; text/arrows scaled up at story start; fix register popping back during 01->02; pixel-by-pixel validation loop.
+Root causes found: (1) eighth handoffs snapped back a layer: move-in lerped from the previous layer while move-out had already ended at the next (visible in video f_11->f_13 as register popping back into view). Restructured to hold-then-glide (i==0 glides in from ident; f<0.6 holds cur; f>=0.6 glides cur->next) — seam lands on cam[i+1] from both sides, pure function, exact reverse. (2) Spacing: GAP 44->72, GUT 24->28, VIEW.w 2170->2260 (right margin ~45u), keys.x derived, blocked aligned to guardrails.x, PP 76->84, captions recentered, LX0 derived. (3) Presence: counter-scale exponent 0.7->0.6 (focused titles ~19-25px vs old ~70px blowups), overlay heads 9->11u constant screen size.
+Files Changed: landing/src/components/sections/platform.tsx, landing/LAYOUT_LOG.md (appended).
+Testing Performed: full hiwtest green — 101-frame T1-T6 sweep zero fails, continuity within theory bars, pill-vs-wire zero intrusions with identity (caught real FAN-OUT x tap-g regression from GAP move, fixed by shifting pill slot), reverse identity exact, tall-390 clean, constancy (14/~25px, heads constant), NEW seam checks 7/7, pin pass 44 steps, zero console errors; tsc clean; next build green; screenshots reviewed.
+Architecture Notes: camera framing math untouched (R9 >=55% fill holds); R9 phase timing reshaped; layer separation (non-scaling-stroke, overlay arrows, counter-scaled text/pills, non-scaling packets) from prior round retained and re-verified after spacing change.
+
+## 2026-11-05 - How-it-works relative text sizing (focused view)
+Requirement: in zoomed/focused view keep font size relative to box size — don't hold small/constant while the box grows.
+Root cause: text counter-scale (titles S^-0.6, body/pills S^-1) held focused type at ~25-27px while its box filled the viewport.
+Files Changed: landing/src/components/sections/platform.tsx (kT=kS=1, comments updated), landing/LAYOUT_LOG.md (appended).
+Testing Performed: hiwtest PASS — 101-frame T1-T6 zero fails, pill-wire zero intrusions, reverse exact, tall-390 clean, seams 0.0%/0.0u, pin 44 steps, constancy full ~14px / focused ~75px / heads 6.7px constant, zero console errors; tsc clean; next build green; screenshots reviewed (01 Register, 05 Guardrails proportional).
+Architecture Notes: text now in diagram space (relative sizing by construction, identical relative layout at every zoom so no new overflow); packets still counter-scaled to constant screen size; arrowheads unchanged (fixed 11u overlay).
+
+## 2026-11-05 - Premium liquid-glass navbar redesign (v2)
+Requirement: Apple-inspired frosted/glossy floating capsule — layered gradients, subtle cool-blue reflections, <=2px blur, dark-CTA contrast, readable over cream AND dark sections, 9-width responsive matrix.
+Implemented (landing only, 2 files):
+- globals.css .navbar-glass: cream base 0.58 + white sheen/blue-light gradient layers, hairline white border + coal/blue inset shadows + ambient shadow, ::before top highlight, NEW ::after pointer glare (radial, --mx/--my, 0.55->0.85 on hover), content z-index above pseudos, isolation+overflow hidden, no-filter fallback, reduced-motion static.
+- nav.tsx: onMouseMove glare handler (mouse + motion-safe only), logo 26->28px.
+Preserved: all 6 destinations, FLIP collapse, mobile panel 0.94 fill, focus states, CTA.
+Not built (deliberate): dark-section variant class — single light glass reads on dark (coal-on-ivory contrast); verified by screenshot. No new deps.
+Testing: Playwright matrix 390/768/1024/1440/1920 x hero/dark/footer — blur computed exactly blur(2px), zero h-overflow, 9 links, menu opens (330px, no overflow), glare vars update, reduced-motion full nav when scrolled, zero console/page errors; footer gray-block scare proven to be page CTA decor seen through glass (header hidden A/B); tsc adds zero new errors (png-module errors identical on HEAD); next build green.
+Files Changed: landing/src/app/globals.css, landing/src/components/sections/nav.tsx.
+
+## 2026-11-05 - Footer CrewAI-inspired redesign (cream, 3 regions)
+Requirement: CrewAI layout concept (upper nav / giant wordmark / minimal bottom bar) on continuous warm cream, no fake links/pages, no newsletter without backend.
+Implemented (landing only): closing.tsx brand column gains expanded description + "Stay connected" community area (GitHub repo, Discussions, Roadmap — all real site.ts destinations); bottom bar gains GitHub + Discussions icons (aria-labelled, external) beside Privacy/Terms spans (kept plain text: no such pages exist); dynamic copyright year. New IconGitHub/IconChat in icons.tsx matching the 1.7-stroke system. No new deps; existing 6 columns/wordmark/parallax untouched.
+Testing: Playwright 9-width matrix (320-1920) — 29 footer links audited, 0 dead, all labelled, externals noopener, zero h-overflow everywhere, zero console/page errors; screenshots reviewed (desktop/tablet/mobile wordmark+bottom bar, navbar collapsed above footer with no link overlap). One rig artifact (1920 shot landing mid-pin) resolved with repeat-scroll, proven non-defect. tsc clean except pre-existing png-module errors (identical on HEAD); next build green.
+Architecture Notes: newsletter deliberately omitted (no backend endpoint — spec §5 community-area path); social set limited to existing destinations (GitHub + Discussions, no LinkedIn/X/Discord).
+
+## 2026-11-05 - Unified glassmorphic preview windows (6 dashboards)
+Requirement: premium glassmorphic redesign of all six product-preview windows via one centralized design system — no per-window one-offs.
+Implemented (landing only, 3 files, no new deps):
+- tokens.css: --preview-glass-* tokens (bg/border/highlight/shadow/radii) in the Nominal theme block.
+- globals.css: .dash-glass-window (L1: ivory 0.78 + top sheen + 5px frost + layered border/highlight/shadow, 18px), .dash-glass-title/.dash-glass-side (translucent, no own blur), .dash-glass-panel (L2), .dash-glass-card (L3), .dash-badge (hairline border + inner highlight), panel-row divider override, no-filter fallback, reduced-motion guard.
+- dashboard-stack.tsx only: Window/Sidebar/StatusPill + all six bodies switched to shared classes; active nav mint indicator; Providers/Logs md cells px-4->px-3 (uniform, fixes Logs tokens clip: 947->896 = fits).
+Deliberate deviation: nested surfaces layer translucency instead of their own backdrop-blur (re-blurring an already-frosted ancestor each scroll frame costs GPU for zero visible gain); single 5px blur per window. Data/labels/colors/charts untouched.
+Testing: rig drove all six active states — every topmost window blur=5px/radius=18px/ivory bg, zero h-overflow at 320/390/768/1440/1920, zero console/page errors; screenshots reviewed (all six + mobile 390 + fixed Logs); reduced-motion static list intact (6 windows, 0 transforms, glass still applies); tsc clean (pre-existing png errors only); next build green.
+Files Changed: landing/src/app/tokens.css, landing/src/app/globals.css, landing/src/components/sections/dashboard-stack.tsx.
+
+## 2026-11-05 - WhatWeDo accordion removal + editorial pillars redesign
+Requirement: remove accordion entirely; all content visible by default; equal 3-col editorial layout with numbers, headings, descs, bullets, compact visuals; responsive 3/2+1/1.
+Implemented (landing/src/components/sections/what-we-do.tsx only, no new deps): deleted open-state, CardDetail, chevron button, accordion CSS; columns now eyebrow (01 / SECURITY etc.) + icon + serif heading + desc + bullets + compact inline SVG vignette (key flow, policy checkpoint w/ mint allow + coral block paths, request trail + sparkbars) pinned to column bottoms via mt-auto; grid md:2-col (3rd spans 2) / lg:3-col with lg-only dividers; kept rule draw, bullet stagger, reveal, icon hover draw; dropped detail paragraphs + their links (were interaction-gated; destinations already linked in footer/CTA).
+Testing: 6 widths (320-1920) — headings align per row, all visuals render, 0 buttons/accordion remnants, 0 h-overflow, 0 console errors; screenshots reviewed (1440/768/390); tsc clean (pre-existing png errors only); next build green.
+
+## 2026-11-05 - Footer spacing pass to editorial spec (no rebuild)
+Follow-up spec re-requested the CrewAI composition already shipped in fab3490. Audited current footer against every acceptance line: only the spacing table deviated. Changed: footer top padding 56->64/80px (pt-16 md:pt-20), nav grid gaps to 40/48px with 24px heading-to-links and 12px link gaps, nav-to-wordmark breathing room to ~96px mobile / 128-144px desktop (clip margin clamp(6rem,10vw,10rem)), wordmark-to-divider 16px (bottom container pt-4), bottom padding 56->40px (pb-10); refreshed stale header comment. Wordmark scale (clamp + 23.5vw full-bleed), cream theme, links, icons, motion all untouched.
+Testing: 9 widths (320-1920) — 0 h-overflow, wordmark spans ~99.7% viewport at every size (96->451px), 29 links 0 dead, 0 console errors; screenshots reviewed incl. settled-scroll mobile (earlier mobile clip scare proven to be a mid-scroll parallax artifact — settled rect 2..388 within 390). tsc clean (pre-existing png errors only); next build green.
+
+## 2026-11-05 - Footer wordmark: Inter 900, coal-to-cream fade, verified parallax
+Requirement: coal/black top fading to cream at bottom, bottom-aligned, per-letter parallax on scroll-up, best font from trials.
+Trials (live screenshots @1440): A Inter 800 ls .01 (status quo, good), B Inter 900 ls -.04 (heaviest, most confident), C Newsreader 700 serif (elegant but LL feet collide at giant size — rejected), D Inter 800 tight (good, lighter than B). Winner: B.
+Changes (globals.css only): .foot-wordmark Inter 900 / ls -.04em (explicit font-sans); .foot-letter gradient transparent->cream stop (melts into footer bg instead of hard transparent cut).
+Verified: per-letter offsets differ by strength (T +55/+41 vs a +10/+7 across scroll positions, pure-function reversible, transform-only, reduced-motion static); wordmark fits 2px-inset at all widths 320-1920, 0 h-overflow; tsc clean; next build green.
+
+## 2026-11-05 - Footer brand block: full-width logo, wordmark below
+Requirement: logo occupies full grid-column width with ToLLma text beneath.
+Change (closing.tsx only): brand row replaced by stacked block — Link wraps img at w-full h-auto (256px asset), wordmark text-xl below; max-w-56 cap under lg where the column goes full width (prevents 350px+ logo on mobile); dropped foot-logo spin class (a -14deg rotation on a 200px mark would read broken).
+Verified: 1440 logo 201x201 = column width, wordmark below; 390 capped 224px, below; 0 h-overflow; tsc clean; next build green.
+
+## 2026-11-05 - Footer brand: blended logo, full-width wordmark
+Feedback: logo white box clashed with cream; wordmark should match logo width.
+Root cause: tollma-light-256.png is opaque white — and mix-blend-multiply can't fix it because reveal ancestors isolate the stacking context. Fixed at the asset: white->transparent with feathered AA edges (PIL), so the mark sits directly on cream everywhere it's used. Wordmark span is now block w-full with inter-character justification + text-align-last (verified pixel-exact: 201/201 desktop, 224/224 mobile), text-3xl bold; logo+word share a max-w-56 lg:max-w-none wrapper so the pair stays aligned on mobile.
+Verified: 390 + 1440 aligned, 0 h-overflow, tsc clean, next build green.
+
+## 2026-11-05 - Footer: serif giant wordmark + compact meta strip
+Feedback: change giant wordmark font; brand column left a void under nav — move content below logo+text.
+Font: trialed Newsreader 700 at ls .01/.02/.045 — picked .045em (L feet clear, fits 2px-inset full-bleed). Serif matches site headline voice.
+Layout (closing.tsx): brand cell now logo + spread wordmark only; description, license pill, Stay-connected moved to a full-width wrapping strip below the grid (desc max-w-md, pill, inline community links with lg:ml-auto). Kills the tall-column void; all 29 links preserved.
+Verified: 1440 + 390 screenshots, 0 h-overflow both, 29 links, 0 errors, tsc clean, next build green.
+
+## 2026-11-05 - Footer wordmark parallax doubled
+Requirement: increase parallax strength for all characters.
+Change: LETTERS speeds x2 (T -5.6, o -4.6, L -3.6, L -2.6, m -1.8, a -1.0 — outer-fastest shear kept); clip breathing room grown to match (140px top / 100px bottom, margins compensated so page layout identical).
+Verified: T +100px / a +18px mid-scroll vs +69/+12px at bottom (6-way spread, reversible pure function); word (494-799) inside clip (354-899); screenshot shows cascade shear, no clipping; build green.
+
+## 2026-11-05 - Footer wordmark: boxy Archivo 900
+Requirement: boxy font for the giant wordmark. Trialed live: Archivo Black (boxiest but overflows at full-bleed scale), Space Grotesk 700 (fits, not boxy), Archivo 900 (boxy grotesque, fits edge-to-edge) — picked Archivo 900. Added via next/font/google (weight 900, display optional, same offline-safe pattern as Inter/Newsreader), wired as --font-archivo on <html>, .foot-wordmark uses it with system-sans fallback.
+Verified: computed font is Archivo, rect 2..1438, 0 h-overflow; tsc clean; next build green (font fetched OK).
+
+## 2026-11-05 - Footer wordmark settles straight at page bottom
+Requirement: at full scroll, all letters align straight (no residual shear).
+Change (closing.tsx only): settle factor = clamp(scrollRemaining / 0.6vh) multiplies every per-letter offset; hits exactly 0 at page bottom (transforms cleared), pure function of scrollY so scroll-up restores shear reversibly. Compatible with the concurrently retuned speed arc (middle-led) — untouched.
+Verified: full scroll -> 6x empty transforms, bottoms 799 x6, screenshot straight; mid-scroll shear intact (earlier probe).
+
+## 2026-11-05 - Footer wordmark: Tiny5 Duo + hover weight falloff
+Requirement: Tiny5 Duo font; hover a letter -> it goes bold, neighbors step down character by character; uniform when none hovered.
+Implementation: next/font Tiny5 (400, display optional, --font-tiny5; note: export is Tiny5 not Tiny5_Duo). .foot-wordmark 400/0.02em, size recalibrated for the narrow pixel face (ink 3.48px/px -> clamp(3.5rem, 30vw, 34rem) = 90% coverage, 0 overflow 320-1920). Hover: Footer hoverIdx state via delegated mouseover (re-render only on change), per-letter inline style weight 700 on hovered + opacity 1-0.16*dist (floor 0.3), 200ms opacity transition; no transform involvement so parallax untouched; touch = uniform default.
+Verified: real-font probe (document.fonts.load) — default 400/1 x6, hover-o 700/1 + 0.84/0.84 + 0.68/0.52/0.36, leave restores uniform; rect/ink fits all widths; screenshot confirms pixel face + emphasis; tsc clean; next build green.
+
+## 2026-11-05 - Footer wordmark: free React Bits TextPressure
+Requirement: use free TextPressure for the footer ToLLma text (cursor ripple/pressure).
+Vendored reactbits.dev TextPressure (JS+CSS) as landing/src/components/ui/text-pressure.tsx (typed TS port, zero deps). One deviation: dropped upstream's hardcoded textTransform:uppercase to preserve exact brand casing "ToLLma". Footer Region B now TextPressure text="ToLLma" flex/width/weight/italic on, alpha/stroke off, idle none (static at rest — restrained), clickRipple on; container aspect 3/1 matches line box so it always spans edge to edge; coal-to-cream per-letter gradient kept via .foot-pressure span CSS (component leaves color empty without pressureColor). Retired: LETTERS scroll parallax + settle + hoverIdx falloff (superseded by pressure engine; opacity/weight conflicts avoided), Tiny5 next/font fetch (unused again), old foot-wordmark CSS.
+Bug fixed in review: rest state rendered hairlines (mouse coords stale with no pointer) — tick now re-centers on the title while cursor unseen, so touch/rest shows a healthy middle swell; first touch/mousemove takes over.
+Verified: exact casing + Roboto Flex loaded, full-bleed 320-1920 with 0 overflow, pressure gradient under cursor, click ripple fires, mobile touch rest state swollen, reduced-motion static, 0 console errors; tsc clean; next build green.
+
+## 2026-11-05 - Free React Bits SwarmCursor as site cursor
+Requirement: vendored free SwarmCursor (full source provided, zero new deps) as a site-wide cursor companion.
+Implementation: landing/src/components/ui/swarm-cursor.tsx (typed TS port: ResolvedSettings, typed refs/uniforms/ripple state, pointer/touch handlers) + SiteCursor wrapper (fixed inset-0 z-[100] pointer-events-none; mounts only on fine-pointer, non-reduced-motion devices — SSR-safe null first render). System cursor stays visible (hideCursor false — usability/a11y call, one prop flip to change). Restrained tuning: 350 particles, near-black on cream (lightMode), mint rush/click accent, idle roam, click burst, intro glide. CSS classes appended to globals.css (no separate CSS file — Next global-CSS rule).
+Root cause found + fixed in validation: page blanked in dev — StrictMode double-mount ran upstream's WEBGL_lose_context cleanup, poisoning the shared canvas so the remount's link() failed silently and the dead canvas composited opaque white (headless). Removed loseContext (buffers/program still freed — the actual GPU hygiene); same-element remounts now survive. Added webglcontextlost fail-safe (hide canvas + stop loop) so a real driver reset can never white-out the site.
+Testing: prod build served — context alive, swarm gathers at cursor, click burst ring visible, click-through works (overlay pointer-events none), 0 h-overflow, touch + reduced-motion correctly unmounted, 0 console errors; dev remount verified alive after fix; tsc clean; next build green.
+
+## 2026-11-05 - SwarmCursor removed completely (user request)
+Removed: landing/src/components/ui/swarm-cursor.tsx (deleted), SiteCursor import + mount in layout.tsx, .swarm-cursor* CSS in globals.css. Same commit also carries the pending footer StickerPeel integration (component + brand-block wiring + sticker CSS + overflow-x-clip containment + reduced-motion/no-WebGL static fallbacks). Verified post-removal: zero swarm references repo-wide, tsc clean, next build green, runtime has no swarm canvas anywhere while the footer sticker mounts and peels, 0 h-overflow, 0 console errors.
+
+## 2026-11-05 - Free React Bits DriftWall as solutions section backdrop
+Requirement: use free DriftWall behind "Provider-agnostic by design", opacity very low but visible.
+Implementation: landing/src/components/ui/drift-wall.tsx (typed TS port, zero new deps) + theme-adapted CSS in globals.css (warm-white tile inner + hairline border instead of upstream near-black). Tiles are self-contained SVG data URIs (12 provider names + API surfaces, charcoal on transparent) — no external image requests. Section layer: absolute inset-0, opacity 0.14, pointer-events none, aria-hidden; content Container raised with relative; section overflow-hidden. Props: 5 cols, slow drift (speed 28), parallax 0, dim 0.6, grayscale, warm-paper overlay, decorative non-focusable tiles.
+Deviations with reason: (1) `decorative` prop renders plain non-focusable tiles — upstream tiles are keyboard-focusable buttons, unacceptable (~50 tab stops) for an ambient backdrop; (2) IntersectionObserver visibility gate so the loop sleeps offscreen (matches the other two vendored components); (3) useIsomorphicLayoutEffect for the resize observer (repo SSR pattern).
+Scare resolved: black bars at section top proven (elementFromPoint) to be the pre-existing PixelWipe divider teeth, not wall tiles — wall tiles render cream bg with loaded images; pixel-wipe.tsx untouched.
+Testing: 60 tiles rendered, data-URI images loaded, 0 focusable nodes, drift animating, grid links clickable through layer, 0 h-overflow (desktop+mobile), reduced-motion frozen, 0 console errors; screenshots reviewed (faint provider names behind grid, readable); tsc clean; next build green.
+
+## 2026-11-05 - Dashboard stacking engine: custom R5 replaced by free React Bits ScrollStack
+Requirement: use free ScrollStack for the hero-adjacent window stack.
+Implementation: landing/src/components/ui/scroll-stack.tsx (typed TS port, zero new deps; WheelEvent wrapper so the Window|Element target union typechecks; isomorphic layout effects). landing/src/components/sections/dashboard-stack.tsx keeps ALL window bodies/data/chrome untouched; only the engine swapped: ScrollStack useWindowScroll with smoothScroll={false} (upstream default hijacks the page wheel — must stay off), snap off, stackPosition 15%, itemScale 0.025 / baseScale 0.95 / dimAmount 0.1 (mirror old cover tiers), holdDistance 400. Card chrome neutralized via .dash-stack-card (transparent, auto height, radius kept for shade clipping) + window centering + inner gutter removal (upstream 6% gutters double-narrowed mobile). Deleted: REGION_VH/SEG paint loop, dim/shadow layers, stacked prop (all windows keep own shadow, dimmed by upstream shade). Kept: static list for no-JS AND reduced-motion (stricter than before — was pinned crossfade), data-active-page + aria-live via lightweight IO/slot-position mirror.
+Verified: full scroll walk visits all 6 in order both directions (reverse exact), shade staircase 0.10-0.41, scale on covered only, live region announces, 0 h-overflow (320-1920), mobile centered/symmetric, reduced-motion + no-JS static lists with 0 transforms, 0 console errors; screenshots reviewed (title-bar tab cascade mid-stack, full Analytics hold); tsc clean; next build green.
+
+## 2026-11-05 - Dashboard stacking engine: custom R5 replaced by free React Bits ScrollStack
+Requirement: use free ScrollStack for the hero-adjacent window stack.
+Implementation: landing/src/components/ui/scroll-stack.tsx (typed TS port, zero new deps; WheelEvent wrapper so the Window|Element target union typechecks; isomorphic layout effects). landing/src/components/sections/dashboard-stack.tsx keeps ALL window bodies/data/chrome untouched; only the engine swapped: ScrollStack useWindowScroll with smoothScroll={false} (upstream default hijacks the page wheel — must stay off), snap off, stackPosition 15%, itemScale 0.025 / baseScale 0.95 / dimAmount 0.1 (mirror old cover tiers), holdDistance 400. Card chrome neutralized via .dash-stack-card (transparent, auto height, radius kept for shade clipping) + window centering + inner gutter removal (upstream 6% gutters double-narrowed mobile). Deleted: REGION_VH/SEG paint loop, dim/shadow layers, stacked prop (all windows keep own shadow, dimmed by upstream shade). Kept: static list for no-JS AND reduced-motion (stricter than before — was pinned crossfade), data-active-page + aria-live via lightweight IO/slot-position mirror.
+Verified: full scroll walk visits all 6 in order both directions (reverse exact), shade staircase 0.10-0.41, scale on covered only, live region announces, 0 h-overflow (320-1920), mobile centered/symmetric, reduced-motion + no-JS static lists with 0 transforms, 0 console errors; screenshots reviewed (title-bar tab cascade mid-stack, full Analytics hold); tsc clean; next build green.
+
+## 2026-11-05 - Hero/stack breathing room (user screenshot: CTA buried under first window)
+Root cause: region -mt-8 pulled the stack 32px up into the hero (net 8px gap, CTA overlapped). Changed region to mt-12 md:mt-16. Verified: CTA-to-window gap 64px desktop / 48px mobile, CTA fully clear, 0 overflow; screenshots reviewed both widths.
+
+## 2026-11-05 - Stacking-window shadow bands fixed (user: "fix this shadow")
+Symptom: muddy dark bands flanking the pile. Root causes found by probing (all three fixed): (1) every covered window cast its full heavy shadow — restored single-shadow rule by toggling dash-window--stacked on non-top cards in the scroll reader (direct classList, no re-render); (2) upstream dim compounded to 0.41 black on the deepest card — dimAmount 0.1->0.05 (caps ~0.23); (3) REAL culprit: the neutral card wrapper spanned the full slot width, so its inset-0 dim shade painted dark bands across the whole row — card now shrink-wraps the window (width fit-content + auto margins) so shade == window box. Also set itemScale 0 (covered cards keep full size; only 24px tabs peek — no dimmed side slivers).
+Verified: end-state pile bright with tab cascade + one soft shadow, mid-stack clean, mobile centered (20/359, ox 0), tsc clean, build green.
+
+## 2026-11-05 - Navbar material swapped to free React Bits GlassSurface
+Requirement: use GlassSurface for the navbar island + mobile menu.
+Implementation: landing/src/components/ui/glass-surface.tsx (typed TS port, zero new deps; CSS folded into globals.css per Next global-CSS rule). Nav pill + mobile panel render it as an absolute inset-0 -z-10 material layer beneath unchanged content (preserves FLIP collapse, hover pills, CTA, focus, touch expand). Props: pill radius 999/frost 0.65, panel radius 24/frost 0.75, zeroed RGB offsets (upstream chromatic fringes read as glitches on dark), no backdrop (never WebGL). Deleted the old faux-glass .navbar-glass system + pointer-glare handler (dead with the class gone); link pills kept.
+Bugs fixed in validation: (1) dark-section illegibility — frost 0.35 was too clear (coal text vanished on black), raised to 0.65/0.75; (2) REAL root cause found by probing computed styles: Tailwind v4 LightningCSS compiles light-dark() into broken var() fallbacks, so ALL upstream backgrounds/shadows were silently dropped — replaced 23 light-dark() with light values (page is always light theme); (3) chromatic fringes on dark — zeroed channel offsets.
+Verified: SVG refraction path active (backdrop-filter url() computed), readable on cream + black sections, mobile pill + open menu legible, reduced-motion static-safe (no loop in component), 0 h-overflow, 0 console errors; tsc clean; next build green.
+
+## 2026-11-05 - Free React Bits GradientASCII as footer-only backdrop
+Requirement: use free GradientASCII as background ONLY for the footer region.
+Implementation: landing/src/components/ui/gradient-ascii.tsx (typed TS port, zero new deps; guarded createTarget/vao nulls degrade to plain cream instead of crashing) + 8-line CSS in globals.css (no separate CSS file — Next global-CSS rule). Footer layer: absolute inset-0, opacity 0.55, pointer-events none, aria-hidden; footer + all content blocks positioned relative above it; footer keeps its cream bg (continuous surface). Props: lightMode wash (critical on cream), rise shape from bottom edge, muted sage/mint ramp, glyph/gradient 0.55/0.6, glow 0.1, flicker 0.1, slow drift, mouse scramble + click wave (window-level tracking works through pointer-events:none).
+Deviations: none behavioral — faithful port; only types + null-guards.
+Verified: context alive (not lost), wash renders (confirmed via full-opacity diagnostic: mint ASCII field rising from bottom), shipped state faint with all 29 links/wordmark/bottom bar fully legible; mobile 0 overflow; reduced-motion renders static frame; 0 console errors; tsc clean; next build green.
+
+## 2026-11-06 - Footer: wordmark never overflows + top-glow wash + solid coal
+User asks: (1) footer text never leaves screen width; (2) GradientASCII glow from footer top; (3) wordmark gradient to black/coal.
+Overflow: root-caused the fit-guard stall (document.fonts.ready can resolve before the component's own @import is discovered, so the guard fitted fallback metrics and never re-ran; plus flex scrollWidth under-reports overflow). Fixes in text-pressure.tsx: explicit document.fonts.load(family) trigger, and a continuous transform backstop in tick (ink bounds from already-read span rects, scaleX to fit, left-anchored) — exact under any face/pointer, self-correcting. Verified FIT at 320/390/768/1440/1920 rest + edge-hover (worst case 2px AA edge at one width).
+Wash flip: rise() center -0.7 -> +0.7 (glow descends from top; reveal order follows). Flip looked dead in tests until root-caused: SwiftShader runs ~1.5fps so the 2.4s intro needs ~60s wall-clock — all short screenshots caught intro ~15%. Proven with 75s soak: mint glyph field rains from the top edge. No shader bug; deviation stands as one commented line.
+Wordmark: solid coal (gradient removed per ask). Font itself (Archivo/Roboto churn) is the parallel session's area — fit-guard is face-agnostic either way.
+Testing: tsc clean; next build green; zero console errors throughout.
+
+## 2026-11-06 - R1-R4 batch: Jersey 10 footer brand, black gradient wash, stronger provider backdrop, Bifrost-style feature cards
+User asks (4): (1) Jersey 10 for footer brand text; (2) black/coal footer gradient; (3) stronger Provider-agnostic backdrop; (4) redesign Unified Gateway Management 3 cards after Bifrost (getmaxim.ai).
+R1: TextPressure fontFamily/fontUrl -> Jersey 10 (+CSS class rule as backstop); small brand link also Jersey 10/400. Verified Google Fonts: single static 400 face, so pressure swell is inert (noted in code) — wordmark renders crisp pixel blocks. Gotcha: first probe showed Inter (stale HMR compile + a CSS edit that orphaned a rule body); touch + rule repair fixed. Validated computed family Jersey 10 + glyph fit 0..vw at 320/390/1440/1920, zero errors.
+R2: GradientASCII colors mint -> black/coal ramp. Screenshot confirms black glyph field; copy stays legible above. Zero errors.
+R3: solutions DriftWall wrapper opacity 0.14->0.35, dim 0.6->0.85. Screenshot: drifting provider labels clearly visible, grid fully legible. Zero errors.
+R4: what-we-do pillars -> Bifrost cards: gap-px bordered 3-up white grid, aspect-4/3 dot-grid illustration zone with scaled-up vignettes, numbered eyebrow + icon/title + same verified copy/bullets. Removed dead pillar-rule scroll effect. Hover lift + visual zoom, reduced-motion static. 3 cards intact at 1440 + stacked 390, ox=0.
+Testing: tsc clean; next build green (static export); zero console errors throughout; full-page overflow PASS all widths.
+
+## 2026-11-06 - Provider backdrop: full opacity + full screen width
+Follow-ups: wrapper opacity 0.35 -> 1 (verified computed 1, tiles strong); then full-bleed — root cause of the narrow look was the 5-column plane (~1090px + 1.18 tilt scale, centered) plus the default fade=0.6 mask dissolving from 40% outward. Fix in solutions.tsx only: columns 5->8 (plane 2353px, covers 1920) + fade 0.6->0.15 (mask holds to 85%). Verified at 1440 + 1920: tiles cut at both viewport edges, ox=0, zero errors, tsc clean. Tiles now drift behind the heading copy too — legible (light tiles under dark text), matches the DriftWall aesthetic.
+
+## 2026-11-06 - models.dev full catalog: all 235 providers with logos + endpoints
+User expanded scope: every models.dev provider (not just our 5) with logo in the backdrop.
+Findings: api.json has no logo fields — but the models.dev repo ships providers/<id>/logo.svg (default branch `dev`; `main` 404s). First-party api fields are null (only aggregators list base URLs); provider ids map: google->gemini, google-vertex->vertex, amazon-bedrock->bedrock.
+Implementation: scripts/sync-models-dev.mjs (npm run sync:providers) fetches catalog + all logos -> src/data/models-dev.json + public/models-dev/*.svg (223/235 have logos; 12 null -> lettermark fallback tile). Static import at runtime: zero client network, no 6MB download, offline-safe. solutions.tsx tiles: logo + name + endpoint (our adapter surface for mapped 5, models.dev api host otherwise, model count fallback). DriftWall forked with optional node tiles.
+Aspect-ratio bug root-caused: unlayered `.drift-wall__tile img{width:100%;height:100%}` beats Tailwind's layered h-7/w-7, stretching logos to tile box. Scoped fill rule to `.drift-wall__inner > img`; all 446 logos now uniform 28px undistorted (measured).
+Full-bleed: fade=0 (no edge mask) + tilt/turn=0 (flat plane, drift preserved) — wall rect == section rect at 1440/1920, confined to section via overflow-hidden.
+Testing: 470 tiles, 0 broken imgs, caption counts 235; ox=0 at 390/1440/1920; tsc clean; build green; zero console errors.
+
+## 2026-11-06 - Site frame + footer wordmark centering
+Frame: fixed inset-3 (12px) hairline border-coal/20, pointer-events-none, z-90, print:hidden — one aria-hidden div in RootLayout, utilities only, no layout shift. Verified on cream hero + dark platform section, persists mid-scroll, zero errors, tsc clean.
+Wordmark centering: foot-pressure gains padding-inline clamp(16px,4vw,72px); backstop is clientWidth-based so stays padding-aware. Measured symmetric margins L/R at 390 (16/16), 1440 (58/58), 1920 (72/72), ox=0, zero errors.
+
+## 2026-11-06 - Black curvy viewport ring
+Frame upgraded: fixed inset-0 12px solid black ring, rounded 28px, html bg-black so corner triangles read black; pointer-events-none, z-90, print-hidden. Verified on hero + footer, zero errors, tsc clean.
+
+## 2026-11-06 - Scroll-away frame on black + tighter footer gap
+Reworked per ask: fixed ring replaced with a page wrapper (m-3, rounded 28px, overflow:clip, print-plain) that scrolls with the page; body forced black via unlayered end-of-file rule (cascade layers: utilities lose to unlayered, so the body class alone couldn't do it) — margins/corners probe as BODY/black mid-scroll, wrapper scrolls off (-2988 at scroll 3000), ox=0. overflow:clip (not hidden) keeps sticky/fixed working. Footer gap: aspect 3.2/1 (bound: fs hits heuristic max contentW/3, so ratio must stay under ~3.26) — wordmark-to-divider gap now 25px, no overlap, zero errors. tsc clean, build green.
+
+## 2026-11-06 - Per-letter footer wordmark parallax (from 76b8e1e)
+Referred commit 76b8e1e (per-letter speeds, full-bleed wordmark): reimplemented as useWordmarkParallax in closing.tsx, adapted to TextPressure — speeds T->a [-0.45..-0.08] via the independent CSS `translate` property (TextPressure writes only fontVariationSettings/opacity on spans, transform on the h1 — no clobbering, fit backstop unaffected). rAF-throttled scroll/resize, pure function of scroll, static under reduced-motion. Measured shear gradient 43.6px->7.8px at entry decaying reversibly, ox=0, zero errors. tsc clean, build green.
+
+## 2026-11-06 - TextPressure removed; static Jersey 10 wordmark
+User: delete the component entirely, use only what came before with this font. Removed text-pressure.tsx (498 lines) + all imports/props/CSS; wordmark is now 6 static Jersey 10 spans in .foot-wordmark (centered cluster, 0.1em tracking, clamp(88px,28vw,480px) — overflow impossible by construction: worst case 2.65em×fs ≤ contentW verified 320..1920). Font loads via CSS @import (layout <head> attempt caused hydration mismatch — raw <head> in App Router; reverted to @import, error gone). Per-letter parallax kept on the static spans (adapted selector) with stronger parallel-session speeds [-1.8..-0.2] + end-anchoring (rest exactly 0 at max scroll). Validated: centered symmetric margins, gap>0, rest 0, mid-passage shear gradient, ox=0, zero errors. tsc clean, build green. Commit 4957fc6.
+
+## 2026-11-06 - Compressed footer rhythm, baseline wordmark
+Top pt-16/20->pt-10/12, nav gap-y-12->8, meta mt-12->8, bottom Container pb-10/pt-4->pb-3/pt-2, bar inner pt-6->pt-3/gap-3->2. Aspect 3.4->3.2 (bound ~3.26 from fs heuristic max) + overflow:clip on .foot-pressure so parallax dips clip at the box instead of crossing the divider. Final: text->divider 12px, bar->footer-end 12px, footer 882px tall at 1440, ox=0, zero errors. tsc clean.
+
+## 2026-11-06 - Cream wash, rounded footer top, clear border
+Wash: black ramp -> sand/taupe cream ramp (deeper pass for legibility) + glyphOpacity 0.55->0.7, spread held at 2.2 (verified full-width top coverage raining to the meta strip, zero errors). Footer: rounded-t-[28px] + overflow-clip (clips wash canvas to the curve) + border-t-2 border-coal/25 following the curve. tsc clean. Commit 261ec46.

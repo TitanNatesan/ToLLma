@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, ClipboardList, Copy, KeyRound, ShieldAlert } from "lucide-react";
-import { toast } from "sonner";
+import { Check, ClipboardList, Copy, Download, KeyRound, ShieldAlert } from "lucide-react";
+import { toast } from "@/lib/notify";
 import {
   Button,
   Checkbox,
@@ -53,6 +53,21 @@ export function RawKeyDialog({ open, rawKey, keyName, reason, onClose }: RawKeyD
         description: "Select the key text manually to copy it.",
       });
     }
+  }
+
+  function download() {
+    const blob = new Blob([rawKey], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${keyName || "tollma-api-key"}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Key downloaded", {
+      description: "Store the file in a secret manager — it cannot be shown again.",
+    });
   }
 
   function close() {
@@ -139,6 +154,17 @@ export function RawKeyDialog({ open, rawKey, keyName, reason, onClose }: RawKeyD
             >
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
               {copied ? "Copied" : "Copy"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={download}
+              data-testid="raw-key-download"
+            >
+              <Download className="size-3.5" />
+              Download
             </Button>
           </div>
 

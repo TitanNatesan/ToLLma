@@ -134,7 +134,8 @@ def test_estimate_chat_cost_matches_token_engine() -> None:
         PriceSet(input=Decimal(2), output=Decimal(10), cache_read=Decimal("0.5")),
     )
     assert estimate.kind == "chat" and estimate.estimated is False
-    expected = (Decimal(1000) * 2 + Decimal(500) * 10 + Decimal(200) * Decimal("0.5")) / Decimal(1_000_000)
+    # prompt total includes the 200 cached tokens: input bills 800 @ 2.
+    expected = (Decimal(800) * 2 + Decimal(500) * 10 + Decimal(200) * Decimal("0.5")) / Decimal(1_000_000)
     assert estimate.estimated_cost == expected
 
 

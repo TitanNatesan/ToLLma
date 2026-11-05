@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/notify";
 import { Button, Checkbox, Dialog, DialogContent, DialogTitle, Input } from "@/components/ui";
 import { ApiError, getCurrentUser, googleLoginUrl, requestAccountDeletion } from "@/services/api";
 import { parseApiError } from "@/lib/errors";
