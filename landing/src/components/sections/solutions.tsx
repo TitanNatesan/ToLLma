@@ -97,7 +97,7 @@ export default function Solutions() {
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-100">
         <DriftWall
           items={WALL_ITEMS}
-          columns={5}
+          columns={8}
           tileWidth={200}
           tileHeight={132}
           gap={18}
@@ -105,6 +105,7 @@ export default function Solutions() {
           direction="up"
           variance={0.45}
           parallax={0}
+          fade={0.15}
           dim={0.85}
           grayscale={true}
           overlayColor="#e5e0d2"
