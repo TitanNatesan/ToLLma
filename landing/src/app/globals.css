@@ -400,8 +400,73 @@ body {
   transform: scaleX(1);
 }
 
-/* Island nav link underline is defined on .nav-link; this keeps the
-   light-variant on the dark island using the same currentColor rule. */
+/* Island nav link underline is defined on .nav-link; the -light variant
+   keeps the same currentColor rule on the glass island. */
+
+/* Premium liquid-glass island: thin ivory translucency, 2px blur max so
+   the background stays recognizable, layered hairline borders, a delicate
+   top reflection clipped to the capsule, and soft ambient depth. Fallback
+   below for engines without backdrop-filter. */
+.navbar-glass {
+  position: relative;
+  background: rgba(247, 247, 238, 0.76);
+  -webkit-backdrop-filter: blur(2px) saturate(1.15);
+  backdrop-filter: blur(2px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 -1px 0 rgba(23, 25, 20, 0.035) inset,
+    0 8px 28px rgba(23, 25, 20, 0.075);
+}
+.navbar-glass::before {
+  content: "";
+  position: absolute;
+  inset: 1px 1px auto 1px;
+  height: 46%;
+  border-radius: inherit;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .navbar-glass {
+    background: rgba(247, 247, 238, 0.96);
+  }
+  .navbar-glass::before {
+    display: none;
+  }
+}
+/* The expanded mobile menu carries body copy, so it trades some
+   translucency for readability. Blur stays at 2px; only the fill deepens. */
+.navbar-glass.navbar-menu {
+  background: rgba(247, 247, 238, 0.94);
+}
+
+/* Glass nav links: soft hover/active capsule behind the label. Padding
+   lives here so the pill wraps the text; the row gap absorbs it. */
+.nav-link-glass {
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  margin: -0.3rem -0.35rem;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+.nav-link-glass:hover {
+  background: rgba(23, 25, 20, 0.06);
+}
+.nav-link-glass[data-active="true"] {
+  background: rgba(23, 25, 20, 0.08);
+}
+.nav-link-glass:focus-visible {
+  outline: 2px solid rgba(23, 25, 20, 0.45);
+  outline-offset: 1px;
+  background: rgba(23, 25, 20, 0.06);
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-link-glass {
+    transition: none;
+  }
+}
 
 /* Reveal: fade + rise (24px, 700ms, var(--ease-reveal)). JS sets
    [data-hidden] only when motion is allowed; --reveal-delay staggers
@@ -666,6 +731,12 @@ body {
 .foot-letter {
   display: inline-block;
   will-change: transform;
+  /* Bottom-to-top gradient, solid coal at the top fading out toward the
+     bottom edge. Painted per letter so it rides the parallax drift. */
+  background: linear-gradient(to top, transparent 0%, var(--color-coal) 55%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* Footer license pill: subtle hairline pill (Apache 2.0 + self-host story). */

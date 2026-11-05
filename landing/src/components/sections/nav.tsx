@@ -1,14 +1,15 @@
 "use client";
 
-// Floating dynamic-island navbar: a centered coal pill, detached from the
-// viewport top. At the top (or whenever the island is hovered / focused /
-// tapped open) it shows everything — wordmark, all section links, API Docs
-// and Get Started. While scrolled down and idle it collapses to just the
-// wordmark, the current scroll-spy section, and Get Started. No progress
-// line. The collapse/expand is a smooth FLIP-measured width glide
-// (curtain reveal, exact widths, no snapping) plus a crossfade between the
-// link row and the section label; transform/opacity-only otherwise. Static
-// full nav under reduced motion (no collapse — everything stays visible).
+// Floating dynamic-island navbar: a centered liquid-glass pill, detached
+// from the viewport top. At the top (or whenever the island is hovered /
+// focused / tapped open) it shows everything — wordmark, all section
+// links, API Docs and Get Started. While scrolled down and idle it
+// collapses to just the wordmark, the current scroll-spy section, and Get
+// Started. No progress line. The collapse/expand is a smooth FLIP-measured
+// width glide (curtain reveal, exact widths, no snapping) plus a crossfade
+// between the link row and the section label; transform/opacity-only
+// otherwise. Static full nav under reduced motion (no collapse —
+// everything stays visible).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { MagneticButton } from "@/components/ui/magnetic-button";
@@ -16,7 +17,7 @@ import { IconClose, IconMenu } from "@/components/ui/icons";
 import { useActiveSection } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { DOCS_URL, GET_STARTED_URL } from "@/lib/site";
-import tollmaLight from "./brand/tollma-light-256.png";
+import tollmaInk from "./brand/tollma-mark-ink.png";
 
 // Mirrors the ToLLma application sidebar
 // (frontend/src/components/Sidebar/SidebarNavigation.tsx PERSONAL_NAV),
@@ -167,7 +168,7 @@ export default function Nav() {
             // Touch: tapping the collapsed island expands it.
             if (!expanded) setTouchOpen(true);
           }}
-          className={`pointer-events-auto flex max-w-full items-center gap-4 rounded-full border border-white/10 bg-coal/95 px-4 py-2 text-cream shadow-[0_18px_50px_-12px_rgba(23,25,20,0.55)] backdrop-blur-md transition-[padding] duration-300 ease-out sm:px-5 sm:py-2.5 ${
+          className={`navbar-glass pointer-events-auto flex max-w-full items-center gap-3 rounded-full px-4 py-2 text-coal transition-[padding,background-color,border-color,box-shadow] duration-300 ease-out sm:gap-4 sm:px-5 sm:py-2.5 ${
             expanded ? "" : "cursor-pointer"
           }`}
         >
@@ -180,9 +181,9 @@ export default function Nav() {
               setOpen(false);
             }}
           >
-            {/* Official ToLLma mark (supplied PNG, light version for the dark island). */}
+            {/* Official ToLLma mark (ink version for the glass island). */}
             <img
-              src={tollmaLight.src}
+              src={tollmaInk.src}
               alt=""
               width={26}
               height={26}
@@ -200,11 +201,11 @@ export default function Nav() {
           <div ref={foldRef} className="island-fold min-w-0">
             <div className="relative">
               <div
-                className={`items-center gap-7 whitespace-nowrap transition-opacity duration-200 ${
+                className={`items-center gap-4 whitespace-nowrap transition-opacity duration-200 lg:gap-6 ${
                   expanded ? "flex opacity-100 max-lg:hidden" : "hidden"
                 }`}
               >
-                <ul className="flex items-center gap-7">
+                <ul className="flex items-center gap-1 lg:gap-3">
                   {LINKS.map((l) => {
                     const isActive = active === l.id;
                     return (
@@ -217,8 +218,8 @@ export default function Nav() {
                             setTouchOpen(false);
                             setOpen(false);
                           }}
-                          className={`nav-link nav-link-light py-1 text-[0.95rem] font-medium transition-opacity hover:opacity-60 ${
-                            isActive ? "text-cream" : "text-cream/80"
+                          className={`nav-link nav-link-light nav-link-glass text-[0.95rem] font-medium transition-opacity hover:opacity-80 ${
+                            isActive ? "text-coal" : "text-coal/70"
                           }`}
                         >
                           {l.label}
@@ -231,7 +232,7 @@ export default function Nav() {
                   href={DOCS_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[0.95rem] font-medium text-cream/80 transition-opacity hover:opacity-60"
+                  className="nav-link-glass text-[0.95rem] font-medium text-coal/70 transition-opacity hover:opacity-80"
                 >
                   API Docs
                 </a>
@@ -247,7 +248,7 @@ export default function Nav() {
                   href={current.href}
                   aria-current={active ? "true" : undefined}
                   onClick={(e) => e.stopPropagation()}
-                  className="truncate text-[0.95rem] font-medium text-cream/85"
+                  className="truncate text-[0.95rem] font-medium text-coal/75"
                 >
                   {current.label}
                 </Link>
@@ -256,7 +257,7 @@ export default function Nav() {
           </div>
 
           <MagneticButton strength={5} className="shrink-0">
-            <span className="btn-shine inline-flex shrink-0 items-center rounded-full bg-cream px-4 py-1.5 text-[0.85rem] font-semibold text-coal sm:px-5 sm:py-2 sm:text-[0.9rem]">
+            <span className="btn-shine inline-flex shrink-0 items-center rounded-full border border-white/20 bg-coal px-4 py-1.5 text-[0.85rem] font-semibold text-cream shadow-[0_2px_10px_rgba(23,25,20,0.25)] transition-transform duration-150 ease-out active:scale-[0.98] sm:px-5 sm:py-2 sm:text-[0.9rem]">
               <Link
                 href={GET_STARTED_URL}
                 onClick={(e) => e.stopPropagation()}
@@ -279,7 +280,7 @@ export default function Nav() {
                 ref={toggleRef}
                 type="button"
                 tabIndex={expanded ? 0 : -1}
-                className="inline-flex size-10 items-center justify-center rounded-full text-cream"
+                className="inline-flex size-10 items-center justify-center rounded-full text-coal"
                 aria-expanded={open}
                 aria-controls="nav-mobile-panel"
                 aria-label={open ? "Close menu" : "Open menu"}
@@ -307,7 +308,7 @@ export default function Nav() {
         >
           <div className="overflow-hidden">
             <div
-              className={`flex flex-col gap-1 rounded-3xl border border-white/10 bg-coal/95 p-3 text-cream shadow-[0_18px_50px_-12px_rgba(23,25,20,0.55)] backdrop-blur-md ${
+              className={`navbar-glass navbar-menu flex flex-col gap-1 rounded-3xl p-3 text-coal ${
                 open ? undefined : "invisible"
               }`}
             >
@@ -319,13 +320,13 @@ export default function Nav() {
                   onClick={() => setOpen(false)}
                   aria-current={active === l.id ? "true" : undefined}
                   style={{ transitionDelay: open ? `${i * 45}ms` : "0ms" }}
-                  className={`flex items-center gap-1.5 rounded-2xl px-3 py-2.5 text-[0.95rem] font-medium transition-[opacity,transform] duration-300 ease-out ${
+                  className={`flex items-center gap-1.5 rounded-2xl px-3 py-2.5 text-[0.95rem] font-medium transition-[opacity,transform,background-color] duration-300 ease-out hover:bg-coal/[0.06] ${
                     open ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
-                  } ${active === l.id ? "text-cream" : "text-cream/80"}`}
+                  } ${active === l.id ? "bg-coal/[0.07] text-coal" : "text-coal/70"}`}
                 >
                   <span
                     aria-hidden="true"
-                    className={`size-1.5 rounded-full bg-cream ${
+                    className={`size-1.5 rounded-full bg-coal ${
                       active === l.id ? "opacity-100" : "opacity-0"
                     }`}
                   />
@@ -334,7 +335,7 @@ export default function Nav() {
               ))}
               <div
                 style={{ transitionDelay: open ? `${LINKS.length * 45}ms` : "0ms" }}
-                className={`mt-1 flex items-center gap-4 border-t border-white/10 px-3 pt-4 transition-[opacity,transform] duration-300 ease-out ${
+                className={`mt-1 flex items-center gap-4 border-t border-coal/10 px-3 pt-4 transition-[opacity,transform] duration-300 ease-out ${
                   open ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
                 }`}
               >
@@ -343,11 +344,11 @@ export default function Nav() {
                   target="_blank"
                   rel="noopener noreferrer"
                   tabIndex={open ? 0 : -1}
-                  className="text-[0.95rem] font-medium text-cream/80"
+                  className="text-[0.95rem] font-medium text-coal/70"
                 >
                   API Docs
                 </a>
-                <span className="btn-shine inline-flex flex-1 items-center justify-center rounded-full bg-cream px-6 py-3 text-[0.95rem] font-semibold text-coal">
+                <span className="btn-shine inline-flex flex-1 items-center justify-center rounded-full border border-white/20 bg-coal px-6 py-3 text-[0.95rem] font-semibold text-cream shadow-[0_2px_10px_rgba(23,25,20,0.25)] transition-transform duration-150 ease-out active:scale-[0.98]">
                   <Link href={GET_STARTED_URL}>Get Started</Link>
                 </span>
               </div>

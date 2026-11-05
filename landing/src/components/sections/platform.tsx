@@ -32,6 +32,13 @@
 // toggle: injection parks the lead packet at L05 and draws the coral
 // blocked branch.
 //
+// Screen-space layer (no giant focused text/arrows): connectors use
+// vector-effect="non-scaling-stroke" (constant screen width at any zoom);
+// arrowheads live in [data-arrows] OUTSIDE the camera at a fixed 9u size,
+// positioned per frame from connector geometry; diagram text counter-scales
+// (titles ~S^-0.7, body/labels constant) so a focused layer reads ~21px
+// instead of ballooning with the zoom. All pure functions of progress.
+//
 // Diagram is vector-only so 400% zoom and DPR 1–3 stay crisp.
 "use client";
 
@@ -158,10 +165,11 @@ const LEDGERS = [
 
 const VIEW: Record<Mode, { x: number; y: number; w: number; h: number }> = {
   // Wide base fit: full-flow frame sits ~7% back from the composition
-  // (content 16..1680 x 48..843 centered) for breathing room. Camera zoom
-  // math uses w/h sizes only; x/y recenter the identity frame. Node sizes,
-  // fonts, and row rhythm are untouched — rendered full-view text stays
-  // >=12px (18u at k~0.68).
+  // (content 16..1956 x 48..928 centered) for breathing room. Camera zoom
+  // math uses w/h sizes only; x/y recenter the identity frame. Node sizes
+  // and row rhythm are untouched — rendered full-view text stays >=12px
+  // at 1440/1920 (19u at k~0.66); 1280 renders ~11.2px (accepted: the
+  // text-size reduction was explicitly requested over the old 12px floor).
   wide: { x: -179, y: -20, w: 2170, h: 1000 },
   tall: { x: 0, y: 0, w: 660, h: 2440 },
 };
@@ -176,14 +184,17 @@ const VIEW: Record<Mode, { x: number; y: number; w: number; h: number }> = {
  * gaps sideways without moving rows up or down.
  */
 const GUT = 24;
-const GAP = 44;
+const GAP = 56;
 const LW = 252;
 const LH = 132;
 const CHIP_W = 240;
 const CHIP_H = 64;
 const LED_W = 272;
 const LED_H = 52;
-const FU = 22;
+// Diagram font unit: 19u renders ~12.6px at 1440 full-view (>=12px floor
+// holds at 1440/1920; 1280 dips to ~11.2 by explicit request). Focused
+// camera states only ever magnify from here.
+const FU = 19;
 
 /** Position strategy per mode, derived from the single LAYERS config. */
 function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rect[]; ledgers: Record<string, Rect>; captures: Rect; blocked: Rect } {
@@ -192,11 +203,12 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     const setupY = 72; const reqY = 260; // setup<->request gap = 56u
     layers.register = { x: 16, y: setupY, w: LW, h: LH };
     layers.keys = { x: 284, y: setupY, w: LW, h: LH };
-    // Request peer gap stays 44u; route/normalize are widened (RW/NW) to carry
-    // their full titles + sub in-box, shifting normalize/observe east.
+    // Request peer gap stays 56u; route/normalize are widened (RW/NW) to carry
+    // their full titles + sub in-box, shifting normalize/observe east. The
+    // lane starts at x=16 (aligned under setup) to preserve the right margin.
     const RW = 364; const NW = 288;
     const W6 = [LW, LW, LW, RW, NW, LW];
-    let xx = 40;
+    let xx = 16;
     ["auth", "ratelimit", "guardrails", "route", "normalize", "observe"].forEach((id, i) => {
       layers[id] = { x: xx, y: reqY, w: W6[i], h: LH };
       xx += W6[i] + GAP;
@@ -277,18 +289,23 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
       c.push({ name: `${a}-${b}`, d: `M${R[a].x + R[a].w},${reqMid} L${R[b].x},${reqMid}`, x1: R[a].x + R[a].w, y1: reqMid, x2: R[b].x, y2: reqMid });
     });
     c.push({ name: "lbl-setup", d: "", x1: 40, y1: 64, x2: 40, y2: 64, label: "SETUP LANE \u00b7 01\u201302", lx: 40, ly: 64 });
-    c.push({ name: "lbl-request", d: "", x1: 940, y1: 250, x2: 940, y2: 250, label: "REQUEST LANE \u00b7 03\u201308", lx: 940, ly: 250 });
+    c.push({ name: "lbl-request", d: "", x1: 980, y1: 244, x2: 980, y2: 244, label: "REQUEST LANE \u00b7 03\u201308", lx: 980, ly: 244 });
     // Fan: one dedicated vertical inbound lane per provider chip. Col0 runs
     // a spine from route's bottom edge into gemini's top, then chains down
     // gemini->bedrock->openai bottom-to-top; col1 elbows from route into
     // anthropic's top, then chains down. Every endpoint lands on a chip
-    // edge; parallels sit >=20u apart with zero crossings.
-    c.push({ name: "fan", d: `M940,${R.route.y + R.route.h} L940,${L.providers[2].y}`, x1: 940, y1: R.route.y + R.route.h, x2: 940, y2: L.providers[2].y, label: "FAN-OUT", lx: 764, ly: 418 });
-    c.push({ name: "fan-p4", d: `M1150,${R.route.y + R.route.h} L1150,400 L1225,400 L1225,${L.providers[1].y}`, x1: 1150, y1: R.route.y + R.route.h, x2: 1225, y2: L.providers[1].y });
-    c.push({ name: "fan-c0a", d: `M940,${L.providers[2].y + L.providers[2].h} L940,${L.providers[4].y}`, x1: 940, y1: L.providers[2].y + L.providers[2].h, x2: 940, y2: L.providers[4].y });
-    c.push({ name: "fan-c0b", d: `M940,${L.providers[4].y + L.providers[4].h} L940,${L.providers[0].y}`, x1: 940, y1: L.providers[4].y + L.providers[4].h, x2: 940, y2: L.providers[0].y });
-    c.push({ name: "fan-c1a", d: `M1225,${L.providers[1].y + L.providers[1].h} L1225,${L.providers[3].y}`, x1: 1225, y1: L.providers[1].y + L.providers[1].h, x2: 1225, y2: L.providers[3].y });
-    c.push({ name: "fan-c1b", d: `M1225,${L.providers[3].y + L.providers[3].h} L1225,${L.providers[5].y}`, x1: 1225, y1: L.providers[3].y + L.providers[3].h, x2: 1225, y2: L.providers[5].y });
+    // edge; parallels sit >=20u apart with zero crossings. Lane x's derive
+    // from the request lane so GAP changes can't strand them.
+    const spineX = R.route.x + 12;
+    const lane1X = R.route.x + CHIP_W + GAP + 13;
+    const fanTop = R.route.y + R.route.h;
+    const elbowY = fanTop + 8;
+    c.push({ name: "fan", d: `M${spineX},${fanTop} L${spineX},${L.providers[2].y}`, x1: spineX, y1: fanTop, x2: spineX, y2: L.providers[2].y, label: "FAN-OUT", lx: spineX - 176, ly: 418 });
+    c.push({ name: "fan-p4", d: `M${R.route.x + 222},${fanTop} L${R.route.x + 222},${elbowY} L${lane1X},${elbowY} L${lane1X},${L.providers[1].y}`, x1: R.route.x + 222, y1: fanTop, x2: lane1X, y2: L.providers[1].y });
+    c.push({ name: "fan-c0a", d: `M${spineX},${L.providers[2].y + L.providers[2].h} L${spineX},${L.providers[4].y}`, x1: spineX, y1: L.providers[2].y + L.providers[2].h, x2: spineX, y2: L.providers[4].y });
+    c.push({ name: "fan-c0b", d: `M${spineX},${L.providers[4].y + L.providers[4].h} L${spineX},${L.providers[0].y}`, x1: spineX, y1: L.providers[4].y + L.providers[4].h, x2: spineX, y2: L.providers[0].y });
+    c.push({ name: "fan-c1a", d: `M${lane1X},${L.providers[1].y + L.providers[1].h} L${lane1X},${L.providers[3].y}`, x1: lane1X, y1: L.providers[1].y + L.providers[1].h, x2: lane1X, y2: L.providers[3].y });
+    c.push({ name: "fan-c1b", d: `M${lane1X},${L.providers[3].y + L.providers[3].h} L${lane1X},${L.providers[5].y}`, x1: lane1X, y1: L.providers[3].y + L.providers[3].h, x2: lane1X, y2: L.providers[5].y });
     // Return: openai's left edge exits west, runs a dedicated lane between
     // the tap feed and the ledger row (crosses nothing), then rises into
     // normalize's bottom edge.
@@ -485,6 +502,30 @@ export default function Platform() {
     });
     const lens = new Map<string, number>();
     pathEls.forEach((p, n) => { try { lens.set(n, p.getTotalLength()); } catch { lens.set(n, 0); } });
+    // Counter-scaled typography: per-text base positions cached once;
+    // paint only writes transform strings. Titles scale as S^-0.65
+    // (~22px at deepest zoom), body/labels as S^-1 (constant screen
+    // size). Pill groups (bg + text together) scale around their slot
+    // centers so they track the diagram without inflating.
+    type TextCache = { el: SVGTextElement; x: number; y: number; t: boolean };
+    const textEls: TextCache[] = [];
+    svg.querySelectorAll<SVGTextElement>("[data-camera] text").forEach((t) => {
+      if (t.closest("[data-pill]")) return; // pill text rides its group
+      const x = Number(t.getAttribute("x")); const y = Number(t.getAttribute("y"));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      textEls.push({ el: t, x, y, t: t.getAttribute("data-tk") === "t" });
+    });
+    const pillEls: { el: SVGGElement; x: number; y: number }[] = [];
+    svg.querySelectorAll<SVGGElement>("g[data-pill]").forEach((g) => {
+      const nm = g.getAttribute("data-pill");
+      const cn = conns.find((c) => c.name === nm);
+      if (cn && cn.lx != null && cn.ly != null) pillEls.push({ el: g, x: cn.lx, y: cn.ly });
+    });
+    const headEls = new Map<string, SVGGElement>();
+    svg.querySelectorAll<SVGGElement>("g[data-oh]").forEach((g) => {
+      const n = g.getAttribute("data-oh");
+      if (n && !headEls.has(n)) headEls.set(n, g);
+    });
 
     const passRoute = mode === "wide" ? PASS_WIDE : PASS_TALL;
     const N = passRoute.length;
@@ -510,16 +551,50 @@ export default function Platform() {
     };
     // Hidden packets reset to a canonical transform-less state so the
     // hidden reading is identical on the way down and the way back up.
-    const setPkt = (el: Element | null, pt: { x: number; y: number } | null, show: boolean) => {
+    // k counter-scales the dot so packets keep a constant screen size.
+    const setPkt = (el: Element | null, pt: { x: number; y: number } | null, show: boolean, k = 1) => {
       if (!el) return;
       (el as SVGElement).style.opacity = show && pt ? "1" : "0";
-      if (pt && show) el.setAttribute("transform", `translate(${pt.x} ${pt.y})`);
-      else el.removeAttribute("transform");
+      if (pt && show) {
+        el.setAttribute("transform", k === 1 ? `translate(${pt.x} ${pt.y})` : `translate(${pt.x} ${pt.y}) scale(${k.toFixed(4)})`);
+      } else el.removeAttribute("transform");
     };
     const segAt = (t: number) => {
       const f = Math.min(0.9999, Math.max(0, t)) * N;
       const i = Math.floor(f);
       return { name: passRoute[Math.min(i, N - 1)], t: f - i };
+    };
+    // Screen-space layer: text counter-scale + fixed-size arrowheads.
+    // All positions stay glued to the (zoomed) architecture; only rendered
+    // size is normalized. Pure function of (S, cam) — reverses exactly.
+    const applyTextScale = (kT: number, kS: number) => {
+      for (const { el, x, y, t } of textEls) {
+        const k = t ? kT : kS;
+        if (Math.abs(k - 1) < 0.01) { el.removeAttribute("transform"); continue; }
+        el.setAttribute("transform", `translate(${x} ${y}) scale(${k.toFixed(4)}) translate(${-x} ${-y})`);
+      }
+      for (const { el, x, y } of pillEls) {
+        if (Math.abs(kS - 1) < 0.01) { el.removeAttribute("transform"); continue; }
+        el.setAttribute("transform", `translate(${x} ${y}) scale(${kS.toFixed(4)}) translate(${-x} ${-y})`);
+      }
+    };
+    const updateOverlay = (S: number, camX: number, camY: number) => {
+      const C0x = V.x + V.w / 2; const C0y = V.y + V.h / 2;
+      headEls.forEach((head, name) => {
+        const el = pathEls.get(name);
+        const len = lens.get(name) ?? 0;
+        if (!el || len <= 0) { head.style.opacity = "0"; return; }
+        let p2: { x: number; y: number }; let p1: { x: number; y: number };
+        try {
+          p2 = el.getPointAtLength(len);
+          p1 = el.getPointAtLength(Math.max(0, len - 5));
+        } catch { head.style.opacity = "0"; return; }
+        const ang = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
+        const vx = C0x + S * (p2.x - camX);
+        const vy = C0y + S * (p2.y - camY);
+        head.setAttribute("transform", `translate(${vx.toFixed(1)} ${vy.toFixed(1)}) rotate(${ang.toFixed(1)})`);
+        head.style.opacity = el.style.opacity || "1";
+      });
     };
 
     const paint = (p: number) => {
@@ -555,10 +630,19 @@ export default function Platform() {
         svg.querySelectorAll<SVGElement>("[data-dim]").forEach((g) => {
           g.style.opacity = sel < 0 ? "1" : "0.35";
         });
+        applyTextScale(1, 1);
+        updateOverlay(1, V.x + V.w / 2, V.y + V.h / 2);
         return;
       }
       const st = stageAt(p);
       const cam = camAt(L, V, p, inj);
+      // Screen-space normalization: total zoom S scales titles as S^0.3
+      // (~21px at deepest zoom) and body/labels not at all, so focused
+      // text stays proportionate instead of ballooning with the camera.
+      const S = st.sc * cam.s;
+      const kT = S <= 1 ? 1 : Math.pow(S, -0.7);
+      const kS = S <= 1 ? 1 : 1 / S;
+      let pktK = kS;
       if (camG) camG.setAttribute("transform", `translate(${(V.x + V.w / 2).toFixed(1)} ${(V.y + V.h / 2).toFixed(1)}) scale(${(st.sc * cam.s).toFixed(4)}) translate(${(-cam.x).toFixed(1)} ${(-cam.y).toFixed(1)})`);
       svg.style.opacity = st.op.toFixed(3);
       // R9 phases: a layer is spotlighted only during phase C.
@@ -621,30 +705,30 @@ export default function Platform() {
       const runPass = (q: number) => {
         const s = segAt(q);
         const inR = q > 0.005 && q < 0.995;
-        setPkt(packetEls.lead, inR ? place(s.name, s.t) : null, inR);
+        setPkt(packetEls.lead, inR ? place(s.name, s.t) : null, inR, pktK);
         const ret = mode === "wide" ? "return" : "prov-norm";
         const s1t = Math.min(1, Math.max(0, (q - 0.5) / 0.5));
-        setPkt(packetEls.s1, place(ret, s1t), q > 0.5 && q < 0.995);
+        setPkt(packetEls.s1, place(ret, s1t), q > 0.5 && q < 0.995, pktK);
         const s2t = Math.min(1, Math.max(0, (q - 0.72) / 0.28));
-        setPkt(packetEls.s2, place("response", s2t), q > 0.72 && q < 0.995);
+        setPkt(packetEls.s2, place("response", s2t), q > 0.72 && q < 0.995, pktK);
         const s3t = (q * 3) % 1;
-        setPkt(packetEls.s3, place("tap-bus", s3t), q > 0.31 && q < 0.995);
+        setPkt(packetEls.s3, place("tap-bus", s3t), q > 0.31 && q < 0.995, pktK);
       };
       const park = () => {
         const r = L.layers[LAYERS[act].id];
-        setPkt(packetEls.lead, { x: r.x - 14, y: r.y + r.h / 2 }, true);
+        setPkt(packetEls.lead, { x: r.x - 14, y: r.y + r.h / 2 }, true, pktK);
         setPkt(packetEls.s1, null, false); setPkt(packetEls.s2, null, false); setPkt(packetEls.s3, null, false);
       };
       const hideAll = () => { setPkt(packetEls.lead, null, false); setPkt(packetEls.s1, null, false); setPkt(packetEls.s2, null, false); setPkt(packetEls.s3, null, false); };
       if (inj && !inC && p >= PH.A && p < PH.D) {
         // Blocked: lead parks at the L05 exit through both passes.
-        setPkt(packetEls.lead, place("blocked", 1), true);
+        setPkt(packetEls.lead, place("blocked", 1), true, pktK);
         setPkt(packetEls.s1, null, false); setPkt(packetEls.s2, null, false); setPkt(packetEls.s3, null, false);
       } else if (!inj && p >= PH.A && p < PH.B) runPass((p - PH.A) / (PH.B - PH.A));
       else if (!inj && p >= PH.C && p < PH.D) runPass((p - PH.C) / (PH.D - PH.C));
       else if (inC && inj) {
         // Stopped at the L05 block: never advances past guardrails.
-        setPkt(packetEls.lead, place("blocked", 1), true);
+        setPkt(packetEls.lead, place("blocked", 1), true, pktK);
         setPkt(packetEls.s1, null, false); setPkt(packetEls.s2, null, false); setPkt(packetEls.s3, null, false);
       } else if (inC) park();
       else hideAll();
@@ -652,6 +736,10 @@ export default function Platform() {
       // Parallax: background grid/glow ONLY.
       const bg = svg.querySelector("[data-bg]");
       if (bg) (bg as SVGElement).style.transform = `translateY(${(p * 26).toFixed(1)}px)`;
+      // Screen-space normalization every frame: titles scale as S^0.3,
+      // body/labels stay constant, arrowheads stay fixed-size.
+      applyTextScale(kT, kS);
+      updateOverlay(S, cam.x, cam.y);
     };
     paintRef.current = paint;
     sigRef.current = () => {
@@ -776,12 +864,9 @@ export default function Platform() {
                     <stop offset="0" stopColor={MINT} stopOpacity="0.10" />
                     <stop offset="1" stopColor={MINT} stopOpacity="0" />
                   </radialGradient>
-                  <marker id="hiw-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M0,0 L10,5 L0,10 z" fill="rgba(245,244,234,0.6)" />
-                  </marker>
-                  <marker id="hiw-arr-coral" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M0,0 L10,5 L0,10 z" fill={CORAL} />
-                  </marker>
+                  {/* No SVG markers: arrowheads live in the screen-space
+                      overlay ([data-arrows]) at a constant size, so camera
+                      zoom can never inflate them. */}
                 </defs>
 
                 {/* Background grid/glow: parallax ONLY here. */}
@@ -792,8 +877,8 @@ export default function Platform() {
                 <g data-camera>
                   {mode === "wide" && (
                     <>
-                      <rect x={16} y={48} width={536} height={180} fill="none" stroke={LINE} strokeDasharray="5 5" />
-                      <rect x={16} y={248} width={L.layers.observe.x + L.layers.observe.w + 24 - 16} height={168} fill="none" stroke={LINE} strokeDasharray="5 5" />
+                      <rect x={16} y={48} width={536} height={180} fill="none" stroke={LINE} strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />
+                      <rect x={16} y={248} width={L.layers.observe.x + L.layers.observe.w + 24 - 16} height={168} fill="none" stroke={LINE} strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />
                     </>
                   )}
                   {/* Connectors (computed from bounding boxes). */}
@@ -808,10 +893,10 @@ export default function Platform() {
                       stroke={cn.coral ? CORAL : INK}
                       strokeOpacity={cn.coral ? 0.9 : 0.55}
                       strokeWidth={2}
+                      vectorEffect="non-scaling-stroke"
                       strokeDasharray={cn.dashed ? "7 6" : undefined}
                       strokeLinejoin="round"
                       strokeLinecap="round"
-                      markerEnd={cn.coral ? "url(#hiw-arr-coral)" : cn.dashed ? undefined : "url(#hiw-arr)"}
                       opacity={0}
                     />
                   ))}
@@ -819,8 +904,8 @@ export default function Platform() {
                   {conns.filter((cn) => cn.label).map((cn) => (
                     PILL_LABELS.has(cn.label ?? "") ? (
                       <g key={`lbl-${cn.name}`} data-lbl={cn.name} data-pill={cn.name} opacity={0.95}>
-                        <rect x={(cn.lx ?? 0) - ((cn.label ?? "").length * 17.7 + 30) / 2} y={(cn.ly ?? 0) - 15} width={(cn.label ?? "").length * 17.7 + 30} height={30} rx={11} fill={CARD} stroke={LINE} />
-                        <text x={cn.lx} y={(cn.ly ?? 0) + 8} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
+                        <rect x={(cn.lx ?? 0) - ((cn.label ?? "").length * FU * 0.8 + 28) / 2} y={(cn.ly ?? 0) - 14} width={(cn.label ?? "").length * FU * 0.8 + 28} height={28} rx={10} fill={CARD} stroke={LINE} />
+                        <text x={cn.lx} y={(cn.ly ?? 0) + 7} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
                           {cn.label}
                         </text>
                       </g>
@@ -838,9 +923,9 @@ export default function Platform() {
                     const r = L.layers[l.id];
                     return (
                       <g key={l.id} data-layer={l.id} data-idx={i} id={`hiw-layer-${l.id}`} opacity={0.35}>
-                        <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={FILL} stroke={l.lane === "setup" ? BLUE : MINT} strokeWidth={1.5} />
-                        <text x={r.x + 18} y={r.y + 34} fill={l.lane === "setup" ? BLUE : MINT} fontSize={FU} fontFamily={MONO} letterSpacing="0.1em">{l.n}</text>
-                        <text x={r.x + 58} y={r.y + 34} fill={INK} fontSize={FU} fontWeight={600} fontFamily={SANS}>{l.title}</text>
+                        <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={FILL} stroke={l.lane === "setup" ? BLUE : MINT} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                        <text data-tk="t" x={r.x + 18} y={r.y + 34} fill={l.lane === "setup" ? BLUE : MINT} fontSize={FU} fontFamily={MONO} letterSpacing="0.1em">{l.n}</text>
+                        <text data-tk="t" x={r.x + 58} y={r.y + 34} fill={INK} fontSize={FU} fontWeight={600} fontFamily={SANS}>{l.title}</text>
                         <text x={r.x + 18} y={r.y + 62} fill={SUB} fontSize={FU} fontWeight={500} fontFamily={MONO} letterSpacing="0.08em">{l.sub}</text>
                         <text x={r.x + 24} y={r.y + 90} fill={SUB} fontSize={FU} fontFamily={MONO}>{l.lines[0]}</text>
                         <text x={r.x + 24} y={r.y + 114} fill={SUB} fontSize={FU} fontFamily={MONO}>{l.lines[1]}</text>
@@ -853,8 +938,8 @@ export default function Platform() {
                     const fam = PROVIDERS[i];
                     return (
                     <g key={fam.id} data-prov={fam.id} data-dim data-down={mode === "wide" ? "fan" : "prov-0"} opacity={0.9}>
-                      <rect x={p.x} y={p.y} width={p.w} height={p.h} fill={FILL} stroke={LINE} strokeWidth={1.5} />
-                      <text x={p.x + p.w / 2} y={p.y + 30} textAnchor="middle" fill={INK} fontSize={FU} fontWeight={600} fontFamily={SANS}>
+                      <rect x={p.x} y={p.y} width={p.w} height={p.h} fill={FILL} stroke={LINE} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                      <text data-tk="t" x={p.x + p.w / 2} y={p.y + 30} textAnchor="middle" fill={INK} fontSize={FU} fontWeight={600} fontFamily={SANS}>
                         {fam.name}
                       </text>
                       <text x={p.x + p.w / 2} y={p.y + 52} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={MONO} letterSpacing="0.08em">
@@ -884,14 +969,14 @@ export default function Platform() {
                     const r = L.ledgers[lg.id];
                     return (
                       <g key={lg.id} data-ledger={lg.id} data-dim opacity={0.9}>
-                        <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={FILL} stroke={LINE} strokeWidth={1.5} />
-                        <text x={r.x + r.w / 2} y={r.y + 30} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">{lg.label}</text>
+                        <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={FILL} stroke={LINE} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                        <text data-tk="t" x={r.x + r.w / 2} y={r.y + 30} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">{lg.label}</text>
                       </g>
                     );
                   })}
                   <g data-captures data-dim opacity={0.9}>
-                    <rect x={L.captures.x} y={L.captures.y} width={L.captures.w} height={L.captures.h} fill={FILL} stroke={BLUE} strokeWidth={1.5} strokeDasharray="7 6" />
-                    <text x={L.captures.x + L.captures.w / 2} y={L.captures.y + 26} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.08em">
+                    <rect x={L.captures.x} y={L.captures.y} width={L.captures.w} height={L.captures.h} fill={FILL} stroke={BLUE} strokeWidth={1.5} strokeDasharray="7 6" vectorEffect="non-scaling-stroke" />
+                    <text data-tk="t" x={L.captures.x + L.captures.w / 2} y={L.captures.y + 26} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.08em">
                       {mode === "wide" ? "CAPTURES" : "PROMPT / RESPONSE CAPTURES"}
                     </text>
                     <text x={L.captures.x + L.captures.w / 2} y={L.captures.y + 45} textAnchor="middle" fill={SUB} fontSize={FU} fontFamily={MONO}>
@@ -900,28 +985,38 @@ export default function Platform() {
                   </g>
                   {/* Coral blocked terminus (stops at L05, never reaches providers). */}
                   <g data-blocked-badge data-coral-ui opacity={0.35}>
-                    <rect x={L.blocked.x} y={L.blocked.y} width={L.blocked.w} height={L.blocked.h} fill={CARD} stroke={CORAL} strokeWidth={2} />
-                    <text x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 44 : 28)} textAnchor="middle" fill={CORAL} fontSize={FU} fontWeight={700} fontFamily={SANS} letterSpacing="0.06em">
+                    <rect x={L.blocked.x} y={L.blocked.y} width={L.blocked.w} height={L.blocked.h} fill={CARD} stroke={CORAL} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+                    <text data-tk="t" x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 44 : 28)} textAnchor="middle" fill={CORAL} fontSize={FU} fontWeight={700} fontFamily={SANS} letterSpacing="0.06em">
                       REQUEST
                     </text>
-                    <text x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 70 : 50)} textAnchor="middle" fill={CORAL} fontSize={FU} fontFamily={SANS} letterSpacing="0.06em">
+                    <text data-tk="t" x={L.blocked.x + L.blocked.w / 2} y={L.blocked.y + (mode === "wide" ? 70 : 50)} textAnchor="middle" fill={CORAL} fontSize={FU} fontFamily={SANS} letterSpacing="0.06em">
                       BLOCKED
                     </text>
                   </g>
 
                   {/* Packets: ONE lead + <=3 secondary, scroll-driven via getPointAtLength. */}
                   <g data-pkt-lead data-allow-overlap opacity={0}>
-                    <circle r={6} fill="#fff" stroke={MINT} strokeWidth={2.5} />
+                    <circle r={6} fill="#fff" stroke={MINT} strokeWidth={2.5} vectorEffect="non-scaling-stroke" />
                   </g>
                   <g data-pkt-s1 data-allow-overlap opacity={0}>
-                    <circle r={4.5} fill="#fff" stroke={BLUE} strokeWidth={2} />
+                    <circle r={4.5} fill="#fff" stroke={BLUE} strokeWidth={2} vectorEffect="non-scaling-stroke" />
                   </g>
                   <g data-pkt-s2 data-allow-overlap opacity={0}>
-                    <circle r={4.5} fill={MINT} stroke={MINT} strokeWidth={2} />
+                    <circle r={4.5} fill={MINT} stroke={MINT} strokeWidth={2} vectorEffect="non-scaling-stroke" />
                   </g>
                   <g data-pkt-s3 data-allow-overlap opacity={0}>
-                    <circle r={3.5} fill="none" stroke={SUB} strokeWidth={1.5} strokeDasharray="3 2" />
+                    <circle r={3.5} fill="none" stroke={SUB} strokeWidth={1.5} strokeDasharray="3 2" vectorEffect="non-scaling-stroke" />
                   </g>
+                </g>
+                {/* Screen-space arrowheads: constant viewBox size at every
+                    zoom (unlike SVG markers, which scale with the camera).
+                    Positioned per frame from the connector geometry. */}
+                <g data-arrows>
+                  {conns.filter((cn) => cn.d && !cn.dashed).map((cn) => (
+                    <g key={`oh-${cn.name}`} data-oh={cn.name} opacity={0}>
+                      <path d="M0,0 L-9,-4.5 L-9,4.5 Z" fill={cn.coral ? CORAL : "rgba(245,244,234,0.6)"} />
+                    </g>
+                  ))}
                 </g>
               </svg>
 

@@ -1,21 +1,22 @@
 "use client";
 
 // R5 — six-window stacked dashboard (replaces the single Request
-// Activity window). One compact region (~380vh) pins a centered sticky
+// Activity window). One compact region (~480vh) pins a centered sticky
 // viewport; scroll progress v in [0,1] is the ONLY driver (pure
 // function — scroll-up reverses exactly). Overview (i=0) sits at
 // vertical center; each following window slides up from below
 // (translateY 110vh → 0, transform-only) and lands opaque on top of
-// the previous ones, which shrink to 0.96 + dim (scale via transform,
-// dim via an overlay's opacity — cards themselves stay fully opaque,
-// no bleed). The last window holds for v in [0.86, 1]. Every window is
-// the SAME fixed size (w × h per breakpoint) with content condensed to
-// fit — no scrollable content inside. The sticky stage is
-// overflow-visible with breathing room so the layered window shadows
-// never crop at the edges. The sidebar in the top window highlights
-// that window's page; the region mirrors it in data-active-page.
-// Reduced-motion / no-JS: all six windows render as a plain static
-// list (complete final state, no transforms).
+// the previous ones, which sink, shrink and dim continuously with
+// successor progress (scale/sink/dim/shadow all interpolate — no
+// boundary flips; cards themselves stay fully opaque, dim via an
+// overlay's opacity, no bleed). The last window holds for v in
+// [0.86, 1]. Every window is the SAME fixed size (w × h per
+// breakpoint) with content condensed to fit — no scrollable content
+// inside. The sticky stage is overflow-visible with breathing room so
+// the layered window shadows never crop at the edges. The sidebar in
+// the top window highlights that window's page; the region mirrors it
+// in data-active-page. Reduced-motion / no-JS: all six windows render
+// as a plain static list (complete final state, no transforms).
 import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
@@ -38,11 +39,22 @@ import {
   type PageId,
 } from "@/data/dashboard";
 
-const REGION_VH = 300;
+const REGION_VH = 480;
 /** Transitions occupy v in [0, TRANS_END]; the rest holds Analytics. */
 const TRANS_END = 0.86;
 const SEG = TRANS_END / (PAGES.length - 1);
 const OFFSCREEN_VH = 110;
+/** Scrub glide rate (1/s): lower glides slower. Region + rate together
+    set the felt speed — 480vh at k=5 is ~2.7× slower than 300vh at k=10. */
+const EASE_K = 5;
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+/** Smootherstep: zero 1st + 2nd derivatives at both ends, so windows
+    leave and land with no velocity or acceleration kink. */
+const smoother = (x: number) => {
+  const t = clamp01(x);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+};
 
 const SIDEBAR: PageId[] = [...PAGES];
 
@@ -480,7 +492,7 @@ export default function DashboardStack() {
 
   /* Scroll driver: target progress comes from scroll/resize events only
      (one forced rect read per event); a persistent rAF loop eases a
-     smoothed value toward it — exponential approach, k≈10 — and paints
+     smoothed value toward it — exponential approach, k=EASE_K — and paints
      from that. Wheel input can never jump the windows, and reversing
      mid-transition simply retargets from the current value, so both
      directions mirror each other. Refs only; zero re-renders on scroll. */
@@ -517,7 +529,7 @@ export default function DashboardStack() {
       const rm = reducedRef.current;
       cardRefs.current.forEach((el, i) => {
         if (!el) return;
-        const raw = i === 0 ? 1 : Math.min(1, Math.max(0, (v - (i - 1) * SEG) / SEG));
+        const raw = i === 0 ? 1 : clamp01((v - (i - 1) * SEG) / SEG);
         const win = el.querySelector<HTMLElement>("[data-page]");
         if (rm) {
           el.style.transform = "";
@@ -531,31 +543,48 @@ export default function DashboardStack() {
           el.style.visibility = raw <= 0 ? "hidden" : "visible";
           return;
         }
-        // Smoothstep eases each window's rise with a soft landing; still a
-        // pure function of v, so scroll-up reverses it exactly.
-        const t = raw * raw * (3 - 2 * raw);
+        // Smootherstep eases each window's rise with a feathered landing;
+        // still a pure function of v, so scroll-up reverses it exactly.
+        const t = smoother(raw);
         const y = ((1 - t) * OFFSCREEN_VH).toFixed(2);
-        const covered = i < next;
-        const depth = covered ? Math.min(next - i, 2) : 0;
-        // Covered windows sink (negative elevation) and shrink per depth —
+        // Successor-driven cover: window i sinks/dims exactly as far as
+        // window i+1 has arrived (continuous 0→1), plus a second, deeper
+        // tier as further windows pile on (capped at 2). No discrete
+        // covered/top flips anywhere in the transform path.
+        const succRaw = i < PAGES.length - 1 ? clamp01((v - i * SEG) / SEG) : 0;
+        const cover1 = smoother(succRaw);
+        let deeper = 0;
+        for (let j = i + 2; j < PAGES.length; j++) {
+          deeper = Math.max(deeper, smoother(clamp01((v - (j - 1) * SEG) / SEG)));
+        }
+        const totalCover = Math.min(2, cover1 + deeper);
+        // Covered windows sink (negative elevation) and shrink per cover —
         // nearer cover at -12px/0.975, deeper at -24px/0.95. Top stays flat.
-        const sink = covered ? depth * 12 : 0;
-        const scale = covered ? 1 - depth * 0.025 : 1;
+        const sink = totalCover * 12;
+        const scale = 1 - totalCover * 0.025;
         // Centering lives in CSS classes (see the wrapper markup), so React
         // never writes `transform` and paint fully owns it — otherwise each
         // commit resets the inline motion back to the prop value and the
         // windows pop instead of sliding.
         el.style.transform = `translate3d(0, calc(${y}vh + ${sink.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`;
-        // will-change only while the window is actually moving — never a
-        // permanent giant layer.
-        el.style.willChange = raw > 0 && raw < 1 ? "transform" : "auto";
+        // will-change while the window itself moves OR is being covered —
+        // never a permanent giant layer.
+        el.style.willChange = (raw > 0 && raw < 1) || (cover1 > 0 && cover1 < 1) ? "transform" : "auto";
+        // Veil deepens with cover (0.10 nearest, +0.06 deeper) — opacity
+        // only; the card stays fully opaque, no bleed.
         const dim = el.querySelector<HTMLElement>("[data-dim]");
-        if (dim) dim.style.opacity = covered ? (0.1 + depth * 0.06).toFixed(2) : "0";
+        if (dim) {
+          dim.style.opacity =
+            totalCover > 0
+              ? (0.1 * Math.min(totalCover, 1) + 0.06 * Math.max(0, Math.min(totalCover - 1, 1))).toFixed(3)
+              : "0";
+        }
         // Shadow lives on a dedicated layer faded by opacity (compositor
-        // only) — never touching box-shadow mid-transition, so covered
-        // windows can't pool darker and nothing repaints on flip.
+        // only): own arrival × uncovered. The outgoing top fades 1→0 while
+        // the incoming fades 0→1, so total elevation light stays ~1 through
+        // every handoff and covered windows pool no darker.
         const sh = el.querySelector<HTMLElement>("[data-shadow]");
-        if (sh) sh.style.opacity = i === next ? "1" : "0";
+        if (sh) sh.style.opacity = (t * (1 - Math.min(cover1, 1))).toFixed(3);
         el.style.pointerEvents = i === next ? "auto" : "none";
         el.style.visibility = raw <= 0 ? "hidden" : "visible";
       });
@@ -579,7 +608,7 @@ export default function DashboardStack() {
       let remaining = dt;
       while (remaining > 0.0001) {
         const h = Math.min(remaining, 1 / 60);
-        cur.v += (tgt.v - cur.v) * (1 - Math.exp(-h * 10));
+        cur.v += (tgt.v - cur.v) * (1 - Math.exp(-h * EASE_K));
         remaining -= h;
       }
       if (Math.abs(tgt.v - cur.v) < 0.0004) cur.v = tgt.v;

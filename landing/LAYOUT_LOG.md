@@ -132,3 +132,39 @@ new layout (current-code evidence; historic R9 numbers live in R9_LOG.md).
   vitest 311/311. Shots: /tmp/opencode/layout/r9e-{1280,1440,1920}-full.png
   (?hiwshot=0.12 full-view). Gallery r9b-*-shots re-saved by c11 with the
   new layout (expected).
+
+## Re-layout: smaller text, wider gaps, constant-size arrows (user-directed)
+- FU 22 -> 19 (full-view 12.6px @1440; 1280 dips to ~11.2 by explicit user
+  request, logged as accepted deviation from the old 12px floor).
+- Request-lane GAP 44 -> 56u; lane origin 40 -> 16 (aligned under setup,
+  preserves right margin: observe ends 1956, viewBox right edge 1991).
+  Fan spine/lanes recomputed from the lane (spineX = route.x + 12,
+  lane1X = col1X + 13); lbl-request slot moved to (980, 244) clear of the
+  route top edge.
+- Arrowheads 7 -> 5 units as interim; then replaced entirely (below).
+- Validation: T1-T6 PASS at every 1% scroll step (101 hiwshot frames),
+  pill-vs-wire zero intrusions, reverse identity exact at 3 points,
+  tall-390 selftest clean, pin pass 44 steps end-state focused steps
+  visited, zero console errors. Shots: /tmp/opencode/dash/hiw-{full,focus,
+  focus-inj,tall}.png.
+
+## Layer separation: constant screen-space strokes/text/arrows under zoom
+- Connectors + node rects + packets: vector-effect="non-scaling-stroke"
+  (constant screen width at any camera zoom).
+- SVG <marker>s removed (they scale with the camera). Arrowheads now live
+  in [data-arrows] OUTSIDE the camera group at fixed 9 viewBox units,
+  positioned per frame from connector geometry (2x getPointAtLength +
+  atan2); head opacity follows its connector's dim state.
+- Diagram text counter-scales per frame: titles S^-0.7, body/labels S^-1
+  (k=1 below S=1 so entry/exit envelope is untouched). Measured: overview
+  title 15px rect (~12.5px font), focused title ~21px (was ~60px+);
+  arrowheads 5.7px at full view AND focused (was: ballooned with zoom).
+- Pill groups counter-scale around their slot centers (bg stays
+  proportionate to text); dim veils/packets/static contexts handled
+  (k=1 + heads positioned in static/tall/reduced-motion paths too).
+- R9 framing math untouched (>=55% fill rule still holds); R9 phase timing
+  untouched. Camera continuity bars re-based to design theory (punch-in
+  blends are steep by R9 design: <=260% scale, <=600u pan per 1% step).
+- Validation: same hiwtest suite green (sweep T-fails=0, constancy checks:
+  overview title 10-17px, focused <=30px, head size delta <=25%);
+  tsc clean; next build green.
