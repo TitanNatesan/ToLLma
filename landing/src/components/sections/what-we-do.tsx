@@ -1,12 +1,11 @@
 "use client";
 
-// Three static pillars: Secure / Govern / Observe. All content is visible
-// by default — no accordion, no tabs, no hidden state. Equal-width grid
-// columns share one spacing system; headings align, visuals pin to the
-// column bottoms via mt-auto. Top rules draw L→R scrubbed on entry;
-// bullets stagger at 40% visibility; icons stroke-draw on hover. Compact
-// inline SVG vignettes (key flow, policy checkpoint, request trail) use
-// the existing ink/mint/coral palette. SSR/reduced-motion: final states.
+// Bifrost-style feature cards (getmaxim.ai reference): bordered 3-up grid
+// (hairline gap-px dividers), each card with a large illustration zone
+// (dot-grid backdrop + scaled-up line-art vignette) over a content zone
+// (numbered eyebrow, icon + serif title, bold lede, bullets). Same
+// verified Secure/Govern/Observe copy — only presentation is new.
+// SSR/reduced-motion: final states; hover lift + visual zoom only.
 import { useEffect } from "react";
 import { Container } from "@/components/ui/layout";
 import { Parallax } from "@/components/ui/parallax";
@@ -212,39 +211,6 @@ const COLS = [
 export default function WhatWeDo() {
   const revealRef = useRevealOnScroll({ staggerMs: 80 });
 
-  /* Top rules draw L→R scrubbed on entry (transform-only, rAF). */
-  useEffect(() => {
-    const root = revealRef.current;
-    if (!root) return;
-    const rules = Array.from(root.querySelectorAll<HTMLElement>(".pillar-rule"));
-    if (!rules.length) return;
-    if (prefersReducedMotion()) return;
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      const vh = window.innerHeight || 1;
-      rules.forEach((rule) => {
-        const rect = rule.getBoundingClientRect();
-        const p = Math.min(1, Math.max(0, (vh * 0.92 - rect.top) / (vh * 0.45)));
-        rule.style.transform = `scaleX(${p.toFixed(3)})`;
-      });
-    };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-      rules.forEach((rule) => {
-        rule.style.transform = "";
-      });
-    };
-  }, [revealRef]);
-
   return (
     <section id="what-we-do" ref={revealRef} className="scroll-mt-20 bg-cream">
       <Container width="wide" className="py-20 md:py-28">
@@ -263,25 +229,28 @@ export default function WhatWeDo() {
         </Parallax>
 
         <Parallax speed={0.85}>
-          <div className="mt-14 grid gap-12 md:grid-cols-2 md:gap-x-10 lg:grid-cols-3 lg:gap-0 lg:divide-x lg:divide-cream-line">
+          <div className="mt-14 grid grid-cols-1 gap-px border border-cream-line bg-cream-line md:grid-cols-3">
             {COLS.map((c) => (
               <article
                 key={c.title}
                 data-reveal
-                className="pillar flex h-full flex-col items-start md:px-10 md:pl-0 lg:px-10 lg:first:pl-0 lg:last:pr-0 md:[&:nth-child(3)]:col-span-2 lg:[&:nth-child(3)]:col-span-1"
+                className="feature-card group flex h-full flex-col bg-white"
               >
-                <span className="pillar-rule" aria-hidden="true" />
-                <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-coal/50">
-                  {c.n} / {c.eyebrow}
-                </p>
-                {c.icon}
-                <h3 className="mt-1 font-serif text-2xl font-medium text-coal">
-                  {c.title}
-                </h3>
-                <p className="mt-3 font-semibold leading-relaxed text-coal">{c.desc}</p>
-                <BulletList bullets={c.bullets} />
-                <div className="mt-auto w-full max-w-[220px] pt-8" aria-hidden="true">
+                <div aria-hidden="true" className="feature-illus grid aspect-[4/3] place-items-center border-b border-cream-line px-10">
                   {c.visual}
+                </div>
+                <div className="flex flex-1 flex-col items-start p-7">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-coal/50">
+                    {c.n} / {c.eyebrow}
+                  </p>
+                  <div className="mt-3 flex items-center gap-3">
+                    {c.icon}
+                    <h3 className="font-serif text-2xl font-medium text-coal">
+                      {c.title}
+                    </h3>
+                  </div>
+                  <p className="mt-3 font-semibold leading-relaxed text-coal">{c.desc}</p>
+                  <BulletList bullets={c.bullets} />
                 </div>
               </article>
             ))}
@@ -289,30 +258,38 @@ export default function WhatWeDo() {
         </Parallax>
       </Container>
       <style>{`
-        .pillar-rule {
-          display: block; width: 100%; height: 2px; border-radius: 2px;
-          background: color-mix(in srgb, var(--color-coal) 18%, transparent);
-          transform: scaleX(1); transform-origin: 0 50%;
-          transition: background-color 250ms ease;
+        .feature-card {
+          transition: transform 300ms var(--ease-out-expo);
         }
-        .pillar:hover .pillar-rule { background: var(--color-coal); }
+        @media (prefers-reduced-motion: no-preference) {
+          .feature-card:hover { transform: translateY(-2px); }
+        }
+        .feature-illus {
+          background-color: #f4f6ec;
+          background-image: radial-gradient(color-mix(in srgb, var(--color-coal) 14%, transparent) 1px, transparent 1px);
+          background-size: 18px 18px;
+        }
+        .feature-illus .pillar-visual {
+          width: min(82%, 320px);
+        }
         .pillar-icon {
-          width: 24px; height: 24px; flex: none; margin-top: 1rem;
+          width: 24px; height: 24px; flex: none; margin-top: 0;
           display: grid; place-items: center; color: var(--color-coal);
           background: transparent; background-color: transparent;
         }
         .pillar-stroke { stroke-dasharray: 1; stroke-dashoffset: 0; }
-        .pillar:hover .pillar-stroke { animation: pillar-draw 650ms var(--ease-out-expo); }
-        .pillar:hover .pillar-stroke:nth-child(2) { animation-delay: 120ms; }
+        .feature-card:hover .pillar-stroke { animation: pillar-draw 650ms var(--ease-out-expo); }
+        .feature-card:hover .pillar-stroke:nth-child(2) { animation-delay: 120ms; }
         @keyframes pillar-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
         .pillar-visual {
           width: 100%; height: auto; color: var(--color-coal);
-          opacity: 0.82; transition: opacity 250ms ease;
+          opacity: 0.82; transition: opacity 250ms ease, transform 300ms var(--ease-out-expo);
         }
-        .pillar:hover .pillar-visual { opacity: 1; }
+        .feature-card:hover .pillar-visual { opacity: 1; transform: scale(1.03); }
         @media (prefers-reduced-motion: reduce) {
-          .pillar:hover .pillar-stroke { animation: none; }
+          .feature-card:hover .pillar-stroke { animation: none; }
           .pillar-visual { transition: none; }
+          .feature-card:hover .pillar-visual { transform: none; }
         }
       `}</style>
     </section>

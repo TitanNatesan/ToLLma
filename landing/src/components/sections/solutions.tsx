@@ -92,9 +92,9 @@ export default function Solutions() {
   const revealRef = useRevealOnScroll({ staggerMs: 80, y: 16 });
   return (
     <section id="solutions" ref={revealRef} className="relative scroll-mt-20 overflow-hidden bg-cream">
-      {/* Ambient drifting provider wall: very faint (opacity + dim +
-          grayscale), non-interactive background. Content paints above. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.14]">
+      {/* Ambient drifting provider wall: clearly visible behind the
+          grid (non-interactive). Content paints above. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.35]">
         <DriftWall
           items={WALL_ITEMS}
           columns={5}
@@ -105,7 +105,7 @@ export default function Solutions() {
           direction="up"
           variance={0.45}
           parallax={0}
-          dim={0.6}
+          dim={0.85}
           grayscale={true}
           overlayColor="#e5e0d2"
           decorative={true}

@@ -882,18 +882,20 @@ body {
 
 /* Footer TextPressure wordmark: container aspect matches the line box
    (font fills the width at 1em tall), so the word always spans edge to
-   edge. Letters keep the coal-to-cream melt; TextPressure writes inline
+   edge. Solid coal via the rule below; TextPressure writes inline
    fontVariationSettings + opacity only, and leaves color empty (no
-   pressureColor), so this gradient applies. */
+   pressureColor), so this color applies. */
 .foot-pressure {
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 1;
 }
-.foot-pressure .text-pressure-title span {
-  /* Solid coal — no fade. TextPressure writes inline
-     fontVariationSettings + opacity only, and leaves color empty (no
-     pressureColor), so this applies. */
+.foot-pressure .text-pressure-title {
+  /* Jersey 10 pixel face for the footer brand (wired here, not only
+     inline, so the face survives component refactors). Solid coal —
+     TextPressure writes inline fontVariationSettings + opacity only,
+     and leaves color empty (no pressureColor), so this applies. */
+  font-family: "Jersey 10", "Arial Black", sans-serif;
   color: var(--color-coal);
 }
 

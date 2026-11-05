@@ -9,7 +9,8 @@
 // and must render exactly.
 //
 // Needs a variable font with wdth/wght/ital axes (default Roboto Flex,
-// loaded via fontUrl). Letters swell under cursor pressure, idle wave
+// loaded via fontUrl). Static faces (e.g. Jersey 10) render fine but
+// pressure/ripple have no visible effect — only the fit backstop acts.
 // optional, click sends a ripple. rAF runs only while animating and only
 // while visible (IntersectionObserver); inert under reduced-motion
 // (idle forced off). No layout reads/writes that shift the page:

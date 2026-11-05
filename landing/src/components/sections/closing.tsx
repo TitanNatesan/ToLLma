@@ -13,14 +13,14 @@ import tollmaLight from "./brand/tollma-light-256.png";
 
 // Cream footer (CrewAI-inspired composition on ToLLma cream): brand +
 // Stay-connected community strip, 6 nav columns (all hrefs verified
-// site.ts links or in-page anchors), giant TextPressure wordmark
-// (free React Bits: cursor pressure + click ripple, idle static),
+// site.ts links or in-page anchors), giant Jersey 10 wordmark
+// (free React Bits TextPressure: static pixel face, click ripple),
 // divider + bottom bar (dynamic year, Privacy/Terms as plain spans,
 // GitHub + Discussions icons).
 //
-// Motion: link underlines sweep left → right; wordmark letters swell
-// under cursor pressure and ripple on click (TextPressure rAF, only
-// while animating/visible, inert under reduced-motion); columns fade
+// Motion: link underlines sweep left → right; wordmark ripple on click
+// (TextPressure rAF, only while animating/visible, inert under
+// reduced-motion); columns fade
 // up in sequence; headings share one baseline (min-h-8).
 const COLS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
   {
@@ -99,12 +99,13 @@ export function Footer() {
   }, []);
   return (
     <footer id="company" ref={revealRef} className="relative scroll-mt-20 overflow-x-clip border-t border-cream-line bg-cream">
-      {/* Ambient ASCII wash behind the whole footer: faint light-mode
-          glow rising from the bottom edge. Decorative only (aria-hidden,
-          pointer-transparent); content paints above. */}
+      {/* Ambient ASCII wash behind the whole footer: black-to-coal glyph
+          field drifting behind the footer content (lightMode on).
+          Decorative only (aria-hidden, pointer-transparent); content
+          paints above. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.55]">
         <GradientASCII
-          colors={["#d9e2d4", "#f4f6ec", "#b9d9c9", "#7fd6b2"]}
+          colors={["#0b0d0b", "#171914", "#3a3f35", "#6f7a70"]}
           shape="rise"
           characters=" =+xX0S8#@"
           cellSize={20}
@@ -152,7 +153,12 @@ export function Footer() {
               </div>
             )}
             <Link href="#top" aria-label="ToLLma home" className="block w-full">
-              <span className="block w-full text-justify text-3xl font-bold tracking-tight text-coal [text-align-last:justify] [text-justify:inter-character]">ToLLma</span>
+              <span
+                className="block w-full text-justify text-3xl tracking-tight text-coal [text-align-last:justify] [text-justify:inter-character]"
+                style={{ fontFamily: '"Jersey 10", sans-serif', fontWeight: 400 }}
+              >
+                ToLLma
+              </span>
             </Link>
             </div>
           </div>
@@ -229,17 +235,17 @@ export function Footer() {
             </a>
           </div>
         </div>
-        {/* Giant wordmark: free React Bits TextPressure. Letters swell
-            under cursor pressure (variable width/weight/italic), click
-            sends a ripple, idle static. The aspect ratio matches the
-            line box (font fills width, 1em tall) so the word always
-            spans edge to edge. */}
+        {/* Giant wordmark: free React Bits TextPressure in Jersey 10
+            (pixel display face, static 400 — pressure swell is inert,
+            letters render crisp blocks). Click ripple still fires;
+            the line box (font fills width, 1em tall) keeps the word
+            spanning edge to edge via the transform backstop. */}
       </Container>
       <div data-reveal className="foot-pressure relative">
         <TextPressure
           text="ToLLma"
-          fontFamily="Archivo"
-          fontUrl="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&display=swap"
+          fontFamily="Jersey 10"
+          fontUrl="https://fonts.googleapis.com/css2?family=Jersey+10&display=swap"
           flex={true}
           alpha={false}
           stroke={false}
