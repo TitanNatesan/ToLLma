@@ -201,3 +201,15 @@ Frame-by-frame read of the user screencast (01->02 handoff) + new spec:
    errors. tsc clean, next build green. Shots: /tmp/opencode/dash/hiw-{full,focus,focus-inj,tall}.png.
 R9 notes: framing math untouched (>=55% fill holds); phase timing reshaped
 (hold + 40%-glide per eighth); no new libs; tall mode unchanged except FU.
+
+## Relative text sizing in focused view (user request 2026-11-05)
+Removed diagram-text counter-scale per request: titles/body/pills now live
+in diagram space (kT=kS=1) so focused type grows proportionally with its
+box instead of holding ~25px constant. Focused title now ~75px tall at
+p=0.5 (was ~27px); full-view floor unchanged (~14px @1440). Packets keep
+constant screen size (pktK=1/S); overlay arrowheads unchanged (11u fixed).
+Validation: full hiwtest PASS — sweep 101 frames T1-T6 zero fails, pill-wire
+zero intrusions, reverse exact, tall-390 clean, seams 0.0%/0.0u, pin 44
+steps, zero console errors; tsc clean; next build green. Rig constancy bar
+updated to focused >40px (relative-sizing expectation). Shots:
+hiw-reg-rel.png (01 Register), hiw-focus-rel.png (05 Guardrails).

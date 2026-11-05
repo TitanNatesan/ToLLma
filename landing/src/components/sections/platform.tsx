@@ -35,9 +35,10 @@
 // Screen-space layer (no giant focused text/arrows): connectors use
 // vector-effect="non-scaling-stroke" (constant screen width at any zoom);
 // arrowheads live in [data-arrows] OUTSIDE the camera at a fixed 11u size,
-// positioned per frame from connector geometry; diagram text counter-scales
-// (titles ~S^-0.6, body/labels constant) so a focused layer reads ~25px
-// instead of ballooning with the zoom. All pure functions of progress.
+// Diagram text lives in diagram space and scales with the box/camera;
+// arrowheads live in [data-arrows] OUTSIDE the camera at a fixed 11u size,
+// positioned per frame from connector geometry; packets counter-scale to a
+// constant screen size. All pure functions of progress.
 //
 // Diagram is vector-only so 400% zoom and DPR 1–3 stay crisp.
 "use client";
@@ -509,11 +510,10 @@ export default function Platform() {
     });
     const lens = new Map<string, number>();
     pathEls.forEach((p, n) => { try { lens.set(n, p.getTotalLength()); } catch { lens.set(n, 0); } });
-    // Counter-scaled typography: per-text base positions cached once;
-    // paint only writes transform strings. Titles scale as S^-0.65
-    // (~22px at deepest zoom), body/labels as S^-1 (constant screen
-    // size). Pill groups (bg + text together) scale around their slot
-    // centers so they track the diagram without inflating.
+    // Diagram-space typography: per-text base positions cached once;
+    // paint only writes transform strings. No counter-scale: text scales
+    // with the camera so size stays relative to its box. Pill groups ride
+    // along unscaled for the same reason.
     type TextCache = { el: SVGTextElement; x: number; y: number; t: boolean };
     const textEls: TextCache[] = [];
     svg.querySelectorAll<SVGTextElement>("[data-camera] text").forEach((t) => {
@@ -571,9 +571,9 @@ export default function Platform() {
       const i = Math.floor(f);
       return { name: passRoute[Math.min(i, N - 1)], t: f - i };
     };
-    // Screen-space layer: text counter-scale + fixed-size arrowheads.
-    // All positions stay glued to the (zoomed) architecture; only rendered
-    // size is normalized. Pure function of (S, cam) — reverses exactly.
+    // Diagram-space layer: text unscaled (relative to its box) + fixed-size
+    // arrowheads. All positions stay glued to the (zoomed) architecture.
+    // Pure function of (S, cam) — reverses exactly.
     const applyTextScale = (kT: number, kS: number) => {
       for (const { el, x, y, t } of textEls) {
         const k = t ? kT : kS;
@@ -643,13 +643,13 @@ export default function Platform() {
       }
       const st = stageAt(p);
       const cam = camAt(L, V, p, inj);
-      // Screen-space normalization: total zoom S scales titles as S^0.3
-      // (~21px at deepest zoom) and body/labels not at all, so focused
-      // text stays proportionate instead of ballooning with the camera.
+      // Text stays in diagram space: font size scales with the box/camera
+      // (no counter-scale), so a focused layer reads proportionally larger.
+      // Packets keep a constant screen size via pktK below.
       const S = st.sc * cam.s;
-      const kT = S <= 1 ? 1 : Math.pow(S, -0.6);
-      const kS = S <= 1 ? 1 : 1 / S;
-      let pktK = kS;
+      const kT = 1;
+      const kS = 1;
+      let pktK = S <= 1 ? 1 : 1 / S;
       if (camG) camG.setAttribute("transform", `translate(${(V.x + V.w / 2).toFixed(1)} ${(V.y + V.h / 2).toFixed(1)}) scale(${(st.sc * cam.s).toFixed(4)}) translate(${(-cam.x).toFixed(1)} ${(-cam.y).toFixed(1)})`);
       svg.style.opacity = st.op.toFixed(3);
       // R9 phases: a layer is spotlighted only during phase C.

@@ -4683,3 +4683,10 @@ Root causes found: (1) eighth handoffs snapped back a layer: move-in lerped from
 Files Changed: landing/src/components/sections/platform.tsx, landing/LAYOUT_LOG.md (appended).
 Testing Performed: full hiwtest green — 101-frame T1-T6 sweep zero fails, continuity within theory bars, pill-vs-wire zero intrusions with identity (caught real FAN-OUT x tap-g regression from GAP move, fixed by shifting pill slot), reverse identity exact, tall-390 clean, constancy (14/~25px, heads constant), NEW seam checks 7/7, pin pass 44 steps, zero console errors; tsc clean; next build green; screenshots reviewed.
 Architecture Notes: camera framing math untouched (R9 >=55% fill holds); R9 phase timing reshaped; layer separation (non-scaling-stroke, overlay arrows, counter-scaled text/pills, non-scaling packets) from prior round retained and re-verified after spacing change.
+
+## 2026-11-05 - How-it-works relative text sizing (focused view)
+Requirement: in zoomed/focused view keep font size relative to box size — don't hold small/constant while the box grows.
+Root cause: text counter-scale (titles S^-0.6, body/pills S^-1) held focused type at ~25-27px while its box filled the viewport.
+Files Changed: landing/src/components/sections/platform.tsx (kT=kS=1, comments updated), landing/LAYOUT_LOG.md (appended).
+Testing Performed: hiwtest PASS — 101-frame T1-T6 zero fails, pill-wire zero intrusions, reverse exact, tall-390 clean, seams 0.0%/0.0u, pin 44 steps, constancy full ~14px / focused ~75px / heads 6.7px constant, zero console errors; tsc clean; next build green; screenshots reviewed (01 Register, 05 Guardrails proportional).
+Architecture Notes: text now in diagram space (relative sizing by construction, identical relative layout at every zoom so no new overflow); packets still counter-scaled to constant screen size; arrowheads unchanged (fixed 11u overlay).
