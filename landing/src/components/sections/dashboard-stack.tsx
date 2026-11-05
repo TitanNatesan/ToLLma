@@ -81,7 +81,7 @@ const STATUS_LABEL: Record<LogStatus, string> = {
 function StatusPill({ status, retryAfterS }: { status: LogStatus; retryAfterS?: number }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[status]}`}
+      className={`dash-badge inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[status]}`}
       title={status === "Throttled" && retryAfterS != null ? `Retry-After ${retryAfterS}s` : undefined}
     >
       <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
@@ -92,11 +92,11 @@ function StatusPill({ status, retryAfterS }: { status: LogStatus; retryAfterS?: 
 
 function Sidebar({ page }: { page: PageId }) {
   return (
-    <ul aria-label="Gateway sections" className="hidden border-r border-cream-line py-4 md:block">
+    <ul aria-label="Gateway sections" className="dash-glass-side hidden border-r border-cream-line/60 py-4 md:block">
       {SIDEBAR.map((s) => (
         <li
           key={s}
-          className={`border-l-2 px-5 py-2 text-sm ${s === page ? "border-coal font-semibold text-coal" : "border-transparent text-coal/55"}`}
+          className={`border-l-2 px-5 py-2 text-sm ${s === page ? "border-mint bg-white/50 font-semibold text-coal" : "border-transparent text-coal/55"}`}
           aria-current={s === page ? "page" : undefined}
         >
           {s}
@@ -123,13 +123,13 @@ function Window({
     <div
       data-page={page}
       data-allow-overlap=""
-      className={`dash-window relative flex h-[740px] w-[min(70rem,92vw)] flex-col overflow-hidden rounded-2xl border border-cream-line bg-white md:h-[600px] ${
+      className={`dash-window dash-glass-window relative flex h-[740px] w-[min(70rem,92vw)] flex-col overflow-hidden md:h-[600px] ${
         stacked
           ? "dash-window--stacked"
           : "shadow-[0_80px_140px_-40px_rgba(23,25,20,0.5),0_36px_70px_-28px_rgba(23,25,20,0.28),0_2px_8px_rgba(23,25,20,0.12)]"
       }`}
     >
-      <div className="relative flex shrink-0 items-center border-b border-cream-line/80 px-5 py-3">
+      <div className="dash-glass-title relative flex shrink-0 items-center border-b border-cream-line/60 px-5 py-3">
         <div className="flex items-center gap-2" aria-hidden="true">
           <span className="size-3 rounded-full" style={{ backgroundColor: "#FF5F57" }} />
           <span className="size-3 rounded-full" style={{ backgroundColor: "#FEBC2E" }} />
@@ -141,7 +141,7 @@ function Window({
       </div>
       <div className="flex shrink-0 items-center justify-between gap-4 border-b border-cream-line px-6 py-4">
         <p className="font-serif text-lg text-coal">{heading}</p>
-        <p className="rounded-full bg-cream px-2.5 py-0.5 text-xs font-medium text-coal/55">
+        <p className="rounded-full border border-white/70 bg-white/60 px-2.5 py-0.5 text-xs font-medium text-coal/55">
           Sample data for illustration
         </p>
       </div>
@@ -182,7 +182,7 @@ function OverviewBody() {
     <div className="px-5 py-4">
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         {kpis.map((k) => (
-          <div key={k.label} className="rounded-xl border border-cream-line bg-cream/60 px-3.5 py-2.5">
+          <div key={k.label} className="dash-glass-card px-3.5 py-2.5">
             <p className="font-mono text-xl font-semibold text-coal">{k.value}</p>
             <p className="mt-0.5 text-xs font-medium text-coal/55">{k.label}</p>
           </div>
@@ -217,7 +217,7 @@ function OverviewBody() {
           <p className="text-sm font-semibold text-coal">Recent blocked events</p>
           <ul className="mt-1.5 space-y-1.5">
             {blocked.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-2 rounded-lg border border-cream-line/70 px-3 py-1 text-xs">
+              <li key={l.id} className="dash-glass-card flex items-center justify-between gap-2 px-3 py-1 text-xs">
                 <span className="font-mono text-coal/55">{l.time}</span>
                 <span className="min-w-0 flex-1 truncate font-medium text-coal">{l.model}</span>
                 <span className="hidden shrink-0 text-coal/55 sm:inline">{l.category?.replace(/_/g, " ")}</span>
@@ -236,7 +236,7 @@ function OverviewBody() {
 
 function ProvidersBody() {
   return (
-    <div className="overflow-x-auto px-2 py-1.5">
+    <div className="dash-glass-panel mx-3 mb-3 mt-1 overflow-x-auto px-2 py-1.5">
       <table className="w-full border-collapse text-left text-sm md:min-w-[600px]">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
@@ -248,7 +248,7 @@ function ProvidersBody() {
               { l: "Req 24h", c: "hidden sm:table-cell" },
               { l: "Error rate", c: "hidden sm:table-cell" },
             ].map((h) => (
-              <th key={h.l} scope="col" className={`px-2 py-2 font-semibold md:px-4 ${h.c}`}>{h.l}</th>
+              <th key={h.l} scope="col" className={`px-2 py-2 font-semibold md:px-3 ${h.c}`}>{h.l}</th>
             ))}
           </tr>
         </thead>
@@ -257,17 +257,17 @@ function ProvidersBody() {
             const s = providerStats(p.id);
             return (
               <tr key={p.id} className="dash-row border-t border-cream-line/70">
-                <td className="px-2 py-1.5 font-medium text-coal md:px-4">{p.name}</td>
-                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal/70 md:table-cell md:px-4">{p.api}<span className="block text-[0.7rem] text-coal/45">{p.note}</span></td>
-                <td className="px-2 py-1.5 md:px-4">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.status === "Operational" ? "bg-mint/60 text-coal" : "bg-butter text-coal"}`}>
+                <td className="px-2 py-1.5 font-medium text-coal md:px-3">{p.name}</td>
+                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal/70 md:table-cell md:px-3">{p.api}<span className="block text-[0.7rem] text-coal/45">{p.note}</span></td>
+                <td className="px-2 py-1.5 md:px-3">
+                  <span className={`dash-badge inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${s.status === "Operational" ? "bg-mint/60 text-coal" : "bg-butter text-coal"}`}>
                     <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
                     {s.status}
                   </span>
                 </td>
-                <td className="px-2 py-1.5 font-mono text-[0.8rem] text-coal md:px-4">{s.p50Ms} ms</td>
-                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal sm:table-cell md:px-4">{s.req24h}</td>
-                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal sm:table-cell md:px-4">{(s.errorRate * 100).toFixed(1)}%</td>
+                <td className="px-2 py-1.5 font-mono text-[0.8rem] text-coal md:px-3">{s.p50Ms} ms</td>
+                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal sm:table-cell md:px-3">{s.req24h}</td>
+                <td className="hidden px-2 py-1.5 font-mono text-[0.8rem] text-coal sm:table-cell md:px-3">{(s.errorRate * 100).toFixed(1)}%</td>
               </tr>
             );
           })}
@@ -280,7 +280,7 @@ function ProvidersBody() {
 
 function KeysBody() {
   return (
-    <div className="overflow-x-auto px-2 py-1.5">
+    <div className="dash-glass-panel mx-3 mb-3 mt-1 overflow-x-auto px-2 py-1.5">
       <table className="w-full min-w-[540px] border-collapse text-left text-sm">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
@@ -308,7 +308,7 @@ function KeysBody() {
                 </td>
                 <td className="px-4 py-2 font-mono text-[0.8rem] text-coal/70">{u.lastUsed}</td>
                 <td className="px-4 py-2">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${k.status === "active" ? "bg-mint/60 text-coal" : "bg-coal/10 text-coal/60"}`}>
+                  <span className={`dash-badge inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${k.status === "active" ? "bg-mint/60 text-coal" : "bg-coal/10 text-coal/60"}`}>
                     <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
                     {k.status}
                   </span>
@@ -326,7 +326,7 @@ function KeysBody() {
 function GuardrailsBody() {
   const rows = guardrailRows();
   return (
-    <div className="overflow-x-auto px-2 py-1.5">
+    <div className="dash-glass-panel mx-3 mb-3 mt-1 overflow-x-auto px-2 py-1.5">
       <table className="w-full min-w-[500px] border-collapse text-left text-sm">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
@@ -357,7 +357,7 @@ function LogsBody() {
   // reconcile script — this view is a window onto it, not the store.
   const rows = [...REQUEST_LOGS].reverse().slice(0, 9).reverse();
   return (
-    <div className="overflow-hidden px-1 py-1.5 md:px-2">
+    <div className="dash-glass-panel mx-2 mb-2 mt-1 overflow-hidden px-1 py-1.5 md:mx-3 md:mb-3 md:px-2">
       <table className="w-full border-collapse text-left text-xs md:text-sm">
         <thead>
           <tr className="text-xs font-semibold uppercase tracking-wider text-coal/50">
@@ -370,20 +370,20 @@ function LogsBody() {
               { l: "Latency", c: "hidden sm:table-cell" },
               { l: "Tokens", c: "hidden sm:table-cell" },
             ].map((h) => (
-              <th key={h.l} scope="col" className={`px-2 py-2 font-semibold md:px-4 ${h.c}`}>{h.l}</th>
+              <th key={h.l} scope="col" className={`px-2 py-2 font-semibold md:px-3 ${h.c}`}>{h.l}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((l) => (
             <tr key={l.id} className="dash-row border-t border-cream-line/70">
-              <td className="px-2 py-1 font-mono text-[0.8rem] text-coal/70 md:px-4 md:py-[7px]">{l.time}</td>
-              <td className="max-w-[92px] truncate px-2 py-1 font-mono text-[0.8rem] text-coal md:max-w-none md:px-4 md:py-[7px]">{l.keyId}</td>
-              <td className="max-w-[110px] truncate px-2 py-1 font-mono text-[0.8rem] text-coal md:max-w-none md:px-4 md:py-[7px]">{l.model}</td>
-              <td className="hidden truncate px-2 py-[7px] text-[0.8rem] font-medium text-coal/70 md:table-cell md:px-4">{PROVIDER_ROWS.find((p) => p.id === l.provider)?.name}</td>
-              <td className="px-2 py-1 md:px-4 md:py-[7px]"><StatusPill status={l.status} retryAfterS={l.retryAfterS} /></td>
-              <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-4">{l.latencyMs === 0 ? "—" : `${l.latencyMs} ms`}</td>
-              <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-4">{l.tokens === 0 ? "—" : l.tokens.toLocaleString("en-US")}</td>
+              <td className="px-2 py-1 font-mono text-[0.8rem] text-coal/70 md:px-3 md:py-[7px]">{l.time}</td>
+              <td className="max-w-[92px] truncate px-2 py-1 font-mono text-[0.8rem] text-coal md:max-w-none md:px-3 md:py-[7px]">{l.keyId}</td>
+              <td className="max-w-[110px] truncate px-2 py-1 font-mono text-[0.8rem] text-coal md:max-w-none md:px-3 md:py-[7px]">{l.model}</td>
+              <td className="hidden truncate px-2 py-[7px] text-[0.8rem] font-medium text-coal/70 md:table-cell md:px-3">{PROVIDER_ROWS.find((p) => p.id === l.provider)?.name}</td>
+              <td className="px-2 py-1 md:px-3 md:py-[7px]"><StatusPill status={l.status} retryAfterS={l.retryAfterS} /></td>
+              <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-3">{l.latencyMs === 0 ? "—" : `${l.latencyMs} ms`}</td>
+              <td className="hidden px-2 py-[7px] font-mono text-[0.8rem] text-coal/70 sm:table-cell md:px-3">{l.tokens === 0 ? "—" : l.tokens.toLocaleString("en-US")}</td>
             </tr>
           ))}
         </tbody>
@@ -409,7 +409,7 @@ function AnalyticsBody() {
   });
   return (
     <div className="grid gap-4 px-5 py-4 lg:grid-cols-2">
-      <div>
+      <div className="dash-glass-panel px-3.5 py-3">
         <p className="text-sm font-semibold text-coal">Spend by provider</p>
         <ul className="mt-1.5 space-y-1.5">
           {spend.map((s) => (
@@ -423,7 +423,7 @@ function AnalyticsBody() {
           ))}
         </ul>
       </div>
-      <div>
+      <div className="dash-glass-panel px-3.5 py-3">
         <p className="text-sm font-semibold text-coal">Tokens by model · top 5</p>
         <ul className="mt-1.5 space-y-1.5">
           {tokens.map((t) => (
@@ -437,7 +437,7 @@ function AnalyticsBody() {
           ))}
         </ul>
       </div>
-      <div className="lg:col-span-2">
+      <div className="dash-glass-panel px-3.5 py-3 lg:col-span-2">
         <p className="text-sm font-semibold text-coal">Daily cost</p>
         <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 h-20 w-full" role="img" aria-label={`Daily cost line, total ${money(KPIS.spendToday)}`}>
           <polyline points={pts.join(" ")} fill="none" stroke="var(--color-mint)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />

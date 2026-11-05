@@ -528,6 +528,70 @@ body {
   }
 }
 
+/* Preview glass system — dashboard-stack windows share one hierarchy.
+   L1 window: translucent ivory + 5px frost + layered border + ambient
+   shadow (the single backdrop-filter per window; nested surfaces layer
+   translucency over the already-frosted backdrop instead of re-blurring,
+   so scroll-driven sticky transforms stay cheap). L2 panels: soft
+   translucency, fine borders, no shadow, no own blur. L3 cards/badges:
+   lightest tint, hairline borders, no shadow. Text is never blurred.
+   Fallback below for engines without backdrop-filter. */
+.dash-glass-window {
+  background-color: var(--preview-glass-bg);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0) 26%);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+  border: 1px solid var(--preview-glass-border);
+  border-radius: var(--preview-radius-window);
+  box-shadow:
+    var(--preview-glass-shadow),
+    0 1px 0 var(--preview-glass-highlight) inset,
+    0 -1px 0 rgba(70, 78, 62, 0.07) inset;
+}
+.dash-glass-title {
+  background: rgba(255, 255, 255, 0.35);
+}
+.dash-glass-side {
+  background: rgba(255, 255, 255, 0.32);
+}
+.dash-glass-panel {
+  background-color: var(--preview-glass-bg-soft);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0) 40%);
+  border: 1px solid var(--preview-glass-border-subtle);
+  border-radius: var(--preview-radius-panel);
+}
+.dash-glass-card {
+  background-color: var(--preview-glass-bg-soft);
+  border: 1px solid var(--preview-glass-border-subtle);
+  border-radius: var(--preview-radius-card);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset;
+}
+.dash-badge {
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) inset;
+}
+/* Table rows inside a glass panel use the fainter divider so the table
+   reads as one cohesive surface instead of stacked boxes. */
+.dash-glass-panel .dash-row {
+  border-color: var(--preview-glass-border-subtle);
+}
+@supports not ((backdrop-filter: blur(5px)) or (-webkit-backdrop-filter: blur(5px))) {
+  .dash-glass-window {
+    background-color: rgba(255, 255, 252, 0.97);
+    background-image: none;
+  }
+  .dash-glass-panel,
+  .dash-glass-card {
+    background-color: rgba(255, 255, 255, 0.9);
+    background-image: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dash-glass-window .dash-row {
+    transition: none;
+  }
+}
+
 /* Reveal: fade + rise (24px, 700ms, var(--ease-reveal)). JS sets
    [data-hidden] only when motion is allowed; --reveal-delay staggers
    siblings (90ms steps); --reveal-y overrides distance. */
