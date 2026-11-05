@@ -4690,3 +4690,19 @@ Root cause: text counter-scale (titles S^-0.6, body/pills S^-1) held focused typ
 Files Changed: landing/src/components/sections/platform.tsx (kT=kS=1, comments updated), landing/LAYOUT_LOG.md (appended).
 Testing Performed: hiwtest PASS — 101-frame T1-T6 zero fails, pill-wire zero intrusions, reverse exact, tall-390 clean, seams 0.0%/0.0u, pin 44 steps, constancy full ~14px / focused ~75px / heads 6.7px constant, zero console errors; tsc clean; next build green; screenshots reviewed (01 Register, 05 Guardrails proportional).
 Architecture Notes: text now in diagram space (relative sizing by construction, identical relative layout at every zoom so no new overflow); packets still counter-scaled to constant screen size; arrowheads unchanged (fixed 11u overlay).
+
+## 2026-11-05 - Premium liquid-glass navbar redesign (v2)
+Requirement: Apple-inspired frosted/glossy floating capsule — layered gradients, subtle cool-blue reflections, <=2px blur, dark-CTA contrast, readable over cream AND dark sections, 9-width responsive matrix.
+Implemented (landing only, 2 files):
+- globals.css .navbar-glass: cream base 0.58 + white sheen/blue-light gradient layers, hairline white border + coal/blue inset shadows + ambient shadow, ::before top highlight, NEW ::after pointer glare (radial, --mx/--my, 0.55->0.85 on hover), content z-index above pseudos, isolation+overflow hidden, no-filter fallback, reduced-motion static.
+- nav.tsx: onMouseMove glare handler (mouse + motion-safe only), logo 26->28px.
+Preserved: all 6 destinations, FLIP collapse, mobile panel 0.94 fill, focus states, CTA.
+Not built (deliberate): dark-section variant class — single light glass reads on dark (coal-on-ivory contrast); verified by screenshot. No new deps.
+Testing: Playwright matrix 390/768/1024/1440/1920 x hero/dark/footer — blur computed exactly blur(2px), zero h-overflow, 9 links, menu opens (330px, no overflow), glare vars update, reduced-motion full nav when scrolled, zero console/page errors; footer gray-block scare proven to be page CTA decor seen through glass (header hidden A/B); tsc adds zero new errors (png-module errors identical on HEAD); next build green.
+Files Changed: landing/src/app/globals.css, landing/src/components/sections/nav.tsx.
+
+## 2026-11-05 - Footer CrewAI-inspired redesign (cream, 3 regions)
+Requirement: CrewAI layout concept (upper nav / giant wordmark / minimal bottom bar) on continuous warm cream, no fake links/pages, no newsletter without backend.
+Implemented (landing only): closing.tsx brand column gains expanded description + "Stay connected" community area (GitHub repo, Discussions, Roadmap — all real site.ts destinations); bottom bar gains GitHub + Discussions icons (aria-labelled, external) beside Privacy/Terms spans (kept plain text: no such pages exist); dynamic copyright year. New IconGitHub/IconChat in icons.tsx matching the 1.7-stroke system. No new deps; existing 6 columns/wordmark/parallax untouched.
+Testing: Playwright 9-width matrix (320-1920) — 29 footer links audited, 0 dead, all labelled, externals noopener, zero h-overflow everywhere, zero console/page errors; screenshots reviewed (desktop/tablet/mobile wordmark+bottom bar, navbar collapsed above footer with no link overlap). One rig artifact (1920 shot landing mid-pin) resolved with repeat-scroll, proven non-defect. tsc clean except pre-existing png-module errors (identical on HEAD); next build green.
+Architecture Notes: newsletter deliberately omitted (no backend endpoint — spec §5 community-area path); social set limited to existing destinations (GitHub + Discussions, no LinkedIn/X/Discord).

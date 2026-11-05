@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { Container } from "@/components/ui/layout";
+import { IconChat, IconGitHub } from "@/components/ui/icons";
 import { useRevealOnScroll } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
@@ -143,9 +144,49 @@ export function Footer() {
               <span className="text-[1.1rem] font-semibold tracking-tight text-coal">ToLLma</span>
             </Link>
             <p className="max-w-xs text-sm leading-relaxed text-coal/60">
-              The open source AI gateway for models and agents. Apache 2.0.
+              The open source AI gateway for models and agents. One unified
+              interface to connect, route, govern, and observe your AI
+              infrastructure.
             </p>
             <span className="foot-pill">Apache 2.0 · Self-hosted</span>
+            {/* Stay connected: no newsletter backend exists, so the
+                community area links the real GitHub repo, discussions,
+                and roadmap instead of inventing a form. */}
+            <div className="mt-2 flex flex-col items-start gap-2">
+              <p className="text-xs font-semibold text-coal/50">Stay connected</p>
+              <ul className="flex flex-col items-start gap-2">
+                <li>
+                  <a
+                    href={GITHUB_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="foot-link inline-flex items-center gap-2 text-sm leading-relaxed text-coal/75"
+                  >
+                    <IconGitHub size={16} /> GitHub repository
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href={COMMUNITY_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="foot-link inline-flex items-center gap-2 text-sm leading-relaxed text-coal/75"
+                  >
+                    <IconChat size={16} /> Community discussions
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href={ROADMAP_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="foot-link text-sm leading-relaxed text-coal/75"
+                  >
+                    Roadmap
+                  </a>
+                </li>
+              </ul>
+            </div>
           </div>
           <nav className="grid grid-cols-2 gap-8 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
             {COLS.map((c) => (
@@ -199,10 +240,33 @@ export function Footer() {
       </div>
       <Container width="wide" className="pb-14">
         <div data-reveal className="flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
-          <p>© 2026 ToLLma · Apache-2.0</p>
-          <p className="flex gap-5">
+          <p>© {new Date().getFullYear()} ToLLma · Apache-2.0</p>
+          {/* Privacy/Terms are plain text: no such pages exist, and fake
+              links are worse than none. Only real destinations get icons:
+              GitHub + Discussions (no LinkedIn/X/Discord exists). */}
+          <p className="flex items-center gap-5">
             <span>Privacy</span>
             <span>Terms</span>
+            <span className="flex items-center gap-3">
+              <a
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="ToLLma on GitHub"
+                className="text-coal/60 transition-colors duration-200 hover:text-coal"
+              >
+                <IconGitHub size={18} />
+              </a>
+              <a
+                href={COMMUNITY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="ToLLma community discussions"
+                className="text-coal/60 transition-colors duration-200 hover:text-coal"
+              >
+                <IconChat size={18} />
+              </a>
+            </span>
           </p>
         </div>
       </Container>
