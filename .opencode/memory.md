@@ -4801,3 +4801,7 @@ Verified: full scroll walk visits all 6 in order both directions (reverse exact)
 
 ## 2026-11-05 - Hero/stack breathing room (user screenshot: CTA buried under first window)
 Root cause: region -mt-8 pulled the stack 32px up into the hero (net 8px gap, CTA overlapped). Changed region to mt-12 md:mt-16. Verified: CTA-to-window gap 64px desktop / 48px mobile, CTA fully clear, 0 overflow; screenshots reviewed both widths.
+
+## 2026-11-05 - Stacking-window shadow bands fixed (user: "fix this shadow")
+Symptom: muddy dark bands flanking the pile. Root causes found by probing (all three fixed): (1) every covered window cast its full heavy shadow — restored single-shadow rule by toggling dash-window--stacked on non-top cards in the scroll reader (direct classList, no re-render); (2) upstream dim compounded to 0.41 black on the deepest card — dimAmount 0.1->0.05 (caps ~0.23); (3) REAL culprit: the neutral card wrapper spanned the full slot width, so its inset-0 dim shade painted dark bands across the whole row — card now shrink-wraps the window (width fit-content + auto margins) so shade == window box. Also set itemScale 0 (covered cards keep full size; only 24px tabs peek — no dimmed side slivers).
+Verified: end-state pile bright with tab cascade + one soft shadow, mid-stack clean, mobile centered (20/359, ox 0), tsc clean, build green.

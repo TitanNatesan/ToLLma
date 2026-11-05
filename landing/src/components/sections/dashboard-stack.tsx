@@ -478,6 +478,14 @@ export default function DashboardStack() {
         if (liveRef.current) liveRef.current.textContent = `${page} window on top.`;
       }
       if (region.dataset.activePage !== page) region.dataset.activePage = page;
+      // Single-shadow rule (mirrors the old engine's constant-light
+      // trick): only the top window casts its shadow. Covered windows
+      // go shadowless so their shadows can't pool into muddy edges.
+      // Direct classList toggles — no re-render on scroll.
+      slots.forEach((el, i) => {
+        const win = el.querySelector<HTMLElement>("[data-page]");
+        if (win) win.classList.toggle("dash-window--stacked", i !== top);
+      });
     };
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(read);
@@ -519,14 +527,18 @@ export default function DashboardStack() {
     >
       {/* Free React Bits ScrollStack drives the stacking (native page
           scroll; smoothScroll stays off so the wheel is never hijacked).
-          Tune here: stackPosition pins the pile, itemScale/baseScale +
-          dimAmount mirror the old cover tiers (0.975/0.95, veil ~0.1). */}
+          Tune here: stackPosition pins the pile; dimAmount compounds per
+          depth (keep it small: 0.05 caps the deepest veil at ~0.23,
+          near the old 0.16 ceiling). itemScale stays 0 — covered cards
+          keep full size so only their 24px title tabs peek out; any
+          shrink would expose dimmed side bands (the muddy-edges
+          defect). baseScale is then a no-op floor. */}
       <ScrollStack
         useWindowScroll
         stackPosition="15%"
-        itemScale={0.025}
+        itemScale={0}
         baseScale={0.95}
-        dimAmount={0.1}
+        dimAmount={0.05}
         holdDistance={400}
         smoothScroll={false}
       >
