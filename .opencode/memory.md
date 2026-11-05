@@ -4850,3 +4850,6 @@ Wordmark centering: foot-pressure gains padding-inline clamp(16px,4vw,72px); bac
 
 ## 2026-11-06 - Black curvy viewport ring
 Frame upgraded: fixed inset-0 12px solid black ring, rounded 28px, html bg-black so corner triangles read black; pointer-events-none, z-90, print-hidden. Verified on hero + footer, zero errors, tsc clean.
+
+## 2026-11-06 - Scroll-away frame on black + tighter footer gap
+Reworked per ask: fixed ring replaced with a page wrapper (m-3, rounded 28px, overflow:clip, print-plain) that scrolls with the page; body forced black via unlayered end-of-file rule (cascade layers: utilities lose to unlayered, so the body class alone couldn't do it) — margins/corners probe as BODY/black mid-scroll, wrapper scrolls off (-2988 at scroll 3000), ox=0. overflow:clip (not hidden) keeps sticky/fixed working. Footer gap: aspect 3.2/1 (bound: fs hits heuristic max contentW/3, so ratio must stay under ~3.26) — wordmark-to-divider gap now 25px, no overlap, zero errors. tsc clean, build green.
