@@ -9,13 +9,16 @@ import { prefersReducedMotion } from "@/lib/animations/motion-preference";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
 import tollmaLight from "./brand/tollma-light-256.png";
 
-// Cream footer with top border: wordmark + 6 link columns (all hrefs are
-// verified site.ts links or in-page anchors), bottom bar with
-// © 2026 ToLLma, Apache-2.0, and Privacy/Terms as plain spans.
+// Cream footer (CrewAI-inspired composition on ToLLma cream): brand +
+// Stay-connected community column, 6 nav columns (all hrefs verified
+// site.ts links or in-page anchors), giant parallax wordmark, divider +
+// bottom bar (dynamic year, Privacy/Terms as plain spans, GitHub +
+// Discussions icons).
 //
-// Phase D motion: link underlines sweep left → right on hover; the wordmark
-// does one small rotation per hover; columns fade up in sequence on entry
-// with the bottom line last; headings share one baseline (min-h-8).
+// Motion: link underlines sweep left → right; wordmark letters ride
+// per-letter scroll parallax (transform-only, reversible, inert under
+// reduced-motion); columns fade up in sequence; headings share one
+// baseline (min-h-8).
 const COLS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
   {
     title: "Meet Our Gateway",
@@ -130,7 +133,7 @@ export function Footer() {
   useWordmarkRise(clipRef, driftRef);
   return (
     <footer id="company" ref={revealRef} className="scroll-mt-20 border-t border-cream-line bg-cream">
-      <Container width="wide" className="pt-14">
+      <Container width="wide" className="pt-16 md:pt-20">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,10fr)]">
           <div data-reveal className="flex flex-col items-start gap-3">
             <Link href="#top" className="foot-logo flex items-center gap-2" aria-label="ToLLma home">
@@ -188,11 +191,11 @@ export function Footer() {
               </ul>
             </div>
           </div>
-          <nav className="grid grid-cols-2 gap-8 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
+          <nav className="grid grid-cols-2 gap-x-10 gap-y-12 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
             {COLS.map((c) => (
-              <div key={c.title} data-reveal className="flex flex-col items-start gap-4">
+              <div key={c.title} data-reveal className="flex flex-col items-start gap-6">
                 <p className="flex min-h-8 items-start text-xs font-semibold text-coal/50">{c.title}</p>
-                <ul className="flex flex-col items-start gap-2.5">
+                <ul className="flex flex-col items-start gap-3">
                   {c.links.map((l) =>
                     l.external ? (
                       <li key={l.label}>
@@ -238,7 +241,7 @@ export function Footer() {
           </span>
         </div>
       </div>
-      <Container width="wide" className="pb-14">
+      <Container width="wide" className="pb-10 pt-4">
         <div data-reveal className="flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} ToLLma · Apache-2.0</p>
           {/* Privacy/Terms are plain text: no such pages exist, and fake
