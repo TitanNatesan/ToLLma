@@ -13,6 +13,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { MagneticButton } from "@/components/ui/magnetic-button";
+import GlassSurface from "@/components/ui/glass-surface";
 import { IconClose, IconMenu } from "@/components/ui/icons";
 import { useActiveSection } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
@@ -164,27 +165,18 @@ export default function Nav() {
           onMouseLeave={() => setHovered(false)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          onMouseMove={(e) => {
-            // Pointer glare: drift the ::after highlight toward the
-            // cursor. Mouse only, motion-safe only — touch and
-            // reduced-motion keep the static centered sheen.
-            if (reduced) return;
-            const pe = e as unknown as { pointerType?: string };
-            if (pe.pointerType && pe.pointerType !== "mouse") return;
-            const el = e.currentTarget;
-            const r = el.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0) return;
-            el.style.setProperty("--mx", `${(((e.clientX - r.left) / r.width) * 100).toFixed(1)}%`);
-            el.style.setProperty("--my", `${(((e.clientY - r.top) / r.height) * 100).toFixed(1)}%`);
-          }}
           onClick={() => {
             // Touch: tapping the collapsed island expands it.
             if (!expanded) setTouchOpen(true);
           }}
-          className={`navbar-glass pointer-events-auto flex max-w-full items-center gap-3 rounded-full px-4 py-2 text-coal transition-[padding,background-color,border-color,box-shadow] duration-300 ease-out sm:gap-4 sm:px-5 sm:py-2.5 ${
+          className={`pointer-events-auto relative isolate flex max-w-full items-center gap-3 rounded-full px-4 py-2 text-coal transition-[padding] duration-300 ease-out sm:gap-4 sm:px-5 sm:py-2.5 ${
             expanded ? "" : "cursor-pointer"
           }`}
         >
+          {/* Real refracted-glass material beneath the island content. */}
+          <div aria-hidden="true" className="absolute inset-0 -z-10">
+            <GlassSurface width="100%" height="100%" borderRadius={999} backgroundOpacity={0.65} displace={0} redOffset={0} greenOffset={0} blueOffset={0} />
+          </div>
           <Link
             href="#top"
             className="flex shrink-0 items-center gap-2"
@@ -321,10 +313,14 @@ export default function Nav() {
         >
           <div className="overflow-hidden">
             <div
-              className={`navbar-glass navbar-menu flex flex-col gap-1 rounded-3xl p-3 text-coal ${
+              className={`relative isolate flex flex-col gap-1 rounded-3xl p-3 text-coal ${
                 open ? undefined : "invisible"
               }`}
             >
+              {/* Same refracted-glass material, denser frost for body copy. */}
+              <div aria-hidden="true" className="absolute inset-0 -z-10">
+                <GlassSurface width="100%" height="100%" borderRadius={24} backgroundOpacity={0.75} displace={0} redOffset={0} greenOffset={0} blueOffset={0} />
+              </div>
               {LINKS.map((l, i) => (
                 <Link
                   key={l.label}
