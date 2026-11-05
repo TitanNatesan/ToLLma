@@ -94,7 +94,7 @@ export default function Solutions() {
     <section id="solutions" ref={revealRef} className="relative scroll-mt-20 overflow-hidden bg-cream">
       {/* Ambient drifting provider wall: clearly visible behind the
           grid (non-interactive). Content paints above. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.35]">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-100">
         <DriftWall
           items={WALL_ITEMS}
           columns={5}
