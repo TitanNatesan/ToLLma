@@ -4824,3 +4824,11 @@ Overflow: root-caused the fit-guard stall (document.fonts.ready can resolve befo
 Wash flip: rise() center -0.7 -> +0.7 (glow descends from top; reveal order follows). Flip looked dead in tests until root-caused: SwiftShader runs ~1.5fps so the 2.4s intro needs ~60s wall-clock — all short screenshots caught intro ~15%. Proven with 75s soak: mint glyph field rains from the top edge. No shader bug; deviation stands as one commented line.
 Wordmark: solid coal (gradient removed per ask). Font itself (Archivo/Roboto churn) is the parallel session's area — fit-guard is face-agnostic either way.
 Testing: tsc clean; next build green; zero console errors throughout.
+
+## 2026-11-06 - R1-R4 batch: Jersey 10 footer brand, black gradient wash, stronger provider backdrop, Bifrost-style feature cards
+User asks (4): (1) Jersey 10 for footer brand text; (2) black/coal footer gradient; (3) stronger Provider-agnostic backdrop; (4) redesign Unified Gateway Management 3 cards after Bifrost (getmaxim.ai).
+R1: TextPressure fontFamily/fontUrl -> Jersey 10 (+CSS class rule as backstop); small brand link also Jersey 10/400. Verified Google Fonts: single static 400 face, so pressure swell is inert (noted in code) — wordmark renders crisp pixel blocks. Gotcha: first probe showed Inter (stale HMR compile + a CSS edit that orphaned a rule body); touch + rule repair fixed. Validated computed family Jersey 10 + glyph fit 0..vw at 320/390/1440/1920, zero errors.
+R2: GradientASCII colors mint -> black/coal ramp. Screenshot confirms black glyph field; copy stays legible above. Zero errors.
+R3: solutions DriftWall wrapper opacity 0.14->0.35, dim 0.6->0.85. Screenshot: drifting provider labels clearly visible, grid fully legible. Zero errors.
+R4: what-we-do pillars -> Bifrost cards: gap-px bordered 3-up white grid, aspect-4/3 dot-grid illustration zone with scaled-up vignettes, numbered eyebrow + icon/title + same verified copy/bullets. Removed dead pillar-rule scroll effect. Hover lift + visual zoom, reduced-motion static. 3 cards intact at 1440 + stacked 390, ox=0.
+Testing: tsc clean; next build green (static export); zero console errors throughout; full-page overflow PASS all widths.
