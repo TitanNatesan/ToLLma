@@ -889,6 +889,10 @@ body {
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 1;
+  /* Centered with breathing room: the wordmark fits the padded box
+     (the TextPressure backstop measures clientWidth, so it stays
+     padding-aware) instead of touching the viewport edges. */
+  padding-inline: clamp(16px, 4vw, 72px);
 }
 .foot-pressure .text-pressure-title {
   /* Jersey 10 pixel face for the footer brand (wired here, not only
