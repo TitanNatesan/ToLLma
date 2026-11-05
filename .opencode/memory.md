@@ -4756,3 +4756,8 @@ Verified: T +100px / a +18px mid-scroll vs +69/+12px at bottom (6-way spread, re
 ## 2026-11-05 - Footer wordmark: boxy Archivo 900
 Requirement: boxy font for the giant wordmark. Trialed live: Archivo Black (boxiest but overflows at full-bleed scale), Space Grotesk 700 (fits, not boxy), Archivo 900 (boxy grotesque, fits edge-to-edge) — picked Archivo 900. Added via next/font/google (weight 900, display optional, same offline-safe pattern as Inter/Newsreader), wired as --font-archivo on <html>, .foot-wordmark uses it with system-sans fallback.
 Verified: computed font is Archivo, rect 2..1438, 0 h-overflow; tsc clean; next build green (font fetched OK).
+
+## 2026-11-05 - Footer wordmark settles straight at page bottom
+Requirement: at full scroll, all letters align straight (no residual shear).
+Change (closing.tsx only): settle factor = clamp(scrollRemaining / 0.6vh) multiplies every per-letter offset; hits exactly 0 at page bottom (transforms cleared), pure function of scrollY so scroll-up restores shear reversibly. Compatible with the concurrently retuned speed arc (middle-led) — untouched.
+Verified: full scroll -> 6x empty transforms, bottoms 799 x6, screenshot straight; mid-scroll shear intact (earlier probe).

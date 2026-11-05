@@ -106,9 +106,16 @@ function useWordmarkRise(
       const rect = clip.getBoundingClientRect();
       const vh = window.innerHeight || 1;
       const progress = (vh - rect.top) / (vh + rect.height) - 0.5;
+      // Settle: as the page reaches its very bottom, ease every offset
+      // to exactly 0 so the wordmark sits straight at rest. Pure
+      // function of scroll position — fully reversible on scroll-up.
+      const max = document.documentElement.scrollHeight - vh;
+      const remaining = Math.max(0, max - (window.scrollY || 0));
+      const settle = Math.min(1, remaining / (vh * 0.6));
       for (const s of spans) {
         const sp = parseFloat(s.dataset.speed || "-1");
-        s.style.transform = `translate3d(0, ${(progress * sp * 100).toFixed(2)}px, 0)`;
+        if (settle <= 0) { s.style.transform = ""; continue; }
+        s.style.transform = `translate3d(0, ${(progress * sp * 100 * settle).toFixed(2)}px, 0)`;
       }
     };
     const schedule = () => {
