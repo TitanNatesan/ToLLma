@@ -4832,3 +4832,6 @@ R2: GradientASCII colors mint -> black/coal ramp. Screenshot confirms black glyp
 R3: solutions DriftWall wrapper opacity 0.14->0.35, dim 0.6->0.85. Screenshot: drifting provider labels clearly visible, grid fully legible. Zero errors.
 R4: what-we-do pillars -> Bifrost cards: gap-px bordered 3-up white grid, aspect-4/3 dot-grid illustration zone with scaled-up vignettes, numbered eyebrow + icon/title + same verified copy/bullets. Removed dead pillar-rule scroll effect. Hover lift + visual zoom, reduced-motion static. 3 cards intact at 1440 + stacked 390, ox=0.
 Testing: tsc clean; next build green (static export); zero console errors throughout; full-page overflow PASS all widths.
+
+## 2026-11-06 - Provider backdrop: full opacity + full screen width
+Follow-ups: wrapper opacity 0.35 -> 1 (verified computed 1, tiles strong); then full-bleed — root cause of the narrow look was the 5-column plane (~1090px + 1.18 tilt scale, centered) plus the default fade=0.6 mask dissolving from 40% outward. Fix in solutions.tsx only: columns 5->8 (plane 2353px, covers 1920) + fade 0.6->0.15 (mask holds to 85%). Verified at 1440 + 1920: tiles cut at both viewport edges, ox=0, zero errors, tsc clean. Tiles now drift behind the heading copy too — legible (light tiles under dark text), matches the DriftWall aesthetic.
