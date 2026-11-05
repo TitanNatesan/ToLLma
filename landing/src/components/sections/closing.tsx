@@ -238,6 +238,8 @@ export function Footer() {
       <div data-reveal className="foot-pressure relative">
         <TextPressure
           text="ToLLma"
+          fontFamily="Archivo"
+          fontUrl="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&display=swap"
           flex={true}
           alpha={false}
           stroke={false}

@@ -135,6 +135,8 @@ const TextPressure = ({
 
   const [fontSize, setFontSize] = useState(minFontSize);
   const [scaleY, setScaleY] = useState(1);
+  const scaleYRef = useRef(1);
+  scaleYRef.current = scaleY;
 
   const chars = Array.from(text);
 
@@ -283,6 +285,15 @@ const TextPressure = ({
       while (ripples.length && now - ripples[0].start > RIPPLE_LIFE * 1000) ripples.shift();
 
       const titleRect = title.getBoundingClientRect();
+      // Hard overflow backstop: cursor pressure changes advances
+      // continuously, so a resize-time fit alone can't guarantee the
+      // line stays inside its box. Measure the actual ink (min/max of
+      // span rects — scrollWidth under-reports flex overflow) and
+      // scale X to fit every tick. Origin is title-left (see CSS), so
+      // the line pins left and can never escape right. Transform-only,
+      // exact, self-correcting under any face or pointer position.
+      let inkL = Infinity;
+      let inkR = -Infinity;
       const maxDist = Math.max(titleRect.width * options.radius, 1);
       const spread = Math.max(options.radius * 2, 0.2);
       // No pointer yet (or it left): rest the pressure on the wordmark
@@ -296,8 +307,17 @@ const TextPressure = ({
       const centers = spans.map((span) => {
         if (!span) return null;
         const rect = span.getBoundingClientRect();
+        if (rect.width > 0) {
+          inkL = Math.min(inkL, rect.left);
+          inkR = Math.max(inkR, rect.right);
+        }
         return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
       });
+      if (inkR > inkL) {
+        const extent = inkR - titleRect.left;
+        const fit = extent > titleRect.width + 1 ? titleRect.width / extent : 1;
+        title.style.transform = `scale(${fit.toFixed(4)}, ${scaleYRef.current})`;
+      }
 
       let changed = false;
       spans.forEach((span, i) => {
@@ -362,16 +382,53 @@ const TextPressure = ({
     };
   }, []);
 
+  // Re-run the fit check once the actual webfont arrives (advances
+  // change under us; document.fonts.ready can resolve before this
+  // component's own @import is even discovered, so load the family
+  // explicitly instead of trusting ready).
+  const [fontTick, setFontTick] = useState(0);
+  useEffect(() => {
+    let on = true;
+    document.fonts
+      ?.load?.(`100px "${fontFamily}"`, text)
+      .then(() => {
+        if (on) setFontTick((t) => t + 1);
+      })
+      .catch(() => {});
+    return () => {
+      on = false;
+    };
+  }, [fontFamily, text]);
+
   useEffect(() => {
     wakeRef.current?.();
-  }, [fontSize, scaleY, text, flex, fontFamily]);
+    // Overflow guard: the chars/2 heuristic assumes ~0.5em average
+    // advance, which wide faces (Archivo Black) exceed — glyphs then
+    // bleed past the viewport with no page overflow to catch it
+    // (overflow is visually clipped by ancestors). Width scales
+    // linearly with font-size, so one proportional correction fits
+    // any face; floored at minFontSize, never grows. Runs after every
+    // size-affecting change (mount, resizes, font swaps).
+    const title = titleRef.current;
+    if (title) {
+      const over = title.scrollWidth - title.clientWidth;
+      if (over > 1) {
+        const cur = parseFloat(getComputedStyle(title).fontSize) || minFontSize;
+        if (cur > minFontSize) {
+          setFontSize(Math.max(minFontSize, Math.floor(cur * (title.clientWidth / title.scrollWidth))));
+        }
+      }
+    }
+  }, [fontSize, scaleY, text, flex, fontFamily, fontTick]);
 
   const titleStyle = {
     fontFamily,
     fontSize,
     lineHeight: 1,
     transform: `scale(1, ${scaleY})`,
-    transformOrigin: "center top",
+    // Left-anchored: the overflow backstop in tick() pins ink to the
+    // left edge, so scaling can only pull the right edge inward.
+    transformOrigin: "left top",
     margin: 0,
     textAlign: "center",
     userSelect: "none",
