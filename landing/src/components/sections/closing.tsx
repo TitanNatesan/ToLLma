@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Container } from "@/components/ui/layout";
 import { IconChat, IconGitHub } from "@/components/ui/icons";
+import StickerPeel from "@/components/ui/sticker-peel";
 import TextPressure from "@/components/ui/text-pressure";
-import { useRevealOnScroll } from "@/lib/animations";
+import { useReducedMotion, useRevealOnScroll } from "@/lib/animations";
 import { COMMUNITY_URL, DOCS_URL, GET_STARTED_URL, GITHUB_URL, LICENSE_URL, ROADMAP_URL } from "@/lib/site";
 import tollmaLight from "./brand/tollma-light-256.png";
 
@@ -83,25 +85,51 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
 // rAF-throttled, inert under prefers-reduced-motion (static full word).
 export function Footer() {
   const revealRef = useRevealOnScroll({ staggerMs: 90, y: 16 });
+  // Static blended mark for reduced-motion (no WebGL sticker).
+  const reduced = useReducedMotion();
+  // Static mark when WebGL2 is unavailable (sticker needs it to draw).
+  const [noGL, setNoGL] = useState(false);
+  useEffect(() => {
+    try {
+      if (!document.createElement("canvas").getContext("webgl2")) setNoGL(true);
+    } catch {
+      setNoGL(true);
+    }
+  }, []);
   return (
-    <footer id="company" ref={revealRef} className="scroll-mt-20 border-t border-cream-line bg-cream">
+    <footer id="company" ref={revealRef} className="scroll-mt-20 overflow-x-clip border-t border-cream-line bg-cream">
       <Container width="wide" className="pt-16 md:pt-20">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,10fr)]">
           <div data-reveal className="flex flex-col items-start gap-3">
-            {/* Brand block: logo spans the full column width, wordmark
-                sits below it. Capped on small screens where the column
-                itself goes full width. */}
+            {/* Brand block: peelable logo sticker spans the full column
+                width, wordmark sits below it as the home link. Capped
+                on small screens where the column itself goes full width.
+                Reduced-motion gets the static blended mark (no WebGL). */}
             <div className="w-full max-w-56 lg:max-w-none">
-            <Link href="#top" className="block w-full" aria-label="ToLLma home">
+            {reduced || noGL ? (
               <img
                 src={tollmaLight.src}
-                alt=""
+                alt="ToLLma"
                 width={256}
                 height={256}
                 className="h-auto w-full"
               />
+            ) : (
+              <div className="relative aspect-square w-full" role="img" aria-label="ToLLma logo sticker — hover to peel">
+                <StickerPeel
+                  imageSrc={tollmaLight.src}
+                  width={200}
+                  finish="gloss"
+                  draggable={false}
+                  backColor="#ddd8cc"
+                  peelBackHoverPct={25}
+                  peelBackActivePct={40}
+                />
+              </div>
+            )}
+            <Link href="#top" aria-label="ToLLma home" className="block w-full">
+              <span className="block w-full text-justify text-3xl font-bold tracking-tight text-coal [text-align-last:justify] [text-justify:inter-character]">ToLLma</span>
             </Link>
-            <span className="block w-full text-justify text-3xl font-bold tracking-tight text-coal [text-align-last:justify] [text-justify:inter-character]">ToLLma</span>
             </div>
           </div>
           <nav className="grid grid-cols-2 gap-x-10 gap-y-12 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">

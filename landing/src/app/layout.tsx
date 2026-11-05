@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Newsreader } from "next/font/google";
-import { SiteCursor } from "@/components/ui/swarm-cursor";
 import "./globals.css";
 
 const inter = Inter({
@@ -102,10 +101,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable}`}>
-      <body className="antialiased">
-        <SiteCursor />
-        {children}
-      </body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

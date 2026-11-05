@@ -840,27 +840,31 @@ body {
   color: transparent;
 }
 
-/* Free React Bits SwarmCursor (vendored, no deps): fixed-layer GPU
-   particle field. Canvas never intercepts pointer events; content
-   layer (unused site-wide) would sit above it. */
-.swarm-cursor {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-.swarm-cursor-canvas {
+/* Footer brand sticker: transparent hit layer only where the sticker
+   is; the canvas itself never intercepts pointer events. */
+.sticker-peel {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.sticker-peel-canvas {
   display: block;
   width: 100%;
   height: 100%;
   pointer-events: none;
 }
-.swarm-cursor-content {
-  position: relative;
-  width: 100%;
-  height: 100%;
+.sticker-peel-hit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Footer license pill: subtle hairline pill (Apache 2.0 + self-host story). */
