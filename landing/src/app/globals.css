@@ -847,11 +847,11 @@ body {
   width: 100%;
   text-align: center;
   white-space: nowrap;
-  /* Editorial serif voice (matches site headlines); tracked out so the
-     L feet clear each other at full-bleed scale. */
-  font-family: var(--font-serif);
-  font-weight: 700;
-  letter-spacing: 0.045em;
+  /* Boxy grotesque voice (Archivo 900, system-sans fallback keeps the
+     same stance offline); tracked slightly out for even rhythm. */
+  font-family: var(--font-archivo), var(--font-sans);
+  font-weight: 900;
+  letter-spacing: 0.01em;
   line-height: 0.9;
   /* Full-bleed: sized in viewport units so the word spans ~96% of the
      screen at every width, edge to edge. */

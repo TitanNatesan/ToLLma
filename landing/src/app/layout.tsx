@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Newsreader } from "next/font/google";
+import { Archivo, Inter, Newsreader } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -16,8 +16,15 @@ const newsreader = Newsreader({
   display: "optional",
 });
 
-// Code/mono face for API examples (kept local via CSS stack to avoid an
-// extra network font; the var is referenced by --font-mono).
+// Boxy grotesque for the giant footer wordmark (single heavy weight;
+// Georgia/system fallback covers offline/static-export builds the same
+// way the serif fallback does).
+const archivo = Archivo({
+  subsets: ["latin"],
+  weight: "900",
+  variable: "--font-archivo",
+  display: "optional",
+});
 const mono = {
   variable: "--font-mono-code",
 };
@@ -102,7 +109,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${newsreader.variable} ${archivo.variable} ${mono.variable}`}>
       <body className="antialiased">{children}</body>
     </html>
   );

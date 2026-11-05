@@ -4752,3 +4752,7 @@ Verified: 1440 + 390 screenshots, 0 h-overflow both, 29 links, 0 errors, tsc cle
 Requirement: increase parallax strength for all characters.
 Change: LETTERS speeds x2 (T -5.6, o -4.6, L -3.6, L -2.6, m -1.8, a -1.0 — outer-fastest shear kept); clip breathing room grown to match (140px top / 100px bottom, margins compensated so page layout identical).
 Verified: T +100px / a +18px mid-scroll vs +69/+12px at bottom (6-way spread, reversible pure function); word (494-799) inside clip (354-899); screenshot shows cascade shear, no clipping; build green.
+
+## 2026-11-05 - Footer wordmark: boxy Archivo 900
+Requirement: boxy font for the giant wordmark. Trialed live: Archivo Black (boxiest but overflows at full-bleed scale), Space Grotesk 700 (fits, not boxy), Archivo 900 (boxy grotesque, fits edge-to-edge) — picked Archivo 900. Added via next/font/google (weight 900, display optional, same offline-safe pattern as Inter/Newsreader), wired as --font-archivo on <html>, .foot-wordmark uses it with system-sans fallback.
+Verified: computed font is Archivo, rect 2..1438, 0 h-overflow; tsc clean; next build green (font fetched OK).
