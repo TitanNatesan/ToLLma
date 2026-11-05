@@ -168,3 +168,36 @@ new layout (current-code evidence; historic R9 numbers live in R9_LOG.md).
 - Validation: same hiwtest suite green (sweep T-fails=0, constancy checks:
   overview title 10-17px, focused <=30px, head size delta <=25%);
   tsc clean; next build green.
+
+## Video-driven pass: wider gaps, snap-back fix, scaled-up focus (user video 2026-11-05)
+Frame-by-frame read of the user screencast (01->02 handoff) + new spec:
+1. Spacing: GAP 44->72, GUT 24->28, VIEW.w 2170->2260 (right margin ~45u),
+   request lane origin 16 (aligned under setup), setup keys.x derived
+   (16+LW+GAP), blocked badge aligned to guardrails.x, PP 76->84,
+   captions/line recentered to 1260/..1560, LED LX0 derived
+   (40+272+GUT). Text floor now 12.1px @1440 / 10.8 @1280 (logged accepted
+   deviation; directed by "reduce text" + wider gaps).
+2. Seam pop fixed (root cause, proven in code + video): the old move-in
+   lerped from the PREVIOUS layer while move-out had already ended at the
+   NEXT layer, so every eighth handoff snapped back one layer then glided
+   forward (register visibly popped back when moving to issue keys).
+   Restructured to hold-then-glide: i==0 glides in from ident, f<0.6 holds
+   cur, f>=0.6 glides cur->next. Seam now lands on cam[i+1] from both sides
+   (pure function, reverses exactly). Entry glide ident->L01 is the longest
+   (pan bar sized for it: <=600u).
+3. Focus presence raised per video direction: counter-scale exponent
+   0.7->0.6 (focused titles ~19-25px, still far from the old ~70px
+   blowups), overlay arrowheads 9->11u (constant screen size at all zooms
+   per the arrow spec; the bigger constant reads as intentional emphasis).
+4. Validation: full hiwtest green — sweep 101 frames T1-T6 zero fails,
+   continuity within theory bars (scale <=150%, pan <=600u), pill-vs-wire
+   zero intrusions with per-pair identity (caught + fixed one real
+   regression: FAN-OUT pill swallowed the tap-g lane after the GAP move),
+   reverse identity exact at 3 points, tall-390 selftest clean, constancy
+   (full title ~14px rect, focused ~25-27px, heads 5.7-6.7px constant),
+   NEW seam-continuity checks 7/7 (<=35% scale, <=120u pan per 0.4% window
+   around every handoff — the old code fails these by construction),
+   pinned pass 44 steps end-state + focused steps visited, zero console
+   errors. tsc clean, next build green. Shots: /tmp/opencode/dash/hiw-{full,focus,focus-inj,tall}.png.
+R9 notes: framing math untouched (>=55% fill holds); phase timing reshaped
+(hold + 40%-glide per eighth); no new libs; tall mode unchanged except FU.

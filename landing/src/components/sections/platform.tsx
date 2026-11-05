@@ -34,9 +34,9 @@
 //
 // Screen-space layer (no giant focused text/arrows): connectors use
 // vector-effect="non-scaling-stroke" (constant screen width at any zoom);
-// arrowheads live in [data-arrows] OUTSIDE the camera at a fixed 9u size,
+// arrowheads live in [data-arrows] OUTSIDE the camera at a fixed 11u size,
 // positioned per frame from connector geometry; diagram text counter-scales
-// (titles ~S^-0.7, body/labels constant) so a focused layer reads ~21px
+// (titles ~S^-0.6, body/labels constant) so a focused layer reads ~25px
 // instead of ballooning with the zoom. All pure functions of progress.
 //
 // Diagram is vector-only so 400% zoom and DPR 1–3 stay crisp.
@@ -165,12 +165,12 @@ const LEDGERS = [
 
 const VIEW: Record<Mode, { x: number; y: number; w: number; h: number }> = {
   // Wide base fit: full-flow frame sits ~7% back from the composition
-  // (content 16..1956 x 48..928 centered) for breathing room. Camera zoom
+  // (content 16..2036 x 48..928 centered) for breathing room. Camera zoom
   // math uses w/h sizes only; x/y recenter the identity frame. Node sizes
   // and row rhythm are untouched — rendered full-view text stays >=12px
-  // at 1440/1920 (19u at k~0.66); 1280 renders ~11.2px (accepted: the
-  // text-size reduction was explicitly requested over the old 12px floor).
-  wide: { x: -179, y: -20, w: 2170, h: 1000 },
+  // at 1440/1920 (19u at k~0.64); 1280 renders ~10.8px (accepted: wider
+  // lane gaps were explicitly requested over the old 12px floor).
+  wide: { x: -179, y: -20, w: 2260, h: 1000 },
   tall: { x: 0, y: 0, w: 660, h: 2440 },
 };
 
@@ -183,8 +183,8 @@ const VIEW: Record<Mode, { x: number; y: number; w: number; h: number }> = {
  * is pinned (provider pitch 80, ledger pitch 64): raising GUT opens peer
  * gaps sideways without moving rows up or down.
  */
-const GUT = 24;
-const GAP = 56;
+const GUT = 28;
+const GAP = 72;
 const LW = 252;
 const LH = 132;
 const CHIP_W = 240;
@@ -202,7 +202,7 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     const layers: Record<string, Rect> = {};
     const setupY = 72; const reqY = 260; // setup<->request gap = 56u
     layers.register = { x: 16, y: setupY, w: LW, h: LH };
-    layers.keys = { x: 284, y: setupY, w: LW, h: LH };
+    layers.keys = { x: 16 + LW + GAP, y: setupY, w: LW, h: LH };
     // Request peer gap stays 56u; route/normalize are widened (RW/NW) to carry
     // their full titles + sub in-box, shifting normalize/observe east. The
     // lane starts at x=16 (aligned under setup) to preserve the right margin.
@@ -216,19 +216,19 @@ function layoutNodes(mode: Mode): { layers: Record<string, Rect>; providers: Rec
     // Providers fan out below route, indexed by PROVIDERS order. openai
     // sits col0-bottom: the single return leg starts at its left edge.
     const slots = [{ c: 0, r: 2 }, { c: 1, r: 0 }, { c: 0, r: 0 }, { c: 1, r: 1 }, { c: 0, r: 1 }, { c: 1, r: 2 }];
-    const PX0 = layers.route.x; const PY0 = 444; const PP = 76; // pinned row rhythm
+    const PX0 = layers.route.x; const PY0 = 444; const PP = 84; // pinned row rhythm
     const providers = slots.map((s) => ({
       x: s.c === 0 ? PX0 : PX0 + CHIP_W + GAP, y: PY0 + s.r * PP, w: CHIP_W, h: CHIP_H,
     }));
     // Ledger row on the GUT pitch.
-    const LED_Y = 768; const LX0 = 336; // captures-to-ledger gap = GUT
+    const LED_Y = 768; const LX0 = 40 + 272 + GUT; // captures-to-ledger gap = GUT
     const ledgers: Record<string, Rect> = {
       meta: { x: LX0, y: LED_Y, w: LED_W, h: LED_H },
       cost: { x: LX0 + LED_W + GUT, y: LED_Y, w: LED_W, h: LED_H },
       tokens: { x: LX0 + 2 * (LED_W + GUT), y: LED_Y, w: LED_W, h: LED_H },
     };
     const captures: Rect = { x: 40, y: LED_Y, w: 272, h: 52 };
-    const blocked: Rect = { x: 632, y: 470, w: 148, h: 96 };
+    const blocked: Rect = { x: layers.guardrails.x, y: 470, w: 148, h: 96 };
     return { layers, providers, ledgers, captures, blocked };
   }
   const W = 400; const H = 132; const X = 40; const Y0 = 120; const STEP = 190; // 58u gaps hold 30u pills with 14u margins
@@ -289,7 +289,7 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
       c.push({ name: `${a}-${b}`, d: `M${R[a].x + R[a].w},${reqMid} L${R[b].x},${reqMid}`, x1: R[a].x + R[a].w, y1: reqMid, x2: R[b].x, y2: reqMid });
     });
     c.push({ name: "lbl-setup", d: "", x1: 40, y1: 64, x2: 40, y2: 64, label: "SETUP LANE \u00b7 01\u201302", lx: 40, ly: 64 });
-    c.push({ name: "lbl-request", d: "", x1: 980, y1: 244, x2: 980, y2: 244, label: "REQUEST LANE \u00b7 03\u201308", lx: 980, ly: 244 });
+    c.push({ name: "lbl-request", d: "", x1: 1026, y1: 244, x2: 1026, y2: 244, label: "REQUEST LANE \u00b7 03\u201308", lx: 1026, ly: 244 });
     // Fan: one dedicated vertical inbound lane per provider chip. Col0 runs
     // a spine from route's bottom edge into gemini's top, then chains down
     // gemini->bedrock->openai bottom-to-top; col1 elbows from route into
@@ -300,7 +300,7 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     const lane1X = R.route.x + CHIP_W + GAP + 13;
     const fanTop = R.route.y + R.route.h;
     const elbowY = fanTop + 8;
-    c.push({ name: "fan", d: `M${spineX},${fanTop} L${spineX},${L.providers[2].y}`, x1: spineX, y1: fanTop, x2: spineX, y2: L.providers[2].y, label: "FAN-OUT", lx: spineX - 176, ly: 418 });
+    c.push({ name: "fan", d: `M${spineX},${fanTop} L${spineX},${L.providers[2].y}`, x1: spineX, y1: fanTop, x2: spineX, y2: L.providers[2].y, label: "FAN-OUT", lx: spineX - 220, ly: 418 });
     c.push({ name: "fan-p4", d: `M${R.route.x + 222},${fanTop} L${R.route.x + 222},${elbowY} L${lane1X},${elbowY} L${lane1X},${L.providers[1].y}`, x1: R.route.x + 222, y1: fanTop, x2: lane1X, y2: L.providers[1].y });
     c.push({ name: "fan-c0a", d: `M${spineX},${L.providers[2].y + L.providers[2].h} L${spineX},${L.providers[4].y}`, x1: spineX, y1: L.providers[2].y + L.providers[2].h, x2: spineX, y2: L.providers[4].y });
     c.push({ name: "fan-c0b", d: `M${spineX},${L.providers[4].y + L.providers[4].h} L${spineX},${L.providers[0].y}`, x1: spineX, y1: L.providers[4].y + L.providers[4].h, x2: spineX, y2: L.providers[0].y });
@@ -319,7 +319,8 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
     const respX = cx(R.normalize);
     c.push({ name: "response", d: `M${respX},${R.normalize.y} L${respX},56 L480,56 L480,${R.keys.y}`, x1: respX, y1: R.normalize.y, x2: 480, y2: R.keys.y, label: "RESPONSE", lx: 800, ly: 94 });
     // Coral blocked branch: guardrails bottom -> terminus top (stops at L05).
-    c.push({ name: "blocked", coral: true, d: `M648,${R.guardrails.y + R.guardrails.h} L648,${L.blocked.y}`, x1: 648, y1: R.guardrails.y + R.guardrails.h, x2: 648, y2: L.blocked.y });
+    const blockX = R.guardrails.x + 16;
+    c.push({ name: "blocked", coral: true, d: `M${blockX},${R.guardrails.y + R.guardrails.h} L${blockX},${L.blocked.y}`, x1: blockX, y1: R.guardrails.y + R.guardrails.h, x2: blockX, y2: L.blocked.y });
     // Dashed workspace tap: register bottom -> captures top via the
     // request-lane gap corridor (never through a node).
     c.push({ name: "tap-captures", dashed: true, d: `M200,${R.register.y + R.register.h} L200,246 L314,246 L314,730 L200,730 L200,${L.captures.y}`, x1: 200, y1: R.register.y + R.register.h, x2: 200, y2: L.captures.y, label: "PROMPT LOG TAP", lx: 172, ly: 858 });
@@ -375,10 +376,10 @@ function buildConns(L: Layout, mode: Mode): Conn[] {
  * R9 scripted camera. Pin progress splits into five phases —
  * A entry [0, .06] full diagram fades+scales .92→1 · B first pass
  * [.06, .18] full emphasis, packets make one pass · C layer steps
- * [.18, .82] equal eighths (2% move-in power2.inOut, 4% hold, 2%
- * move-out; camera zooms to each layer's bbox + one gutter margin per
- * side computed from layoutNodes — never hand-typed; active layer and
- * its in/out connectors stay 1.0, ALL else 0.35) · D second pass
+ * [.18, .82] equal eighths (hold then 40%-glide-out per eighth, i=0
+ * glides in from ident; camera zooms to each layer's bbox + one gutter
+ * margin per side computed from layoutNodes — never hand-typed; active
+ * layer and its in/out connectors stay 1.0, ALL else 0.35) · D second pass
  * [.82, .92] full emphasis, packets pass again · E exit [.92, 1]
  * scale→.9 + fade→0 (nothing visible at end).
  * Camera = one transform on a single inner <g> (transform/opacity only),
@@ -421,22 +422,28 @@ function camFor(L: Layout, V: { x: number; y: number; w: number; h: number }, i:
   const ew = r.w + GUT * 2; const eh = r.h + GUT * 2;
   return { x: r.x + r.w / 2, y: r.y + r.h / 2, s: Math.min(V.w / ew, V.h / eh) };
 }
-/** Camera as a pure function of progress (identity outside C blends). */
+/**
+ * Camera as a pure function of progress (identity outside C blends).
+ * Seam-safe by construction: each eighth HOLDS its layer, then glides to
+ * the next, so frame u=i+1 lands exactly on cam[i+1] from both sides —
+ * the previous from-the-prior-layer move-in snapped back to it at every
+ * layer handoff (visible as the focused box popping back mid-transition).
+ */
 function camAt(L: Layout, V: { x: number; y: number; w: number; h: number }, p: number, inj: boolean): Cam {
   const ident: Cam = { x: V.x + V.w / 2, y: V.y + V.h / 2, s: 1 };
   if (p < PH.B || p >= PH.C) return ident;
   const u = ((p - PH.B) / (PH.C - PH.B)) * 8;
   const i = Math.min(7, Math.floor(u));
-  const f = u - i; // 0–0.25 move-in, 0.25–0.75 hold, 0.75–1 move-out
+  const f = u - i; // 0–0.6 hold, 0.6–1 glide-out (i=0 glides in from ident)
   const cur = camFor(L, V, i, inj);
-  if (f < 0.25) {
-    const prev = i === 0 ? ident : camFor(L, V, i - 1, inj);
-    const t = power2inOut(f / 0.25);
-    return { x: lerp(prev.x, cur.x, t), y: lerp(prev.y, cur.y, t), s: lerp(prev.s, cur.s, t) };
+  if (i === 0 && f < 0.4) {
+    const t = power2inOut(f / 0.4);
+    return { x: lerp(ident.x, cur.x, t), y: lerp(ident.y, cur.y, t), s: lerp(ident.s, cur.s, t) };
   }
-  if (f > 0.75) {
+  if (f < 0.6) return cur;
+  {
     const next = i === 7 ? ident : camFor(L, V, i + 1, inj);
-    const t = power2inOut((f - 0.75) / 0.25);
+    const t = power2inOut((f - 0.6) / 0.4);
     return { x: lerp(cur.x, next.x, t), y: lerp(cur.y, next.y, t), s: lerp(cur.s, next.s, t) };
   }
   return cur;
@@ -640,7 +647,7 @@ export default function Platform() {
       // (~21px at deepest zoom) and body/labels not at all, so focused
       // text stays proportionate instead of ballooning with the camera.
       const S = st.sc * cam.s;
-      const kT = S <= 1 ? 1 : Math.pow(S, -0.7);
+      const kT = S <= 1 ? 1 : Math.pow(S, -0.6);
       const kS = S <= 1 ? 1 : 1 / S;
       let pktK = kS;
       if (camG) camG.setAttribute("transform", `translate(${(V.x + V.w / 2).toFixed(1)} ${(V.y + V.h / 2).toFixed(1)}) scale(${(st.sc * cam.s).toFixed(4)}) translate(${(-cam.x).toFixed(1)} ${(-cam.y).toFixed(1)})`);
@@ -950,11 +957,11 @@ export default function Platform() {
                   })}
                   {mode === "wide" ? (
                     <>
-                      <text data-caption="providers" data-dim x={1400} y={842} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
+                      <text data-caption="providers" data-dim x={1260} y={842} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
                         PROVIDERS · 6 FAMILIES
                       </text>
-                      <line x1={1400} y1={874} x2={1700} y2={874} stroke={LINE} strokeWidth={1.5} />
-                      <text data-caption="analytics-cap" data-dim x={1400} y={928} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
+                      <line x1={1260} y1={874} x2={1560} y2={874} stroke={LINE} strokeWidth={1.5} />
+                      <text data-caption="analytics-cap" data-dim x={1260} y={928} fill={SUB} fontSize={FU} fontFamily={SANS} letterSpacing="0.1em">
                         ANALYTICS READS LEDGERS
                       </text>
                     </>
@@ -1014,7 +1021,7 @@ export default function Platform() {
                 <g data-arrows>
                   {conns.filter((cn) => cn.d && !cn.dashed).map((cn) => (
                     <g key={`oh-${cn.name}`} data-oh={cn.name} opacity={0}>
-                      <path d="M0,0 L-9,-4.5 L-9,4.5 Z" fill={cn.coral ? CORAL : "rgba(245,244,234,0.6)"} />
+                      <path d="M0,0 L-11,-5 L-11,5 Z" fill={cn.coral ? CORAL : "rgba(245,244,234,0.65)"} />
                     </g>
                   ))}
                 </g>
