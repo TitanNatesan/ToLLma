@@ -840,6 +840,29 @@ body {
   color: transparent;
 }
 
+/* Free React Bits SwarmCursor (vendored, no deps): fixed-layer GPU
+   particle field. Canvas never intercepts pointer events; content
+   layer (unused site-wide) would sit above it. */
+.swarm-cursor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.swarm-cursor-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.swarm-cursor-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 /* Footer license pill: subtle hairline pill (Apache 2.0 + self-host story). */
 .foot-pill {
   display: inline-flex;
