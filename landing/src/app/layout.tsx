@@ -102,15 +102,15 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable} bg-black`}>
       <body className="antialiased">
-        {/* Site frame: thick black ring with curvy corners around the whole
-            viewport. Fixed + pointer-transparent, so it never intercepts
-            clicks or shifts layout; body/html stay black so the corners
-            outside the curve read black too. Hidden in print. */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none fixed inset-0 z-[90] rounded-[28px] border-[12px] border-black print:hidden"
-        />
-        {children}
+        {/* Page frame: the whole page sits on black with a curvy cutout.
+            This wrapper scrolls with the page (nothing is fixed); the
+            body black shows through the margin as the surround.
+            overflow: clip (NOT hidden) clips the curve without turning
+            the wrapper into a scroll container, so sticky/fixed
+            descendants keep working. Plain in print. */}
+        <div className="m-3 overflow-clip rounded-[28px] bg-cream print:m-0 print:rounded-none print:overflow-visible">
+          {children}
+        </div>
       </body>
     </html>
   );

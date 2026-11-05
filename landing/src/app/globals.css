@@ -888,7 +888,7 @@ body {
 .foot-pressure {
   position: relative;
   width: 100%;
-  aspect-ratio: 3 / 1;
+  aspect-ratio: 3.2 / 1;
   /* Centered with breathing room: the wordmark fits the padded box
      (the TextPressure backstop measures clientWidth, so it stays
      padding-aware) instead of touching the viewport edges. */
@@ -1194,4 +1194,17 @@ body {
   font-size: 0.75rem;
   font-weight: 500;
   color: color-mix(in srgb, var(--color-coal) 70%, transparent);
+}
+
+/* Page-frame surround: the page wrapper floats on black, so the body
+   itself must be black (the base token sets cream). Unlayered on purpose:
+   utilities live in a cascade layer and lose to unlayered rules, which is
+   also why the body class alone can't do it. Plain white in print. */
+body {
+  background: #000;
+}
+@media print {
+  body {
+    background: #fff;
+  }
 }
