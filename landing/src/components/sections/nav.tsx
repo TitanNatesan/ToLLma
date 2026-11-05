@@ -17,23 +17,22 @@ import GlassSurface from "@/components/ui/glass-surface";
 import { IconClose, IconMenu } from "@/components/ui/icons";
 import { useActiveSection } from "@/lib/animations";
 import { prefersReducedMotion } from "@/lib/animations/motion-preference";
-import { DOCS_URL, GET_STARTED_URL } from "@/lib/site";
+import { GET_STARTED_URL } from "@/lib/site";
 import tollmaInk from "./brand/tollma-mark-ink.png";
 
-// Mirrors the ToLLma application sidebar
-// (frontend/src/components/Sidebar/SidebarNavigation.tsx PERSONAL_NAV),
-// not the reference video's marketing taxonomy. Each item deep-links to the
-// landing section showcasing that app area: Providers -> provider grid,
-// API Keys -> Secure pillar (credentials & access), Guardrails -> guardrail
-// panel, Prompt Logs -> Request Activity dashboard, Analytics -> platform
-// section (Observe step: usage & cost visibility).
+// Landing page sections, in page order. The island shows exactly these —
+// no app-taxonomy or off-page items. The collapsed island pairs the
+// current section label with Get Started (kept as the conversion CTA,
+// not a nav item).
 const LINKS = [
-  { label: "Providers", href: "#providers", id: "providers" },
-  { label: "API Keys", href: "#what-we-do", id: "what-we-do" },
-  { label: "Guardrails", href: "#outcomes", id: "outcomes" },
-  { label: "Prompt Logs", href: "#activity", id: "activity" },
-  { label: "Analytics", href: "#platform", id: "platform" },
+  { label: "Overview", href: "#top", id: "top" },
+  { label: "Manage", href: "#what-we-do", id: "what-we-do" },
+  { label: "Outcomes", href: "#outcomes", id: "outcomes" },
+  { label: "Platform", href: "#platform", id: "platform" },
+  { label: "Providers", href: "#solutions", id: "solutions" },
+  { label: "Guides", href: "#knowledge", id: "knowledge" },
 ];
+const OVERVIEW = LINKS[0];
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
@@ -45,15 +44,29 @@ export default function Nav() {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const foldRef = useRef<HTMLDivElement | null>(null);
   const foldW = useRef(0);
-  const ids = useMemo(() => LINKS.map((l) => l.id), []);
+  // #top is the whole <main> (always intersecting), so it must NOT be
+  // tracked — it would pin the spy. Tracked in page order; Overview and
+  // the tail (CTA + footer) resolve via the reading-line fallback below.
+  const ids = useMemo(() => LINKS.filter((l) => l.id !== "top").map((l) => l.id), []);
   const active = useActiveSection(ids);
   const reduced = prefersReducedMotion();
 
-  const current = LINKS.find((l) => l.id === active) ?? {
-    label: "Overview",
-    href: "#top",
-    id: "top",
-  };
+  // Current item: the live match, else the last section whose top passed
+  // the reading line (Overview above everything, last item past the end).
+  // Recomputed whenever the spy fires (scroll-driven), so it stays fresh.
+  const current = useMemo(() => {
+    const hit = LINKS.find((l) => l.id === active);
+    if (hit) return hit;
+    if (typeof window === "undefined") return OVERVIEW;
+    const y = window.scrollY + window.innerHeight * 0.4;
+    let cur = OVERVIEW;
+    for (const l of LINKS) {
+      const el = document.getElementById(l.id);
+      if (el && el.getBoundingClientRect().top + window.scrollY <= y) cur = l;
+      else break;
+    }
+    return cur;
+  }, [active]);
   // Reduced motion: never collapse — the full nav is always shown.
   const expanded = reduced || !scrolled || hovered || focused || touchOpen || open;
 
@@ -233,14 +246,6 @@ export default function Nav() {
                     );
                   })}
                 </ul>
-                <a
-                  href={DOCS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="nav-link-glass text-[0.95rem] font-medium text-coal/70 transition-opacity hover:opacity-80"
-                >
-                  API Docs
-                </a>
               </div>
               <span
                 className={`whitespace-nowrap transition-opacity duration-200 ${
@@ -344,19 +349,10 @@ export default function Nav() {
               ))}
               <div
                 style={{ transitionDelay: open ? `${LINKS.length * 45}ms` : "0ms" }}
-                className={`mt-1 flex items-center gap-4 border-t border-coal/10 px-3 pt-4 transition-[opacity,transform] duration-300 ease-out ${
+                className={`mt-1 flex items-center gap-4 px-3 pt-4 transition-[opacity,transform] duration-300 ease-out ${
                   open ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
                 }`}
               >
-                <a
-                  href={DOCS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  tabIndex={open ? 0 : -1}
-                  className="text-[0.95rem] font-medium text-coal/70"
-                >
-                  API Docs
-                </a>
                 <span className="btn-shine inline-flex flex-1 items-center justify-center rounded-full border border-white/20 bg-coal px-6 py-3 text-[0.95rem] font-semibold text-cream shadow-[0_2px_10px_rgba(23,25,20,0.25)] transition-transform duration-150 ease-out active:scale-[0.98]">
                   <Link href={GET_STARTED_URL}>Get Started</Link>
                 </span>
