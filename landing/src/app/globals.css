@@ -889,6 +889,10 @@ body {
   position: relative;
   width: 100%;
   aspect-ratio: 3.2 / 1;
+  /* Clip the parallax dip at the box edge so descending letters can
+     never cross the divider below (static text always fits inside
+     with room to spare — only overshoot frames are cut). */
+  overflow: clip;
   /* Centered with breathing room: the wordmark fits the padded box
      (the TextPressure backstop measures clientWidth, so it stays
      padding-aware) instead of touching the viewport edges. */

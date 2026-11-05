@@ -167,7 +167,7 @@ export function Footer() {
           lightMode={true}
         />
       </div>
-      <Container width="wide" className="relative pt-16 md:pt-20">
+      <Container width="wide" className="relative pt-10 md:pt-12">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,10fr)]">
           <div data-reveal className="flex flex-col items-start gap-3">
             {/* Brand block: peelable logo sticker spans the full column
@@ -206,7 +206,7 @@ export function Footer() {
             </Link>
             </div>
           </div>
-          <nav className="grid grid-cols-2 gap-x-10 gap-y-12 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
+          <nav className="grid grid-cols-2 gap-x-10 gap-y-8 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
             {COLS.map((c) => (
               <div key={c.title} data-reveal className="flex flex-col items-start gap-6">
                 <p className="flex min-h-8 items-start text-xs font-semibold text-coal/50">{c.title}</p>
@@ -244,7 +244,7 @@ export function Footer() {
             column doesn't leave a void under the nav. No newsletter
             backend exists, so Stay connected links the real GitHub repo,
             discussions, and roadmap. */}
-        <div data-reveal className="mt-12 flex flex-col gap-x-10 gap-y-4 lg:flex-row lg:items-center">
+        <div data-reveal className="mt-8 flex flex-col gap-x-10 gap-y-4 lg:flex-row lg:items-center">
           <p className="max-w-md text-sm leading-relaxed text-coal/60">
             The open source AI gateway for models and agents. One unified
             interface to connect, route, govern, and observe your AI
@@ -303,8 +303,8 @@ export function Footer() {
           minFontSize={36}
         />
       </div>
-      <Container width="wide" className="relative pb-10 pt-4">
-        <div data-reveal className="flex flex-col gap-3 border-t border-cream-line pt-6 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
+      <Container width="wide" className="relative pb-3 pt-2">
+        <div data-reveal className="flex flex-col gap-2 border-t border-cream-line pt-3 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} ToLLma · Apache-2.0</p>
           {/* Privacy/Terms are plain text: no such pages exist, and fake
               links are worse than none. Only real destinations get icons:
