@@ -101,7 +101,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable}`}>
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        {/* Site frame: hairline border around the whole viewport.
+            Fixed + pointer-transparent, so it never intercepts clicks
+            or shifts layout; hidden in print. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-3 z-[90] border border-coal/20 print:hidden"
+        />
+        {children}
+      </body>
     </html>
   );
 }
