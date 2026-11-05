@@ -4669,3 +4669,10 @@ Implemented (landing/src/components/sections/platform.tsx only): FU 22->19, GAP 
 Files Changed: landing/src/components/sections/platform.tsx, landing/LAYOUT_LOG.md (appended).
 Testing Performed: tsc clean; next build green; hiwtest rig — T1-T6 PASS at all 101 1%-frames, pill-vs-wire zero intrusions, reverse identity exact, tall-390 selftest clean, constancy checks (overview 10-17, focused <=30, heads constant), pinned pass 44 steps end-state + focused steps, zero console errors. One rig artifact documented (stale coordinate frame after first-load layout drift; re-read metrics per target) and one real rig bug found+fixed (lifespan... n/a). E pin pass independently verified via part2 + standalone probe (43 steps).
 Architecture Notes: camera math (R9 phases/blends) untouched — smoothness work lives in normalization layers; all paint remains pure functions of progress (reversible, deterministic).
+
+## 2026-11-05 - Navbar transparency increase (0.76 -> 0.58 fill)
+Requirement: more transparency + clearer background visibility, keep liquid-glass UI (2px blur cap retained).
+Implemented: .navbar-glass fill rgba(247,247,238,0.76 -> 0.58); border 0.68 -> 0.75 white + ambient shadow 0.075 -> 0.10 so the edge carries definition as fill drops. Reflection softened 0.34 -> 0.22. Mobile menu fill untouched (0.94, body-copy readability). Single light treatment confirmed on dark sections via screenshot (no theme switch, no state, no flash).
+Files Changed: landing/src/app/globals.css (.navbar-glass x2 rules, ::before alpha).
+Testing Performed: computed bg rgba(247,247,238,0.58) + blur(2px) asserted in-page; screenshots reviewed over light hero + dark platform (island legible in both, background clearly visible); zero console errors.
+Architecture Notes: blur budget unchanged (2px); definition now comes from border/shadow, not fill.

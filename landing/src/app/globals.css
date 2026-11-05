@@ -409,14 +409,14 @@ body {
    below for engines without backdrop-filter. */
 .navbar-glass {
   position: relative;
-  background: rgba(247, 247, 238, 0.76);
+  background: rgba(247, 247, 238, 0.58);
   -webkit-backdrop-filter: blur(2px) saturate(1.15);
   backdrop-filter: blur(2px) saturate(1.15);
-  border: 1px solid rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.8) inset,
     0 -1px 0 rgba(23, 25, 20, 0.035) inset,
-    0 8px 28px rgba(23, 25, 20, 0.075);
+    0 8px 28px rgba(23, 25, 20, 0.1);
 }
 .navbar-glass::before {
   content: "";
