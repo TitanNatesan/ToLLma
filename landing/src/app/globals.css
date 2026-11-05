@@ -846,9 +846,11 @@ body {
   width: 100%;
   text-align: center;
   white-space: nowrap;
-  font-family: var(--font-sans);
-  font-weight: 900;
-  letter-spacing: -0.04em;
+  /* Editorial serif voice (matches site headlines); tracked out so the
+     L feet clear each other at full-bleed scale. */
+  font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: 0.045em;
   line-height: 0.9;
   /* Full-bleed: sized in viewport units so the word spans ~96% of the
      screen at every width, edge to edge. */

@@ -4741,3 +4741,9 @@ Verified: 1440 logo 201x201 = column width, wordmark below; 390 capped 224px, be
 Feedback: logo white box clashed with cream; wordmark should match logo width.
 Root cause: tollma-light-256.png is opaque white — and mix-blend-multiply can't fix it because reveal ancestors isolate the stacking context. Fixed at the asset: white->transparent with feathered AA edges (PIL), so the mark sits directly on cream everywhere it's used. Wordmark span is now block w-full with inter-character justification + text-align-last (verified pixel-exact: 201/201 desktop, 224/224 mobile), text-3xl bold; logo+word share a max-w-56 lg:max-w-none wrapper so the pair stays aligned on mobile.
 Verified: 390 + 1440 aligned, 0 h-overflow, tsc clean, next build green.
+
+## 2026-11-05 - Footer: serif giant wordmark + compact meta strip
+Feedback: change giant wordmark font; brand column left a void under nav — move content below logo+text.
+Font: trialed Newsreader 700 at ls .01/.02/.045 — picked .045em (L feet clear, fits 2px-inset full-bleed). Serif matches site headline voice.
+Layout (closing.tsx): brand cell now logo + spread wordmark only; description, license pill, Stay-connected moved to a full-width wrapping strip below the grid (desc max-w-md, pill, inline community links with lg:ml-auto). Kills the tall-column void; all 29 links preserved.
+Verified: 1440 + 390 screenshots, 0 h-overflow both, 29 links, 0 errors, tsc clean, next build green.

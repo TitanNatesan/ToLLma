@@ -151,50 +151,6 @@ export function Footer() {
             </Link>
             <span className="block w-full text-justify text-3xl font-bold tracking-tight text-coal [text-align-last:justify] [text-justify:inter-character]">ToLLma</span>
             </div>
-            <p className="max-w-xs text-sm leading-relaxed text-coal/60">
-              The open source AI gateway for models and agents. One unified
-              interface to connect, route, govern, and observe your AI
-              infrastructure.
-            </p>
-            <span className="foot-pill">Apache 2.0 · Self-hosted</span>
-            {/* Stay connected: no newsletter backend exists, so the
-                community area links the real GitHub repo, discussions,
-                and roadmap instead of inventing a form. */}
-            <div className="mt-2 flex flex-col items-start gap-2">
-              <p className="text-xs font-semibold text-coal/50">Stay connected</p>
-              <ul className="flex flex-col items-start gap-2">
-                <li>
-                  <a
-                    href={GITHUB_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="foot-link inline-flex items-center gap-2 text-sm leading-relaxed text-coal/75"
-                  >
-                    <IconGitHub size={16} /> GitHub repository
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href={COMMUNITY_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="foot-link inline-flex items-center gap-2 text-sm leading-relaxed text-coal/75"
-                  >
-                    <IconChat size={16} /> Community discussions
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href={ROADMAP_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="foot-link text-sm leading-relaxed text-coal/75"
-                  >
-                    Roadmap
-                  </a>
-                </li>
-              </ul>
-            </div>
           </div>
           <nav className="grid grid-cols-2 gap-x-10 gap-y-12 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
             {COLS.map((c) => (
@@ -228,6 +184,46 @@ export function Footer() {
               </div>
             ))}
           </nav>
+        </div>
+        {/* Compact meta strip below the grid: description, license pill,
+            and community links in one wrapping row so the tall brand
+            column doesn't leave a void under the nav. No newsletter
+            backend exists, so Stay connected links the real GitHub repo,
+            discussions, and roadmap. */}
+        <div data-reveal className="mt-12 flex flex-col gap-x-10 gap-y-4 lg:flex-row lg:items-center">
+          <p className="max-w-md text-sm leading-relaxed text-coal/60">
+            The open source AI gateway for models and agents. One unified
+            interface to connect, route, govern, and observe your AI
+            infrastructure.
+          </p>
+          <span className="foot-pill shrink-0">Apache 2.0 · Self-hosted</span>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 lg:ml-auto">
+            <span className="text-xs font-semibold text-coal/50">Stay connected</span>
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="foot-link inline-flex items-center gap-2 text-sm leading-relaxed text-coal/75"
+            >
+              <IconGitHub size={16} /> GitHub repository
+            </a>
+            <a
+              href={COMMUNITY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="foot-link inline-flex items-center gap-2 text-sm leading-relaxed text-coal/75"
+            >
+              <IconChat size={16} /> Community discussions
+            </a>
+            <a
+              href={ROADMAP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="foot-link text-sm leading-relaxed text-coal/75"
+            >
+              Roadmap
+            </a>
+          </div>
         </div>
         {/* R11 giant wordmark: full-bleed below the link columns, copyright
             bar after it. Each letter rides its own parallax speed (outer
