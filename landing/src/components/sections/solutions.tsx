@@ -117,9 +117,11 @@ function TargetCorners() {
 export default function Solutions() {
   const revealRef = useRevealOnScroll({ staggerMs: 80, y: 16 });
   return (
-    <section id="solutions" ref={revealRef} className="relative scroll-mt-20 overflow-hidden bg-cream">
-      {/* Ambient drifting provider wall: clearly visible behind the
-          grid (non-interactive). Content paints above. */}
+    <section id="solutions" ref={revealRef} className="relative flex min-h-[100svh] scroll-mt-20 flex-col justify-center overflow-hidden bg-cream">
+      {/* Ambient drifting provider wall: absolute full-bleed backdrop,
+          static (speed 0, uniform grid) so the content scrolling above
+          it reads as parallax. Covers the whole section, always at
+          least viewport height. Non-interactive. Content paints above. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-100">
         <DriftWall
           items={WALL_ITEMS}
@@ -127,7 +129,8 @@ export default function Solutions() {
           tileWidth={160}
           tileHeight={106}
           gap={18}
-          speed={28}
+          speed={0}
+          uniform
           direction="up"
           variance={0.45}
           parallax={0}
