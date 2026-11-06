@@ -4886,3 +4886,6 @@ User: fix/test/verify/complete the loop. Audit: 0 missing alts (empties are deco
 
 ## 2026-11-07 - Nav hydration mismatch fix
 Bug: useMemo fallback read window.scrollY during render — SSR rendered Overview while a mid-page reload hydrated Guides. Fix: mounted-gate (useState+useEffect); first client render mirrors SSR, fallback corrects post-mount. Verified: no hydration error on #company reload; spy aria-marks Manage/Platform/Providers/Guides per section; bottom label Guides. (One probe round showed stale-bundle readings mid-HMR; re-ran settled — all correct.) Commit 0a1b8bc.
+
+## 2026-11-07 - Wordmark bottom padding to zero
+Explicit padding-bottom:0 on .foot-pressure + .foot-wordmark (top margin + side inline padding kept). Verified computed T/R/B/L 0/0/0/0 + 0/57.6/0/57.6, ox=0, zero errors, tsc clean.
