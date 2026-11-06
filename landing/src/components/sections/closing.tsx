@@ -147,12 +147,12 @@ export function Footer() {
     }
   }, []);
   return (
-    <footer id="company" ref={revealRef} className="relative scroll-mt-20 overflow-clip rounded-t-[28px] border-t-2 border-coal/25 bg-cream">
+    <footer id="company" ref={revealRef} className="relative scroll-mt-20 overflow-clip rounded-t-[40px] bg-cream md:rounded-t-[64px]">
       {/* Ambient ASCII wash behind the whole footer: cream/sand glyph
           field drifting behind the footer content (lightMode on).
           Decorative only (aria-hidden, pointer-transparent); content
           paints above. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.55]">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.40]">
         <GradientASCII
           colors={["#d8d0b8", "#e6e0cd", "#bfb59c", "#9d937a"]}
           shape="rise"
@@ -300,7 +300,7 @@ export function Footer() {
           ))}
         </div>
       </div>
-      <Container width="wide" className="relative pb-2 pt-0">
+      <Container width="wide" className="relative pb-1 pt-0">
         <div data-reveal className="flex flex-col gap-2 border-t border-cream-line pt-2 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} ToLLma · Apache-2.0</p>
           {/* Privacy/Terms are plain text: no such pages exist, and fake

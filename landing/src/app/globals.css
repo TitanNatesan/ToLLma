@@ -881,6 +881,18 @@ body {
   transform: rotate(-14deg);
 }
 
+/* Footer top glow: radial light from top-center in the cream family,
+   layered over bg-cream (background-color comes from the utility). */
+#company {
+  background-image: radial-gradient(
+    ellipse 85% 55% at 50% 0%,
+    rgba(255, 255, 255, 0.72),
+    rgba(247, 247, 238, 0.48) 38%,
+    rgba(247, 247, 238, 0.12) 70%,
+    transparent 100%
+  );
+}
+
 /* Footer wordmark: plain Jersey 10, static. Flex spreads the line edge
    to edge; clamp() sizes it (deterministic, no measuring), so it can
    never overflow. Parallax dips clip at the box edge instead of
