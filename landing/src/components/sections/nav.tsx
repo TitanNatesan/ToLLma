@@ -188,7 +188,7 @@ export default function Nav() {
         >
           {/* Real refracted-glass material beneath the island content. */}
           <div aria-hidden="true" className="absolute inset-0 -z-10">
-            <GlassSurface width="100%" height="100%" borderRadius={999} backgroundOpacity={0.65} displace={0} redOffset={0} greenOffset={0} blueOffset={0} />
+            <GlassSurface width="100%" height="100%" borderRadius={999} backgroundOpacity={0.45} displace={0} redOffset={0} greenOffset={0} blueOffset={0} />
           </div>
           <Link
             href="#top"
@@ -324,7 +324,7 @@ export default function Nav() {
             >
               {/* Same refracted-glass material, denser frost for body copy. */}
               <div aria-hidden="true" className="absolute inset-0 -z-10">
-                <GlassSurface width="100%" height="100%" borderRadius={24} backgroundOpacity={0.75} displace={0} redOffset={0} greenOffset={0} blueOffset={0} />
+                <GlassSurface width="100%" height="100%" borderRadius={24} backgroundOpacity={0.55} displace={0} redOffset={0} greenOffset={0} blueOffset={0} />
               </div>
               {LINKS.map((l, i) => (
                 <Link

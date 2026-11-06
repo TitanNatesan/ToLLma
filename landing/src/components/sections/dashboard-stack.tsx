@@ -1,15 +1,15 @@
 "use client";
 
-// Six-window stacked dashboard. The stacking engine is the free React
+// Three-window stacked dashboard. The stacking engine is the free React
 // Bits ScrollStack (vendored, no deps) in useWindowScroll mode: each
 // window pins in turn while covered windows shrink + dim, exactly like
 // the previous hand-rolled scrub region but driven by native scroll.
-// All six windows share one fixed size (w × h per breakpoint) with
+// All three windows share one fixed size (w × h per breakpoint) with
 // content condensed to fit — no scrollable content inside. The sidebar
 // in each window highlights that window's page; an IntersectionObserver
 // mirrors the topmost card into data-active-page + the aria-live line
 // (refs only, zero re-renders on scroll). Reduced-motion / no-JS: all
-// six windows render as a plain static list (complete final state,
+// three windows render as a plain static list (complete final state,
 // no transforms). Native page scroll is preserved (smoothScroll off —
 // the upstream default would hijack the wheel and fight GSAP pins).
 import { useEffect, useRef, useState } from "react";

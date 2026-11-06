@@ -1,10 +1,9 @@
 // ============================================================
-// R5 dashboard dataset — ONE seeded module feeding all six hero
-// windows (Overview, Providers, API Keys, Guardrails, Request Logs,
-// Analytics). Every KPI/table/bar is a pure sum over REQUEST_LOGS
-// (+ fixed per-key budgets), so Overview totals reconcile with the
-// log + analytics detail by construction. All figures are SAMPLE
-// data for illustration — never real usage.
+// R5 dashboard dataset — ONE seeded module feeding the three hero
+// windows (Overview, Providers, API Keys). Every KPI/table/bar is a
+// pure sum over REQUEST_LOGS (+ fixed per-key budgets), so Overview
+// totals reconcile with the log + analytics detail by construction.
+// All figures are SAMPLE data for illustration — never real usage.
 // Truth anchors (imported, never redeclared): provider API surfaces
 // + streaming/tool flags from site.ts PROVIDERS; the 10 guardrail
 // categories from site.ts GUARDRAIL_CATEGORIES.
@@ -28,14 +27,11 @@ export type PageId =
   | "Request Logs"
   | "Analytics";
 
-/** Window order (top → bottom of the stack). */
+/** Window order (top → bottom of the stack): three windows only. */
 export const PAGES: PageId[] = [
   "Overview",
   "Providers",
   "API Keys",
-  "Guardrails",
-  "Request Logs",
-  "Analytics",
 ];
 
 export type LogStatus =

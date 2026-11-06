@@ -293,15 +293,15 @@ export function Footer() {
       </Container>
       <div data-reveal className="foot-pressure relative">
         <div aria-hidden="true" className="foot-wordmark">
-          {"tOllMA".split("").map((ch, i) => (
+          {"ToLLma".split("").map((ch, i) => (
             <span key={i} data-letter="" className="foot-letter">
               {ch}
             </span>
           ))}
         </div>
       </div>
-      <Container width="wide" className="relative pb-3 pt-2">
-        <div data-reveal className="flex flex-col gap-2 border-t border-cream-line pt-3 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
+      <Container width="wide" className="relative pb-2 pt-1">
+        <div data-reveal className="flex flex-col gap-2 border-t border-cream-line pt-2 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} ToLLma · Apache-2.0</p>
           {/* Privacy/Terms are plain text: no such pages exist, and fake
               links are worse than none. Only real destinations get icons:
