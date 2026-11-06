@@ -903,6 +903,10 @@ body {
   white-space: nowrap;
   margin-top: clamp(2px, 0.8vw, 12px);
   padding-bottom: 0;
+  /* Pull the divider up to the ink: glyphs end ~5% em above the line
+     box, so a -5% bottom margin lands the following rule exactly on
+     the ink at every size. Scales with the clamp() font-size. */
+  margin-bottom: -0.05em;
 }
 .foot-letter {
   display: inline-block;
