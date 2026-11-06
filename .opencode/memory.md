@@ -4874,3 +4874,6 @@ Stack: PAGES cut to Overview/Providers/API Keys (dataset truth otherwise intact;
 
 ## 2026-11-07 - Frame top/bottom only
 Wrapper m-3 -> mx-0 my-3: side borders gone (full-bleed), 12px black bars top + bottom with curvy corners stay, scroll with page. Verified L/R 0, top 12, ox=0, zero errors, tsc clean. Commit 5586c10.
+
+## 2026-11-07 - Thicker frame bars
+Wrapper my-3 -> my-6 (12px -> 24px black top/bottom, sides stay 0). Verified 24/0, ox=0, zero errors, tsc clean.
