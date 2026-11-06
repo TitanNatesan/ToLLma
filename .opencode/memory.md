@@ -4871,3 +4871,6 @@ Replaced app-taxonomy links with the 6 landing sections in page order (Overview/
 
 ## 2026-11-07 - 3 windows, airier navbar, wordmark on the floor
 Stack: PAGES cut to Overview/Providers/API Keys (dataset truth otherwise intact; scroll math + sidebar auto-adapt). Verified 3 windows. Navbar: GlassSurface backgroundOpacity 0.65->0.45 island / 0.75->0.55 panel — content ghosts through, label/CTA readable. Footer: bar to pb-2/pt-1 + inner pt-2 (gap now 4px, dips clipped). Caught + reverted parallel-session casing slip (tOllMA -> exact ToLLma). tsc clean, zero errors, ox=0. Commit 28b548e.
+
+## 2026-11-07 - Frame top/bottom only
+Wrapper m-3 -> mx-0 my-3: side borders gone (full-bleed), 12px black bars top + bottom with curvy corners stay, scroll with page. Verified L/R 0, top 12, ox=0, zero errors, tsc clean. Commit 5586c10.
