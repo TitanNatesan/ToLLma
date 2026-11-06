@@ -104,11 +104,13 @@ export default function RootLayout({
       <body className="antialiased">
         {/* Page frame: black bars top + bottom that scroll with the page
             (nothing is fixed); body black shows through the margin as
-            the surround, full-bleed on the sides. overflow: clip (NOT
-            hidden) clips the curvy corners without turning the wrapper
-            into a scroll container, so sticky/fixed descendants keep
-            working. Plain in print. */}
-        <div className="mx-0 my-6 overflow-clip rounded-[28px] bg-cream print:m-0 print:rounded-none print:overflow-visible">
+            the surround, full-bleed on the sides. Bottom radius mirrors
+            the footer top (40px mobile / 64px md+) so both curves match;
+            top stays 28px (hero side). overflow: clip (NOT hidden) clips
+            the curvy corners without turning the wrapper into a scroll
+            container, so sticky/fixed descendants keep working. Plain
+            in print. */}
+        <div className="mx-0 my-6 overflow-clip rounded-t-[28px] rounded-b-[40px] bg-cream md:rounded-b-[64px] print:m-0 print:rounded-none print:overflow-visible">
           {children}
         </div>
       </body>
