@@ -131,10 +131,10 @@ vec3 pinch(vec2 p, float time, out float order) {
 
 vec3 rise(vec2 p, float time, out float order) {
   float wide = max(uAspect, 0.9);
-  // Footer fork: center sits ABOVE the viewport (+0.7) so the glow
-  // descends from the top edge. Upstream uses -0.7 (rises from the
-  // bottom). Reveal order follows the flip consistently.
-  vec2 center = vec2(0.05 * sin(time * 0.45) * wide, 0.7);
+  // Footer fork: center sits above the viewport (+0.3) so the glow
+  // covers the top and reaches down to the brand text. Upstream uses
+  // -0.7 (rises from the bottom). Reveal order follows consistently.
+  vec2 center = vec2(0.05 * sin(time * 0.45) * wide, 0.3);
   vec2 radius = vec2(0.82 * wide, 0.64 * (1.0 + 0.04 * sin(time * 0.8)));
   float d = length((p - center) / radius);
   float soft = mix(0.6, 1.15, uSoftness);

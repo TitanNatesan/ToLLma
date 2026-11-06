@@ -161,7 +161,7 @@ export function Footer() {
           density={0.65}
           glyphOpacity={0.7}
           gradientOpacity={0.6}
-          scale={3}
+          scale={3.6}
           glow={0.1}
           flicker={0.1}
           speed={0.6}
