@@ -4883,3 +4883,6 @@ Wrapper my-3 -> my-6 (12px -> 24px black top/bottom, sides stay 0). Verified 24/
 
 ## 2026-11-07 - Requirement loop closure sweep
 User: fix/test/verify/complete the loop. Audit: 0 missing alts (empties are decorative/aria-hidden), 0 unlabeled buttons, 0 aria-hidden focusables, single h1, zero console/page errors. tsc clean, production build green. End-state verified 390+1440: tOllMA Jersey 10 wordmark, 6 section nav items, 3 stack windows, frame 24/0, ox=0. (The "1 issue" badge in the user screenshot is their browser extension, not page-reported; nothing actionable found.)
+
+## 2026-11-07 - Nav hydration mismatch fix
+Bug: useMemo fallback read window.scrollY during render — SSR rendered Overview while a mid-page reload hydrated Guides. Fix: mounted-gate (useState+useEffect); first client render mirrors SSR, fallback corrects post-mount. Verified: no hydration error on #company reload; spy aria-marks Manage/Platform/Providers/Guides per section; bottom label Guides. (One probe round showed stale-bundle readings mid-HMR; re-ran settled — all correct.) Commit 0a1b8bc.
