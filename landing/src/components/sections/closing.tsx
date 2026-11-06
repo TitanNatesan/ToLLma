@@ -159,7 +159,7 @@ export function Footer() {
           characters=" =+xX0S8#@"
           cellSize={20}
           density={0.65}
-          glyphOpacity={0.7}
+          glyphOpacity={0.8}
           gradientOpacity={0.6}
           scale={3.6}
           glow={0.1}

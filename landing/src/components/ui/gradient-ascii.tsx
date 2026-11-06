@@ -130,15 +130,22 @@ vec3 pinch(vec2 p, float time, out float order) {
 }
 
 vec3 rise(vec2 p, float time, out float order) {
-  float wide = max(uAspect, 0.9);
-  // Footer fork: center sits above the viewport (+0.3) so the glow
-  // covers the top and reaches down to the brand text. Upstream uses
-  // -0.7 (rises from the bottom). Reveal order follows consistently.
+  // Footer fork: radial wash from the top-center. wide tracks the true
+  // aspect (no 0.9 clamp) so the falloff profile is identical in UV
+  // space at every viewport. Upstream center is -0.7 (rises from the
+  // bottom); ours sits at +0.3 near the top edge. Reveal order follows.
+  float wide = max(uAspect, 0.01);
   vec2 center = vec2(0.05 * sin(time * 0.45) * wide, 0.3);
   vec2 radius = vec2(0.82 * wide, 0.64 * (1.0 + 0.04 * sin(time * 0.8)));
   float d = length((p - center) / radius);
-  float soft = mix(0.6, 1.15, uSoftness);
-  float t = clamp(pow(clamp(1.0 - d, 0.0, 1.0), soft) * 1.35, 0.0, 1.0);
+  // Opacity envelope: 80% at the top-center only, 10% floor everywhere
+  // else (side edges d~0.61+, corners, bottom). u = 1 at the center;
+  // the 0.55->0.69 window keeps the full-strength blob tight around the
+  // top-center while everything past d~0.45 rests on the floor. The
+  // downstream tone() maps floor t~0.085 to ~10% glyph alpha and t = 1
+  // to full glyphOpacity (0.8), so no prop math is needed elsewhere.
+  float u = clamp(1.0 - d, 0.0, 1.0);
+  float t = 0.085 + 0.915 * smoothstep(0.55, 0.69, u);
   order = clamp((d - 0.2) * 1.3, 0.0, 1.0);
   return vec3(t, t, 0.0);
 }
