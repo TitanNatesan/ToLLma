@@ -108,7 +108,7 @@ export default function RootLayout({
             hidden) clips the curvy corners without turning the wrapper
             into a scroll container, so sticky/fixed descendants keep
             working. Plain in print. */}
-        <div className="mx-0 my-3 overflow-clip rounded-[28px] bg-cream print:m-0 print:rounded-none print:overflow-visible">
+        <div className="mx-0 my-6 overflow-clip rounded-[28px] bg-cream print:m-0 print:rounded-none print:overflow-visible">
           {children}
         </div>
       </body>
