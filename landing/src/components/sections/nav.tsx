@@ -51,13 +51,24 @@ export default function Nav() {
   const active = useActiveSection(ids);
   const reduced = prefersReducedMotion();
 
+  // Mount gate: the reading-line fallback below reads window.scrollY,
+  // which differs between SSR (no window) and a mid-page reload
+  // (restored scroll position) — rendering it during hydration
+  // mismatches (server says Overview, client says Guides). The first
+  // client render mirrors the server; the effect flips the gate and the
+  // fallback corrects on the next render.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Current item: the live match, else the last section whose top passed
   // the reading line (Overview above everything, last item past the end).
   // Recomputed whenever the spy fires (scroll-driven), so it stays fresh.
   const current = useMemo(() => {
     const hit = LINKS.find((l) => l.id === active);
     if (hit) return hit;
-    if (typeof window === "undefined") return OVERVIEW;
+    if (!mounted) return OVERVIEW;
     const y = window.scrollY + window.innerHeight * 0.4;
     let cur = OVERVIEW;
     for (const l of LINKS) {
@@ -66,7 +77,7 @@ export default function Nav() {
       else break;
     }
     return cur;
-  }, [active]);
+  }, [active, mounted]);
   // Reduced motion: never collapse — the full nav is always shown.
   const expanded = reduced || !scrolled || hovered || focused || touchOpen || open;
 
