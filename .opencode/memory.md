@@ -4889,3 +4889,6 @@ Bug: useMemo fallback read window.scrollY during render — SSR rendered Overvie
 
 ## 2026-11-07 - Wordmark bottom padding to zero
 Explicit padding-bottom:0 on .foot-pressure + .foot-wordmark (top margin + side inline padding kept). Verified computed T/R/B/L 0/0/0/0 + 0/57.6/0/57.6, ox=0, zero errors, tsc clean.
+
+## 2026-11-07 - Footer loop iteration 2
+Wash center +0.7->+0.3 (spread 3.0 kept): 60s soak proves glyphs rain top->bottom bar, surrounding the wordmark, top stays brightest. tOllMA + zero-gap divider contact re-verified (text=tOllMA, gap 0, ox=0, zero errors). tsc clean. Commit in footer batch.
