@@ -4892,3 +4892,6 @@ Explicit padding-bottom:0 on .foot-pressure + .foot-wordmark (top margin + side 
 
 ## 2026-11-07 - Footer loop iteration 2
 Wash center +0.7->+0.3 (spread 3.0 kept): 60s soak proves glyphs rain top->bottom bar, surrounding the wordmark, top stays brightest. tOllMA + zero-gap divider contact re-verified (text=tOllMA, gap 0, ox=0, zero errors). tsc clean. Commit in footer batch.
+
+## 2026-11-07 - Wordmark touching the divider
+Canvas-measured Jersey 10 ink bottoms (all 5 glyph classes end 1px above baseline, zero descenders), then tight-crop loop: margin-bottom -0.05em on .foot-wordmark pulls the rule onto the ink. Verified visually at 1440 + 390: every glyph kisses the hairline, none crossed or clipped; ox=0, zero errors, tsc clean.
