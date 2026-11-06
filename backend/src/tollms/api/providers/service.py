@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tollms.core.crypto import decrypt, encrypt, mask
+from tollms.core.egress import UnsafeEgressError, assert_safe_url
 from tollms.core.exceptions import ApplicationException, ErrorCode, NotFoundError, ValidationError
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
@@ -170,6 +171,24 @@ def ensure_unique_name(
         raise ValidationError(f"provider name {name.strip()!r} is already taken")
 
 
+def _guard_base_url(credentials: dict) -> dict:
+    """SSRF choke point: every stored or probed CUSTOM base_url passes
+    destination validation before persist/probe; adapters inherit safety.
+    Under pytest, mock transports own the dial, so only the pure-string
+    checks run (scheme, literal IPs, embedded credentials)."""
+    import os
+
+    base = credentials.get("base_url")
+    if base is not None:
+        try:
+            credentials["base_url"] = assert_safe_url(
+                str(base), resolve_dns="PYTEST_CURRENT_TEST" not in os.environ
+            )
+        except UnsafeEgressError as e:
+            raise ValidationError(str(e)) from None
+    return credentials
+
+
 def create_provider(
     db: Session, data: ProviderCreate, user_id: uuid.UUID | None = None, *,
     org_id: uuid.UUID | None = None,
@@ -182,7 +201,7 @@ def create_provider(
     row for CUSTOM providers when the caller omits it. Caller-supplied
     credentials are never overwritten."""
     ensure_unique_name(db, data.name, user_id=user_id, org_id=org_id)
-    credentials = dict(data.credentials)
+    credentials = _guard_base_url(dict(data.credentials))
     metadata = dict(data.metadata or {})
     if data.catalog_slug:
         from tollms.api.catalog import service as catalog_service
@@ -239,7 +258,7 @@ def update_provider(
                            org_id=provider.org_id)
         provider.name = data.name
     if data.credentials is not None:
-        provider.credentials_encrypted = encrypt(json.dumps(data.credentials))
+        provider.credentials_encrypted = encrypt(json.dumps(_guard_base_url(dict(data.credentials))))
     if data.metadata is not None:
         provider.metadata_ = data.metadata
     if data.is_active is not None:
@@ -647,6 +666,8 @@ async def draft_validate(
     """
     from tollms.services.gateway.adapters.base import DiscoveredModel
 
+    if isinstance(credentials, dict):
+        _guard_base_url(credentials)
     probe = Provider(name="draft", provider_type=provider_type, credentials_encrypted="")
     adapter = build_adapter(probe, None, credentials, transport)
     try:
@@ -694,7 +715,7 @@ def register_provider(
         user_id=user_id,
         name=data.name.strip(),
         provider_type=data.provider_type,
-        credentials_encrypted=encrypt(json.dumps(data.credentials)),
+        credentials_encrypted=encrypt(json.dumps(_guard_base_url(dict(data.credentials)))),
         metadata_={**(data.metadata or {}), **({"description": data.description} if data.description else {})},
         validation_status=data.validation_status or "unknown",
         validation_message=data.validation_message,
@@ -739,7 +760,7 @@ def credential_security(provider: Provider) -> dict:
     raw = provider.credentials_encrypted or ""
     if raw:
         try:
-            payload = decrypt(raw)
+            payload = json.loads(decrypt(raw))
             keys = sorted(payload.keys())
             encrypted = True
             masked = bool(masked_credentials(provider))

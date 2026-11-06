@@ -19,7 +19,7 @@ def _mkuser(tag: str) -> TestClient:
 
     c = TestClient(app)
     email = f"org-{tag}-{uuid.uuid4().hex[:8]}@tollma.ai"
-    r = c.post("/auth/signup", json={"email": email, "password": "Password123"})
+    r = c.post("/auth/signup", json={"email": email, "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     if token:
@@ -202,7 +202,7 @@ def test_invite_new_user_registers_then_accepts(client: TestClient, db, user_fac
     assert inv.status_code == 201, inv.text
 
     newcomer = TestClient(app)
-    r = newcomer.post("/auth/signup", json={"email": fresh_email, "password": "Password123"})
+    r = newcomer.post("/auth/signup", json={"email": fresh_email, "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     newcomer.get("/auth/verify", params={"token": r.json()["debug_verification_token"]})
     mine = newcomer.get(f"{ORG}/invitations/mine").json()

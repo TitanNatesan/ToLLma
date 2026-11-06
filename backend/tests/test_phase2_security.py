@@ -35,7 +35,7 @@ from tollms.services.cache.manager import call_sync, get_manager
 
 
 def _signup(client: TestClient, email: str, password: str = "Password123") -> dict:
-    r = client.post("/auth/signup", json={"email": email, "password": password})
+    r = client.post("/auth/signup", json={"email": email, "password": password, "age_confirmed": True})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -103,12 +103,12 @@ def test_login_burst_rate_limited_429(
     monkeypatch.setattr(settings, "auth_rate_limit_window_seconds", 60)
     _signup(client, email="burst@tollma.ai")
 
-    first = client.post("/auth/login", json={"email": "burst@tollma.ai", "password": "Password123"})
+    first = client.post("/auth/login", json={"email": "burst@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert first.status_code == 200, first.text
-    second = client.post("/auth/login", json={"email": "burst@tollma.ai", "password": "Password123"})
+    second = client.post("/auth/login", json={"email": "burst@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert second.status_code == 200, second.text
 
-    denied = client.post("/auth/login", json={"email": "burst@tollma.ai", "password": "Password123"})
+    denied = client.post("/auth/login", json={"email": "burst@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert denied.status_code == 429, denied.text
     assert denied.json()["error"]["code"] == "RATE_LIMITED"
     assert denied.headers.get("retry-after") is not None
@@ -131,7 +131,7 @@ def test_login_lockout_denies_correct_password(
         assert bad.status_code == 401, bad.text
 
     # Correct password is denied while the email+IP pair is locked.
-    denied = client.post("/auth/login", json={"email": "locked@tollma.ai", "password": "Password123"})
+    denied = client.post("/auth/login", json={"email": "locked@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert denied.status_code == 429, denied.text
     assert denied.json()["error"]["code"] == "RATE_LIMITED"
     assert denied.headers.get("retry-after") is not None
@@ -151,13 +151,13 @@ def test_login_lockout_expiry_allows_success(
         assert client.post(
             "/auth/login", json={"email": "expiry@tollma.ai", "password": "WrongPass1"}
         ).status_code == 401
-    locked = client.post("/auth/login", json={"email": "expiry@tollma.ai", "password": "Password123"})
+    locked = client.post("/auth/login", json={"email": "expiry@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert locked.status_code == 429, locked.text
     assert 0 < int(locked.headers["retry-after"]) <= 45
 
     # Simulate the TTL window passing (IP-agnostic: drop every login counter).
     assert call_sync(get_manager().invalidate_pattern("tollma:login_attempts:*")) >= 0
-    ok = client.post("/auth/login", json={"email": "expiry@tollma.ai", "password": "Password123"})
+    ok = client.post("/auth/login", json={"email": "expiry@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert ok.status_code == 200, ok.text
 
 
@@ -174,7 +174,7 @@ def test_successful_login_resets_lockout_counter(
             "/auth/login", json={"email": "reset-counter@tollma.ai", "password": "WrongPass1"}
         ).status_code == 401
     assert client.post(
-        "/auth/login", json={"email": "reset-counter@tollma.ai", "password": "Password123"}
+        "/auth/login", json={"email": "reset-counter@tollma.ai", "password": "Password123", "age_confirmed": True}
     ).status_code == 200
 
     # Counter was cleared: two more failures are still 401s, not a lockout
@@ -184,7 +184,7 @@ def test_successful_login_resets_lockout_counter(
             "/auth/login", json={"email": "reset-counter@tollma.ai", "password": "WrongPass1"}
         ).status_code == 401
     assert client.post(
-        "/auth/login", json={"email": "reset-counter@tollma.ai", "password": "Password123"}
+        "/auth/login", json={"email": "reset-counter@tollma.ai", "password": "Password123", "age_confirmed": True}
     ).status_code == 200
 
 

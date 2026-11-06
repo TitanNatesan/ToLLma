@@ -68,7 +68,7 @@ async def signup(
     _: None = Depends(rate_limit.limit("auth:signup")),
 ) -> AuthResponse:
     user, verify_token, verification_sent = await service.signup(
-        db, str(data.email), data.password, data.full_name
+        db, str(data.email), data.password, data.full_name, age_confirmed=data.age_confirmed
     )
     refresh_jti = security.generate_refresh_jti()
     session_id = await security.create_session(
@@ -92,6 +92,17 @@ async def verify(
     _: None = Depends(rate_limit.limit("auth:verify")),
 ) -> VerifyResponse:
     user = await service.verify_email(db, token)
+    return VerifyResponse(user=service.read_user(user))
+
+
+@router.post("/confirm-age", response_model=VerifyResponse)
+async def confirm_age(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    _: None = Depends(rate_limit.limit("auth:verify")),
+) -> VerifyResponse:
+    """One-click 18+ self-declaration for legacy/OAuth accounts (F3)."""
+    user = service.confirm_age(db, user)
     return VerifyResponse(user=service.read_user(user))
 
 

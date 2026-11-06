@@ -50,6 +50,45 @@ class ResolvedSetting:
     match_source: str | None = None
 
 
+def _zero_retention_applies(
+    db: Session, user_id: uuid.UUID | None, org_id: uuid.UUID | None
+) -> bool:
+    """F9 mirror for the capture path (services may not import api/*).
+
+    Any zero_retention policy at the applicable scope suppresses capture.
+    Fail-open False on error: preserves today's capture behavior.
+    """
+    if user_id is None:
+        return False
+    try:
+        from tollms.models.privacy import RetentionPolicy
+
+        rows = db.scalars(
+            select(RetentionPolicy).where(
+                RetentionPolicy.is_deleted.is_(False),
+                RetentionPolicy.zero_retention.is_(True),
+                RetentionPolicy.data_category == "prompt_logs",
+                RetentionPolicy.user_id == user_id,
+            )
+        ).all()
+        if rows:
+            return True
+        if org_id is not None:
+            org_rows = db.scalars(
+                select(RetentionPolicy).where(
+                    RetentionPolicy.is_deleted.is_(False),
+                    RetentionPolicy.zero_retention.is_(True),
+                    RetentionPolicy.data_category == "prompt_logs",
+                    RetentionPolicy.org_id == org_id,
+                )
+            ).all()
+            return bool(org_rows)
+        return False
+    except Exception:
+        logger.warning("zero-retention check failed", exc_info=True)
+        return False
+
+
 def _live_setting_for_user(db: Session, user_id: uuid.UUID) -> PromptLoggingSetting | None:
     try:
         return db.scalar(
@@ -202,10 +241,19 @@ def resolve_setting(
     additionally requires the key allow-list to hit - an empty target list
     logs nothing, never falls back to global. Never raises (fail-closed
     to no-capture).
+
+    Zero-retention (F9) short-circuits to no-capture before any setting
+    lookup: org policy wins for org traffic, most-restrictive TTL wins,
+    zero at either applicable scope suppresses capture. Canonical rule text
+    lives in INTERFACE_FREEZE.md F9; the API-facing twin is
+    api/privacy/service.resolve_retention (kept in sync by freeze).
     """
     try:
         provenance, key_org = _derive_provenance(db, api_key_id, key_provenance)
         if provenance == "unknown":
+            return ResolvedSetting()
+        scope_org = key_org if key_org is not None else org_id
+        if _zero_retention_applies(db, user_id, scope_org):
             return ResolvedSetting()
         if provenance == "organization":
             scope_org = key_org if key_org is not None else org_id

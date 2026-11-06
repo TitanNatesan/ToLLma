@@ -31,6 +31,11 @@ from tollms.api.prompt_logging.router import router as prompt_logging_router
 from tollms.api.providers.router import router as providers_router
 from tollms.api.repository.router import router as repository_router
 from tollms.api.settings.router import router as settings_router
+from tollms.api.legal.router import router as legal_router
+from tollms.api.privacy.router import router as privacy_router
+from tollms.api.security.router import router as security_router
+from tollms.api.governance.router import router as governance_router
+from tollms.api.incidents.router import router as incidents_router
 from tollms.api.exports.router import router as exports_router
 from tollms.api.messages.router import router as messages_router
 from tollms.api.request_logs.router import router as request_logs_router
@@ -143,6 +148,19 @@ def create_app() -> FastAPI:
     register_handlers(app)
 
     @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if get_settings().environment == "prod":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        if request.url.path.startswith("/api/") or request.url.path.startswith("/v1/"):
+            response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        return response
+
+    @app.middleware("http")
     async def access_log(request: Request, call_next):
         request_id = uuid.uuid4().hex[:8]
         start = time.monotonic()
@@ -196,6 +214,11 @@ def create_app() -> FastAPI:
     app.include_router(orgs_router)
     app.include_router(notifications_router)
     app.include_router(public_gateway_router)
+    app.include_router(privacy_router)
+    app.include_router(legal_router)
+    app.include_router(security_router)
+    app.include_router(governance_router)
+    app.include_router(incidents_router)
     logger.info("%s starting (env=%s)", settings.project_name, settings.environment)
     return app
 

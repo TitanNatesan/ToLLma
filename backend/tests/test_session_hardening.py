@@ -21,14 +21,14 @@ PASSWORD = "Password123"
 
 def _signup_login(client: TestClient, email: str) -> dict:
     """Fresh verified user + one password login; returns access/refresh/sid."""
-    r = client.post("/auth/signup", json={"email": email, "password": PASSWORD})
+    r = client.post("/auth/signup", json={"email": email, "password": PASSWORD, "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     assert token
     v = client.get("/auth/verify", params={"token": token})
     assert v.status_code == 200, v.text
     client.cookies.clear()
-    login = client.post("/auth/login", json={"email": email, "password": PASSWORD})
+    login = client.post("/auth/login", json={"email": email, "password": PASSWORD, "age_confirmed": True})
     assert login.status_code == 200, login.text
     access = login.json()["access_token"]
     refresh = client.cookies.get("refresh_token")
@@ -41,7 +41,7 @@ def _signup_login(client: TestClient, email: str) -> dict:
 def _login_again(client: TestClient, email: str) -> dict:
     """Extra login for an existing user (multi-session scenarios)."""
     client.cookies.clear()
-    r = client.post("/auth/login", json={"email": email, "password": PASSWORD})
+    r = client.post("/auth/login", json={"email": email, "password": PASSWORD, "age_confirmed": True})
     assert r.status_code == 200, r.text
     access = r.json()["access_token"]
     refresh = client.cookies.get("refresh_token")
@@ -218,7 +218,7 @@ def test_login_audit_has_event_without_token_material(
     client: TestClient, caplog
 ) -> None:
     email = "audit@tollma.ai"
-    r = client.post("/auth/signup", json={"email": email, "password": PASSWORD})
+    r = client.post("/auth/signup", json={"email": email, "password": PASSWORD, "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     assert token
@@ -227,7 +227,7 @@ def test_login_audit_has_event_without_token_material(
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="tollms.api.auth.service"):
-        login = client.post("/auth/login", json={"email": email, "password": PASSWORD})
+        login = client.post("/auth/login", json={"email": email, "password": PASSWORD, "age_confirmed": True})
     assert login.status_code == 200, login.text
     access = login.json()["access_token"]
     refresh = client.cookies.get("refresh_token")

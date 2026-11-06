@@ -7,7 +7,7 @@ export const MOCK_URL = "http://host.docker.internal:4899";
 /** Sign up + verify a fresh user in the page's context (cookies persist for UI + page.request). */
 export async function apiLoginAs(page: Page, tag: string): Promise<{ email: string }> {
   const email = `pw-${tag}-${Date.now()}@tollma.ai`;
-  const signup = await page.request.post(`${API}/auth/signup`, { data: { email, password: "Password123" } });
+  const signup = await page.request.post(`${API}/auth/signup`, { data: { email, password: "Password123", age_confirmed: true } });
   if (!signup.ok()) throw new Error(`e2e signup failed: ${await signup.text()}`);
   const token = (await signup.json()).debug_verification_token as string | null;
   if (token) await page.request.get(`${API}/auth/verify`, { params: { token } });
@@ -17,7 +17,7 @@ export async function apiLoginAs(page: Page, tag: string): Promise<{ email: stri
 /** Sign up in a bare request context (for API-only specs). Cookies persist in the fixture. */
 export async function apiSignupRequest(request: APIRequestContext, tag: string): Promise<{ email: string }> {
   const email = `pw-${tag}-${Date.now()}@tollma.ai`;
-  const signup = await request.post(`${API}/auth/signup`, { data: { email, password: "Password123" } });
+  const signup = await request.post(`${API}/auth/signup`, { data: { email, password: "Password123", age_confirmed: true } });
   if (!signup.ok()) throw new Error(`e2e signup failed: ${await signup.text()}`);
   return { email };
 }

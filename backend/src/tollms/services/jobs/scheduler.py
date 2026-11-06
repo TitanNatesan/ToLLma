@@ -151,11 +151,20 @@ def _purge_user_data(db, user_id: uuid.UUID) -> dict[str, int]:
     """Hard-delete one account's data in dependency order. No commit."""
     from sqlalchemy import delete, select, update
 
-    from tollms.models.api_key import ApiKey
+    from tollms.models.api_key import ApiKey, ApiRequestLog
     from tollms.models.attachment import Attachment
     from tollms.models.conversation import Conversation
+    from tollms.models.guardrail import GuardrailPolicy, GuardrailTrigger
+    from tollms.models.organization import Notification
+    from tollms.models.prompt_logging import (
+        PromptLog,
+        PromptLoggingKeyOverride,
+        PromptLoggingKeyTarget,
+        PromptLoggingSetting,
+    )
     from tollms.models.provider import Provider
     from tollms.models.registered_model import AIModel
+    from tollms.models.request_log import ExportEvent, RequestLog
     from tollms.models.usage_aggregate import UsageDailyAggregate
     from tollms.services.api_keys import keys as key_engine
     from tollms.services.gateway.attachments import delete_bytes
@@ -201,6 +210,46 @@ def _purge_user_data(db, user_id: uuid.UUID) -> dict[str, int]:
         .where(UsageDailyAggregate.user_id == user_id)
         .values(user_id=None)
     ).rowcount or 0
+    # Erasure ledger coverage (H1): user-attributed operational rows are
+    # hard-deleted — content (prompt bodies, excerpts, request metadata)
+    # must not survive de-linked. Counts-only aggregates stay anonymized.
+    prompt_logs = db.execute(
+        delete(PromptLog).where(PromptLog.user_id == user_id)
+    ).rowcount or 0
+    triggers = db.execute(
+        delete(GuardrailTrigger).where(GuardrailTrigger.user_id == user_id)
+    ).rowcount or 0
+    policies = db.execute(
+        delete(GuardrailPolicy).where(GuardrailPolicy.user_id == user_id)
+    ).rowcount or 0
+    setting_ids = select(PromptLoggingSetting.id).where(
+        PromptLoggingSetting.user_id == user_id
+    )
+    key_targets = db.execute(
+        delete(PromptLoggingKeyTarget).where(
+            PromptLoggingKeyTarget.setting_id.in_(setting_ids)
+        )
+    ).rowcount or 0
+    key_overrides = db.execute(
+        delete(PromptLoggingKeyOverride).where(
+            PromptLoggingKeyOverride.setting_id.in_(setting_ids)
+        )
+    ).rowcount or 0
+    log_settings = db.execute(
+        delete(PromptLoggingSetting).where(PromptLoggingSetting.user_id == user_id)
+    ).rowcount or 0
+    request_logs = db.execute(
+        delete(RequestLog).where(RequestLog.user_id == user_id)
+    ).rowcount or 0
+    api_request_logs = db.execute(
+        delete(ApiRequestLog).where(ApiRequestLog.user_id == user_id)
+    ).rowcount or 0
+    export_events = db.execute(
+        delete(ExportEvent).where(ExportEvent.user_id == user_id)
+    ).rowcount or 0
+    notifications = db.execute(
+        delete(Notification).where(Notification.user_id == user_id)
+    ).rowcount or 0
     return {
         "conversations": conversations,
         "attachments": len(paths),
@@ -210,6 +259,16 @@ def _purge_user_data(db, user_id: uuid.UUID) -> dict[str, int]:
         "api_keys": api_keys,
         "key_hashes": key_hashes,
         "usage_aggregates": aggregates,
+        "prompt_logs": prompt_logs,
+        "guardrail_triggers": triggers,
+        "guardrail_policies": policies,
+        "prompt_logging_settings": log_settings,
+        "prompt_logging_key_targets": key_targets,
+        "prompt_logging_key_overrides": key_overrides,
+        "request_logs": request_logs,
+        "api_request_logs": api_request_logs,
+        "export_events": export_events,
+        "notifications": notifications,
     }
 
 
@@ -234,6 +293,9 @@ def _purge_due_accounts(db, now: datetime) -> None:
     for user in due:
         user_id, email = user.id, user.email
         try:
+            if _legal_hold_active(db):
+                logger.warning("purge deferred for %s: active legal hold", user_id)
+                continue
             counts = _purge_user_data(db, user_id)
             key_hashes = counts.pop("key_hashes")
             for key_hash in key_hashes:
@@ -268,6 +330,29 @@ def _purge_due_accounts(db, now: datetime) -> None:
                 db.rollback()
             logger.exception("account purge failed: user_id=%s", user_id)
             emit("account.purged", user_id=str(user_id), result="failed")
+
+
+def _legal_hold_active(db) -> bool:
+    """Fail-closed legal-hold gate for the purge engine (F: hold_active).
+
+    Queries LegalRequest directly — services must not import api.*.
+    Unreadable hold table blocks purging (fail closed).
+    """
+    try:
+        from sqlalchemy import select
+
+        from tollms.models.incidents import LegalRequest
+
+        row = db.execute(
+            select(LegalRequest.id).where(
+                LegalRequest.is_deleted.is_(False),
+                LegalRequest.hold_active.is_(True),
+            ).limit(1)
+        ).first()
+        return row is not None
+    except Exception:
+        logger.warning("legal-hold check failed", exc_info=True)
+        return True
 
 
 def _deletion_job() -> None:

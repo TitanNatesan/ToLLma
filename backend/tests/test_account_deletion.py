@@ -172,7 +172,7 @@ def test_delete_request_validation_matrix(
 
     # Unverified local account -> 403 EMAIL_VERIFICATION_REQUIRED (verified
     # gate fires before the password check).
-    r = client.post("/auth/signup", json={"email": "del-unverified@tollma.ai", "password": "Password123"})
+    r = client.post("/auth/signup", json={"email": "del-unverified@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     email_service.outbox.clear()
     gated = client.post(DELETE_REQUEST, json={"current_password": "Password123"})
@@ -194,7 +194,7 @@ def test_delete_request_happy_path(
     # Second, independent session: the request must revoke others, not self.
     first_token = client.cookies.get("access_token")
     assert first_token
-    assert client.post("/auth/login", json={"email": user["email"], "password": "Password123"}).status_code == 200
+    assert client.post("/auth/login", json={"email": user["email"], "password": "Password123", "age_confirmed": True}).status_code == 200
     assert client.get("/api/v1/settings/sessions").json()["total"] == 2
 
     # An API key minted before the request must die with it.
@@ -506,11 +506,12 @@ def test_purge_full_resource_user(
     # Attachments (linked + stray) gone at the row level and on disk.
     assert db.scalars(select(Attachment).where(Attachment.user_id == uid)).all() == []
     assert all(not p.exists() for p in seed["disk"])
-    # Analytics survive anonymized: aggregates + request logs keep rows, lose user.
+    # Analytics survive anonymized: aggregates keep rows, lose user.
+    # Attributed request logs are hard-deleted (H1 erasure completeness).
     aggregates = db.scalars(select(UsageDailyAggregate)).all()
     assert len(aggregates) == 1 and aggregates[0].user_id is None
     logs = db.scalars(select(ApiRequestLog)).all()
-    assert len(logs) == 1 and logs[0].user_id is None and logs[0].api_key_id is None
+    assert logs == []
     # Audit ok row with per-resource counts.
     audits = db.scalars(select(PurgeAuditLog).where(PurgeAuditLog.deleted_user_id == uid)).all()
     assert len(audits) == 1
@@ -527,7 +528,7 @@ def test_purge_full_resource_user(
 
     # The freed address re-registers cleanly.
     client.cookies.clear()
-    assert client.post("/auth/signup", json={"email": email, "password": "Password123"}).status_code == 200
+    assert client.post("/auth/signup", json={"email": email, "password": "Password123", "age_confirmed": True}).status_code == 200
 
 
 def test_purge_not_due_user_untouched(

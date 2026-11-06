@@ -7,6 +7,11 @@ import {
 } from "@/components/Sidebar/SidebarSettings";
 import { useHashSection } from "@/hooks/useHashSection";
 import { SettingsCard } from "./components/SettingsCard";
+import { AgeConfirmBanner } from "./components/AgeConfirmBanner";
+import { PrivacyConsentsSection } from "./components/PrivacyConsentsSection";
+import { RetentionSection } from "./components/RetentionSection";
+import { CookiesSection } from "./components/CookiesSection";
+import { DataRightsSection } from "./components/DataRightsSection";
 import { AppearanceSection } from "./components/AppearanceSection";
 import { ChatPreferencesSection } from "./components/ChatPreferencesSection";
 import { ProfileSection } from "./components/ProfileSection";
@@ -34,6 +39,44 @@ export default function SettingsPage() {
       header={<PageHeader title="Settings" subtitle="Account, appearance, chat behavior, providers, and organizations." />}
       testId="settings-page"
     >
+          <AgeConfirmBanner />
+
+          <SettingsCard
+            id="privacy"
+            title="Privacy"
+            description="Consent preferences per category. Functional is always on."
+            testId="settings-section-privacy"
+          >
+            <PrivacyConsentsSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="retention"
+            title="Data retention"
+            description="How long your data is kept, per category. Blank uses the platform default."
+            testId="settings-section-retention"
+          >
+            <RetentionSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="cookies"
+            title="Cookies"
+            description="Device-local cookie preferences."
+            testId="settings-section-cookies"
+          >
+            <CookiesSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="data-rights"
+            title="Your data"
+            description="Export a copy, submit data requests, or head to deletion."
+            testId="settings-section-data-rights"
+          >
+            <DataRightsSection />
+          </SettingsCard>
+
           <SettingsCard
             id="profile"
             active={activeId === "profile"}

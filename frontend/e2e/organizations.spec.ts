@@ -4,7 +4,7 @@ import { API } from "./helpers";
 /** Sign up + verify (org routes require a verified account). */
 async function signupVerified(request: APIRequestContext, tag: string): Promise<{ email: string }> {
   const email = `pw-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tollma.ai`;
-  const signup = await request.post(`${API}/auth/signup`, { data: { email, password: "Password123" } });
+  const signup = await request.post(`${API}/auth/signup`, { data: { email, password: "Password123", age_confirmed: true } });
   if (!signup.ok()) throw new Error(`e2e signup failed: ${await signup.text()}`);
   const token = (await signup.json()).debug_verification_token as string | null;
   if (token) {
@@ -45,7 +45,7 @@ test.describe("organizations phase A", () => {
     const invitee = await playwright.request.newContext();
     const inviteeEmail = `pw-e2e-invitee-${Date.now()}@tollma.ai`;
     const signup = await invitee.post(`${API}/auth/signup`, {
-      data: { email: inviteeEmail, password: "Password123" },
+      data: { email: inviteeEmail, password: "Password123", age_confirmed: true },
     });
     expect(signup.ok()).toBeTruthy();
     const vtoken = (await signup.json()).debug_verification_token as string | null;
@@ -110,7 +110,7 @@ test.describe("organizations phase A", () => {
     const org = await orgAs(request, `Reject Org ${Date.now()}`);
     const email = `pw-e2e-reject-${Date.now()}@tollma.ai`;
     const signup = await page.request.post(`${API}/auth/signup`, {
-      data: { email, password: "Password123" },
+      data: { email, password: "Password123", age_confirmed: true },
     });
     const token = (await signup.json()).debug_verification_token as string | null;
     if (token) await page.request.get(`${API}/auth/verify`, { params: { token } });
@@ -131,7 +131,7 @@ test.describe("organizations phase A", () => {
     const org = await orgAs(request, `Approve Org ${Date.now()}`);
     const email = `pw-e2e-joiner-${Date.now()}@tollma.ai`;
     const signup = await page.request.post(`${API}/auth/signup`, {
-      data: { email, password: "Password123" },
+      data: { email, password: "Password123", age_confirmed: true },
     });
     const token = (await signup.json()).debug_verification_token as string | null;
     if (token) await page.request.get(`${API}/auth/verify`, { params: { token } });
@@ -150,7 +150,7 @@ test.describe("organizations phase A", () => {
     const org = await orgAs(request, `Remove Org ${Date.now()}`);
     const email = `pw-e2e-gone-${Date.now()}@tollma.ai`;
     const signup = await page.request.post(`${API}/auth/signup`, {
-      data: { email, password: "Password123" },
+      data: { email, password: "Password123", age_confirmed: true },
     });
     const token = (await signup.json()).debug_verification_token as string | null;
     if (token) await page.request.get(`${API}/auth/verify`, { params: { token } });
@@ -338,7 +338,7 @@ test.describe("organizations phase A", () => {
     const org = await orgAs(request, `Iso Org ${Date.now()}`);
     const email = `pw-e2e-iso-${Date.now()}@tollma.ai`;
     const signup = await page.request.post(`${API}/auth/signup`, {
-      data: { email, password: "Password123" },
+      data: { email, password: "Password123", age_confirmed: true },
     });
     expect(signup.ok()).toBeTruthy();
     const vtoken = (await signup.json()).debug_verification_token as string | null;

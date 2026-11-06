@@ -245,7 +245,9 @@ async def transcribe_audio(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> str:
     """Whisper transcription through an OpenAI-compatible endpoint (same creds)."""
-    url = base_url.rstrip("/") + "/audio/transcriptions"
+    from tollms.core.egress import safe_join
+
+    url = safe_join(base_url, "/audio/transcriptions")
     files = {"file": (filename, data, content_type or "audio/mpeg")}
     try:
         async with httpx.AsyncClient(transport=transport, timeout=180.0) as client:

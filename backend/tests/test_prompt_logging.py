@@ -29,7 +29,7 @@ ORG = "/api/v1/orgs"
 
 def _other(email: str) -> TestClient:
     c = TestClient(app)
-    r = c.post("/auth/signup", json={"email": email, "password": "Password123"})
+    r = c.post("/auth/signup", json={"email": email, "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     if token:

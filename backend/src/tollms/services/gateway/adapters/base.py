@@ -191,6 +191,8 @@ class BaseProviderAdapter:
     supported_endpoints: ClassVar[frozenset[str]] = frozenset({"chat_completions"})
 
     def _client(self, **kwargs) -> httpx.AsyncClient:
+        # Redirects stay off: every hop must pass egress validation explicitly.
+        kwargs.setdefault("follow_redirects", False)
         return httpx.AsyncClient(transport=self.transport, timeout=self.timeout, **kwargs)
 
     async def chat_stream(

@@ -3,7 +3,7 @@ import { API, selectDropdown } from "./helpers";
 
 async function verifiedSignupAndVerify(request: APIRequestContext, tag: string): Promise<string> {
   const email = `pw-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@tollma.ai`;
-  const signup = await request.post(`${API}/auth/signup`, { data: { email, password: "Password123" } });
+  const signup = await request.post(`${API}/auth/signup`, { data: { email, password: "Password123", age_confirmed: true } });
   if (!signup.ok()) throw new Error(`e2e signup failed: ${await signup.text()}`);
   const token = (await signup.json()).debug_verification_token as string | null;
   if (token) await request.get(`${API}/auth/verify`, { params: { token } });

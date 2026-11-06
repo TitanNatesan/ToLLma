@@ -51,6 +51,8 @@ def _google_user(db: Session) -> tuple[User, str]:
         google_id=google_id,
         has_password=False,
         email_verified=True,
+        age_confirmed_at=datetime.now(timezone.utc),
+        age_confirm_method="self_declaration:test-helper",
     )
     db.add(user)
     db.commit()
@@ -76,7 +78,7 @@ def _auth(token: str) -> dict:
 
 
 def test_local_signup_reports_local_provider(client: TestClient) -> None:
-    r = client.post("/auth/signup", json={"email": "local@example.com", "password": "Password123"})
+    r = client.post("/auth/signup", json={"email": "local@example.com", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     user = r.json()["user"]
     assert user["provider"] == "local"
@@ -239,7 +241,7 @@ def test_reset_password_end_to_end(
 
     # New password works, old one does not.
     assert client.post("/auth/login", json={"email": "reset@example.com", "password": "BrandNew123"}).status_code == 200
-    assert client.post("/auth/login", json={"email": "reset@example.com", "password": "Password123"}).status_code == 401
+    assert client.post("/auth/login", json={"email": "reset@example.com", "password": "Password123", "age_confirmed": True}).status_code == 401
 
 
 def test_expired_reset_token_is_rejected(
@@ -273,7 +275,7 @@ def test_using_one_token_invalidates_siblings(
 
 
 def test_signup_enforces_password_policy(client: TestClient) -> None:
-    weak = client.post("/auth/signup", json={"email": "weak@example.com", "password": "alllowercase1"})
+    weak = client.post("/auth/signup", json={"email": "weak@example.com", "password": "alllowercase1", "age_confirmed": True})
     assert weak.status_code == 422
     assert "uppercase" in weak.json()["error"]["message"]
 
@@ -314,7 +316,7 @@ def test_forgot_reset_end_to_end_google_with_password(
     # Dual login: email+password works after the reset; old password is dead.
     client.cookies.clear()
     assert client.post("/auth/login", json={"email": email, "password": "BrandNew123"}).status_code == 200
-    assert client.post("/auth/login", json={"email": email, "password": "Password123"}).status_code == 401
+    assert client.post("/auth/login", json={"email": email, "password": "Password123", "age_confirmed": True}).status_code == 401
 
 
 def test_google_only_forgot_silent_reset_rejected(

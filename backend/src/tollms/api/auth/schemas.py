@@ -13,6 +13,8 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     full_name: str | None = Field(default=None, max_length=255)
+    # 18+ self-declaration (unchecked-by-default checkbox in UI). No DOB/ID.
+    age_confirmed: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -30,6 +32,7 @@ class UserRead(BaseModel):
     full_name: str | None
     username: str | None = None
     email_verified: bool
+    age_confirmed: bool = False
     platform_role: str = "user"
     auth_provider: AuthProvider
     # Provider-aware surface: "local" shows password management, "google" does not.

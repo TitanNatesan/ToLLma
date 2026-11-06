@@ -46,6 +46,7 @@ class ErrorCode(str, enum.Enum):
     FORBIDDEN = "FORBIDDEN"
     EMAIL_VERIFICATION_REQUIRED = "EMAIL_VERIFICATION_REQUIRED"
     ACCOUNT_PENDING_DELETION = "ACCOUNT_PENDING_DELETION"
+    AGE_CONFIRMATION_REQUIRED = "AGE_CONFIRMATION_REQUIRED"
     CONFLICT = "CONFLICT"
 
 
@@ -123,6 +124,14 @@ class AccountPendingDeletionError(ForbiddenError):
     retryable."""
 
     code = ErrorCode.ACCOUNT_PENDING_DELETION
+    status_code = 403
+
+
+class AgeConfirmationRequiredError(ForbiddenError):
+    """Legacy/OAuth account that never confirmed 18+ eligibility: feature
+    access denied until POST /auth/confirm-age. 403, not retryable."""
+
+    code = ErrorCode.AGE_CONFIRMATION_REQUIRED
     status_code = 403
 
 

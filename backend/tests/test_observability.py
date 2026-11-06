@@ -53,7 +53,7 @@ def _metric_get(name: str, labels: dict[str, str] | None = None):
 
 
 def _signup_verify(client: TestClient, email: str) -> dict:
-    r = client.post("/auth/signup", json={"email": email, "password": PASSWORD})
+    r = client.post("/auth/signup", json={"email": email, "password": PASSWORD, "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     assert token

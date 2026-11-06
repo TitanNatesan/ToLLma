@@ -119,3 +119,10 @@ class User(SoftDeleteMixin, TimestampedModel):
     prompt_logging_settings: Mapped[list["PromptLoggingSetting"]] = relationship(back_populates="owner")
     prompt_logs: Mapped[list["PromptLog"]] = relationship(back_populates="owner")
     benchmark_runs: Mapped[list["BenchmarkRun"]] = relationship(back_populates="owner")
+    legal_acceptances: Mapped[list["LegalAcceptance"]] = relationship(back_populates="user")
+    # 18+ eligibility (F3): self-declared at signup, NULL = legacy account
+    # that must confirm once via POST /auth/confirm-age. No DOB/ID collected.
+    age_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    age_confirm_method: Mapped[str | None] = mapped_column(String(32), nullable=True)

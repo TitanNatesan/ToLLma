@@ -20,7 +20,7 @@ test.describe("notifications", () => {
     const invitee = await playwright.request.newContext();
     const inviteeEmail = `pw-e2e-notif-${Date.now()}@tollma.ai`;
     const signup = await invitee.post(`${API}/auth/signup`, {
-      data: { email: inviteeEmail, password: "Password123" },
+      data: { email: inviteeEmail, password: "Password123", age_confirmed: true },
     });
     expect(signup.ok()).toBeTruthy();
     const vtoken = (await signup.json()).debug_verification_token as string | null;

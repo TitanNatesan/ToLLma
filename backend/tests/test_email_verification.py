@@ -17,6 +17,7 @@ in `tollms.core.config.Settings` are never touched.
 """
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,7 +33,7 @@ GATE_CODE = "EMAIL_VERIFICATION_REQUIRED"
 
 
 def _signup(client: TestClient, email: str = "gate@tollma.ai", password: str = "Password123") -> dict:
-    r = client.post("/auth/signup", json={"email": email, "password": password})
+    r = client.post("/auth/signup", json={"email": email, "password": password, "age_confirmed": True})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -54,6 +55,8 @@ def _google_user(db: Session) -> tuple[User, str]:
         google_id=google_id,
         has_password=False,
         email_verified=True,
+        age_confirmed_at=datetime.now(timezone.utc),
+        age_confirm_method="self_declaration:test-helper",
     )
     db.add(user)
     db.commit()
@@ -88,7 +91,7 @@ def test_unverified_allowed_surface_never_403(client: TestClient) -> None:
     assert bad.status_code == 422, bad.text
 
     client.cookies.clear()  # drop signup session; login must stand alone
-    login = client.post("/auth/login", json={"email": "allowed@tollma.ai", "password": "Password123"})
+    login = client.post("/auth/login", json={"email": "allowed@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert login.status_code == 200, login.text
 
     logout = client.post("/auth/logout")

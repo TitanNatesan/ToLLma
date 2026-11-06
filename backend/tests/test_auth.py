@@ -12,7 +12,7 @@ from tollms.core.config import get_settings
 
 
 def _signup(client: TestClient, email: str = "a@tollma.ai", password: str = "Password123") -> dict:
-    r = client.post("/auth/signup", json={"email": email, "password": password})
+    r = client.post("/auth/signup", json={"email": email, "password": password, "age_confirmed": True})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -35,10 +35,10 @@ def test_signup_creates_unverified_user(client: TestClient, db: Session) -> None
     assert body["debug_verification_token"]
     assert body["verification_sent"] is True
 
-    dup = client.post("/auth/signup", json={"email": "a@tollma.ai", "password": "Password123"})
+    dup = client.post("/auth/signup", json={"email": "a@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert dup.status_code == 422
 
-    bad = client.post("/auth/signup", json={"email": "not-an-email", "password": "Password123"})
+    bad = client.post("/auth/signup", json={"email": "not-an-email", "password": "Password123", "age_confirmed": True})
     assert bad.status_code == 422
 
 
@@ -48,7 +48,7 @@ def test_signup_succeeds_when_verification_email_fails(
     """SMTP down: signup still 200s (account + session created) with sent=false."""
     monkeypatch.setattr(auth_service, "send_verification_email", lambda to, url: False)
     r = client.post(
-        "/auth/signup", json={"email": "smtp-fail@tollma.ai", "password": "Password123"}
+        "/auth/signup", json={"email": "smtp-fail@tollma.ai", "password": "Password123", "age_confirmed": True}
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -110,7 +110,7 @@ async def _drop(token: str) -> None:
 def test_login_issues_jwt_and_session(client: TestClient) -> None:
     _signup(client, email="l@tollma.ai")
     client.cookies.clear()  # drop signup session; login must stand alone
-    r = client.post("/auth/login", json={"email": "l@tollma.ai", "password": "Password123"})
+    r = client.post("/auth/login", json={"email": "l@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     assert r.cookies.get("access_token") and r.cookies.get("refresh_token")
     assert r.cookies.get("tollma_session") == "1"
@@ -121,7 +121,7 @@ def test_login_issues_jwt_and_session(client: TestClient) -> None:
 
     wrong = client.post("/auth/login", json={"email": "l@tollma.ai", "password": "wrongpass1"})
     assert wrong.status_code == 401
-    missing = client.post("/auth/login", json={"email": "nobody@tollma.ai", "password": "Password123"})
+    missing = client.post("/auth/login", json={"email": "nobody@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert missing.status_code == 401
 
 
@@ -192,7 +192,7 @@ def test_user_isolation_conversations_messages(client: TestClient, provider_fact
 def test_refresh_rotates_access_token(client: TestClient) -> None:
     _signup(client, email="r@tollma.ai")
     client.cookies.clear()
-    client.post("/auth/login", json={"email": "r@tollma.ai", "password": "Password123"})
+    client.post("/auth/login", json={"email": "r@tollma.ai", "password": "Password123", "age_confirmed": True})
     old_access = client.cookies.get("access_token")
     assert old_access
 

@@ -71,7 +71,7 @@ def _primary_rows(db: Session, uid: uuid.UUID) -> list[ApiKey]:
 
 def _mkuser(tag: str) -> TestClient:
     c = TestClient(app)
-    r = c.post("/auth/signup", json={"email": f"edgekeys-{tag}@tollma.ai", "password": "Password123"})
+    r = c.post("/auth/signup", json={"email": f"edgekeys-{tag}@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     if token:

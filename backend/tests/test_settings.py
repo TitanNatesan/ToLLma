@@ -130,7 +130,7 @@ def test_password_change_verifies_and_revokes_other_sessions(client: TestClient,
     user_factory("settings-password@tollma.ai")
     token1 = client.cookies.get("access_token")
     # Log in again: a second, independent session for the same user.
-    second = client.post("/auth/login", json={"email": "settings-password@tollma.ai", "password": "Password123"})
+    second = client.post("/auth/login", json={"email": "settings-password@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert second.status_code == 200
     assert client.get("/api/v1/settings/sessions").json()["total"] == 2
 
@@ -189,7 +189,7 @@ def test_sessions_usage_aggregates_and_revocation(client: TestClient, db: Sessio
     )
     db.commit()
 
-    client.post("/auth/login", json={"email": user["email"], "password": "Password123"})
+    client.post("/auth/login", json={"email": user["email"], "password": "Password123", "age_confirmed": True})
     listed = client.get("/api/v1/settings/sessions").json()
     assert listed["total"] == 2
     current = [s for s in listed["sessions"] if s["current"]]
@@ -212,8 +212,8 @@ def test_sessions_usage_aggregates_and_revocation(client: TestClient, db: Sessio
 def test_revoke_other_sessions(client: TestClient, user_factory) -> None:
     user = user_factory("settings-revoke@tollma.ai")
     token1 = client.cookies.get("access_token")
-    client.post("/auth/login", json={"email": user["email"], "password": "Password123"})
-    client.post("/auth/login", json={"email": user["email"], "password": "Password123"})
+    client.post("/auth/login", json={"email": user["email"], "password": "Password123", "age_confirmed": True})
+    client.post("/auth/login", json={"email": user["email"], "password": "Password123", "age_confirmed": True})
     assert client.get("/api/v1/settings/sessions").json()["total"] == 3
 
     revoked = client.post("/api/v1/settings/sessions/revoke-others")
@@ -303,6 +303,8 @@ def _google_passwordless(db: Session) -> tuple[object, str, str]:
         has_password=False,
         password_hash=None,
         email_verified=True,
+        age_confirmed_at=datetime.now(timezone.utc),
+        age_confirm_method="self_declaration:test-helper",
     )
     db.add(user)
     db.commit()
@@ -545,7 +547,7 @@ def test_email_change_unverified_local_gate(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_change_captures(monkeypatch)
-    r = client.post("/auth/signup", json={"email": "change-gated@tollma.ai", "password": "Password123"})
+    r = client.post("/auth/signup", json={"email": "change-gated@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
 
     # Verified gate fires before the password check: 403, never 422.

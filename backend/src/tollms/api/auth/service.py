@@ -65,6 +65,7 @@ def _read(user: User):
         full_name=user.full_name,
         username=user.username,
         email_verified=user.email_verified,
+        age_confirmed=user.age_confirmed_at is not None,
         platform_role=user.platform_role.value,
         auth_provider=user.auth_provider,
         provider=user.provider,
@@ -116,24 +117,37 @@ def read_user(user: User):
 
 
 async def signup(
-    db: Session, email: str, password: str, full_name: str | None
+    db: Session, email: str, password: str, full_name: str | None, *,
+    age_confirmed: bool = False,
 ) -> tuple[User, str, bool]:
     """Create an UNVERIFIED user and dispatch the verification email.
     Returns (user, verification_token, verification_sent).
 
     A failed email send (SMTP down) never fails signup: the account and
-    session are still created and the caller reports sent=False."""
+    session are still created and the caller reports sent=False.
+
+    18+ self-declaration is mandatory (F3): no confirmation → 422."""
     address = normalize_email(email)
+    if not age_confirmed:
+        raise ValidationError("age confirmation required")
     if get_by_email(db, address) is not None:
         raise ValidationError("email already registered")
     user = User(
         email=address,
         full_name=(full_name or "").strip() or None,
+        age_confirmed_at=datetime.now(timezone.utc),
+        age_confirm_method="self_declaration:signup",
     )
     set_local_identity(user)
     set_password(user, password)
     db.add(user)
     db.commit()
+    try:
+        from tollms.api.legal import service as legal_service
+
+        legal_service.stamp_signup_acceptance(db, user, method="signup_checkbox")
+    except Exception:
+        logger.exception("signup legal acceptance stamp failed")
     try:
         from tollms.api.keys import service as keys_service
 
@@ -144,6 +158,19 @@ async def signup(
     token, sent = await issue_verification(db, user)
     logger.info("user signed up: %s", user.id)
     return user, token, sent
+
+
+def confirm_age(db: Session, user: User) -> User:
+    """One-click 18+ self-declaration for legacy/OAuth accounts (F3).
+
+    Idempotent: already-confirmed accounts return unchanged. No DOB/ID."""
+    if user.age_confirmed_at is None:
+        user.age_confirmed_at = datetime.now(timezone.utc)
+        user.age_confirm_method = "self_declaration:confirm_age"
+        db.commit()
+        db.refresh(user)
+        logger.info("age confirmed: %s", user.id)
+    return user
 
 
 async def issue_verification(db: Session, user: User) -> tuple[str, bool]:

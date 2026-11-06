@@ -8,6 +8,7 @@ from tollms.core.config import ConfigurationError, Settings
 def test_settings_success_with_valid_values() -> None:
     settings = Settings(
         secret_key="test-secret-key-12345",
+        jwt_secret="test-jwt-secret-67890",
         postgres_db="test_db",
         postgres_user="test_user",
         postgres_password="test_password",
@@ -25,6 +26,7 @@ def test_settings_missing_required_variables_throws_proper_error(monkeypatch: py
     # Clear any environment variables that might be present in the testing environment
     for key in [
         "SECRET_KEY",
+        "JWT_SECRET",
         "POSTGRES_DB",
         "POSTGRES_USER",
         "POSTGRES_PASSWORD",
@@ -46,4 +48,5 @@ def test_settings_missing_required_variables_throws_proper_error(monkeypatch: py
     assert "POSTGRES_HOST" in error_msg
     assert "POSTGRES_PORT" in error_msg
     assert "SECRET_KEY" in error_msg
+    assert "JWT_SECRET" in error_msg
     assert ".env.example" in error_msg

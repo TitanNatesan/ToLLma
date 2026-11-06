@@ -16,6 +16,7 @@ test("signup, verify, login, me, logout", async ({ page }) => {
   await page.goto("/signup");
   await page.getByTestId("signup-email").fill(email);
   await page.getByTestId("signup-password").fill("Password123");
+  await page.getByTestId("signup-age-confirm").check();
   await page.getByTestId("signup-submit").click();
   await expect(page).toHaveURL("/", { timeout: 15000 });
 
@@ -24,7 +25,7 @@ test("signup, verify, login, me, logout", async ({ page }) => {
 
   // Verify via API (debug token, non-prod) then confirm through the UI page.
   const signup = await page.request.post(`${API}/auth/signup`, {
-    data: { email: `pw-verify-${Date.now()}@tollma.ai`, password: "Password123" },
+    data: { email: `pw-verify-${Date.now()}@tollma.ai`, password: "Password123", age_confirmed: true },
   });
   const token = (await signup.json()).debug_verification_token as string;
   await page.goto(`/verify?token=${encodeURIComponent(token)}`);
@@ -115,7 +116,7 @@ test("users only see their own providers", async ({ page }) => {
   if (!ctx2) throw new Error("no browser");
   const p2 = await ctx2.newPage();
   const email2 = `pw-iso-b-${Date.now()}@tollma.ai`;
-  await p2.request.post(`${API}/auth/signup`, { data: { email: email2, password: "Password123" } });
+  await p2.request.post(`${API}/auth/signup`, { data: { email: email2, password: "Password123", age_confirmed: true } });
   await p2.goto("/providers");
   await expect(p2.locator("section[aria-label='Provider list']").getByText(name)).toHaveCount(0);
   await ctx2.close();

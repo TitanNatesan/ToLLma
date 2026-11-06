@@ -180,7 +180,7 @@ def test_create_unknown_slug_404(client: TestClient, user_factory) -> None:
 def _mkuser(tag: str, app) -> TestClient:
     c = TestClient(app)
     email = f"tmpl-{tag}-{uuid.uuid4().hex[:8]}@tollma.ai"
-    r = c.post("/auth/signup", json={"email": email, "password": "Password123"})
+    r = c.post("/auth/signup", json={"email": email, "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     if token:

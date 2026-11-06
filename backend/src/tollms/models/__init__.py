@@ -63,3 +63,23 @@ from tollms.models.search_index import ConversationSearchEntry  # noqa: F401
 from tollms.models.share import ConversationShare  # noqa: F401
 from tollms.models.usage_aggregate import UsageDailyAggregate  # noqa: F401
 from tollms.models.user import AuthProvider, PlatformRole, User  # noqa: F401
+from tollms.models.privacy import (  # noqa: F401
+    ConsentCategory,
+    ConsentRecord,
+    ConsentStatus,
+    DSREvent,
+    DSRRequest,
+    DSRStatus,
+    DSRType,
+    RetentionPolicy,
+)
+from tollms.models.security_audit import SecurityAuditEvent  # noqa: F401
+from tollms.models.governance import AbuseReport, ProviderPolicy  # noqa: F401
+from tollms.models.incidents import (  # noqa: F401
+    Complaint,
+    Incident,
+    LegalRequest,
+    Subprocessor,
+    VulnerabilityReport,
+)
+from tollms.models.legal import LegalAcceptance, LegalDocument  # noqa: F401

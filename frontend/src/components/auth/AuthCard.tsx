@@ -7,7 +7,9 @@ import { motion } from "framer-motion";
 import { Eye, EyeOff, KeyRound, Loader2, Lock, Mail, ShieldCheck, User as UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { Logo } from "@/components/ui/Logo";
-import { ApiError, googleLoginUrl, login, signup } from "@/services/api";
+import { ApiError, googleLoginUrl, login } from "@/services/api";
+import { signupWithAge } from "@/services/trust";
+import { parseApiError } from "@/lib/errors";
 import { toast } from "@/lib/notify";
 import { useAuthStore } from "@/store/auth";
 
@@ -64,6 +66,9 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   const [signupError, setSignupError] = useState<string | null>(null);
   const [signupBusy, setSignupBusy] = useState(false);
   const [capsOn, setCapsOn] = useState(false);
+  // F3: 18+ self-declaration, unchecked by default. No confirm → no submit
+  // (client gate); the backend also 422s without `age_confirmed`.
+  const [signupAgeConfirmed, setSignupAgeConfirmed] = useState(false);
 
   // Password strength (length + variety heuristic, client-side hint only —
   // the backend still enforces its own minimum).
@@ -200,12 +205,17 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
     if (signupBusy) return;
     e.preventDefault();
     setSignupError(null);
+    if (!signupAgeConfirmed) {
+      setSignupError("Please confirm you are 18 or older to create an account.");
+      return;
+    }
     setSignupBusy(true);
     try {
-      const res = await signup(
+      const res = await signupWithAge(
         signupEmail.trim(),
         signupPassword,
         signupFullName.trim() || undefined,
+        true,
       );
       setUser(res.user);
       if (res.access_token) {
@@ -233,7 +243,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
     } catch (err) {
       const message =
         err instanceof ApiError && err.status === 422
-          ? "That email is already registered or password needs 8+ characters."
+          ? parseApiError(err).message
           : "Signup failed. Please try again.";
       setSignupError(message);
       toast.error(message);
@@ -568,6 +578,20 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                   {signupError}
                 </div>
               )}
+
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-zinc-300 select-none">
+                <input
+                  type="checkbox"
+                  checked={signupAgeConfirmed}
+                  onChange={(e) => {
+                    setSignupAgeConfirmed(e.target.checked);
+                    setSignupError(null);
+                  }}
+                  data-testid="signup-age-confirm"
+                  className="mt-0.5 size-4 shrink-0 cursor-pointer rounded accent-tollma-500"
+                />
+                <span>I confirm I am 18 years or older.</span>
+              </label>
 
               <Button
                 type="submit"

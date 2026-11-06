@@ -35,7 +35,7 @@ SSE_BODY = (
 def _mkuser(tag: str) -> TestClient:
     c = TestClient(app)
     email = f"scope-{tag}-{uuid.uuid4().hex[:8]}@tollma.ai"
-    r = c.post("/auth/signup", json={"email": email, "password": "Password123"})
+    r = c.post("/auth/signup", json={"email": email, "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     if token:

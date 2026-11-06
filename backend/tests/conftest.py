@@ -109,6 +109,7 @@ def _generation_test_sessions(db: Session):
 @pytest.fixture()
 def user_factory(client: TestClient):
     def _make(email: str = "u@tollma.ai", password: str = "Password123", **kw) -> dict:
+        kw.setdefault("age_confirmed", True)
         r = client.post("/auth/signup", json={"email": email, "password": password, **kw})
         assert r.status_code == 200, r.text
         body = r.json()

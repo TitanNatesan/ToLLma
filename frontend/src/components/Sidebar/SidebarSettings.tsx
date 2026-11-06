@@ -5,11 +5,15 @@ import type { ComponentType, MouseEvent } from "react";
 import {
   AlertTriangle,
   Building2,
+  Cookie,
+  FileDown,
+  History,
   KeyRound,
   MonitorSmartphone,
   Palette,
   ScrollText,
   Server,
+  ShieldCheck,
   SlidersHorizontal,
   UserRound,
 } from "lucide-react";
@@ -33,6 +37,10 @@ export const SETTINGS_SECTIONS = [
   { hash: "sessions", label: "Sessions", icon: MonitorSmartphone },
   { hash: "providers", label: "Providers", icon: Server },
   { hash: "logging", label: "Logging", icon: ScrollText },
+  { hash: "privacy", label: "Privacy", icon: ShieldCheck },
+  { hash: "retention", label: "Retention", icon: History },
+  { hash: "cookies", label: "Cookies", icon: Cookie },
+  { hash: "data-rights", label: "Data rights", icon: FileDown },
   { hash: "organizations", label: "Organizations", icon: Building2 },
   { hash: "danger-zone", label: "Danger zone", icon: AlertTriangle },
 ] as const satisfies readonly SettingsSectionDef[];

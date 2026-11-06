@@ -124,7 +124,7 @@ def test_decorators_cached_invalidate_refresh(monkeypatch: pytest.MonkeyPatch) -
 
 def test_provider_validation_served_from_cache(db: Session, provider_factory) -> None:
     assert _run(cache_client.connect()) is True
-    p = provider_factory("VC", creds={"base_url": "http://invalid.invalid"})
+    p = provider_factory("VC", creds={"base_url": "http://mock-unreachable"})
     pid = uuid.UUID(p["id"])
     manager = get_manager()
     assert _run(manager.set(cache_keys.provider_validation(pid),
@@ -149,7 +149,7 @@ def test_provider_update_invalidates_cache(client: TestClient, provider_factory)
 
 def test_discovery_served_from_cache_with_live_registration(db: Session, provider_factory, model_factory) -> None:
     assert _run(cache_client.connect()) is True
-    p = provider_factory("DC", creds={"base_url": "http://invalid.invalid"})
+    p = provider_factory("DC", creds={"base_url": "http://mock-unreachable"})
     pid = uuid.UUID(p["id"])
     payload = {
         "models": [

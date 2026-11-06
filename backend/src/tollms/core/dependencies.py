@@ -100,11 +100,13 @@ async def require_active_user(request: Request, db: Session = Depends(get_db)) -
     403 ACCOUNT_PENDING_DELETION. Delete-request (idempotent re-request) and
     restore stay on `get_current_user` so pending accounts can reach them.
     """
-    from tollms.core.exceptions import AccountPendingDeletionError
+    from tollms.core.exceptions import AccountPendingDeletionError, AgeConfirmationRequiredError
 
     user = await require_verified_user(request, db)
     if user.deletion_scheduled_for is not None:
         raise AccountPendingDeletionError("Account scheduled for deletion.")
+    if user.age_confirmed_at is None:
+        raise AgeConfirmationRequiredError("age confirmation required")
     return user
 
 

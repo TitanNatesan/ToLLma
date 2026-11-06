@@ -30,6 +30,12 @@ import {
 } from "@/services/admin";
 import type { AdminPreset, AdminQueryParams } from "@/types/admin";
 import { ApiKeysSection } from "./components/ApiKeysSection";
+import {
+  COMPLIANCE_SECTIONS,
+  COMPLIANCE_SECTION_IDS,
+  ComplianceNav,
+  ComplianceSectionBody,
+} from "./components/ComplianceSections";
 import { CacheSection } from "./components/CacheSection";
 import { CatalogSection } from "./components/CatalogSection";
 import { CostsSection } from "./components/CostsSection";
@@ -122,7 +128,7 @@ function SectionHeading({
   icon: Icon,
   active,
 }: {
-  id: AdminSectionId;
+  id: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
   active: boolean;
@@ -218,7 +224,11 @@ export default function AdminPage() {
 
   // The URL hash is the single source of truth for which section renders.
   // Deep links (`/admin#tokens`) and sidebar clicks both drive it.
-  const activeId = useHashSection(ADMIN_SECTION_IDS, "overview");
+  // Compliance sections (Agent E, Wave 3) append after the 13 telemetry
+  // sections. Sidebar entries stay orchestrator-owned; ComplianceNav below
+  // links the six hashes until the sidebar diff lands.
+  const ALL_SECTION_IDS: readonly string[] = [...ADMIN_SECTION_IDS, ...COMPLIANCE_SECTION_IDS];
+  const activeId = useHashSection(ALL_SECTION_IDS, "overview");
 
   // One section mounts at a time, so scroll to it after each switch —
   // the sidebar click target unmounts before the new section exists.
@@ -272,8 +282,13 @@ export default function AdminPage() {
     );
   }
 
-  function sectionQuery(id: AdminSectionId): SectionQuery {
-    switch (id) {
+  function sectionQuery(id: string): SectionQuery {
+    if ((COMPLIANCE_SECTION_IDS as readonly string[]).includes(id)) {
+      // Compliance sections own their queries; SectionBody passes through.
+      return { isPending: false, isError: false, error: null, refetch: () => {} };
+    }
+    const legacyId = id as AdminSectionId;
+    switch (legacyId) {
       case "overview":
         return dashboard;
       case "usage":
@@ -304,8 +319,12 @@ export default function AdminPage() {
     }
   }
 
-  function renderSectionBody(id: AdminSectionId): ReactNode {
-    switch (id) {
+  function renderSectionBody(id: string): ReactNode {
+    if ((COMPLIANCE_SECTION_IDS as readonly string[]).includes(id)) {
+      return <ComplianceSectionBody id={id} />;
+    }
+    const legacyId = id as AdminSectionId;
+    switch (legacyId) {
       case "overview":
         return dashboard.data ? <OverviewSection data={dashboard.data} /> : null;
       case "usage":
@@ -351,8 +370,11 @@ export default function AdminPage() {
 
   return (
     <PageContainer header={pageHeader} testId="admin-page">
+      <ComplianceNav activeId={activeId} />
       {(() => {
-          const section = ADMIN_SECTIONS.find(({ id }) => id === activeId) ?? ADMIN_SECTIONS[0];
+          const section =
+            [...ADMIN_SECTIONS, ...COMPLIANCE_SECTIONS].find(({ id }) => id === activeId) ??
+            ADMIN_SECTIONS[0];
           return (
             <section
               key={section.id}

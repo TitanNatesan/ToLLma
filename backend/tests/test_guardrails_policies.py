@@ -37,7 +37,7 @@ def test_crud_personal(client: TestClient, user_factory) -> None:
 
 def _verified_client(email: str) -> TestClient:
     other = TestClient(app)
-    r = other.post("/auth/signup", json={"email": email, "password": "Password123"})
+    r = other.post("/auth/signup", json={"email": email, "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     if token:

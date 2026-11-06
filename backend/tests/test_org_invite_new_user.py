@@ -24,7 +24,7 @@ ORG = "/api/v1/orgs"
 def _mkuser(tag: str) -> TestClient:
     c = TestClient(app)
     email = f"newflow-{tag}-{uuid.uuid4().hex[:8]}@tollma.ai"
-    r = c.post("/auth/signup", json={"email": email, "password": "Password123"})
+    r = c.post("/auth/signup", json={"email": email, "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     token = r.json().get("debug_verification_token")
     if token:
@@ -87,7 +87,7 @@ def test_accept_new_happy_path(client: TestClient, db, user_factory) -> None:
     anon = TestClient(app)
 
     r = anon.post(f"{ORG}/invitations/by-token/{_token(db, inv['id'])}/accept-new",
-                  json={"full_name": "Fresh Person", "password": "Password123"})
+                  json={"full_name": "Fresh Person", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["org_id"] == oid
@@ -130,7 +130,7 @@ def test_accept_new_404_oracle(client: TestClient, db, user_factory) -> None:
     user_factory()
     org = _mkorg(client)
     anon = TestClient(app)
-    payload = {"full_name": "N N", "password": "Password123"}
+    payload = {"full_name": "N N", "password": "Password123", "age_confirmed": True}
 
     expected = _err_wo_ts(anon.post(f"{ORG}/invitations/by-token/does-not-exist/accept-new",
                                     json=payload))
@@ -180,7 +180,7 @@ def test_accept_new_existing_email_409(client: TestClient, db, user_factory) -> 
     anon = TestClient(app)
 
     r = anon.post(f"{ORG}/invitations/by-token/{_token(db, inv['id'])}/accept-new",
-                  json={"full_name": "Bob Clone", "password": "Password123"})
+                  json={"full_name": "Bob Clone", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 409, r.text
     assert r.json()["error"]["code"] == "INVITE_ACCOUNT_EXISTS"
 
@@ -316,7 +316,7 @@ def test_accept_new_double_accept_single_membership(
     inv = _invite(client, org["id"], email)
     anon = TestClient(app)
     tok = _token(db, inv["id"])
-    payload = {"full_name": "D D", "password": "Password123"}
+    payload = {"full_name": "D D", "password": "Password123", "age_confirmed": True}
 
     assert anon.post(f"{ORG}/invitations/by-token/{tok}/accept-new",
                      json=payload).status_code == 200

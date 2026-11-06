@@ -54,7 +54,7 @@ def _upload(client: TestClient, name: str, data: bytes, mime: str):
 
 def _other_client() -> TestClient:
     c2 = TestClient(app)
-    r = c2.post("/auth/signup", json={"email": "other@tollma.ai", "password": "Password123"})
+    r = c2.post("/auth/signup", json={"email": "other@tollma.ai", "password": "Password123", "age_confirmed": True})
     assert r.status_code == 200, r.text
     # Gate-era: verify so cross-user tests exercise ownership (404), not the gate (403).
     token = r.json().get("debug_verification_token")
