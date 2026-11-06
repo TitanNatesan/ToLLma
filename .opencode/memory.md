@@ -4877,3 +4877,6 @@ Wrapper m-3 -> mx-0 my-3: side borders gone (full-bleed), 12px black bars top + 
 
 ## 2026-11-07 - Thicker frame bars
 Wrapper my-3 -> my-6 (12px -> 24px black top/bottom, sides stay 0). Verified 24/0, ox=0, zero errors, tsc clean.
+
+## 2026-11-07 - Footer loop: wash reach, tOllMA, hairline gap
+(1) Gradient scale 2.2->3.0: full-width sand wash now rains top->meta strip, verified by 60s soak screenshot. (2) Giant wordmark ToLLma->tOllMA ONLY (small brand link + copyright untouched); Jersey 10 renders the mixed case natively. (3) Bottom container pt-1->pt-0: wordmark-to-divider gap now 0 (kissing, no clip, no overlap), verified 390/1440 + screenshot. Loop validated: text exact, fit in-bounds, gap>=0, ox=0, zero errors, tsc clean. Commit 0b89a2e.
