@@ -913,13 +913,18 @@ body {
   font-size: clamp(88px, 28vw, 480px);
   line-height: 1;
   white-space: nowrap;
-  margin-top: clamp(2px, 0.8vw, 12px);
-  padding-bottom: 0;
-  /* Pull the divider up to the ink: Jersey 10's OS/2 line box extends
-     ~13% em below the visible ink (zero descenders, tall descent
-     metric), so a -13% bottom margin lands the following rule exactly
-     on the ink at every size. Scales with the clamp() font-size. */
-  margin-bottom: -0.13em;
+  /* Pull the box up into its own top slack: the 0.2325em of empty line
+     box above the ink is dead center-space. A -0.11em top margin halves
+     the meta-to-ink void at every size while the divider kiss below
+     (margin-bottom) keeps the brand glued to the rule. The box top stays
+     inside transparent slack, so nothing painted ever overlaps. */
+  margin-top: -0.11em;
+  /* Measured Jersey 10 metrics (canvas fontBoundingBox at 200px em:
+     ascent 161, descent 54; ink actual ascent 107, zero descenders):
+     with line-height:1 the ink sits 0.2325em below the box top and ends
+     0.2325em above the box bottom, symmetric. A -0.23em bottom margin
+     lands the following rule exactly on the ink at every size. */
+  margin-bottom: -0.23em;
 }
 .foot-letter {
   display: inline-block;

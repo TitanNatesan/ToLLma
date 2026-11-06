@@ -212,11 +212,11 @@ export function Footer() {
             </Link>
             </div>
           </div>
-          <nav className="grid grid-cols-2 gap-x-10 gap-y-8 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
+          <nav className="grid grid-cols-2 gap-x-12 gap-y-12 min-[560px]:grid-cols-3 xl:grid-cols-6" aria-label="Footer">
             {COLS.map((c) => (
-              <div key={c.title} data-reveal className="flex flex-col items-start gap-6">
+              <div key={c.title} data-reveal className="flex flex-col items-start gap-8">
                 <p className="flex min-h-8 items-start text-xs font-semibold text-coal/50">{c.title}</p>
-                <ul className="flex flex-col items-start gap-3">
+                <ul className="flex flex-col items-start gap-4">
                   {c.links.map((l) =>
                     l.external ? (
                       <li key={l.label}>
@@ -250,7 +250,7 @@ export function Footer() {
             column doesn't leave a void under the nav. No newsletter
             backend exists, so Stay connected links the real GitHub repo,
             discussions, and roadmap. */}
-        <div data-reveal className="mt-8 flex flex-col gap-x-10 gap-y-4 lg:flex-row lg:items-center">
+        <div data-reveal className="mt-12 flex flex-col gap-x-10 gap-y-4 lg:flex-row lg:items-center">
           <p className="max-w-md text-sm leading-relaxed text-coal/60">
             The open source AI gateway for models and agents. One unified
             interface to connect, route, govern, and observe your AI
