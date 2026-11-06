@@ -4868,3 +4868,6 @@ Wash: black ramp -> sand/taupe cream ramp (deeper pass for legibility) + glyphOp
 
 ## 2026-11-06 - Navbar: page sections in order + scroll-spy
 Replaced app-taxonomy links with the 6 landing sections in page order (Overview/Manage/Outcomes/Platform/Providers/Guides); dropped the off-page API Docs item (Get Started CTA kept). #top excluded from tracking (whole <main> would pin the spy); reading-line fallback resolves Overview at top, last-passed at tail. Validated: spy trail ordered across full scroll, Providers aria-highlighted in-section, collapsed label follows, mobile panel lists 6, fits at 1280, ox=0, zero errors, tsc clean. Commit 787fd47.
+
+## 2026-11-07 - 3 windows, airier navbar, wordmark on the floor
+Stack: PAGES cut to Overview/Providers/API Keys (dataset truth otherwise intact; scroll math + sidebar auto-adapt). Verified 3 windows. Navbar: GlassSurface backgroundOpacity 0.65->0.45 island / 0.75->0.55 panel — content ghosts through, label/CTA readable. Footer: bar to pb-2/pt-1 + inner pt-2 (gap now 4px, dips clipped). Caught + reverted parallel-session casing slip (tOllMA -> exact ToLLma). tsc clean, zero errors, ox=0. Commit 28b548e.
