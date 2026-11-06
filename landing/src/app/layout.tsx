@@ -102,13 +102,13 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${newsreader.variable} ${mono.variable} bg-black`}>
       <body className="antialiased">
-        {/* Page frame: the whole page sits on black with a curvy cutout.
-            This wrapper scrolls with the page (nothing is fixed); the
-            body black shows through the margin as the surround.
-            overflow: clip (NOT hidden) clips the curve without turning
-            the wrapper into a scroll container, so sticky/fixed
-            descendants keep working. Plain in print. */}
-        <div className="m-3 overflow-clip rounded-[28px] bg-cream print:m-0 print:rounded-none print:overflow-visible">
+        {/* Page frame: black bars top + bottom that scroll with the page
+            (nothing is fixed); body black shows through the margin as
+            the surround, full-bleed on the sides. overflow: clip (NOT
+            hidden) clips the curvy corners without turning the wrapper
+            into a scroll container, so sticky/fixed descendants keep
+            working. Plain in print. */}
+        <div className="mx-0 my-3 overflow-clip rounded-[28px] bg-cream print:m-0 print:rounded-none print:overflow-visible">
           {children}
         </div>
       </body>
