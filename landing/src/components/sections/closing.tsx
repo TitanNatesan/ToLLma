@@ -161,7 +161,7 @@ export function Footer() {
           density={0.65}
           glyphOpacity={0.7}
           gradientOpacity={0.6}
-          scale={2.2}
+          scale={3}
           glow={0.1}
           flicker={0.1}
           speed={0.6}
@@ -293,14 +293,14 @@ export function Footer() {
       </Container>
       <div data-reveal className="foot-pressure relative">
         <div aria-hidden="true" className="foot-wordmark">
-          {"ToLLma".split("").map((ch, i) => (
+          {"tOllMA".split("").map((ch, i) => (
             <span key={i} data-letter="" className="foot-letter">
               {ch}
             </span>
           ))}
         </div>
       </div>
-      <Container width="wide" className="relative pb-2 pt-1">
+      <Container width="wide" className="relative pb-2 pt-0">
         <div data-reveal className="flex flex-col gap-2 border-t border-cream-line pt-2 text-sm text-coal/60 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} ToLLma · Apache-2.0</p>
           {/* Privacy/Terms are plain text: no such pages exist, and fake
