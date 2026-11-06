@@ -4880,3 +4880,6 @@ Wrapper my-3 -> my-6 (12px -> 24px black top/bottom, sides stay 0). Verified 24/
 
 ## 2026-11-07 - Footer loop: wash reach, tOllMA, hairline gap
 (1) Gradient scale 2.2->3.0: full-width sand wash now rains top->meta strip, verified by 60s soak screenshot. (2) Giant wordmark ToLLma->tOllMA ONLY (small brand link + copyright untouched); Jersey 10 renders the mixed case natively. (3) Bottom container pt-1->pt-0: wordmark-to-divider gap now 0 (kissing, no clip, no overlap), verified 390/1440 + screenshot. Loop validated: text exact, fit in-bounds, gap>=0, ox=0, zero errors, tsc clean. Commit 0b89a2e.
+
+## 2026-11-07 - Requirement loop closure sweep
+User: fix/test/verify/complete the loop. Audit: 0 missing alts (empties are decorative/aria-hidden), 0 unlabeled buttons, 0 aria-hidden focusables, single h1, zero console/page errors. tsc clean, production build green. End-state verified 390+1440: tOllMA Jersey 10 wordmark, 6 section nav items, 3 stack windows, frame 24/0, ox=0. (The "1 issue" badge in the user screenshot is their browser extension, not page-reported; nothing actionable found.)
