@@ -97,9 +97,15 @@ test("analytics range switching + custom range + CSV export", async ({ page }) =
 
 test("accent preference applies globally, persists, and reaches the backend", async ({ page }) => {
   await apiLoginAs(page, "accent");
-  await page.goto("/settings");
+  // Accent picker lives in Command Palette -> Theme Studio (no settings card).
+  await page.goto("/");
   await page.waitForLoadState("networkidle");
-  await expect(page.getByTestId("settings-page")).toBeVisible();
+  await expect(page.getByTestId("left-sidebar")).toBeVisible({ timeout: 20000 });
+  await page.waitForTimeout(400);
+  await page.keyboard.press("Control+k");
+  await expect(page.getByTestId("command-palette")).toBeVisible({ timeout: 10000 });
+  await page.getByTestId("cmd-theme").click();
+  await expect(page.getByTestId("theme-studio")).toBeVisible({ timeout: 10000 });
 
   await page.getByTestId("accent-blue").click();
   await expect
@@ -123,6 +129,10 @@ test("accent preference applies globally, persists, and reaches the backend", as
     .toBe("#1d4ed8");
 
   // Custom color picker accepts any hex and applies derived shades.
+  await page.keyboard.press("Control+k");
+  await expect(page.getByTestId("command-palette")).toBeVisible({ timeout: 10000 });
+  await page.getByTestId("cmd-theme").click();
+  await expect(page.getByTestId("theme-studio")).toBeVisible({ timeout: 10000 });
   await page.getByTestId("accent-custom").fill("#e11d48");
   await expect
     .poll(() =>

@@ -14,10 +14,13 @@ from tollms.api.conversations.schemas import (
     BranchListRead,
     BranchRead,
     ConversationCreate,
+    ConversationPathRead,
     ConversationPin,
     ConversationRead,
     ConversationRename,
+    ConversationTreeRead,
     MessageRead,
+    SelectRequest,
     UsageTotals,
 )
 from tollms.api.gateway.schemas import ActiveGenerationRead
@@ -114,3 +117,29 @@ def create_branch(
         db, conversation_id, data.message_id, user.id, data.branch_name
     )
     return message_service._branch_read(db, branch)
+
+
+@router.get("/{conversation_id}/tree", response_model=ConversationTreeRead)
+def tree(conversation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ConversationTreeRead:
+    """Versioned branching tree: every node + the selected leaf id."""
+    return ConversationTreeRead.model_validate(service.conversation_tree(db, conversation_id, user.id))
+
+
+@router.get("/{conversation_id}/path", response_model=ConversationPathRead)
+def path(conversation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ConversationPathRead:
+    """Active path (root to selected leaf). This is the model context."""
+    result = service.conversation_path(db, conversation_id, user.id)
+    return ConversationPathRead(
+        path=service.message_reads(db, result["path"], user.id),
+        active_leaf_id=result["active_leaf_id"],
+    )
+
+
+@router.post("/{conversation_id}/select", response_model=ConversationPathRead)
+def select(conversation_id: uuid.UUID, data: SelectRequest, db: Session = Depends(get_db), user: User = Depends(require_active_user)) -> ConversationPathRead:
+    """Switch the active branch to a node; new messages continue from it."""
+    result = service.select_message(db, conversation_id, data.message_id, user.id)
+    return ConversationPathRead(
+        path=service.message_reads(db, result["path"], user.id),
+        active_leaf_id=result["active_leaf_id"],
+    )

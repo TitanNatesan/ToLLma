@@ -10,10 +10,10 @@
 }
 
 .dark {
-  --background: #0a0a0a;
+  --background: #000000;
   --foreground: #ededed;
-  --sidebar-bg: #111111;
-  --input-bg: #111111;
+  --sidebar-bg: #0a0a0a;
+  --input-bg: #0a0a0a;
 }
 
 /* Sileo toast state colors: info follows the ToLLma brand accent so
@@ -44,6 +44,145 @@
   --color-tollma-800: #033805;
   --color-tollma-900: #022a04;
   --color-tollma-950: #021e03;
+}
+
+/* ---- ToLLma glass surface system (8A/8B) ----
+   Tokens: --glass-bg = translucent surface fill; --glass-border = low-
+   contrast hairline; --glass-blur = the single restrained frost layer
+   (12px, floating panels only); --glass-shadow / --glass-shadow-lg = soft
+   layered depth (no neon, no glow); --glass-focus-ring = tollma-500 @ 60%,
+   the same value primitives already use for focus rings;
+   --glass-disabled-opacity = 0.5, mirroring disabled:opacity-50.
+   Usage: floating chrome (Card, DialogContent, DropdownMenuContent) gets
+   `.surface-glass` / `.surface-glass-lg` automatically via the
+   `surface="glass"` default in primitives.tsx. Wrap dense tables/forms in
+   `surface="solid"` for fully-opaque readability. Helpers live in
+   @layer components so a page's own bg-* / border-* / shadow-* utilities still
+   win on conflict. Perf rules: exactly ONE backdrop-blur layer per overlay
+   (DialogOverlay itself carries no blur); never nest .surface-glass inside
+   .surface-glass, never put blur on full-screen or animated elements, never
+   animate the blur value. No transitions are added here, so
+   prefers-reduced-motion has nothing to gate. */
+:root {
+  --glass-bg: rgb(255 255 255 / 0.72);
+  --glass-border: rgb(24 24 27 / 0.08);
+  --glass-blur: 12px;
+  --glass-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 8px 24px rgb(0 0 0 / 0.06);
+  --glass-shadow-lg:
+    0 2px 8px rgb(0 0 0 / 0.05),
+    0 16px 40px rgb(0 0 0 / 0.1);
+  --glass-focus-ring: rgb(6 110 9 / 0.6);
+  --glass-disabled-opacity: 0.5;
+}
+
+.dark {
+  --glass-bg: rgb(24 24 27 / 0.6);
+  --glass-border: rgb(255 255 255 / 0.08);
+  --glass-shadow:
+    0 1px 2px rgb(0 0 0 / 0.3),
+    0 8px 24px rgb(0 0 0 / 0.35);
+  --glass-shadow-lg:
+    0 2px 8px rgb(0 0 0 / 0.35),
+    0 16px 40px rgb(0 0 0 / 0.45);
+  --glass-focus-ring: rgb(6 110 9 / 0.6);
+  --glass-disabled-opacity: 0.5;
+}
+
+@layer components {
+  /* Frosted panel: translucent fill + hairline + single blur + soft depth.
+     Apply once per overlay (the blur layer); inner content stays solid.
+     NOTE: keep only the unprefixed declaration here. LightningCSS drops a
+     paired unprefixed declaration as "redundant", which silently kills the
+     frost (verified via CDP matched-rules). Old-WebKit fallback lives in
+     the @supports block below. */
+  .surface-glass {
+    background-color: var(--glass-bg);
+    border-color: var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(var(--glass-blur));
+  }
+
+  /* Dialog-scale frost: same treatment, deeper (but still soft) shadow. */
+  .surface-glass-lg {
+    background-color: var(--glass-bg);
+    border-color: var(--glass-border);
+    box-shadow: var(--glass-shadow-lg);
+    backdrop-filter: blur(var(--glass-blur));
+  }
+
+  /* Pre-Chromium-76 / pre-Safari-18 fallback: prefixed frost only when the
+     unprefixed property is unsupported. */
+  @supports not (backdrop-filter: blur(1px)) {
+    .surface-glass,
+    .surface-glass-lg {
+      -webkit-backdrop-filter: blur(var(--glass-blur));
+    }
+  }
+}
+
+/* ---- Glass engine additions ----
+   Dark mode IS the deep-black palette (former separate black mode merged in).
+   (a) Radius tokens consumed via Tailwind rounded-* utilities / primitives.
+   (b) Specular highlight: a top-anchored ::before sheen driven by the
+   engine-owned --glass-highlight var (0 when transparency is off). No
+   transitions here — rapid slider updates must stay cheap. */
+:root {
+  /* Compact scale: small elements tightest, large panels softest. Nested
+     cards use one step smaller than their parent for proportional geometry. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-2xl: 26px;
+}
+
+@layer components {
+  .surface-glass,
+  .surface-glass-lg {
+    position: relative;
+  }
+  .surface-glass::before,
+  .surface-glass-lg::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 55%;
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+    /* Smoother refraction: soft three-stop falloff instead of a hard fade,
+       so the sheen melts into the surface rather than banding. */
+    background: linear-gradient(
+      to bottom,
+      rgb(255 255 255 / var(--glass-highlight, 0)),
+      rgb(255 255 255 / calc(var(--glass-highlight, 0) * 0.35)) 38%,
+      transparent 72%
+    );
+    pointer-events: none;
+  }
+  /* Overlay scrollbars: zero layout space (content never shifts), thumb
+     stays visible floating over the edge. Chromium uses `overlay` so no
+     gutter is reserved; Firefox falls back to a thin scrollbar. */
+  .overlay-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(128 128 128 / 0.45) transparent;
+  }
+  .overlay-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+    background: transparent;
+  }
+  .overlay-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .overlay-scroll::-webkit-scrollbar-thumb {
+    background: rgb(128 128 128 / 0.45);
+    border-radius: 3px;
+  }
+  .overlay-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgb(128 128 128 / 0.65);
+  }
 }
 
 html,
@@ -246,4 +385,28 @@ html[data-animations="off"] .animate-pulse {
   .animate-pulse {
     animation: none !important;
   }
+}
+
+/* Unlayered so it beats the `overflow-y-auto` utility: zero-space overlay
+   scrollbars in Chromium (falls back to thin auto scrollbar elsewhere). */
+@supports (overflow: overlay) {
+  .overlay-scroll {
+    overflow-y: overlay;
+  }
+}
+
+/* App-wide scrollbar look: thin, transparent track, floating thumb. */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(128 128 128 / 0.45);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(128 128 128 / 0.65);
 }

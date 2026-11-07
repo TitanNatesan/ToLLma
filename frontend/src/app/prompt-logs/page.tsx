@@ -1,16 +1,15 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ScrollText } from "lucide-react";
 import { EmptyState, LoadingState, PageContainer, PageHeader } from "@/components/ui";
 import { useOrgs } from "@/hooks/useOrgs";
 import { useOrgStore } from "@/store/org";
 import { usePromptLoggingSettings } from "@/hooks/usePromptLogs";
-import { resolvePromptLogPerms, tabFromParam, type PromptLogTab } from "./components/promptLogLogic";
+import { resolvePromptLogPerms } from "./components/promptLogLogic";
 import { PromptLogsPanel } from "./components/PromptLogsPanel";
-import { PromptLogsSettings } from "./components/PromptLogsSettings";
 
 function PromptLogsPageInner() {
   const context = useOrgStore((st) => st.context);
@@ -26,20 +25,17 @@ function PromptLogsPageInner() {
   });
 
   const settings = usePromptLoggingSettings(orgId, perms.canRead);
+
+  // The settings tab moved to /settings#logging (R4). Preserve old deep
+  // links (?tab=settings, bookmarks) with a one-way redirect instead of
+  // silently landing on logs.
   const searchParams = useSearchParams();
   const router = useRouter();
-  const pathname = usePathname();
-  const [tab, setTab] = useState<PromptLogTab>(() => tabFromParam(searchParams.get("tab")));
-
-  // Keep the active tab in the URL (replace: no history spam, no scroll jump).
   useEffect(() => {
-    const params = new URLSearchParams(searchParams.toString());
-    if ((params.get("tab") ?? "logs") !== tab) {
-      if (tab === "logs") params.delete("tab");
-      else params.set("tab", tab);
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    if (searchParams.get("tab") === "settings") {
+      router.replace("/settings#logging");
     }
-  }, [tab, pathname, router, searchParams]);
+  }, [searchParams, router]);
 
   if (isOrg && !orgs.isPending && !perms.canRead) {
     return (
@@ -60,33 +56,12 @@ function PromptLogsPageInner() {
         title="Prompt Logs"
         subtitle={isOrg ? `Organization logs · ${orgEntry?.name ?? ""}` : "Personal logs"}
       />
-      <div className="flex gap-1 border-b border-zinc-200 px-4 dark:border-zinc-800" role="tablist" aria-label="Prompt log views" data-testid="prompt-logs-tabs">
-        {(["logs", "settings"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            data-testid={`tab-${t}`}
-            className={`rounded-t px-3 py-2 text-xs font-medium capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 ${tab === t ? "border-b-2 border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100" : "text-zinc-500"}`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {tab === "logs" && (
-        <PromptLogsPanel
-          orgId={orgId}
-          perms={perms}
-          loggingEnabled={settings.data?.enabled ?? true}
-          settingsLoaded={!settings.isPending && !settings.error}
-        />
-      )}
-      {tab === "settings" && (
-        <PromptLogsSettings orgId={orgId} isOrg={isOrg} canManage={perms.canManage} />
-      )}
+      <PromptLogsPanel
+        orgId={orgId}
+        perms={perms}
+        loggingEnabled={settings.data?.enabled ?? true}
+        settingsLoaded={!settings.isPending && !settings.error}
+      />
 
       <p className="px-4 pb-4 text-[11px] text-zinc-400">
         Need to call the API directly? <Link href="/docs">API docs</Link> cover the prompt-log endpoints.
@@ -96,8 +71,8 @@ function PromptLogsPageInner() {
 }
 
 export default function PromptLogsPage() {
-  // useSearchParams needs a Suspense boundary or the production build fails
-  // (the filter/tab state below reads the URL on mount).
+  // PromptLogsPanel reads the URL filter state, so the Suspense boundary stays
+  // (useSearchParams requires it for a passing production build).
   return (
     <Suspense fallback={<LoadingState message="Loading prompt logs…" className="py-12" />}>
       <PromptLogsPageInner />

@@ -27,6 +27,8 @@ class ConversationPin(BaseModel):
 
 class MessageRead(BaseModel):
     id: uuid.UUID
+    parent_message_id: uuid.UUID | None = None
+    version_number: int = 1
     role: Role
     content: str
     status: MessageStatus = MessageStatus.COMPLETED
@@ -70,6 +72,7 @@ class ConversationRead(BaseModel):
     is_pinned: bool = False
     provider_id: uuid.UUID | None
     model_id: uuid.UUID | None
+    active_leaf_message_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
     # Number of live messages; clients hide empty (draft/abandoned) chats.
@@ -156,3 +159,28 @@ class GenerationRunRead(BaseModel):
     latency_ms: float | None = None
     error: str | None = None
     created_at: datetime
+
+
+class TreeNodeRead(BaseModel):
+    """One node of the versioned branching tree (no content — use path)."""
+
+    id: uuid.UUID
+    parent_message_id: uuid.UUID | None = None
+    role: Role
+    version_number: int = 1
+    status: MessageStatus = MessageStatus.COMPLETED
+    created_at: datetime
+
+
+class ConversationTreeRead(BaseModel):
+    nodes: list[TreeNodeRead] = Field(default_factory=list)
+    active_leaf_id: uuid.UUID | None = None
+
+
+class ConversationPathRead(BaseModel):
+    path: list[MessageRead] = Field(default_factory=list)
+    active_leaf_id: uuid.UUID | None = None
+
+
+class SelectRequest(BaseModel):
+    message_id: uuid.UUID

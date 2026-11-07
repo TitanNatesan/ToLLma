@@ -461,8 +461,12 @@ def test_regenerated_usage_attributed_to_key(client: TestClient, db: Session, us
 
     started = asyncio.run(_regen())
     db.expire_all()
+    assert started.message_id != aid
     assistant = db.get(Message, started.message_id)
     assert assistant is not None and assistant.api_key_id == second_id
+    # The original row keeps its own key and run (Rule A: never reset).
+    original = db.get(Message, aid)
+    assert original is not None and original.api_key_id == first_key.id
     logs = list(db.scalars(
         select(RequestLog).where(RequestLog.message_id == started.message_id
                                  ).order_by(RequestLog.created_at.desc())))
@@ -470,7 +474,11 @@ def test_regenerated_usage_attributed_to_key(client: TestClient, db: Session, us
     runs = list(db.scalars(
         select(GenerationRun).where(GenerationRun.message_id == started.message_id
                                     ).order_by(GenerationRun.generation_number.asc())))
-    assert [r.api_key_id for r in runs] == [first_key.id, second_id]
+    assert [r.api_key_id for r in runs] == [second_id]
+    old_runs = list(db.scalars(
+        select(GenerationRun).where(GenerationRun.message_id == aid
+                                    ).order_by(GenerationRun.generation_number.asc())))
+    assert [r.api_key_id for r in old_runs] == [first_key.id]
 
 
 # --- picker hides unusable keys -------------------------------------------------

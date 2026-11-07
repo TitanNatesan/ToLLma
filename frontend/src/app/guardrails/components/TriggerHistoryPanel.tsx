@@ -14,6 +14,7 @@ import { parseApiError } from "@/lib/errors";
 import type { GuardrailPolicy, TriggerEvent } from "@/services/guardrails";
 import { useGuardrailTrigger, useGuardrailTriggers } from "@/hooks/useGuardrails";
 import { ScrollText } from "lucide-react";
+import { EMPTY_TRIGGER_FILTER, matchTriggerReason, type TriggerFilterState } from "./policyLogic";
 
 function TriggerInspector({ id, orgId, onClose }: { id: string | null; orgId?: string; onClose: () => void }) {
   const q = useGuardrailTrigger(id, orgId);
@@ -70,29 +71,42 @@ export function TriggerHistoryPanel({
   policies,
   canView,
   orgId,
+  filters,
+  onFiltersChange,
+  feed,
 }: {
   policies: GuardrailPolicy[];
   canView: boolean;
   orgId?: string;
+  /** Controlled mode: the page owns these in the persistent sidebar so tab switches keep them. */
+  filters?: TriggerFilterState;
+  onFiltersChange?: (f: TriggerFilterState) => void;
+  /** Controlled mode: the page owns the feed so tab switches don't refetch. */
+  feed?: ReturnType<typeof useGuardrailTriggers>;
 }) {
-  const [policyId, setPolicyId] = useState("");
-  const [severity, setSeverity] = useState("");
-  const [action, setAction] = useState("");
-  const [source, setSource] = useState("");
-  const [q, setQ] = useState("");
+  const [inner, setInner] = useState<TriggerFilterState>(EMPTY_TRIGGER_FILTER);
+  const f = filters ?? inner;
+  const setF: (next: TriggerFilterState) => void = onFiltersChange ?? setInner;
+  const controlled = filters !== undefined;
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const filters = useMemo(
+  const serverFilters = useMemo(
     () => ({
       org_id: orgId ?? undefined,
-      policy_id: policyId || undefined,
-      severity: severity || undefined,
-      action: action || undefined,
-      source: source || undefined,
+      policy_id: f.policyId || undefined,
+      severity: f.severity || undefined,
+      action: f.action || undefined,
+      source: f.source || undefined,
     }),
-    [orgId, policyId, severity, action, source],
+    [orgId, f],
   );
-  const feed = useGuardrailTriggers(filters, canView);
+  // Uncontrolled legacy mode fetches here; controlled mode uses the page-owned feed.
+  const innerFeed = useGuardrailTriggers(serverFilters, canView && feed === undefined);
+  const activeFeed = feed ?? innerFeed;
+
+  function update(patch: Partial<TriggerFilterState>) {
+    setF({ ...f, ...patch });
+  }
 
   if (!canView) {
     return (
@@ -105,47 +119,47 @@ export function TriggerHistoryPanel({
     );
   }
 
-  const pages = feed.data?.pages ?? [];
+  const pages = activeFeed.data?.pages ?? [];
   const items = pages.flatMap((p) => p.items);
-  const shown = q.trim()
-    ? items.filter((t: TriggerEvent) => `${t.category ?? ""} ${t.action} ${t.reason ?? ""} ${t.input_excerpt ?? ""} ${t.output_excerpt ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
-    : items;
+  const shown = items.filter((t: TriggerEvent) => matchTriggerReason(t, f.q));
 
   return (
     <div className="space-y-3" data-testid="trigger-history">
-      <div className="flex flex-wrap gap-2">
-        <div className="w-44">
-          <Select value={policyId} onChange={(e) => setPolicyId(e.target.value)} aria-label="Policy filter" data-testid="trigger-filter-policy">
-            <option value="">All policies</option>
-            {policies.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </Select>
+      {!controlled && (
+        <div className="flex flex-wrap gap-2">
+          <div className="w-44">
+            <Select value={f.policyId} onChange={(e) => update({ policyId: e.target.value })} aria-label="Policy filter" data-testid="trigger-filter-policy">
+              <option value="">All policies</option>
+              {policies.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          </div>
+          <div className="w-32">
+            <Select value={f.severity} onChange={(e) => update({ severity: e.target.value })} aria-label="Severity filter" data-testid="trigger-filter-severity">
+              <option value="">Severity</option>
+              {["low", "medium", "high", "critical"].map((s) => <option key={s} value={s}>{s}</option>)}
+            </Select>
+          </div>
+          <div className="w-32">
+            <Select value={f.action} onChange={(e) => update({ action: e.target.value })} aria-label="Action filter" data-testid="trigger-filter-action">
+              <option value="">Action</option>
+              {["logged", "warned", "blocked", "allowed"].map((a) => <option key={a} value={a}>{a}</option>)}
+            </Select>
+          </div>
+          <div className="w-32">
+            <Select value={f.source} onChange={(e) => update({ source: e.target.value })} aria-label="Source filter" data-testid="trigger-filter-source">
+              <option value="">Source</option>
+              {(["internal", "external"] as const).map((s) => <option key={s} value={s}>{s}</option>)}
+            </Select>
+          </div>
+          <div className="min-w-40 flex-1">
+            <Input value={f.q} onChange={(e) => update({ q: e.target.value })} placeholder="Search reason…" aria-label="Search triggers" className="h-8 text-xs" data-testid="trigger-search" />
+          </div>
         </div>
-        <div className="w-32">
-          <Select value={severity} onChange={(e) => setSeverity(e.target.value)} aria-label="Severity filter" data-testid="trigger-filter-severity">
-            <option value="">Severity</option>
-            {["low", "medium", "high", "critical"].map((s) => <option key={s} value={s}>{s}</option>)}
-          </Select>
-        </div>
-        <div className="w-32">
-          <Select value={action} onChange={(e) => setAction(e.target.value)} aria-label="Action filter" data-testid="trigger-filter-action">
-            <option value="">Action</option>
-            {["logged", "warned", "blocked", "allowed"].map((a) => <option key={a} value={a}>{a}</option>)}
-          </Select>
-        </div>
-        <div className="w-32">
-          <Select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source filter" data-testid="trigger-filter-source">
-            <option value="">Source</option>
-            {(["internal", "external"] as const).map((s) => <option key={s} value={s}>{s}</option>)}
-          </Select>
-        </div>
-        <div className="min-w-40 flex-1">
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search reason…" aria-label="Search triggers" className="h-8 text-xs" data-testid="trigger-search" />
-        </div>
-      </div>
-      {feed.isPending ? (
+      )}
+      {activeFeed.isPending ? (
         <LoadingState message="Loading triggers…" className="py-8" />
-      ) : feed.error ? (
-        <ErrorState title="Could not load triggers" message={parseApiError(feed.error).message} onRetry={() => void feed.refetch()} />
+      ) : activeFeed.error ? (
+        <ErrorState title="Could not load triggers" message={parseApiError(activeFeed.error).message} onRetry={() => void activeFeed.refetch()} />
       ) : shown.length === 0 ? (
         <EmptyState icon={ScrollText} title="No trigger events" description="Matching policy triggers will appear here." testId="no-triggers" />
       ) : (
@@ -168,9 +182,9 @@ export function TriggerHistoryPanel({
               </li>
             ))}
           </ul>
-          {feed.hasNextPage && (
-            <Button size="sm" variant="outline" onClick={() => void feed.fetchNextPage()} disabled={feed.isFetchingNextPage} data-testid="triggers-more">
-              {feed.isFetchingNextPage ? "Loading…" : "Load more"}
+          {activeFeed.hasNextPage && (
+            <Button size="sm" variant="outline" onClick={() => void activeFeed.fetchNextPage()} disabled={activeFeed.isFetchingNextPage} data-testid="triggers-more">
+              {activeFeed.isFetchingNextPage ? "Loading…" : "Load more"}
             </Button>
           )}
         </>

@@ -189,7 +189,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
           render ONLY on chat pages; providers/analytics/settings/admin keep
           their contextual bodies; everywhere else the body stays empty so
           the bottom-anchored nav is the single navigation. */}
-      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overlay-scroll">
         {isChatPage ? (
           <SidebarConversations />
         ) : isAdminPage ? (
@@ -232,7 +232,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
           }}
           onFocusCapture={peekNavOpen}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto overlay-scroll">
             {scopeOrgId ? (
               <SidebarOrgNav orgId={scopeOrgId} />
             ) : (
@@ -301,7 +301,7 @@ export function Sidebar({ onOpenCommandPalette }: { onOpenCommandPalette?: () =>
         duration: isResizing ? 0 : 0.25,
         ease: "easeInOut",
       }}
-      className="relative flex shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
+      className="relative flex shrink-0 flex-col overflow-hidden border-r border-zinc-200 bg-[var(--glass-bg)] backdrop-blur-[var(--glass-blur)] dark:border-zinc-800"
       aria-label={ariaLabel}
       aria-hidden={!leftSidebarOpen}
       inert={!leftSidebarOpen}

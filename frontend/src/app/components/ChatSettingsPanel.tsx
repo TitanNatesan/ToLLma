@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { useEffect, useId, useRef, useState, type ComponentType } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useAllChatKeyModels, useChatKeys } from "@/hooks/useChatKeys";
@@ -13,6 +13,7 @@ import {
   Check,
   Cpu,
   Database,
+  GitBranch,
   Layers,
   MessageSquarePlus,
   PanelRightClose,
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { fmtCompactTokens, fmtCost, fmtPrice, fmtTokens } from "@/lib/utils";
 import { getModelCapabilities, mediaRates } from "@/app/components/chat/capabilities";
 import { endpointLabel } from "@/app/providers/fields";
+import { ConversationFlow } from "./chat/ConversationFlow";
 import { logoForProviderType } from "@/services/catalog";
 import { ProviderLogo } from "@/components/ui/ProviderLogo";
 
@@ -43,15 +45,22 @@ function Section({
   testid?: string;
   children: React.ReactNode;
 }) {
+  const headingId = useId();
   return (
     <section
+      aria-labelledby={headingId}
       className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900/40 shadow-xs"
       data-testid={testid}
     >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          {Icon && <Icon className="size-3 text-zinc-400" />}
-          <span>{title}</span>
+        <div className="flex items-center gap-1.5">
+          {Icon && <Icon className="size-3 text-zinc-400" aria-hidden="true" />}
+          <h3
+            id={headingId}
+            className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+          >
+            {title}
+          </h3>
         </div>
         {badge}
       </div>
@@ -182,8 +191,13 @@ export function IntelligencePanel() {
     const mq = window.matchMedia("(max-width: 1100px)");
     const update = () => setIsMobile(mq.matches);
     update();
+    // Small screens start with the overlay closed: the store default is
+    // open (desktop discovery), and an open overlay would cover the
+    // composer on first load with no conversation to dismiss it.
+    if (mq.matches) setRightSidebar(false);
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -362,6 +376,11 @@ export function IntelligencePanel() {
                   ))}
                 </div>
               )}
+            </Section>
+
+            {/* 1b. Conversation Flow */}
+            <Section title="Conversation Flow" icon={GitBranch} testid="intelligence-flow">
+              <ConversationFlow conversationId={activeConversationId} />
             </Section>
 
             {/* 2. Limits */}

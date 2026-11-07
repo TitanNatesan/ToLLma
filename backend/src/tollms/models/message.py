@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, Float, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -74,6 +74,26 @@ class Message(SoftDeleteMixin, TimestampedModel):
             "ix_messages_client_key", "user_id", "client_key", unique=True,
             postgresql_where=text("client_key IS NOT NULL"),
         ),
+        # Versioned branching tree (spec sections 2-7, 11): every message has
+        # at most one parent; siblings order by version_number. The unique
+        # constraint cannot enforce root sequencing (PostgreSQL treats NULL
+        # parent ids as distinct), so root versioning is service-sequenced
+        # per conversation (see next_sibling_version).
+        UniqueConstraint(
+            "conversation_id", "parent_message_id", "version_number",
+            name="uq_messages_sibling_version",
+        ),
+        CheckConstraint("version_number >= 1", name="ck_messages_version_positive"),
+        CheckConstraint(
+            "parent_message_id IS NULL OR parent_message_id != id",
+            name="ck_messages_no_self_parent",
+        ),
+        Index("ix_messages_parent", "parent_message_id"),
+        Index("ix_messages_conv_parent", "conversation_id", "parent_message_id"),
+        Index(
+            "ix_messages_roots", "conversation_id",
+            postgresql_where=text("parent_message_id IS NULL"),
+        ),
     )
 
     user_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -90,6 +110,17 @@ class Message(SoftDeleteMixin, TimestampedModel):
         UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
     )
     model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("models.id"), nullable=True)
+    # Branching tree: the message this node responds to (NULL = conversation
+    # root; Rule B edits create additional roots). SET NULL keeps children
+    # readable when a parent is hard-deleted; soft-deletes never cascade.
+    parent_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="SET NULL", name="fk_messages_parent_message"),
+        nullable=True,
+        default=None,
+    )
+    # 1-based position among siblings sharing (conversation_id, parent).
+    version_number: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
     status: Mapped[MessageStatus] = mapped_column(
         Enum(MessageStatus, name="message_status"), nullable=False,
         default=MessageStatus.COMPLETED, server_default=MessageStatus.COMPLETED.name,
@@ -134,6 +165,17 @@ class Message(SoftDeleteMixin, TimestampedModel):
 
     conversation: Mapped["Conversation"] = relationship(
         back_populates="messages", foreign_keys="Message.conversation_id"
+    )
+    parent: Mapped["Message | None"] = relationship(
+        "Message", remote_side="Message.id",
+        foreign_keys="Message.parent_message_id",
+        back_populates="children",
+    )
+    children: Mapped[list["Message"]] = relationship(
+        "Message", back_populates="parent",
+        foreign_keys="Message.parent_message_id",
+        order_by="Message.version_number",
+        cascade="save-update, merge",
     )
     api_key: Mapped["ApiKey | None"] = relationship(back_populates="messages")
     attachments: Mapped[list["Attachment"]] = relationship(

@@ -70,9 +70,9 @@ test.describe("organizations phase A", () => {
     const members = await page.request.get(`${API}/api/v1/orgs/${org.id}/members`);
     expect(members.ok()).toBeTruthy();
     expect((await members.json()).map((m: { email: string }) => m.email)).toContain(inviteeEmail);
-    // UI: root's inbox shows the acceptance notification.
-    await page.goto("/settings#organizations");
-    await expect(page.getByTestId("settings-org-inbox")).toContainText("joined");
+    // UI: root's notifications page shows the acceptance notification.
+    await page.goto("/notifications");
+    await expect(page.getByTestId("notifications-page")).toContainText("joined", { timeout: 20000 });
   });
 
   test("scenario 4: accept invitation via inbox UI", async ({ page, request }) => {
@@ -86,10 +86,11 @@ test.describe("organizations phase A", () => {
     });
     expect(inv.ok(), await inv.text()).toBeTruthy();
     const invId = (await inv.json()).id as string;
-    await page.goto("/settings#organizations");
-    await expect(page.getByTestId("settings-org-inbox")).toContainText(org.name);
+    await page.goto("/organizations/invites");
+    await expect(page.getByTestId("org-invites-page")).toContainText(org.name, { timeout: 20000 });
+    await expect(page.getByTestId(`org-invite-${invId}`)).toContainText(org.name, { timeout: 20000 });
     await page.getByTestId(`org-invite-accept-${invId}`).click();
-    await expect(page.getByTestId(`org-invite-${invId}`)).toHaveCount(0);
+    await expect(page).toHaveURL(/\/organizations\//, { timeout: 20000 });
     await page.goto("/settings#organizations");
     await expect(page.getByTestId("settings-organizations")).toContainText(org.name);
   });

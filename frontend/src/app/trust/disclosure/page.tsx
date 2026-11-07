@@ -42,6 +42,7 @@ export default function TrustDisclosurePage() {
     <PageContainer
       header={
         <PageHeader
+          hideMenu
           title="Responsible disclosure"
           subtitle="How to report a security vulnerability to us."
         />

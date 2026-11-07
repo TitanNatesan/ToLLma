@@ -79,3 +79,12 @@ Email + password (strength policy), Google OAuth (PKCE, state binding, link-on-v
 
 - Key endpoints: `/auth/*` (signup, verify, login, Google, refresh, logout, forgot/reset, resend-verification), `/api/v1/settings/*` (profile, password, sessions, danger zone), `POST /auth/restore`.
 - Limits: auth rate limits + login lockout; unverified accounts get `403 EMAIL_VERIFICATION_REQUIRED`; pending-deletion accounts get `403 ACCOUNT_PENDING_DELETION`.
+
+## Frontend experience
+
+- Settings (`/settings#<section>`, order follows the sidebar): profile, appearance, chat, account, sessions, logging, privacy, retention, cookies, data rights, organizations, danger zone. Provider management lives only on `/providers`; inbox/notifications live only on `/notifications` and `/organizations/invites`.
+- Prompt logging: full configuration (global toggle, input/output capture, per-key overrides, retention days, precedence + effective summary) in Settings → Logging for the personal workspace; `/prompt-logs` is exploration-only. Old `?tab=settings` links redirect to `/settings#logging`.
+- Guardrails (`/guardrails`): one persistent filter panel across Policies/Triggers/Templates with per-tab state (policy search/severity/enforcement/on-off/scope; trigger policy/severity/action/source/reason; template text search).
+- Design system: glass tokens in `src/app/globals.css` (`--glass-bg/border/blur/shadow`); `Card`/`Dialog`/`Dropdown` default to `surface="glass"`, `surface="solid"` for dense tables/forms; single blur layer, never nested/animated.
+- Public legal: `/legal`, `/legal/[slug]`, `/trust/subprocessors`, `/trust/disclosure` (no session); auth pages carry a legal footer (Terms · Privacy · Cookies · Legal center).
+- Logos: square-corner ToLLma mark everywhere (no radius/clipping); raster assets verified square.

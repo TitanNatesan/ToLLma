@@ -11,6 +11,8 @@ import type {
   GuardrailAssignment,
   GuardrailCreateInput,
   GuardrailPolicy,
+  GuardrailTemplate,
+  TriggerEvent,
 } from "@/services/guardrails";
 
 /** Backend category vocabulary (`service.CATEGORIES`) — keep in sync. */
@@ -276,6 +278,49 @@ export interface PolicyFilter {
 }
 
 export const EMPTY_FILTER: PolicyFilter = { q: "", severity: "ALL", enforcement: "ALL", enabled: "ALL", scope: "ALL" };
+
+/** Sidebar-owned trigger history filters: server fields + client reason search. */
+export interface TriggerFilterState {
+  policyId: string; // "" = all
+  severity: string; // "" = all
+  action: string; // "" = all
+  source: string; // "" = all
+  q: string; // client-side reason/excerpt search, never sent to the API
+}
+
+export const EMPTY_TRIGGER_FILTER: TriggerFilterState = {
+  policyId: "",
+  severity: "",
+  action: "",
+  source: "",
+  q: "",
+};
+
+/** Client-side reason/excerpt search over loaded trigger events. */
+export function matchTriggerReason(
+  t: Pick<TriggerEvent, "category" | "action" | "reason" | "input_excerpt" | "output_excerpt">,
+  q: string,
+): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return `${t.category ?? ""} ${t.action} ${t.reason ?? ""} ${t.input_excerpt ?? ""} ${t.output_excerpt ?? ""}`
+    .toLowerCase()
+    .includes(needle);
+}
+
+/**
+ * Client-side template search over loaded template data (name + description).
+ * GuardrailTemplate has no category/status fields, so text search is the only
+ * filter backed by real data — no fake faceted filters.
+ */
+export function filterTemplates<T extends Pick<GuardrailTemplate, "name" | "description">>(
+  items: T[],
+  q: string,
+): T[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return items;
+  return items.filter((t) => `${t.name} ${t.description ?? ""}`.toLowerCase().includes(needle));
+}
 
 /** Scoped = at least one non-global assignment. */
 export function isScoped(p: GuardrailPolicy): boolean {

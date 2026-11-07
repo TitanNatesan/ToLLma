@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   DETECTION_STEP_COPY,
   EMPTY_FILTER,
+  EMPTY_TRIGGER_FILTER,
+  filterTemplates,
   SCOPE_STEP_COPY,
   WIZARD_SCOPE_OPTIONS,
   buildEvaluatorConfigs,
@@ -10,6 +12,7 @@ import {
   evaluatorSummary,
   filterPolicies,
   isPolicyLocked,
+  matchTriggerReason,
   isScoped,
   resolveKeyAssignments,
   scopeSummary,
@@ -258,5 +261,39 @@ describe("key assignment logic", () => {
     expect(r.effective.map((p) => p.id)).toContain("g");
     expect(toggleAssignment(new Set(), r.lockedIds, "g").has("g")).toBe(false);
     expect(toggleAssignment(new Set(["g"]), r.lockedIds, "g").has("g")).toBe(true);
+  });
+});
+
+describe("trigger sidebar filters", () => {
+  const evt = {
+    category: "pii",
+    action: "blocked",
+    reason: "SSN detected",
+    input_excerpt: "my number is 123",
+    output_excerpt: null,
+  };
+  it("empty query matches everything, text matches across reason fields", () => {
+    expect(matchTriggerReason(evt, "")).toBe(true);
+    expect(matchTriggerReason(evt, "  ")).toBe(true);
+    expect(matchTriggerReason(evt, "ssn")).toBe(true);
+    expect(matchTriggerReason(evt, "BLOCKED")).toBe(true);
+    expect(matchTriggerReason(evt, "number")).toBe(true);
+    expect(matchTriggerReason(evt, "nope")).toBe(false);
+  });
+  it("starts blank (no server-side filtering until the user picks)", () => {
+    expect(EMPTY_TRIGGER_FILTER).toEqual({ policyId: "", severity: "", action: "", source: "", q: "" });
+  });
+});
+
+describe("filterTemplates", () => {
+  const items = [
+    { key: "a", name: "PII block", description: "Stops leaks" },
+    { key: "b", name: "Injection guard", description: "Prompt attacks" },
+  ];
+  it("returns all on blank query, matches name and description", () => {
+    expect(filterTemplates(items, "")).toHaveLength(2);
+    expect(filterTemplates(items, "pii").map((t) => t.key)).toEqual(["a"]);
+    expect(filterTemplates(items, "prompt").map((t) => t.key)).toEqual(["b"]);
+    expect(filterTemplates(items, "zzz")).toHaveLength(0);
   });
 });

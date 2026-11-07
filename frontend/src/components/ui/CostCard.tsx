@@ -54,14 +54,14 @@ export function CostCard({
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-center text-xs">
-          <div className="rounded bg-zinc-50 p-1.5 dark:bg-zinc-900/50">
+          <div className="rounded-[var(--radius-sm,10px)] bg-zinc-50 p-1.5 dark:bg-zinc-900">
             <div className="text-[10px] text-zinc-400">Input</div>
             <div className="font-medium text-zinc-700 dark:text-zinc-300 font-mono">
               {fmt(inputCost)}
             </div>
           </div>
 
-          <div className="rounded bg-zinc-50 p-1.5 dark:bg-zinc-900/50">
+          <div className="rounded-[var(--radius-sm,10px)] bg-zinc-50 p-1.5 dark:bg-zinc-900">
             <div className="text-[10px] text-zinc-400">Output</div>
             <div className="font-medium text-zinc-700 dark:text-zinc-300 font-mono">
               {fmt(outputCost)}

@@ -114,7 +114,7 @@ export function WorkspaceLoggingSection({ orgId, canManage }: {
         </p>
       )}
       <div className="flex justify-end pt-2">
-        <Link href="/prompt-logs?tab=settings" data-testid="workspace-logging-open">
+        <Link href="/prompt-logs" data-testid="workspace-logging-open">
           <Button size="sm" variant="outline">Open Prompt Logs</Button>
         </Link>
       </div>

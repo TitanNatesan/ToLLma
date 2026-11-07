@@ -63,7 +63,7 @@ export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogP
 
         {active ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+            <div className="flex items-center gap-2 rounded-[var(--radius-md,14px)] border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
               <Link2 className="size-3.5 shrink-0 text-zinc-400" />
               <span className="min-w-0 flex-1 truncate font-mono text-xs" data-testid="share-link">
                 {shareUrl}

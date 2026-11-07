@@ -42,7 +42,7 @@ export function ProviderSelector({
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs transition-colors",
+            "flex h-8 items-center gap-1.5 rounded-[var(--radius-md,14px)] px-2.5 text-xs transition-colors",
             "border border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 bg-white",
             "dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:bg-zinc-800 dark:bg-zinc-900",
             !currentProvider && "text-zinc-400",
@@ -68,7 +68,7 @@ export function ProviderSelector({
               onClick={() => handleSelect(p)}
               data-testid={`provider-option-${p.id}`}
               className={cn(
-                "flex items-center justify-between px-2.5 py-1.5 text-xs cursor-pointer rounded-md",
+                "flex items-center justify-between px-2.5 py-1.5 text-xs cursor-pointer rounded-[var(--radius-sm,10px)]",
                 currentId === p.id && "bg-zinc-100 font-semibold dark:bg-zinc-800",
               )}
             >

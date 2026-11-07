@@ -10,9 +10,9 @@ interface LogoProps {
 }
 
 const markSizes = {
-  sm: { box: "size-6 rounded-md", px: 24 },
-  md: { box: "size-7 rounded-lg", px: 28 },
-  lg: { box: "size-8 rounded-xl", px: 32 },
+  sm: { box: "size-6", px: 24 },
+  md: { box: "size-7", px: 28 },
+  lg: { box: "size-8", px: 32 },
 } as const;
 
 const textClasses = {

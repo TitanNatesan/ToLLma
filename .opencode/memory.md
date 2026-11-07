@@ -4932,3 +4932,109 @@ Requirement: evidence-based acceptance of P0/P1 scope (no broad implementation);
 Findings: one genuine P0 miss — internal keyed-chat plane (api/gateway/service.py) lacked the new ledger wiring; fixed with the same pattern (trace_id=conversation, costs/priced/pin, finish_reason, status_message), test updated to assert trace linkage. H1 plane-level evidence added (unpriced model through public gateway persists NULL costs). Drop counters exposed on GET retention (schema additive). Retention single-pane copy added (last open plan item). Gap-matrix corrected (dual-read was never shipped; single-pane was missing). Independent reviewer: no Critical; H1/H2/H3+M1/M4/L1 fixed.
 Verification: 39 obs tests green; 78-test regression batch green; full suite 1313 green (head test updated twice); vitest 324; e2e 7/7 on final build; live probes (filters, score 404, CSV export, retention counters); uq_scores_rewrite confirmed in pg; downgrade/upgrade verified.
 Decisions: (A) agreed P0/P1 scope COMPLETE with standing deferrals; (B) NOT at full Langfuse parity — no hierarchy/tags/datasets/prompt-mgmt/KEKs/cross-plane stitching/sampling. Export-filter parity, alert wiring = next milestone. No shared services restarted except :3000 (clean restarts after builds); no shared DB writes; isolated test DBs throughout.
+
+## 2026-11-07 - Frontend consistency, settings, glass design & performance (R1-R9)
+Requirement: implement 9 frontend requirements (settings cleanup/order, guardrails panel, logging consolidation, logo, legal, orgs card, glass system, perf) via 4 parallel frontend subagents with disjoint file ownership, then integrate, review, fix, verify.
+Implementation Summary: (1) Settings: Providers card + sidebar entry removed (file deleted), content reordered to sidebar order, Logging card now hosts full PromptLogsSettings (personal scope) + link to /prompt-logs, inbox/notifications removed from OrganizationsSection (flows preserved via /organizations/invites + /notifications). (2) Prompt-logs page is exploration-only; ?tab=settings redirects to /settings#logging. (3) Guardrails: single persistent filter panel with per-tab state (policies/triggers-templates search), trigger feed lazy + no refetch on tab switch, TemplateGallery error state. (4) Logo square corners (Logo.tsx + SidebarHeader override); raster assets verified square. (5) Legal: /legal, /legal/[slug], /trust/subprocessors, /trust/disclosure public via proxy + Shell bare paths; auth footer with legal links; anon acceptance gated off. (6) Glass tokens in globals.css; Card/Dialog/Dropdown surface="glass" default with solid opt-out; single non-nested blur. (7) Perf: no new deps, CSS-only change, enabled-gated guardrails query. Fixed reviewer Highs (footer duplication, unguarded query, deep-link) + Mediums (error state, anon acceptance, table contrast, card active props). Tester retargeted 2 e2e files to invites/notifications pages.
+Files Changed: 22 frontend source files (settings, guardrails, prompt-logs, legal, trust, auth, sidebar, shell, proxy, logo, primitives, globals.css), docs/FEATURES.md, 2 e2e specs. No backend changes. No new dependencies.
+Testing Performed: tsc clean, eslint clean, vitest 38 files / 327 tests pass (incl. 3 new), next build green, Playwright: settings order verified in-browser (12/12 ids), guardrails panel across 3 tabs, prompt-logs intact, mobile 390px zero overflow, legal pages 200 logged-out, trust-legal + prompt-logs-observability e2e pass, organizations/org-validation retargets pass (remaining failures pre-existing: mock-egress, dev-overlay, identity isolation).
+Architecture Notes: SidebarSettings remains single source of settings order; PromptLogsSettings reused (not duplicated) in Settings; PUBLIC_PATHS/BARE_PATHS must stay in sync (no guard yet); dense tables should pass surface="solid".
+
+## 2026-11-07 - Command palette transparent glassmorphic theme
+Requirement: command palette in transparent glassmorphic theme with gaussian blur.
+Implementation Summary: stripped opaque overrides in CommandPalette.tsx (DialogContent now uses surface-glass-lg token fill/border/shadow; Command root transparent; section dividers on --glass-border; item hovers/selected/icon tiles/kbd chips converted to translucent zinc/tollma washes); added palette-specific backdrop-blur-xl + bg-white/60 (dark zinc-900/50) so the gaussian frost reads through the fill. Single blur layer (overlay stays dim-only), no nested glass, no new deps.
+Files Changed: frontend/src/components/ui/CommandPalette.tsx only.
+Testing Performed: tsc clean, eslint clean, Playwright screenshot verified (frosted bleed + readable text + tollma selected tint).
+Architecture Notes: page-level utilities win over @layer components tokens, so palette tuning stays local without touching the shared system; dark mode uses white/10 washes on the zinc-900/60 frost.
+
+## 2026-11-07 - Command palette brightness tuning
+Requirement: keep gaussian blur, make palette brighter (was reading dim gray).
+Implementation Summary: raised DialogContent fill from bg-white/60 to bg-white/85 (dark zinc-900/50 to /70); blur (backdrop-blur-xl), hairline, rows unchanged.
+Files Changed: frontend/src/components/ui/CommandPalette.tsx (one class).
+Testing Performed: eslint clean, Playwright screenshot verified brighter frosted panel with readable text.
+Architecture Notes: dimness came from the darkened overlay bleeding through the 60% fill; 85% keeps translucency at edges while restoring brightness.
+
+## 2026-11-07 - Command palette transparency rebalance
+Requirement: 85% fill read as opaque; restore transparency while staying bright.
+Implementation Summary: settled DialogContent fill at bg-white/75 (dark zinc-900/60) with backdrop-blur-xl; screenshot confirms bright panel with visible frosted bleed at edges.
+Files Changed: frontend/src/components/ui/CommandPalette.tsx (one class).
+Testing Performed: eslint clean, Playwright screenshot verified.
+Architecture Notes: 60% read dim gray, 85% read opaque; 75% is the balance point against the shared dim overlay (overlay itself untouched — shared primitive).
+
+## 2026-11-07 - Command palette overlay lightened
+Requirement: reduce overlay dark opacity behind the command palette.
+Implementation Summary: added backward-compatible overlayClassName prop to DialogContent (shared primitive default unchanged at bg-black/60); palette passes bg-black/30. Screenshot confirms light scrim with visible backdrop.
+Files Changed: frontend/src/components/ui/primitives.tsx (additive prop), frontend/src/components/ui/CommandPalette.tsx.
+Testing Performed: tsc clean, eslint clean, Playwright screenshot verified.
+Architecture Notes: overlay default untouched so all other dialogs keep their scrim; palette opts out explicitly.
+
+## 2026-11-07 - Radius tightening, input dark-mode fix, theme rehydration
+Requirement: reduce border radius (size-varied cards, tighter nav highlights); fix dark/black input contrast; validate theme-via-palette persistence after refresh.
+Implementation Summary: tokens reduced to sm8/md12/lg16/xl22/2xl26; sidebar + settings nav highlights to radius-sm; Card gained size-aware radius prop (sm/md/lg, default md). Fixed shared Input/Textarea missing dark: variants (dark zinc-900 fill, themed text/placeholder) — provider wizard inputs readable in black mode. Added zustand onRehydrateStorage to re-apply full glass vars on boot (layout script only restores classes; vars previously stayed at token defaults until first store update).
+Files Changed: globals.css, Sidebar.tsx, SidebarSettings.tsx, primitives.tsx (Card radius prop + Input/Textarea dark), store/glass.ts.
+Testing Performed: eslint clean, tsc clean, Playwright: black theme + blur(16px) fully restored after reload; wizard input computed style dark-bg/light-text; black-mode wizard screenshot verified.
+Architecture Notes: fill/overlay balance settled at 75%/bg-black/30; rehydration apply is idempotent with the subscribe path.
+
+## 2026-11-07 - Overlay (zero-space) scrollbars
+Requirement: no scrollbar may occupy layout space; thumb stays visible.
+Implementation Summary: new .overlay-scroll utility (transparent 6px track, floating thumb; Chromium overflow:overlay via unlayered @supports so it beats the overflow-y-auto utility; Firefox thin fallback) + app-wide thin transparent webkit scrollbar styling. Applied to DialogContent, dropdowns/popovers, palette list, both sidebars, settings nav.
+Files Changed: globals.css, primitives.tsx, CommandPalette.tsx, Sidebar.tsx, SidebarSettings.tsx.
+Testing Performed: eslint clean, tsc clean (only pre-existing audit-temp spec error, not mine). Visual check deferred to running audit (parallel playwright runs conflict on screenshots).
+Architecture Notes: page utilities live unlayered so the @supports override had to be unlayered too; global *::-webkit-scrollbar keeps every other scroller visually consistent.
+
+## 2026-11-07 - Glass theme engine + Theme Studio + full UI QA (final)
+Requirement: centralized user-configurable glassmorphism (palette Theme action, Studio popup, live preview, persistence, Appearance removal, migration, full audit).
+Implementation Summary: theme engine (store/glass.ts + lib/glass.ts, per-user persisted, clamped/validated, re-applied on rehydrate); Appearance section removed to Theme Studio (nested Radix dialog, Esc layering, focus return, revert/reset); accent migrated unchanged (server-synced); black mode via .dark.black; iOS radius tokens reduced to 8/12/16/22/26 with size-aware Card radius prop; overlay scrollbars; Input/Textarea dark variants; DialogContent overlayClassName prop; palette glass + lighter scrim + focus ring; ChatSettingsPanel mobile fix (audit).
+Files Changed: store/glass.ts, lib/glass.ts, theme/ThemeStudio.tsx, theme/AccentPicker.tsx, CommandPalette.tsx, primitives.tsx, ui/* (17 files), globals.css, layout.tsx, settings page, SidebarSettings.tsx, AppearanceSection deleted, auth.ts (setUser/reset scoping), ChatSettingsPanel.tsx, docs/FEATURES.md, e2e (organizations, org-validation, theme-studio new).
+Testing Performed: tsc clean, eslint clean, vitest 327/327, next build green, Playwright theme-studio 4/4, route matrix 20+ routes × 1440/390 × light/dark/black (1 fix, rest PASS), refresh persistence incl. custom blur, mobile zero-overflow, black-mode input contrast verified.
+Architecture Notes: single glass var source of truth; no nested blur; accent stays server-side; per-user scoping via setUser/reset; PUBLIC_PATHS/BARE_PATHS sync still unguarded (follow-up: add test).
+
+## 2026-11-07 - Second refinement batch (radius, blur coverage, focus ring, notification position)
+Requirement: tighten radii (auth inputs, new-chat, nav highlighters); blur on every transparent card; remove palette input focus border; centralize glass config validation; notification position picker in Theme Studio with skeleton + confirmation toast; kill Theme Studio horizontal scroll.
+Implementation Summary: auth inputs rounded-xl→sm(8px); new-chat button lg→sm; nav rows back to rounded-md(6px); radius tokens 8/12/16/22 + Card radius prop; Sidebar/PageHeader/DetailPanel-footer/SidebarFooter migrated to var(--glass-bg/border)+blur; shared chrome sweep found only intentional dark code surfaces; palette input focus ring removed; overlay-scroll utility + global thin scrollbars; notificationPosition in glass store (persisted/validated), Toaster default + per-toast override passthrough, Studio skeleton picker firing from→to toast at new position; studio overflow-x-clip.
+Files Changed: AuthCard, SidebarConversations, Sidebar, SidebarSettings, globals.css, primitives.tsx, DetailPanel, PageHeader, SidebarFooter, CommandPalette, store/glass, lib/glass, lib/notify, SileoToaster, ThemeStudio; tests: glass-notification.test.ts, theme-studio.spec.ts.
+Testing Performed: tsc/eslint clean, vitest 330/330, theme-studio e2e 6/6, Playwright screenshots (wizard black-mode, studio picker + top-left toast, login 8px radius), computed-style assertions. Audit agent running in parallel for final matrix.
+Architecture Notes: Sileo supports per-toast position; Toaster position reactive to store; user explicitly overrode focus-ring a11y default on palette input (cmkd aria-selected states remain).
+
+## 2026-11-07 - Glass blur propagation root-cause fix
+Requirement: blur slider had no visible effect; palette must inherit studio config.
+Root cause (verified via CDP matched-rules): LightningCSS dropped the paired unprefixed `backdrop-filter` from `.surface-glass-lg` as "redundant", leaving only `-webkit-backdrop-filter` — which Chromium ignored, so dialogs computed `none`. Additionally the palette had hardcoded `backdrop-blur-xl` + fill utilities (utilities layer beats components layer), and several chrome surfaces had hardcoded blur-sm/md utilities.
+Implementation Summary: surface-glass rules now declare only unprefixed backdrop-filter, with the -webkit- fallback isolated in `@supports not (backdrop-filter: blur(1px))`; removed palette fill/blur overrides so it inherits engine vars; migrated PageHeader/Sidebar/SidebarFooter/DetailPanel-footer/ChatHeader/AuthCard/AuthShell hardcoded blurs to `backdrop-blur-[var(--glass-blur)]` (transient hovers/tooltips/media overlays intentionally left alone).
+Files Changed: globals.css, CommandPalette.tsx, PageHeader, Sidebar, SidebarFooter, DetailPanel, ChatHeader, AuthCard, AuthShell; test: theme-studio.spec.ts blur-propagation test.
+Testing Performed: computed-style assertions (40px/0px on palette+sidebar+header), tsc/eslint clean, vitest 330/330, theme-studio e2e 7/7 incl. new regression test.
+Architecture Notes: never pair prefixed+unprefixed backdrop-filter in one rule under LightningCSS; utilities-layer blur always beats components-layer glass — route every blur through the var.
+
+## 2026-11-07 - Literal transparency/blur scales, smoother refraction, inverted toasts
+Requirement: transparency 100% = 98% see-through; refraction smoother; blur 1%=1px (0-100); white toasts on dark/black, black toasts on light.
+Implementation Summary: alpha formula max(0.02, 1-(t/100)*0.98); blur slider+clamp 0-100 with % readout; sheen gradient 3-stop 55% + smoothstep highlight curve; Toaster default theme inverted vs app appearance (contrast fills untouched).
+Files Changed: lib/glass.ts, globals.css (sheen), ThemeStudio (slider+microcopy), SileoToaster.tsx.
+Testing Performed: tsc/eslint clean, vitest 330/330, Playwright verified bg 0.02 + blur 100px + white top-center toast in dark mode with screenshot.
+Architecture Notes: toast inversion is default-theme only; explicit contrast toasts keep their fills; tester adding unit+e2e coverage for new mappings.
+
+## 2026-11-07 - Code/table tightening, dark-only theme (black merged), sidebar brand fix
+Requirement: smaller radius + less padding on code cells/tables, no table margin; drop black mode (deep-black becomes dark); sidebar header brand always fully visible.
+Implementation Summary: RichCodeBlock/RichTable radius xl->sm(8px), outer my-3->my-2, paddings reduced (pre p-3.5->2.5, headers px-3.5->2.5/py-1.5->py-1, th/td px/py tightened), m-0 on table scroll wrapper+table (prose-margin-proof). GlassAppearance now light|dark; .dark vars take former black values (#000 bg); .dark.black block deleted; Theme Studio Light/Dark only; legacy stored "black" migrates to dark (clamp + layout init + classList.remove). Sidebar brand link w-auto shrink-0, no truncate, header overflow-hidden. Also fixed studio 7px x-overflow (accent custom-color absolute input; label now overflow-hidden shrink-0).
+Files Changed: ResponseMarkdown.tsx, store/glass.ts, lib/glass.ts, globals.css, layout.tsx, ThemeStudio.tsx, SidebarHeader.tsx, AccentPicker.tsx.
+Testing Performed: tsc/eslint clean, vitest 342/342, theme-studio e2e 9/9 (tester updated black refs + legacy-migration test), Playwright verified modes=[light,dark], studio x-overflow=0, dark base rgb(0 0 0).
+Architecture Notes: dark: variants untouched (still keyed on .dark); dark is now strictly deeper than before — light mode unchanged.
+
+## 2026-11-07 - Responsive sidebar header, pager moved below content
+Requirement: top sidebar section responsive (theme/palette hidden on narrow widths); redesign palette icon; move Response X-of-N pager below content.
+Implementation Summary: SidebarHeader now width-aware (sidebarWidth<300 → compact two-row: brand row + utility row; >=300 single row); palette button icon Search→Command(⌘); logo always full brand; kbd hint hidden in compact. Generation pager moved below content (after Sources, before actions); testids unchanged.
+Files Changed: SidebarHeader.tsx, MessageView.tsx. Tests: e2e/sidebar-header.spec.ts, messageViewPager.test.ts (static position contract — mock-egress blocks live multi-gen seeding).
+Testing Performed: tsc/eslint clean, vitest 344/344, new specs green, screenshot verified compact header (brand + all controls visible at 260px), pager e2e refs confirmed present (live path covered by existing conversation-intelligence spec when egress allows).
+Architecture Notes: responsive breakpoint reads live sidebarWidth from chat store; no new deps; kbd hint only in full layout.
+
+## 2026-11-08 - Versioned branching conversations, message tree + flow visualization
+Requirement: persistent versioned branching tree (B1-B20): sibling regen, branch edits, multi-root, failed/cancelled versions, request/response switching with descendant restore, active path, intelligence graph, migration preserving history, full tests.
+Implementation Summary: messages.parent_message_id + version_number (uq conv/parent/version, CHECKs, FK SET NULL), conversations.active_leaf_message_id (use_alter circular FK). Migration 38aa765cebc8 (LAG backfill, leaf=newest, lossy-by-design downgrade note). Regenerate creates new assistant sibling (in-place reset removed); edit creates new user sibling + assistant child; _history/_history_until + media refs from active path; new endpoints tree/path/select/siblings/children (explicit operationIds); uq-violation-only 409 mapping, leaf-after-flush. Frontend: request 1/N selector, sibling-driven generation pager (same testids), active-path rendering with fallback, ConversationFlow custom SVG graph (zoom/scroll-safe, reduced-motion, compact mode) in intelligence-flow section; Section h3/aria-labelledby.
+Files Changed: models/message.py + conversation.py, alembic 38aa765cebc8, conversations service/router/schemas, gateway service, messages service/router, ConversationFlow.tsx + conversationFlowLayout.ts, MessageView.tsx, ChatWorkspace.tsx, ChatSettingsPanel.tsx, services/api.ts, hooks/useIntelligence.ts, types/index.ts. Tests: test_conversation_tree.py + test_conversation_tree_versions.py (12), conversationFlowLayout/Status + requestVersionPager tests (15). Docs: docs/branching/{architecture,api,frontend,migration,testing}.md.
+Testing Performed: pytest 1325 passed + 1 pre-existing laya pin failure; vitest 359/359; tsc/eslint clean; alembic check clean; OpenAPI 305 routes 0 dup operationIds; sidebar-header e2e 2/2; flow-section desktop+mobile screenshots OK; live regen/branch e2e BLOCKED (mock-egress refusal, pre-existing).
+Architecture Notes: versions/runs stay per-node history (grain decision); fork-level conversation branches untouched; single-leaf-per-conversation (ownership is per-conv); path derived by parent-walk, no parallel visible-message store.
+
+## 2026-11-08 - Branching final acceptance audit
+Requirement: verify B1-B20 claims, close gaps: live graph interaction, streaming regen without egress, same-parent concurrency, leaf-scope audit, visual acceptance, regression.
+Implementation Summary: no source changes (acceptance only). Reviewer: leaf is conversation-global + private-conversation invariant holds (owner-only endpoints, shares read-only) — scope model kept; 19/20 claims CONFIRMED, B14/B20 partial (no delete tests). Tester closed gaps: test_concurrent_branch_regeneration.py (3 PASS), test_streaming_regeneration_tree.py (3 PASS, fake adapters), e2e/branching-flow.spec.ts (7/7 PASS, seeded 7-node fixture, cleaned up) + 3 delete-retarget/select-deleted tests (PASS). Fixed 2 doc inaccuracies (operationId claim, test count). tsc/eslint clean.
+Files Changed: docs/branching/{api,testing}.md (corrections); tests only: test_concurrent_branch_regeneration.py, test_streaming_regeneration_tree.py, e2e/branching-flow.spec.ts, +3 tests in test_conversation_tree_versions.py.
+Testing Performed: full pytest 1331 passed + 1 pre-existing laya failure; versions file 9/9; vitest 359/359; e2e 7/7; populated-graph desktop+mobile screenshots verified (7 nodes, active highlight, selectors).
+Architecture Notes: known items for product decision, NOT changed: public share serves full log incl. superseded/edited nodes (disable/rotate mitigates); NULL-parent root version race window (reads deterministic); spawn-handler 409 breadth; graph focus-indicator relies on browser default. Live send-from-leaf e2e BLOCKED (sandbox egress refusal); covered at service level.

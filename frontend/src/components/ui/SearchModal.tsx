@@ -84,7 +84,7 @@ export function SearchModal({ open, onOpenChange, onSelect }: SearchModalProps) 
           {results.map((result, index) => (
             <button
               className={cn(
-                "flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors",
+                "flex w-full items-start gap-2.5 rounded-[var(--radius-sm,10px)] px-3 py-2.5 text-left transition-colors",
                 index === safeIndex ? "bg-zinc-100 dark:bg-zinc-800" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60",
               )}
               data-testid={`search-result-${index}`}
@@ -103,7 +103,7 @@ export function SearchModal({ open, onOpenChange, onSelect }: SearchModalProps) 
                 <span className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium">{result.conversation_title}</span>
                   {result.model_name && (
-                    <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    <span className="shrink-0 rounded-[var(--radius-sm,10px)] bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                       {result.model_name}
                     </span>
                   )}

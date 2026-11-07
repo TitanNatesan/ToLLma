@@ -4,11 +4,19 @@ import logging
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tollms.api.conversations.schemas import MessageRead
-from tollms.api.conversations.service import get_message, list_messages
+from tollms.api.conversations.service import (
+    add_message,
+    get_conversation,
+    get_message,
+    list_messages,
+    retarget_leaf_after_delete,
+)
+from tollms.api.conversations import service as conv_service
 from tollms.api.gateway.service import start_regeneration, validate_key_for_model
 from tollms.api.conversations.schemas import BranchRead
 from tollms.api.messages.schemas import (
@@ -16,7 +24,7 @@ from tollms.api.messages.schemas import (
     MessageHistoryRead,
     MessageVersionRead,
 )
-from tollms.core.exceptions import NotFoundError, ValidationError
+from tollms.core.exceptions import ConflictError, NotFoundError, ValidationError
 from tollms.models.attachment import Attachment
 from tollms.models.conversation import Conversation
 from tollms.models.message import Message, MessageStatus, Role
@@ -122,21 +130,30 @@ def message_history(db: Session, message_id: uuid.UUID, user_id: uuid.UUID | Non
     )
 
 
-def edit_message(
+async def edit_message(
     db: Session,
     message_id: uuid.UUID,
     content: str,
     user_id: uuid.UUID | None,
     *,
     key_id: uuid.UUID | None = None,
+    transport=None,
+    session_factory=None,
+    session_id: str | None = None,
+    client_ip: str | None = None,
 ) -> tuple[Message, list[MessageVersion], Message | None]:
-    """Snapshot + replace a user message; returns the following assistant to regenerate.
+    """Branching edit (Rule B): new user sibling + new assistant child.
 
-    When a regeneration will follow (a terminal assistant exists after this
-    message), the session-user key gate runs BEFORE the edit commits, so a
-    denied regen leaves the content — and its version history — untouched.
-    Edits with no following response stay owner-check-only, as before.
+    The edited node stays untouched (no MessageVersion snapshots — the node
+    itself is new, so legacy per-node history is left alone). The sibling
+    takes the edited node's parent (NULL root included: Rule B multi-root),
+    the child hangs under the sibling, and the active leaf moves to the
+    child. The key gate runs BEFORE any mutation, so a denied regeneration
+    leaves no sibling behind; the original subtree is untouched either way.
     """
+    # Deferred: gateway.service imports conversations.service at module load.
+    from tollms.api.gateway.service import start_child_assistant
+
     message = get_message(db, message_id, user_id)
     if message.role != Role.USER:
         raise ValidationError("only user messages can be edited")
@@ -144,62 +161,81 @@ def edit_message(
     if not cleaned:
         raise ValidationError("message content must not be blank")
 
-    # Regen target is position-dependent only: resolve it BEFORE mutating so
-    # the key gate fails closed without persisting a half-applied edit.
-    following = db.execute(
-        select(Message)
-        .where(
-            Message.conversation_id == message.conversation_id,
-            Message.role == Role.ASSISTANT,
-            Message.created_at > message.created_at,
-            Message.is_deleted.is_(False),
-        )
-        .order_by(Message.created_at.asc())
-        .limit(1)
-    ).scalar_one_or_none()
-    terminal = (
+    conv_id = message.conversation_id
+    # Inherit only from an assistant that actually descends from the edited
+    # node (parent-chain walk in memory) — never a time-ordered stranger
+    # from another branch. Falls back to the conversation default below.
+    by_id = {m.id: m for m in list_messages(db, conv_id, user_id)}
+
+    def _descends_from(node: Message) -> bool:
+        seen, cur, guard = {node.id}, node, 0
+        while cur.parent_message_id is not None and guard < 10_000:
+            if cur.parent_message_id == message.id:
+                return True
+            if cur.parent_message_id in seen:
+                return False
+            seen.add(cur.parent_message_id)
+            cur = by_id.get(cur.parent_message_id)
+            if cur is None:
+                return False
+            guard += 1
+        return False
+
+    following = next(
+        (
+            cand
+            for cand in sorted(
+                (
+                    m
+                    for m in by_id.values()
+                    if m.role == Role.ASSISTANT
+                    and m.created_at > message.created_at
+                    and m.provider_id is not None
+                    and m.model_id is not None
+                ),
+                key=lambda m: (m.created_at, m.id),
+            )
+            if _descends_from(cand)
+        ),
+        None,
+    )
+    if (
         following is not None
         and following.status in (MessageStatus.COMPLETED, MessageStatus.CANCELLED, MessageStatus.FAILED)
         and following.provider_id is not None
         and following.model_id is not None
-    )
-    target = following if terminal else None
-    if target is not None:
-        validate_key_for_model(db, key_id, user_id, target.model_id)
-
-    versions = _versions(db, message.id)
-    if not versions:
-        db.add(
-            MessageVersion(
-                message_id=message.id,
-                user_id=user_id,
-                version_number=1,
-                content=message.content,
-                edited_by="user",
-            )
-        )
-        next_number = 2
+    ):
+        target_provider_id, target_model_id = following.provider_id, following.model_id
     else:
-        next_number = versions[-1].version_number + 1
+        conv = get_conversation(db, conv_id, user_id)
+        target_provider_id = conv.provider_id or message.provider_id
+        target_model_id = conv.model_id or message.model_id
+    if target_provider_id is None or target_model_id is None:
+        raise ValidationError("message has no model to regenerate with")
+    validate_key_for_model(db, key_id, user_id, target_model_id)
 
-    db.add(
-        MessageVersion(
-            message_id=message.id,
-            user_id=user_id,
-            version_number=next_number,
-            content=cleaned,
-            edited_by="user",
+    try:
+        edited = add_message(
+            db, conv_id, Role.USER, cleaned,
+            provider_id=target_provider_id, model_id=target_model_id,
+            user_id=user_id, session_id=session_id,
+            parent_message_id=message.parent_message_id, use_active_leaf=False,
         )
+    except IntegrityError as exc:
+        # Sibling-version race under the edited node's parent: no orphan,
+        # no leaf move — the caller retries on the winning branch.
+        # Anything else re-raises so DB safeguards stay loud.
+        db.rollback()
+        if conv_service._sibling_version_conflict(exc):
+            raise ConflictError("message version conflict, retry the edit")
+        raise
+    child = await start_child_assistant(
+        db, prompt_msg=edited, parent_id=edited.id,
+        user_id=user_id, provider_id=target_provider_id, model_id=target_model_id,
+        key_id=key_id, transport=transport, session_factory=session_factory,
+        session_id=session_id, client_ip=client_ip,
     )
-    message.content = cleaned
-    db.commit()
-    db.refresh(message)
-
-    search_engine.index_message(db, message)
-    db.commit()
-    _invalidate_conversation_caches(message.conversation_id, user_id)
-
-    return message, _versions(db, message.id), target
+    return edited, [], child
 
 
 async def regenerate_message(
@@ -284,6 +320,7 @@ def delete_message(db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None
     db.commit()
     search_engine._invalidate(message.user_id)
     _invalidate_conversation_caches(conversation_id, user_id)
+    retarget_leaf_after_delete(db, conversation_id, message, user_id)
 
 
 def create_branch(
@@ -299,7 +336,7 @@ def create_branch(
         raise NotFoundError("conversation not found")
     cutoff = get_message(db, message_id, user_id)
     if cutoff.conversation_id != source.id:
-        raise ValidationError("message does not belong to this conversation")
+        raise NotFoundError("conversation not found")
 
     branch = Conversation(
         user_id=source.user_id,
@@ -325,7 +362,7 @@ def create_branch(
     )
     position = next((i for i, m in enumerate(ordered) if m.id == cutoff.id), None)
     if position is None:
-        raise ValidationError("message does not belong to this conversation")
+        raise NotFoundError("conversation not found")
     copied = ordered[: position + 1]
 
     old_ids = [message.id for message in copied]
@@ -353,6 +390,9 @@ def create_branch(
         runs_by_message.setdefault(row.message_id, []).append(row)
 
     id_map: dict[uuid.UUID, uuid.UUID] = {}
+    old_parents: dict[uuid.UUID, uuid.UUID | None] = {
+        message.id: message.parent_message_id for message in copied
+    }
     for position, message in enumerate(copied):
         # Explicit created_at: one transaction shares a single now(), so ties
         # would fall back to UUID order and scramble history. Source time plus
@@ -362,6 +402,8 @@ def create_branch(
             conversation_id=branch.id,
             created_at=message.created_at + timedelta(microseconds=position),
             role=message.role,
+            parent_message_id=None,
+            version_number=message.version_number or 1,
             content=message.content,
             provider_id=message.provider_id,
             model_id=message.model_id,
@@ -380,6 +422,15 @@ def create_branch(
         db.add(fresh)
         db.flush()
         id_map[message.id] = fresh.id
+    for old_id, new_id in id_map.items():
+        old_parent = old_parents[old_id]
+        if old_parent is not None and old_parent in id_map:
+            db.execute(
+                update(Message).where(Message.id == new_id).values(
+                    parent_message_id=id_map[old_parent]
+                )
+            )
+    branch.active_leaf_message_id = id_map[cutoff.id]
     for old_id, rows in attachments_by_message.items():
         for position, row in enumerate(rows):
             db.add(
@@ -436,6 +487,18 @@ def create_branch(
     _invalidate_conversation_caches(source.id, user_id)
     logger.info("branch created: %s from %s at message %s", branch.id, source.id, cutoff.id)
     return branch
+
+
+def message_siblings(
+    db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None
+) -> list[Message]:
+    return conv_service.message_siblings(db, message_id, user_id)
+
+
+def message_children(
+    db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None
+) -> list[Message]:
+    return conv_service.message_children(db, message_id, user_id)
 
 
 def _branch_read(db: Session, conversation: Conversation) -> BranchRead:

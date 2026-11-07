@@ -35,7 +35,7 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const clickable = typeof onRowClick === "function";
   return (
-    <div className="overflow-x-auto" data-testid={testId}>
+    <div className="overflow-x-auto rounded-[var(--radius-lg,20px)]" data-testid={testId}>
       <table className="w-full min-w-[560px] border-collapse text-xs">
         <thead>
           <tr className="border-b border-zinc-200 text-left text-[10px] uppercase tracking-wider text-zinc-400 dark:border-zinc-800">
@@ -78,7 +78,7 @@ export function DataTable<T>({
                 className={cn(
                   "border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50",
                   clickable &&
-                    "cursor-pointer hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-tollma-500/60 dark:hover:bg-zinc-800/50",
+                    "cursor-pointer hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] dark:hover:bg-zinc-800/50",
                 )}
               >
                 {columns.map((column) => (

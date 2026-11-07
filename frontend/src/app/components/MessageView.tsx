@@ -276,6 +276,10 @@ export interface ChatMessageProps {
   onEdit?: (messageId: string, content: string) => void;
   onBranch?: (messageId: string) => void;
   onActivateGeneration?: (messageId: string, runId: string) => void;
+  /** Same-parent message ids (version order) for branch navigation. */
+  siblingIds?: string[] | null;
+  onSelectSibling?: (messageId: string) => void;
+  siblingBusy?: boolean;
 }
 
 function formatCost(val: string | null): string | null {
@@ -391,6 +395,9 @@ function MessageViewInner({
   onEdit,
   onBranch,
   onActivateGeneration,
+  siblingIds,
+  onSelectSibling,
+  siblingBusy,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
@@ -447,6 +454,13 @@ function MessageViewInner({
   const mediaKind = /^Generating (image|video)/.exec(message.content)?.[1] as "image" | "video" | undefined;
   const progressLabel = mediaKind ? mediaProgressLabel(mediaKind, message.content) : undefined;
   const mediaTotal = mediaKind === "image" ? mediaProgressTotal(message.content) : undefined;
+
+  // Sibling-level navigation (message branches): same-parent ids in version
+  // order. Failed/cancelled siblings stay selectable — the failure banner +
+  // retry below already handles the terminal state once selected.
+  const siblingList = siblingIds && siblingIds.length > 1 ? siblingIds : null;
+  const siblingIndex = siblingList ? siblingList.indexOf(message.id) : -1;
+  const hasSiblingNav = !!siblingList && siblingIndex >= 0 && !!onSelectSibling;
 
   const generations = msg.generations ?? [];
   const activeGenerationIndex = Math.max(
@@ -547,47 +561,50 @@ function MessageViewInner({
                 </div>
               </div>
             ) : (
-              <CollapsibleUserContent content={message.content} isStreaming={isStreaming} />
+              <>
+                <CollapsibleUserContent content={message.content} isStreaming={isStreaming} />
+                {hasSiblingNav && siblingList && (
+                  <div className="mt-1 flex justify-end">
+                    <div
+                      className="inline-flex w-fit items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-800"
+                      data-testid={`request-version-nav-${message.id}`}
+                    >
+                      <button
+                        aria-label="Previous request version"
+                        className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                        data-testid="request-prev"
+                        disabled={siblingBusy || siblingIndex <= 0}
+                        onClick={() => {
+                          const target = siblingList[siblingIndex - 1];
+                          if (target) onSelectSibling?.(target);
+                        }}
+                        type="button"
+                      >
+                        <ChevronLeft className="size-3.5" />
+                      </button>
+                      <span className="px-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-400" data-testid="request-version-page">
+                        {siblingIndex + 1} / {siblingList.length}
+                      </span>
+                      <button
+                        aria-label="Next request version"
+                        className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                        data-testid="request-next"
+                        disabled={siblingBusy || siblingIndex >= siblingList.length - 1}
+                        onClick={() => {
+                          const target = siblingList[siblingIndex + 1];
+                          if (target) onSelectSibling?.(target);
+                        }}
+                        type="button"
+                      >
+                        <ChevronRight className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             )
           ) : (
             <>
-              {generations.length > 1 && (
-                <div
-                  className="mb-1 inline-flex w-fit items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-800"
-                  data-testid={`generation-nav-${message.id}`}
-                >
-                  <button
-                    aria-label="Previous generation"
-                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
-                    data-testid="generation-prev"
-                    disabled={activeGenerationIndex <= 0}
-                    onClick={() => {
-                      const target = generations[activeGenerationIndex - 1];
-                      if (target) onActivateGeneration?.(message.id, target.id);
-                    }}
-                    type="button"
-                  >
-                    <ChevronLeft className="size-3.5" />
-                  </button>
-                  <span className="px-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-400" data-testid="generation-page">
-                    Response {activeGenerationIndex + 1} of {generations.length}
-                  </span>
-                  <button
-                    aria-label="Next generation"
-                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
-                    data-testid="generation-next"
-                    disabled={activeGenerationIndex >= generations.length - 1}
-                    onClick={() => {
-                      const target = generations[activeGenerationIndex + 1];
-                      if (target) onActivateGeneration?.(message.id, target.id);
-                    }}
-                    type="button"
-                  >
-                    <ChevronRight className="size-3.5" />
-                  </button>
-                </div>
-              )}
-
               {toolCalls?.map((tool, index) => <ToolCall key={index} {...tool} />)}
 
               {mediaKind ? (
@@ -654,6 +671,83 @@ function MessageViewInner({
               ) : null}
 
               <Sources sources={sources} />
+
+              {/* Generation pager lives below the content, next to the
+                  message actions, so it never covers the response head.
+                  Sibling-level branch navigation wins when the tree knows
+                  same-parent versions; the runs-level pager stays for older
+                  backends (same testids, so existing refs keep resolving). */}
+              {hasSiblingNav && siblingList ? (
+                <div
+                  className="mt-1 inline-flex w-fit items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-800"
+                  data-testid={`generation-nav-${message.id}`}
+                >
+                  <button
+                    aria-label="Previous response version"
+                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                    data-testid="generation-prev"
+                    disabled={siblingBusy || siblingIndex <= 0}
+                    onClick={() => {
+                      const target = siblingList[siblingIndex - 1];
+                      if (target) onSelectSibling?.(target);
+                    }}
+                    type="button"
+                  >
+                    <ChevronLeft className="size-3.5" />
+                  </button>
+                  <span className="px-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-400" data-testid="generation-page">
+                    Response {siblingIndex + 1} of {siblingList.length}
+                  </span>
+                  <button
+                    aria-label="Next response version"
+                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                    data-testid="generation-next"
+                    disabled={siblingBusy || siblingIndex >= siblingList.length - 1}
+                    onClick={() => {
+                      const target = siblingList[siblingIndex + 1];
+                      if (target) onSelectSibling?.(target);
+                    }}
+                    type="button"
+                  >
+                    <ChevronRight className="size-3.5" />
+                  </button>
+                </div>
+              ) : generations.length > 1 && (
+                <div
+                  className="mt-1 inline-flex w-fit items-center gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-800"
+                  data-testid={`generation-nav-${message.id}`}
+                >
+                  <button
+                    aria-label="Previous generation"
+                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                    data-testid="generation-prev"
+                    disabled={activeGenerationIndex <= 0}
+                    onClick={() => {
+                      const target = generations[activeGenerationIndex - 1];
+                      if (target) onActivateGeneration?.(message.id, target.id);
+                    }}
+                    type="button"
+                  >
+                    <ChevronLeft className="size-3.5" />
+                  </button>
+                  <span className="px-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-400" data-testid="generation-page">
+                    Response {activeGenerationIndex + 1} of {generations.length}
+                  </span>
+                  <button
+                    aria-label="Next generation"
+                    className="rounded-full p-0.5 text-zinc-500 hover:bg-zinc-200 disabled:opacity-40 dark:hover:bg-zinc-700"
+                    data-testid="generation-next"
+                    disabled={activeGenerationIndex >= generations.length - 1}
+                    onClick={() => {
+                      const target = generations[activeGenerationIndex + 1];
+                      if (target) onActivateGeneration?.(message.id, target.id);
+                    }}
+                    type="button"
+                  >
+                    <ChevronRight className="size-3.5" />
+                  </button>
+                </div>
+              )}
             </>
           )}
         </MessageContent>
@@ -790,5 +884,8 @@ export const MessageView = memo(MessageViewInner, (prev, next) => (
   !!prev.onRegenerate === !!next.onRegenerate &&
   !!prev.onEdit === !!next.onEdit &&
   !!prev.onBranch === !!next.onBranch &&
-  !!prev.onActivateGeneration === !!next.onActivateGeneration
+  !!prev.onActivateGeneration === !!next.onActivateGeneration &&
+  prev.siblingIds === next.siblingIds &&
+  !!prev.onSelectSibling === !!next.onSelectSibling &&
+  prev.siblingBusy === next.siblingBusy
 ));

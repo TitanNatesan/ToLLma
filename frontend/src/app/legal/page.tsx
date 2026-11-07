@@ -7,6 +7,7 @@ import { Button, Card, CardContent, EmptyState, LoadingState, PageContainer, Pag
 import { LegalDocList } from "@/components/trust/LegalDocList";
 import { LEGAL_DOCUMENT_SEED, decorateLegalDocument } from "@/components/trust/legalSeed";
 import { listLegalDocuments, listReacceptRequired } from "@/services/trust";
+import { useAuthStore } from "@/store/auth";
 
 /**
  * Legal center index. Live registry first (`status: published` rows
@@ -30,6 +31,8 @@ export default function LegalCenterPage() {
   const docs = (catalogue.data ?? LEGAL_DOCUMENT_SEED).map(decorateLegalDocument);
   const degraded = catalogue.isError || !catalogue.data;
   const needsReaccept = reaccept.data ?? [];
+  // Signed-in visitors don't need the login shortcut.
+  const authed = useAuthStore((s) => s.user) !== null;
 
   return (
     <PageContainer
@@ -37,6 +40,16 @@ export default function LegalCenterPage() {
         <PageHeader
           title="Legal center"
           subtitle="Terms, privacy, security, and AI policies governing ToLLma."
+          hideMenu
+          actions={
+            authed ? undefined : (
+              <Link href="/login" data-testid="legal-login">
+                <Button variant="outline" size="sm">
+                  Log in
+                </Button>
+              </Link>
+            )
+          }
         />
       }
       testId="legal-page"

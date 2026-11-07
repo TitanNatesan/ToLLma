@@ -317,12 +317,12 @@ export function Select({
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={onListKeyDown}
       className={cn(
-        "max-h-[min(20rem,80dvh)] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-xl",
+        "max-h-[min(20rem,80dvh)] overflow-y-auto rounded-[var(--radius-xl,26px)] border border-zinc-200 bg-white p-1 shadow-xl",
         "dark:border-zinc-800 dark:bg-zinc-900",
       )}
       style={coords ? { position: "fixed", zIndex: 100, top: coords.top, left: coords.left, width: Math.max(coords.width, 180), pointerEvents: "auto" } : { display: "none" }}
     >
-      <div className="sticky top-0 flex items-center gap-1.5 rounded-md bg-white px-2 py-1.5 dark:bg-zinc-900">
+      <div className="sticky top-0 flex items-center gap-1.5 rounded-[var(--radius-sm,10px)] bg-white px-2 py-1.5 dark:bg-zinc-900">
         <Search className="size-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
         <input
           ref={searchRef}
@@ -352,7 +352,7 @@ export function Select({
               title={option.label}
               onClick={() => commit(option.value)}
               className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                "flex w-full items-center gap-2 rounded-[var(--radius-sm,10px)] px-2 py-1.5 text-left text-xs transition-colors",
                 "focus:bg-zinc-100 focus:outline-none dark:focus:bg-zinc-800",
                 active
                   ? "bg-tollma-50 text-tollma-800 dark:bg-tollma-950/50 dark:text-tollma-200"
@@ -418,10 +418,10 @@ export function Select({
         }}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          "flex w-full items-center justify-between gap-2 rounded-md border text-zinc-900 transition-colors cursor-pointer",
+          "flex w-full items-center justify-between gap-2 rounded-[var(--radius-md,14px)] border text-zinc-900 transition-colors cursor-pointer",
           "border-zinc-300 bg-white hover:border-zinc-400 shadow-xs",
           "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-600",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-tollma-500 dark:focus-visible:ring-tollma-500/60",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] focus-visible:border-tollma-500",
           "disabled:cursor-not-allowed",
           !selected && "text-zinc-400 dark:text-zinc-500",
           sizeVariant === "sm" ? "h-8 pl-2.5 pr-2 text-xs" : "h-9 pl-3 pr-2.5 text-sm",

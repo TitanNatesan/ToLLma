@@ -14,7 +14,7 @@ export { Toaster } from "./SileoToaster";
 
 // --- shadcn/ui button (cva variants + Radix Slot for asChild) ---
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-md,14px)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -28,10 +28,10 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-8",
+        sm: "h-8 rounded-[var(--radius-md,14px)] px-3 text-xs",
+        lg: "h-10 rounded-[var(--radius-md,14px)] px-8",
         icon: "h-8 w-8",
-        xs: "h-6 w-6 rounded",
+        xs: "h-6 w-6 rounded-[var(--radius-sm,10px)]",
       },
     },
     defaultVariants: { variant: "default", size: "default" },
@@ -58,7 +58,7 @@ export function IconButton({ className, variant = "ghost", size = "icon", ...pro
 
 // --- shadcn/ui badge ---
 const badgeVariants = cva(
-  "inline-flex items-center whitespace-nowrap shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
+  "inline-flex items-center whitespace-nowrap shrink-0 rounded-[var(--radius-sm,10px)] border px-2.5 py-0.5 text-xs font-medium transition-colors",
   {
     variants: {
       variant: {
@@ -92,7 +92,7 @@ export function Switch({
       className={cn(
         "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-zinc-200 transition-colors",
         "data-[state=checked]:bg-tollma-600 dark:data-[state=checked]:bg-tollma-500",
-        "focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-700",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-700",
         className,
       )}
       {...props}
@@ -112,8 +112,8 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        "flex h-9 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-1 text-sm transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
+        "flex h-9 w-full rounded-[var(--radius-md,14px)] border border-zinc-300 bg-white px-3 py-1 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -126,8 +126,8 @@ export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTex
   return (
     <textarea
       className={cn(
-        "flex min-h-16 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
+        "flex min-h-16 w-full rounded-[var(--radius-md,14px)] border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] focus-visible:border-zinc-400 dark:focus-visible:border-zinc-500",
         "disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700",
         className,
       )}
@@ -176,10 +176,10 @@ export function Checkbox({
         <div
           aria-hidden
           className={cn(
-            "pointer-events-none flex size-4 items-center justify-center rounded-[4px] border transition-all duration-150 shadow-xs",
+            "pointer-events-none flex size-4 items-center justify-center rounded-[var(--radius-sm,10px)] border transition-all duration-150 shadow-xs",
             "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900",
             "group-hover:border-zinc-400 dark:group-hover:border-zinc-500",
-            "peer-focus-visible:ring-2 peer-focus-visible:ring-tollma-500/60 peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
+            "peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] peer-focus-visible:ring-offset-1 dark:peer-focus-visible:ring-offset-zinc-950",
             "peer-checked:border-tollma-600 peer-checked:bg-tollma-600 peer-checked:text-white",
             "dark:peer-checked:border-tollma-500 dark:peer-checked:bg-tollma-500 dark:peer-checked:text-white",
           )}
@@ -201,11 +201,37 @@ export function Checkbox({
   );
 }
 
-// --- shadcn/ui card ---
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+// --- Shared surface language (glass tokens live in globals.css) ---
+export type SurfaceVariant = "glass" | "solid";
+export interface SurfaceProps {
+  /**
+   * Frosted translucency ("glass", the default on floating chrome) vs fully
+   * opaque ("solid", for dense tables/forms where readability wins).
+   * `className` still wins on conflict, so this is purely additive.
+   */
+  surface?: SurfaceVariant;
+  /** Size-based geometry: sm = nested/compact cards, md = default panels,
+      lg = large feature panels. Nested cards use one step smaller. */
+  radius?: "sm" | "md" | "lg";
+}
+
+// --- shadcn/ui card (glass is the default floating-chrome finish; use
+// surface="solid" when the card hosts dense tables/forms) ---
+export function Card({ className, surface = "glass", radius = "md", ...props }: React.HTMLAttributes<HTMLDivElement> & SurfaceProps) {
   return (
     <div
-      className={cn("rounded-lg border border-zinc-200 bg-white text-zinc-950 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50", className)}
+      className={cn(
+        radius === "sm"
+          ? "rounded-[var(--radius-sm,8px)]"
+          : radius === "lg"
+            ? "rounded-[var(--radius-lg,16px)]"
+            : "rounded-[var(--radius-md,12px)]",
+        "border text-zinc-950 dark:text-zinc-50",
+        surface === "glass"
+          ? "surface-glass"
+          : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950",
+        className,
+      )}
       {...props}
     />
   );
@@ -257,7 +283,7 @@ export function Tooltip({ children, content, side = "top" }: { children: React.R
       <TooltipPrimitives.Portal>
         <TooltipPrimitives.Content
           side={side}
-          className="z-50 rounded-md bg-zinc-900 px-2 py-1 text-xs text-white shadow-md dark:bg-zinc-100 dark:text-zinc-900"
+          className="z-50 rounded-[var(--radius-sm,10px)] bg-zinc-900 px-2 py-1 text-xs text-white shadow-md dark:bg-zinc-100 dark:text-zinc-900"
           sideOffset={4}
         >
           {content}
@@ -272,14 +298,17 @@ export function Tooltip({ children, content, side = "top" }: { children: React.R
 export const DropdownMenu = DropdownMenuPrimitives.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitives.Trigger;
 
-export function DropdownMenuContent({ className, sideOffset = 4, collisionPadding = 8, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Content>) {
+export function DropdownMenuContent({ className, surface = "glass", sideOffset = 4, collisionPadding = 8, ...props }: React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitives.Content> & SurfaceProps) {
   return (
     <DropdownMenuPrimitives.Portal>
       <DropdownMenuPrimitives.Content
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "z-50 min-w-48 max-h-[min(24rem,90dvh)] overflow-y-auto rounded-md border border-zinc-200 bg-white p-1 shadow-md dark:border-zinc-800 dark:bg-zinc-900",
+          "z-50 min-w-48 max-h-[min(24rem,90dvh)] overflow-y-auto overlay-scroll rounded-[var(--radius-xl,26px)] border p-1",
+          surface === "glass"
+            ? "surface-glass"
+            : "border-zinc-200 bg-white shadow-md dark:border-zinc-800 dark:bg-zinc-900",
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           className,
         )}
@@ -293,7 +322,7 @@ export function DropdownMenuItem({ className, ...props }: React.ComponentPropsWi
   return (
     <DropdownMenuPrimitives.Item
       className={cn(
-        "relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none",
+        "relative flex cursor-pointer select-none items-center gap-2 rounded-[var(--radius-sm,10px)] px-2 py-1.5 text-sm outline-none",
         "focus:bg-zinc-100 dark:focus:bg-zinc-800",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
@@ -339,7 +368,7 @@ export function DialogOverlay({ className, ...props }: React.ComponentPropsWitho
   return (
     <DialogPrimitives.Overlay
       className={cn(
-        "fixed inset-0 z-50 bg-black/60 backdrop-blur-sm",
+        "fixed inset-0 z-50 bg-black/60",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         className,
@@ -349,10 +378,10 @@ export function DialogOverlay({ className, ...props }: React.ComponentPropsWitho
   );
 }
 
-export function DialogContent({ className, children, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitives.Content>) {
+export function DialogContent({ className, overlayClassName, surface = "glass", children, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitives.Content> & SurfaceProps & { overlayClassName?: string }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       {/* Centered with margin auto, not translate: a transform (or filter)
         on this container would become the containing block for
         position:fixed descendants (e.g. Select listboxes portaled here to
@@ -361,8 +390,11 @@ export function DialogContent({ className, children, ...props }: React.Component
         edge padding on narrow viewports. */}
       <DialogPrimitives.Content
         className={cn(
-          "fixed inset-x-4 top-[15%] z-50 mx-auto max-w-lg rounded-xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
-          "max-h-[80vh] overflow-y-auto",
+          "fixed inset-x-4 top-[15%] z-50 mx-auto max-w-lg rounded-[var(--radius-xl,26px)] border p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))]",
+          surface === "glass"
+            ? "surface-glass-lg"
+            : "border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950",
+          "max-h-[80vh] overflow-y-auto overlay-scroll",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           className,

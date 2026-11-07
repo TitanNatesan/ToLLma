@@ -10,7 +10,7 @@ import { usePreferencesSync } from "@/hooks/useSettings";
 import { clearAuthAndCredentialCache, hasSessionCookie, useAuthStore } from "@/store/auth";
 import { Loader2 } from "lucide-react";
 
-const BARE_PATHS = ["/login", "/signup", "/verify", "/invite", "/auth/callback", "/auth/forgot-password", "/auth/reset-password", "/share", "/health"];
+const BARE_PATHS = ["/login", "/signup", "/verify", "/invite", "/auth/callback", "/auth/forgot-password", "/auth/reset-password", "/share", "/health", "/legal", "/trust/disclosure", "/trust/subprocessors"];
 
 /** Loads server preferences into the settings store once a session exists.
  *  Lives inside QueryProvider (Shell itself renders outside it). */

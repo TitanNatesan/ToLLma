@@ -245,20 +245,32 @@ def _assert_cached(cid: str, user_id: uuid.UUID, expected: bool) -> None:
 
 def test_usage_cache_invalidated_on_edit(db: Session, client, user_factory, provider_factory, model_factory):
     from tollms.services.cache import client as cache_client
+    from tollms.api.keys.service import ensure_primary_key
 
     assert _run(cache_client.connect()) is True
     provider, model = _setup(client, user_factory, provider_factory, model_factory)
     user_id = _uid(client)
     conv = _conv(db, user_id, provider, model)
     msg = add_message(db, conv.id, Role.USER, "original", user_id=user_id)
+    key_id = ensure_primary_key(db, user_id).id
 
     _seed_usage(client, str(conv.id))
     _assert_cached(str(conv.id), user_id, True)
 
-    r = client.patch(f"/api/v1/messages/{msg.id}", json={"content": "edited"})
-    assert r.status_code == 200
+    r = client.patch(
+        f"/api/v1/messages/{msg.id}",
+        params={"key_id": str(key_id)},
+        json={"content": "edited"},
+    )
+    assert r.status_code == 200, r.text
     _assert_cached(str(conv.id), user_id, False)
     assert client.get(f"/api/v1/conversations/{conv.id}/usage").status_code == 200
+
+    # The failed background generation (no provider in this test) must not
+    # resurrect the cache or break the usage read above; the sibling row
+    # itself is the only mutation.
+    siblings = client.get(f"/api/v1/messages/{r.json()['message']['id']}/siblings").json()
+    assert len(siblings) == 2
 
 
 def test_usage_cache_invalidated_on_activate(db: Session, client, user_factory, provider_factory, model_factory):

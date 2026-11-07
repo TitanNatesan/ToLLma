@@ -130,7 +130,7 @@ export function AnalyticsRangePicker({
       </DropdownMenu>
 
       {preset === "custom" && (
-        <div className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2 py-1 dark:border-zinc-800">
+        <div className="flex items-center gap-1.5 rounded-[var(--radius-md,14px)] border border-zinc-200 px-2 py-1 dark:border-zinc-800">
           <input
             type="date"
             value={customStart}
@@ -242,7 +242,7 @@ export function AdminRangePicker({
       <div
         role="group"
         aria-label="Time range"
-        className="hidden items-center rounded-lg border border-zinc-200 bg-zinc-50/60 p-0.5 sm:flex dark:border-zinc-800 dark:bg-zinc-900/60"
+        className="hidden items-center rounded-[var(--radius-md,14px)] border border-zinc-200 bg-zinc-50 p-0.5 sm:flex dark:border-zinc-800 dark:bg-zinc-900"
       >
         {ADMIN_PRESETS.map((option) => (
           <button
@@ -254,7 +254,7 @@ export function AdminRangePicker({
             aria-pressed={option.value === preset}
             data-testid={`admin-range-${option.value}`}
             className={cn(
-              "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+              "rounded-[var(--radius-sm,10px)] px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
               option.value === preset
                 ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
                 : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100",

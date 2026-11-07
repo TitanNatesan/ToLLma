@@ -122,7 +122,7 @@ export function ChatHeader() {
   const costFormatted = fmtCost(usage?.total_cost);
 
   return (
-    <header className="flex h-12 w-full min-w-0 shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-zinc-200 bg-white/80 px-4 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/80">
+    <header className="flex h-12 w-full min-w-0 shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-[var(--glass-border)] bg-[var(--glass-bg)] px-4 backdrop-blur-[var(--glass-blur)]">
       {/* Left: Title & Inline Rename */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {!leftSidebarOpen && (

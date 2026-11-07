@@ -10,9 +10,7 @@ import {
   History,
   KeyRound,
   MonitorSmartphone,
-  Palette,
   ScrollText,
-  Server,
   ShieldCheck,
   SlidersHorizontal,
   UserRound,
@@ -31,11 +29,9 @@ export interface SettingsSectionDef {
  */
 export const SETTINGS_SECTIONS = [
   { hash: "profile", label: "Profile", icon: UserRound },
-  { hash: "appearance", label: "Appearance", icon: Palette },
   { hash: "chat", label: "Chat", icon: SlidersHorizontal },
   { hash: "account", label: "Account", icon: KeyRound },
   { hash: "sessions", label: "Sessions", icon: MonitorSmartphone },
-  { hash: "providers", label: "Providers", icon: Server },
   { hash: "logging", label: "Logging", icon: ScrollText },
   { hash: "privacy", label: "Privacy", icon: ShieldCheck },
   { hash: "retention", label: "Retention", icon: History },
@@ -76,7 +72,7 @@ export function SidebarSettings({ activeId }: { activeId: SettingsSectionId }) {
           Settings
         </span>
       </div>
-      <div className="flex-1 overflow-y-auto px-2 pb-2">
+      <div className="flex-1 overflow-y-auto overlay-scroll px-2 pb-2">
         <nav aria-label="Settings sections" data-testid="sidebar-settings-sections">
           <div className="space-y-0.5">
             {SETTINGS_SECTIONS.map((s) => {

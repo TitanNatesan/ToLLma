@@ -9,11 +9,14 @@ import {
   editMessage,
   getAnalyticsWidgets,
   getBranchTree,
+  getConversationPath,
+  getConversationTree,
   getMessageHistory,
   listShares,
   regenerateMessage,
   regenerateShare,
   searchConversations,
+  selectConversationBranch,
 } from "@/services/api";
 import type { AnalyticsRangeParams } from "@/types";
 
@@ -24,6 +27,33 @@ export function useConversationSearch(query: string, filters: { providerId?: str
     queryFn: () => searchConversations(trimmed, filters),
     enabled: trimmed.length >= 2,
     staleTime: 15_000,
+  });
+}
+
+function noRetryOnMissing(count: number, error: unknown): boolean {
+  const status = (error as { status?: number }).status;
+  if (status === 404 || status === 422) return false;
+  return count < 2;
+}
+
+/** Message-level tree (spec 7-10). 404s while the backend is mid-build: the
+ *  caller falls back to the persisted conversation array, never a blank chat. */
+export function useConversationTree(conversationId: string | null) {
+  return useQuery({
+    queryKey: ["conversation-tree", conversationId],
+    queryFn: () => getConversationTree(conversationId as string),
+    enabled: Boolean(conversationId),
+    retry: noRetryOnMissing,
+  });
+}
+
+/** Active path root→leaf (spec 7-10). Same 404 tolerance as the tree. */
+export function useConversationPath(conversationId: string | null) {
+  return useQuery({
+    queryKey: ["conversation-path", conversationId],
+    queryFn: () => getConversationPath(conversationId as string),
+    enabled: Boolean(conversationId),
+    retry: noRetryOnMissing,
   });
 }
 
@@ -65,6 +95,8 @@ export function useIntelligenceMutations(conversationId: string | null) {
     const target = id ?? conversationId;
     if (target) {
       void qc.invalidateQueries({ queryKey: ["conversation", target] });
+      void qc.invalidateQueries({ queryKey: ["conversation-tree", target] });
+      void qc.invalidateQueries({ queryKey: ["conversation-path", target] });
       void qc.invalidateQueries({ queryKey: ["branches", target] });
       void qc.invalidateQueries({ queryKey: ["request-logs", target] });
       void qc.invalidateQueries({ queryKey: ["shares", target] });
@@ -90,6 +122,15 @@ export function useIntelligenceMutations(conversationId: string | null) {
     onSuccess: (result) => invalidate(result.message.conversation_id),
   });
 
+  const select = useMutation({
+    mutationFn: ({ conversationId: id, messageId }: { conversationId: string; messageId: string }) =>
+      selectConversationBranch(id, messageId),
+    // Conversation id is known from the variables (the path payload only
+    // carries messages + the leaf); the composer draft lives in the store
+    // and is untouched, so switching never loses typed text.
+    onSuccess: (_result, variables) => invalidate(variables.conversationId),
+  });
+
   const branch = useMutation({
     mutationFn: ({ conversationId: id, messageId, branchName }: { conversationId: string; messageId: string; branchName?: string }) =>
       createBranch(id, messageId, branchName),
@@ -112,5 +153,5 @@ export function useIntelligenceMutations(conversationId: string | null) {
     onSuccess: (result) => invalidate(result.conversation_id),
   });
 
-  return { edit, regenerate, activate, branch, share, unshare, rotate };
+  return { edit, regenerate, activate, branch, select, share, unshare, rotate };
 }

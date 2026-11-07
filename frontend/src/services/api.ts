@@ -1,6 +1,8 @@
 import type {
   AIModel,
   ActiveGeneration,
+  ConversationPath,
+  ConversationTree,
   AnalyticsBreakdown,
   AnalyticsConversations,
   AnalyticsDataset,
@@ -999,6 +1001,22 @@ export const createBranch = (conversationId: string, messageId: string, branchNa
   });
 export const getBranchTree = (conversationId: string) =>
   get<BranchTree>(`/api/v1/conversations/${conversationId}/branches`);
+
+// --- Message-level branching (spec sections 7-10 contract) ------------------
+// One-file switch: every tree/path/select read lives here, so pointing the UI
+// at a mock adapter (or back) means editing only these functions.
+export const getConversationTree = (conversationId: string) =>
+  get<ConversationTree>(`/api/v1/conversations/${conversationId}/tree`);
+export const getConversationPath = (conversationId: string) =>
+  get<ConversationPath>(`/api/v1/conversations/${conversationId}/path`);
+export const selectConversationBranch = (conversationId: string, messageId: string) =>
+  post<ConversationPath>(`/api/v1/conversations/${conversationId}/select`, {
+    message_id: messageId,
+  });
+export const getMessageSiblings = (messageId: string) =>
+  get<ChatMessage[]>(`/api/v1/messages/${messageId}/siblings`);
+export const getMessageChildren = (messageId: string) =>
+  get<ChatMessage[]>(`/api/v1/messages/${messageId}/children`);
 
 export const listShares = (conversationId: string) =>
   get<ConversationShare[]>(`/api/v1/shares?conversation_id=${conversationId}`);

@@ -42,6 +42,7 @@ from tollms.models.provider import Provider, ProviderType
 from tollms.models.registered_model import AIModel
 from tollms.api.conversations.service import (
     active_assistant_message,
+    active_path,
     add_message,
     create_conversation,
     find_assistant_by_client_key,
@@ -1044,6 +1045,23 @@ async def _video_fallback(row, data: bytes, model, adapter, transcriber, transpo
     return texts, media
 
 
+def _chat_from_stored(
+    db: Session,
+    stored: list,
+    user_id: uuid.UUID | None,
+    adapter: BaseProviderAdapter,
+    model,
+) -> list[ChatMessage]:
+    """Persisted rows -> provider-bound messages, re-injecting attachments."""
+    grouped = attachment_service.attachments_for_messages(db, [m.id for m in stored], user_id)
+    messages: list[ChatMessage] = []
+    for m in stored:
+        texts, media = _assemble_history(grouped.get(m.id, []), model, adapter)
+        content = "\n\n".join([m.content, *texts]) if texts else m.content
+        messages.append(ChatMessage(role=m.role.value, content=content, media=media))
+    return messages
+
+
 def _history(
     db: Session,
     conv_id: uuid.UUID | None,
@@ -1052,19 +1070,19 @@ def _history(
     adapter: BaseProviderAdapter,
     model,
 ) -> list[ChatMessage]:
-    """Persisted messages -> provider-bound messages, re-injecting attachments."""
+    """Active path (root to selected leaf) -> provider-bound messages.
+
+    Sibling branches never leak into model context; the full log stays
+    readable via list_messages for compatibility.
+    """
     messages: list[ChatMessage] = []
     if system:
         messages.append(ChatMessage(role="system", content=system))
     if conv_id is None:
         return messages
-    stored = list_messages(db, conv_id, user_id)
-    grouped = attachment_service.attachments_for_messages(db, [m.id for m in stored], user_id)
-    for m in stored:
-        texts, media = _assemble_history(grouped.get(m.id, []), model, adapter)
-        content = "\n\n".join([m.content, *texts]) if texts else m.content
-        messages.append(ChatMessage(role=m.role.value, content=content, media=media))
-    return messages
+    return messages + _chat_from_stored(
+        db, active_path(db, conv_id, user_id), user_id, adapter, model
+    )
 
 
 def _assemble_history(rows, model, adapter: BaseProviderAdapter) -> tuple[list[str], list[MediaPart]]:
@@ -1195,9 +1213,7 @@ async def run_chat(
         extra_usage = (tokens.cache_read, tokens.cache_write, tokens.reasoning)
         extra_cost = (breakdown.cache_read_cost, breakdown.cache_write_cost, breakdown.reasoning_cost)
         user_msg = add_message(db, conv_id, Role.USER, data.message, provider_id=provider.id, model_id=model.id,
-                    user_id=user_id, session_id=session_id)
-        if api_key_id is not None:
-            user_msg.api_key_id = api_key_id
+                    user_id=user_id, session_id=session_id, api_key_id=api_key_id)
         for row in rows:
             attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
         db.commit()
@@ -1208,11 +1224,8 @@ async def run_chat(
             status=MessageStatus.COMPLETED, started_at=started_at,
             completed_at=datetime.now(timezone.utc),
             user_id=user_id, session_id=session_id, usage_estimated=estimated,
+            api_key_id=api_key_id,
         )
-        if api_key_id is not None:
-            assistant.api_key_id = api_key_id
-            db.commit()
-            db.refresh(assistant)
         # Guardrail post: audit-first; a blocked buffer_then_inspect verdict
         # withholds the text (usage/cost rows stand — the provider billed).
         guard_action = _guardrail_post(
@@ -1316,6 +1329,10 @@ async def run_chat(
             usage_estimated=estimated, latency_ms=latency_ms,
             attachments=attachments,
         )
+    except ConflictError:
+        # Sibling-version race lost after the gate: refund, keep the 409.
+        _release_chat_reservation(ctx, provider, model, request_id, org_cap)
+        raise
     except (NotFoundError, ValidationError, ForbiddenError, TooManyRequestsError):
         raise
     except Exception as e:
@@ -1465,7 +1482,9 @@ async def _setup_generation(
             # conversation — history is resolved, not discarded.
             ref_row = next((row for row in rows if row.kind == "image"), None)
             if ref_row is None and lookup_conv_id is not None:
-                stored = list_messages(db, lookup_conv_id, user_id)
+                # Active path only: sibling branches never leak reference
+                # images into a generation on another branch.
+                stored = active_path(db, lookup_conv_id, user_id)
                 grouped = attachment_service.attachments_for_messages(
                     db, [m.id for m in stored], user_id
                 )
@@ -1508,7 +1527,9 @@ async def _setup_generation(
             # prior image in this conversation — same rule as stills.
             ref_row = next((row for row in rows if row.kind == "image"), None)
             if ref_row is None and lookup_conv_id is not None:
-                stored = list_messages(db, lookup_conv_id, user_id)
+                # Active path only: sibling branches never leak reference
+                # images into a generation on another branch.
+                stored = active_path(db, lookup_conv_id, user_id)
                 grouped = attachment_service.attachments_for_messages(
                     db, [m.id for m in stored], user_id
                 )
@@ -1632,7 +1653,7 @@ async def start_generation(
             user_msg = add_message(
                 db, conv_id, Role.USER, data.message,
                 provider_id=provider.id, model_id=model.id, user_id=user_id,
-                session_id=session_id,
+                session_id=session_id, api_key_id=setup.api_key_id,
             )
             for row in setup.rows:
                 attachment_service.link_to_message(db, row, conv_id, user_msg.id, commit=False)
@@ -1641,6 +1662,7 @@ async def start_generation(
                 provider_id=provider.id, model_id=model.id,
                 status=MessageStatus.RUNNING, started_at=started_at,
                 user_id=user_id, session_id=session_id,
+                api_key_id=setup.api_key_id, client_key=data.client_key,
             )
             run = GenerationRun(
                 message_id=assistant.id,
@@ -1656,14 +1678,7 @@ async def start_generation(
             db.add(run)
             db.commit()
             db.refresh(run)
-            if setup.api_key_id is not None:
-                user_msg.api_key_id = setup.api_key_id
-                assistant.api_key_id = setup.api_key_id
-            if data.client_key:
-                assistant.client_key = data.client_key
-            if setup.api_key_id is not None or data.client_key:
-                db.commit()
-                db.refresh(assistant)
+            db.refresh(assistant)
             conversation_row = get_conversation(db, conv_id, user_id)
             # Eagerly created (route-first) conversations arrive without a model;
             # stamp the first used provider/model so settings/analytics stay accurate.
@@ -2015,116 +2030,84 @@ async def run_stream(
         yield raw
 
 
-def _history_until(
+def _history_through(
     db: Session,
-    conv_id: uuid.UUID,
-    cutoff,
+    target: Message,
     user_id: uuid.UUID | None,
     adapter: BaseProviderAdapter,
     model,
 ) -> list[ChatMessage]:
-    """History up to (and including) a specific user message.
+    """Model context for a child generation: the root-to-target node chain.
 
-    Regeneration must not feed the previous answer back to the model, so this
-    slices at the prompt that produced the assistant message being replaced.
+    The previous answer never feeds back (the chain stops at the prompt),
+    whether the target sits on the active path or on another branch.
     """
-    stored = [m for m in list_messages(db, conv_id, user_id) if m.created_at <= cutoff.created_at]
-    grouped = attachment_service.attachments_for_messages(db, [m.id for m in stored], user_id)
-    messages: list[ChatMessage] = []
-    for m in stored:
-        texts, media = _assemble_history(grouped.get(m.id, []), model, adapter)
-        content = "\n\n".join([m.content, *texts]) if texts else m.content
-        messages.append(ChatMessage(role=m.role.value, content=content, media=media))
-    return messages
+    # One query for the conversation, then walk in memory — never O(depth)
+    # sequential db.get calls.
+    by_id = {m.id: m for m in list_messages(db, target.conversation_id, user_id)}
+    chain, seen = [target], {target.id}
+    while chain[-1].parent_message_id is not None and len(chain) < 10_000:
+        nxt = by_id.get(chain[-1].parent_message_id)
+        if nxt is None or nxt.id in seen:
+            break
+        seen.add(nxt.id)
+        chain.append(nxt)
+    chain.reverse()
+    return _chat_from_stored(db, chain, user_id, adapter, model)
 
 
-def _reset_assistant_for_regeneration(assistant: Message, started_at: datetime) -> None:
-    """Clear a terminal assistant row so the driver can stream a new run into it."""
-    assistant.content = ""
-    assistant.status = MessageStatus.RUNNING
-    assistant.started_at = started_at
-    assistant.completed_at = None
-    assistant.error = None
-    assistant.error_code = None
-    assistant.usage_estimated = False
-    assistant.ttfb_ms = None
-    assistant.thinking_ms = None
-    assistant.latency_ms = None
-    assistant.prompt_tokens = None
-    assistant.completion_tokens = None
-    assistant.total_tokens = None
-    assistant.cache_read_tokens = None
-    assistant.cache_write_tokens = None
-    assistant.reasoning_tokens = None
-    assistant.input_cost = None
-    assistant.output_cost = None
-    assistant.total_cost = None
-    assistant.cache_read_cost = None
-    assistant.cache_write_cost = None
-    assistant.reasoning_cost = None
+def _nearest_user_ancestor(
+    db: Session, assistant: Message, user_id: uuid.UUID | None
+) -> Message | None:
+    """Prompt that produced an assistant node: nearest live USER ancestor.
+
+    Ancestors only — no conversation-global fallback (a time-ordered
+    stranger from another branch is never the prompt). None when the chain
+    yields no user; the caller raises ValidationError.
+    """
+    seen, node, guard = {assistant.id}, assistant, 0
+    while node.parent_message_id is not None and guard < 10_000:
+        nxt = db.get(Message, node.parent_message_id)
+        if (
+            nxt is None
+            or nxt.conversation_id != assistant.conversation_id
+            or nxt.id in seen
+        ):
+            break
+        if nxt.role == Role.USER and not nxt.is_deleted:
+            return nxt
+        seen.add(nxt.id)
+        node, guard = nxt, guard + 1
+    return None
 
 
-async def start_regeneration(
+def _build_chat_adapter(
     db: Session,
-    message_id: uuid.UUID,
-    *,
-    user_id: uuid.UUID | None = None,
-    provider_id: uuid.UUID | None = None,
-    model_id: uuid.UUID | None = None,
-    key_id: uuid.UUID | None = None,
-    reasoning_level: str | None = None,
-    transport: httpx.AsyncBaseTransport | None = None,
-    session_factory=None,
-    session_id: str | None = None,
-    client_ip: str | None = None,
-) -> GenerationStarted:
-    """Regenerate an assistant message in place, preserving every prior run.
-
-    The message row always mirrors the active generation; `generation_runs`
-    keeps the full history for ◀ 1 of N ▶ navigation. Key-gated exactly like
-    chat send: a session user without `key_id` gets 422 KEY_REQUIRED, and the
-    requested model must sit in the key's allow-list (403 otherwise).
-    """
-    assistant = get_message(db, message_id, user_id)
-    if assistant.role != Role.ASSISTANT:
-        raise ValidationError("only assistant messages can be regenerated")
-    if assistant.status not in TERMINAL_STATUSES:
-        raise ConflictError("message is still generating")
-    api_key = _require_chat_key(db, key_id, user_id)
-
-    conv_id = assistant.conversation_id
-    preceding = db.execute(
-        select(Message)
-        .where(
-            Message.conversation_id == conv_id,
-            Message.role == Role.USER,
-            Message.created_at <= assistant.created_at,
-            Message.id != assistant.id,
-            Message.is_deleted.is_(False),
-        )
-        .order_by(Message.created_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if preceding is None:
-        raise ValidationError("no user message to regenerate from")
-
-    target_provider_id = provider_id or assistant.provider_id
-    target_model_id = model_id or assistant.model_id
-    if target_provider_id is None or target_model_id is None:
-        raise ValidationError("message has no model to regenerate with")
-    provider, model = _resolve(db, target_provider_id, target_model_id, user_id)
-    _enforce_key_model(db, api_key, model.id)
-    api_key_id = api_key.id if api_key is not None else None
+    provider: Provider,
+    model: AIModel,
+    transport: httpx.AsyncBaseTransport | None,
+    reasoning_level: str | None,
+) -> BaseProviderAdapter:
+    """Provider adapter for a chat turn; media generations wrap it later."""
     credentials = decrypted_credentials(provider)
     adapter = build_adapter(provider, model, credentials, transport)
     adapter.reasoning_level = _adapter_reasoning_level(provider, model, reasoning_level)
     adapter.max_output_tokens = model.max_output_tokens
     adapter.image_output = bool(model.supports_image_generation)
-    history = _history_until(db, conv_id, preceding, user_id, adapter, model)
-    adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
-    if not history:
-        raise ValidationError("no conversation history to regenerate from")
-    history_text = "".join(m.content for m in history)
+    return adapter
+
+
+def _estimate_and_gate(
+    db: Session,
+    api_key,
+    provider: Provider,
+    model: AIModel,
+    history: list[ChatMessage],
+    history_text: str,
+    user_id: uuid.UUID | None,
+    client_ip: str | None,
+) -> tuple[str, object, Decimal | None]:
+    """Pre-flight estimate + key-policy reservation BEFORE row creation."""
     if _is_media_model(model):
         regen_est_cost = media_cost_estimate(
             db, provider, model, model.primary_endpoint,
@@ -2134,7 +2117,6 @@ async def start_regeneration(
         est_tokens, est_cost = max(1, len(history_text) // 4), regen_est_cost
     else:
         est_tokens, est_cost = _chat_estimate(db, provider, model, history_text)
-    # Policy gate BEFORE row writes (raises 404-oracle/403/429 on deny).
     request_id = uuid.uuid4().hex
     ctx, org_cap = _enforce_chat_key(
         db, api_key, provider, model,
@@ -2143,7 +2125,36 @@ async def start_regeneration(
         pre_text=history_text, pre_user_id=user_id,
         pre_action_text=_guardrail_action_text(history),
     )
+    return request_id, ctx, org_cap
 
+
+async def _spawn_sibling_assistant(
+    db: Session,
+    *,
+    conv_id: uuid.UUID,
+    parent_id: uuid.UUID | None,
+    prompt_msg: Message,
+    provider: Provider,
+    model: AIModel,
+    adapter: BaseProviderAdapter,
+    api_key_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+    history: list[ChatMessage],
+    history_text: str,
+    request_id: str,
+    ctx,
+    org_cap: Decimal | None,
+    session_factory=None,
+    session_id: str | None,
+) -> Message:
+    """Insert one RUNNING assistant sibling and drive it (Rules A/B).
+
+    The new node shares the regenerated node's parent, takes the next
+    sibling version, and becomes the active leaf. Prior siblings keep
+    their content, status, and generation runs; the new row's runs start
+    from generation 1. The driver finalizes THIS row (never in place).
+    """
+    adapter.prompt_cache = caching_for_model(db, provider, model, conv_id)
     started_at = datetime.now(timezone.utc)
     try:
         async with generation_engine.manager.conv_lock(conv_id):
@@ -2151,21 +2162,18 @@ async def start_regeneration(
                 raise ConflictError(f"conversation {conv_id} already has an active generation")
             if active_assistant_message(db, conv_id, user_id) is not None:
                 raise ConflictError(f"conversation {conv_id} already has an active generation")
-            last_number = db.execute(
-                select(func.max(GenerationRun.generation_number)).where(
-                    GenerationRun.message_id == assistant.id
-                )
-            ).scalar_one()
-            db.execute(
-                update(GenerationRun)
-                .where(GenerationRun.message_id == assistant.id)
-                .values(is_active=False)
+            assistant = add_message(
+                db, conv_id, Role.ASSISTANT, "",
+                provider_id=provider.id, model_id=model.id,
+                status=MessageStatus.RUNNING, started_at=started_at,
+                user_id=user_id, session_id=session_id, api_key_id=api_key_id,
+                parent_message_id=parent_id, use_active_leaf=False,
             )
             run = GenerationRun(
                 message_id=assistant.id,
                 user_id=user_id,
                 api_key_id=api_key_id,
-                generation_number=int(last_number or 0) + 1,
+                generation_number=1,
                 provider_id=provider.id,
                 model_id=model.id,
                 content="",
@@ -2173,9 +2181,6 @@ async def start_regeneration(
                 is_active=False,
             )
             db.add(run)
-            _reset_assistant_for_regeneration(assistant, started_at)
-            if api_key_id is not None:
-                assistant.api_key_id = api_key_id
             db.commit()
             db.refresh(assistant)
             db.refresh(run)
@@ -2183,6 +2188,14 @@ async def start_regeneration(
         # Gate already reserved but no generation proceeds — refund so the
         # 409 leaves no phantom spend (fail-closed direction, not a bypass).
         _release_chat_reservation(ctx, provider, model, request_id, org_cap)
+        raise
+    except IntegrityError:
+        # Lost an in-flight race: a live generation now exists — adopt the
+        # 409 rather than duplicating (sibling versions stay gapless).
+        db.rollback()
+        _release_chat_reservation(ctx, provider, model, request_id, org_cap)
+        if active_assistant_message(db, conv_id, user_id) is not None:
+            raise ConflictError(f"conversation {conv_id} already has an active generation")
         raise
     except Exception:
         # Any other post-gate failure before spawn: refund the reservation.
@@ -2196,7 +2209,7 @@ async def start_regeneration(
         user_id=user_id,
         adapter=adapter,
         history=history,
-        history_text="".join(m.content for m in history),
+        history_text=history_text,
         provider_type=provider.provider_type.value,
         model_label=model.model_id,
         provider_name=provider.name,
@@ -2217,7 +2230,7 @@ async def start_regeneration(
         key_org_cap=str(org_cap) if org_cap is not None else None,
     )
     if _is_media_model(model):
-        # Retry/regenerate reuses the preceding user prompt, no duplicate rows.
+        # Retry/regenerate reuses the prompt text, no duplicate rows.
         # Image retries stay prompt-only (no invented size/quality); video
         # keeps its duration default.
         regen_endpoint = model.primary_endpoint
@@ -2232,7 +2245,7 @@ async def start_regeneration(
             conversation_id=conv_id,
             message_id=assistant.id,
             user_id=user_id,
-            prompt=preceding.content,
+            prompt=prompt_msg.content,
             provider_type=provider.provider_type.value,
             operation="generate",
             lineage={"intent": {"count_source": "default"}}
@@ -2249,4 +2262,93 @@ async def start_regeneration(
         "regeneration started: message=%s run=%s number=%s model=%s",
         assistant.id, run.id, run.generation_number, model.model_id,
     )
-    return GenerationStarted(conversation_id=conv_id, generation_id=assistant.id, message_id=assistant.id)
+    return assistant
+
+
+async def start_child_assistant(
+    db: Session,
+    *,
+    prompt_msg: Message,
+    parent_id: uuid.UUID | None,
+    user_id: uuid.UUID | None = None,
+    provider_id: uuid.UUID | None = None,
+    model_id: uuid.UUID | None = None,
+    key_id: uuid.UUID | None = None,
+    reasoning_level: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    session_factory=None,
+    session_id: str | None = None,
+    client_ip: str | None = None,
+) -> Message:
+    """Shared regenerate/edit driver: resolve, gate, insert sibling, spawn.
+
+    Key + allow-list gates run before any row exists (422 KEY_REQUIRED for
+    session users without a key, 404 oracle on bad keys, 403 off-allow-list);
+    the policy reservation gates before the assistant row is created.
+    """
+    api_key = _require_chat_key(db, key_id, user_id)
+    provider, model = _resolve(db, provider_id, model_id, user_id)
+    _enforce_key_model(db, api_key, model.id)
+    adapter = _build_chat_adapter(db, provider, model, transport, reasoning_level)
+    history = _history_through(db, prompt_msg, user_id, adapter, model)
+    if not history:
+        raise ValidationError("no conversation history to regenerate from")
+    history_text = "".join(m.content for m in history)
+    request_id, ctx, org_cap = _estimate_and_gate(
+        db, api_key, provider, model, history, history_text, user_id, client_ip
+    )
+    return await _spawn_sibling_assistant(
+        db, conv_id=prompt_msg.conversation_id, parent_id=parent_id,
+        prompt_msg=prompt_msg, provider=provider, model=model, adapter=adapter,
+        api_key_id=api_key.id if api_key is not None else None,
+        user_id=user_id, history=history, history_text=history_text,
+        request_id=request_id, ctx=ctx, org_cap=org_cap,
+        session_factory=session_factory, session_id=session_id,
+    )
+
+
+async def start_regeneration(
+    db: Session,
+    message_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None = None,
+    provider_id: uuid.UUID | None = None,
+    model_id: uuid.UUID | None = None,
+    key_id: uuid.UUID | None = None,
+    reasoning_level: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    session_factory=None,
+    session_id: str | None = None,
+    client_ip: str | None = None,
+) -> GenerationStarted:
+    """Regenerate as a NEW assistant sibling under the same prompt (Rule A).
+
+    The target row is never reset: prior siblings (including FAILED and
+    CANCELLED) stay visible, and the new row's generation runs start from
+    1. Key-gated exactly like chat send: a session user without `key_id`
+    gets 422 KEY_REQUIRED, and the requested model must sit in the key's
+    allow-list (403 otherwise).
+    """
+    assistant = get_message(db, message_id, user_id)
+    if assistant.role != Role.ASSISTANT:
+        raise ValidationError("only assistant messages can be regenerated")
+    if assistant.status not in TERMINAL_STATUSES:
+        raise ConflictError("message is still generating")
+
+    prompt_msg = _nearest_user_ancestor(db, assistant, user_id)
+    if prompt_msg is None:
+        raise ValidationError("no user message to regenerate from")
+
+    target_provider_id = provider_id or assistant.provider_id
+    target_model_id = model_id or assistant.model_id
+    if target_provider_id is None or target_model_id is None:
+        raise ValidationError("message has no model to regenerate with")
+    sibling = await start_child_assistant(
+        db, prompt_msg=prompt_msg, parent_id=assistant.parent_message_id,
+        user_id=user_id, provider_id=target_provider_id, model_id=target_model_id,
+        key_id=key_id, reasoning_level=reasoning_level, transport=transport,
+        session_factory=session_factory, session_id=session_id, client_ip=client_ip,
+    )
+    return GenerationStarted(
+        conversation_id=sibling.conversation_id, generation_id=sibling.id, message_id=sibling.id
+    )

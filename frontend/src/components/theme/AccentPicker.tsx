@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Moon, Palette, Sun } from "lucide-react";
+import { Check, Palette } from "lucide-react";
 import { toast } from "@/lib/notify";
 import { Input, SettingItem } from "@/components/ui";
 import { useUpdatePreferences } from "@/hooks/useSettings";
@@ -10,31 +10,14 @@ import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/store/settings";
 import type { AccentName } from "@/types";
 
-const THEME_KEY = "theme";
-
-function initialDark(): boolean {
-  if (typeof document === "undefined") return true;
-  return document.documentElement.classList.contains("dark");
-}
-
-export function AppearanceSection() {
+/** Accent color picker (server-synced). Appearance theming lives in the glass engine. */
+export function AccentPicker() {
   const accent = useSettingsStore((s) => s.accent);
   const accentColor = useSettingsStore((s) => s.accentColor);
   const update = useUpdatePreferences();
-  const [isDark, setIsDark] = useState(initialDark);
   const [customHex, setCustomHex] = useState(() =>
     accentColor && HEX_COLOR_RE.test(accentColor) ? accentColor : "#6366f1",
   );
-
-  function setTheme(dark: boolean) {
-    document.documentElement.classList.toggle("dark", dark);
-    try {
-      localStorage.setItem(THEME_KEY, dark ? "dark" : "light");
-    } catch {
-      // storage unavailable
-    }
-    setIsDark(dark);
-  }
 
   function choose(accentName: AccentName, custom?: string) {
     update.mutate(
@@ -55,42 +38,6 @@ export function AppearanceSection() {
 
   return (
     <>
-      <SettingItem label="Theme" description="Light or dark interface.">
-        <div
-          className="flex items-center gap-1 rounded-lg border border-zinc-200 p-1 dark:border-zinc-800"
-          data-testid="settings-theme-toggle"
-        >
-          <button
-            type="button"
-            onClick={() => setTheme(false)}
-            aria-pressed={!isDark}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-              !isDark
-                ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-            )}
-          >
-            <Sun className="size-3.5" />
-            <span>Light</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setTheme(true)}
-            aria-pressed={isDark}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-              isDark
-                ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-            )}
-          >
-            <Moon className="size-3.5" />
-            <span>Dark</span>
-          </button>
-        </div>
-      </SettingItem>
-
       <SettingItem
         label="Accent color"
         description="Applies instantly to buttons, links, focus rings, sliders and charts."
@@ -116,7 +63,7 @@ export function AppearanceSection() {
 
           <label
             className={cn(
-              "relative flex size-6 cursor-pointer items-center justify-center rounded-full border transition-transform hover:scale-110",
+              "relative flex size-6 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border transition-transform hover:scale-110",
               accent === "custom"
                 ? "border-zinc-400 ring-2 ring-zinc-300 dark:ring-zinc-700"
                 : "border-transparent",

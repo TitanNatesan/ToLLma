@@ -15,7 +15,7 @@ export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="p-0 overflow-hidden shadow-2xl" data-testid="shortcuts-overlay">
-        <Command className="rounded-xl bg-white dark:bg-zinc-950" label="Keyboard shortcuts">
+        <Command className="rounded-[var(--radius-xl,26px)] bg-white dark:bg-zinc-950" label="Keyboard shortcuts">
           <div className="flex items-center border-b border-zinc-200 px-3 dark:border-zinc-800">
             <Keyboard className="mr-2 size-4 text-zinc-400" />
             <Command.Input
@@ -23,7 +23,7 @@ export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
               className="flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-zinc-400"
               data-testid="shortcuts-input"
             />
-            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:bg-zinc-800">
+            <kbd className="rounded-[var(--radius-sm,10px)] bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:bg-zinc-800">
               Esc
             </kbd>
           </div>
@@ -45,7 +45,7 @@ export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
                     <Command.Item
                       key={shortcut.id}
                       value={`${shortcut.label} ${shortcut.description} ${shortcut.keys.join(" ")} ${group}`}
-                      className="flex cursor-default items-center justify-between gap-3 rounded-md px-3 py-2 text-sm text-zinc-700 data-[selected=true]:bg-tollma-50 dark:text-zinc-300 dark:data-[selected=true]:bg-tollma-950"
+                      className="flex cursor-default items-center justify-between gap-3 rounded-[var(--radius-sm,10px)] px-3 py-2 text-sm text-zinc-700 data-[selected=true]:bg-tollma-50 dark:text-zinc-300 dark:data-[selected=true]:bg-tollma-950"
                       data-testid={`shortcut-${shortcut.id}`}
                     >
                       <span className="flex min-w-0 flex-col">
@@ -56,7 +56,7 @@ export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
                         {displayKeys(shortcut.keys).map((key) => (
                           <kbd
                             key={key}
-                            className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                            className="rounded-[var(--radius-sm,10px)] border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
                           >
                             {key}
                           </kbd>
@@ -72,9 +72,9 @@ export function ShortcutsOverlay({ open, onClose }: ShortcutsOverlayProps) {
           <div className="flex items-center justify-between border-t border-zinc-200 px-3 py-2 text-[10px] text-zinc-400 dark:border-zinc-800">
             <span>Available on every page</span>
             <span className="font-mono">
-              <kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">Ctrl/⌘</kbd>
+              <kbd className="rounded-[var(--radius-sm,10px)] bg-zinc-100 px-1 dark:bg-zinc-800">Ctrl/⌘</kbd>
               <span className="ml-1">+</span>
-              <kbd className="ml-1 rounded bg-zinc-100 px-1 dark:bg-zinc-800">/</kbd>
+              <kbd className="ml-1 rounded-[var(--radius-sm,10px)] bg-zinc-100 px-1 dark:bg-zinc-800">/</kbd>
             </span>
           </div>
         </Command>

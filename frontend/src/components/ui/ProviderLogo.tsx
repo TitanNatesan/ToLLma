@@ -50,10 +50,10 @@ export function ProviderLogo({ logoUrl, name, size = "md", className }: {
         className={cn(
           "flex shrink-0 items-center justify-center bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300",
           size === "sm"
-            ? "size-6 rounded-md"
+            ? "size-6 rounded-[var(--radius-sm,10px)]"
             : size === "lg"
-              ? "size-12 rounded-2xl"
-              : "size-8 rounded-lg",
+              ? "size-12 rounded-[var(--radius-lg,20px)]"
+              : "size-8 rounded-[var(--radius-md,14px)]",
           className,
         )}
       >
@@ -70,7 +70,7 @@ export function ProviderLogo({ logoUrl, name, size = "md", className }: {
       alt={`${name} logo`}
       loading="lazy"
       onError={() => setAttempt((a) => a + 1)}
-      className={cn("shrink-0 bg-white object-contain ring-1 ring-inset ring-zinc-200 dark:ring-zinc-700", size === "sm" ? "size-6 rounded-md" : size === "lg" ? "size-12 rounded-2xl" : "size-8 rounded-lg", className)}
+      className={cn("shrink-0 bg-white object-contain ring-1 ring-inset ring-zinc-200 dark:ring-zinc-700", size === "sm" ? "size-6 rounded-[var(--radius-sm,10px)]" : size === "lg" ? "size-12 rounded-[var(--radius-lg,20px)]" : "size-8 rounded-[var(--radius-md,14px)]", className)}
     />
   );
 }

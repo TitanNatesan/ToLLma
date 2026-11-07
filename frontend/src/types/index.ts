@@ -182,6 +182,10 @@ export interface ChatMessage {
   role: Role;
   content: string;
   conversation_id?: string;
+  /** Branching: null for roots; siblings share a parent. Additive — older backends omit. */
+  parent_message_id?: string | null;
+  /** 1-based position among same-parent messages. Additive — older backends omit. */
+  version_number?: number | null;
   status?: MessageStatus | null;
   started_at?: string | null;
   completed_at?: string | null;
@@ -673,6 +677,26 @@ export interface BranchInfo {
   branch_name: string | null;
   message_count: number;
   created_at: string;
+}
+
+/** Message-level branch tree (spec sections 7-10 contract). */
+export interface ConversationTreeNode {
+  id: string;
+  parent_message_id: string | null;
+  role: string;
+  version_number: number;
+  status: string | null;
+  created_at: string;
+}
+
+export interface ConversationTree {
+  nodes: ConversationTreeNode[];
+  active_leaf_id: string | null;
+}
+
+export interface ConversationPath {
+  path: ChatMessage[];
+  active_leaf_id: string | null;
 }
 
 export interface BranchTree {

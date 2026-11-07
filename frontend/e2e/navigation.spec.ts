@@ -142,7 +142,9 @@ test("personal nav renders directly without the gear toggle", async ({ page }) =
   await page.getByTestId("sidebar-personal-nav").getByTestId("sidebar-nav-settings").click();
   await expect(page).toHaveURL(/\/settings/);
   await expect(page.getByTestId("settings-page")).toBeVisible();
-  await expect(page.getByTestId("sidebar-settings-appearance")).toBeVisible();
+  // Appearance moved to Command Palette -> Theme Studio (no settings entry).
+  await expect(page.getByTestId("sidebar-settings-appearance")).toHaveCount(0);
+  await expect(page.getByTestId("sidebar-settings-profile")).toBeVisible();
   await expect(page.getByTestId("sidebar-personal-nav").getByTestId("sidebar-nav-settings")).toHaveAttribute("aria-current", "page");
 
   // Logo returns home: chat is the home page.

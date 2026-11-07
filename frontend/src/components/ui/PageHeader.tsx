@@ -29,7 +29,7 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-sm",
+        "flex flex-wrap items-center justify-between gap-3 border-b border-[var(--glass-border)] bg-[var(--glass-bg)] px-4 py-3 backdrop-blur-[var(--glass-blur)]",
         sticky && "sticky top-0 z-20 -mx-4 px-4",
         className,
       )}
@@ -42,7 +42,7 @@ export function PageHeader({
               onClick={() => setLeftSidebar(true)}
               aria-label="Open sidebar"
               data-testid="page-header-menu"
-              className="-ml-1 flex size-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 md:hidden dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              className="-ml-1 flex size-7 items-center justify-center rounded-[var(--radius-md,14px)] text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 md:hidden dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
             >
               <Menu className="size-4" />
             </button>

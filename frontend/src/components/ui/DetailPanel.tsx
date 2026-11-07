@@ -181,7 +181,7 @@ export function DetailPanel({
             aria-label={label}
             tabIndex={-1}
             className={cn(
-              "fixed inset-y-0 right-0 flex flex-col border-l border-zinc-200 bg-white shadow-2xl outline-none dark:border-zinc-800 dark:bg-zinc-950",
+              "fixed inset-y-0 right-0 flex flex-col rounded-l-[var(--radius-xl,26px)] border-l border-zinc-200 bg-white shadow-2xl outline-none dark:border-zinc-800 dark:bg-zinc-950",
               className,
             )}
             data-testid={testId}
@@ -203,7 +203,7 @@ export function DetailPanel({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  className="rounded-[var(--radius-sm,10px)] p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                   aria-label="Close panel"
                 >
                   <X className="size-4" />
@@ -215,7 +215,7 @@ export function DetailPanel({
             <div className="flex-1 overflow-y-auto p-4">{children}</div>
 
             {footer && (
-              <div className="border-t border-zinc-200 bg-white/95 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/95">
+              <div className="rounded-bl-[var(--radius-xl,26px)] border-t border-[var(--glass-border)] bg-[var(--glass-bg)] px-4 py-3 backdrop-blur-[var(--glass-blur)]">
                 {footer}
               </div>
             )}

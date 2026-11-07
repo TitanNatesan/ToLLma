@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { PageContainer, PageHeader } from "@/components/ui";
 import {
   SETTINGS_SECTION_IDS,
@@ -12,17 +13,16 @@ import { PrivacyConsentsSection } from "./components/PrivacyConsentsSection";
 import { RetentionSection } from "./components/RetentionSection";
 import { CookiesSection } from "./components/CookiesSection";
 import { DataRightsSection } from "./components/DataRightsSection";
-import { AppearanceSection } from "./components/AppearanceSection";
 import { ChatPreferencesSection } from "./components/ChatPreferencesSection";
 import { ProfileSection } from "./components/ProfileSection";
 import { AccountSecuritySection } from "./components/AccountSecuritySection";
 import { DangerZoneSection } from "./components/DangerZoneSection";
 import { SessionsSection } from "./components/SessionsSection";
-import { ProvidersSection } from "./components/ProvidersSection";
-import { WorkspaceLoggingSection } from "@/components/logging/WorkspaceLoggingSection";
+import { PromptLogsSettings } from "@/app/prompt-logs/components/PromptLogsSettings";
 import { OrganizationsSection } from "./components/OrganizationsSection";
 
-/** Settings: profile, appearance (accent system), chat prefs, password, sessions. */
+/** Settings: profile, appearance, chat prefs, password, sessions. Content order
+ *  follows SETTINGS_SECTIONS in SidebarSettings (providers removed). */
 export default function SettingsPage() {
   // The URL hash is the single source of truth for the highlighted section.
   // Deep links (`/settings#appearance`) and sidebar clicks both drive it.
@@ -36,46 +36,10 @@ export default function SettingsPage() {
 
   return (
     <PageContainer
-      header={<PageHeader title="Settings" subtitle="Account, appearance, chat behavior, providers, and organizations." />}
+      header={<PageHeader title="Settings" subtitle="Account, appearance, chat behavior, and organizations." />}
       testId="settings-page"
     >
           <AgeConfirmBanner />
-
-          <SettingsCard
-            id="privacy"
-            title="Privacy"
-            description="Consent preferences per category. Functional is always on."
-            testId="settings-section-privacy"
-          >
-            <PrivacyConsentsSection />
-          </SettingsCard>
-
-          <SettingsCard
-            id="retention"
-            title="Data retention"
-            description="How long your data is kept, per category. Blank uses the platform default."
-            testId="settings-section-retention"
-          >
-            <RetentionSection />
-          </SettingsCard>
-
-          <SettingsCard
-            id="cookies"
-            title="Cookies"
-            description="Device-local cookie preferences."
-            testId="settings-section-cookies"
-          >
-            <CookiesSection />
-          </SettingsCard>
-
-          <SettingsCard
-            id="data-rights"
-            title="Your data"
-            description="Export a copy, submit data requests, or head to deletion."
-            testId="settings-section-data-rights"
-          >
-            <DataRightsSection />
-          </SettingsCard>
 
           <SettingsCard
             id="profile"
@@ -85,16 +49,6 @@ export default function SettingsPage() {
             testId="settings-section-profile"
           >
             <ProfileSection />
-          </SettingsCard>
-
-          <SettingsCard
-            id="appearance"
-            active={activeId === "appearance"}
-            title="Appearance"
-            description="Theme and accent color — applied instantly, everywhere."
-            testId="settings-section-appearance"
-          >
-            <AppearanceSection />
           </SettingsCard>
 
           <SettingsCard
@@ -128,23 +82,58 @@ export default function SettingsPage() {
           </SettingsCard>
 
           <SettingsCard
-            id="providers"
-            active={activeId === "providers"}
-            title="Providers"
-            description="Model providers connected to this workspace."
-            testId="settings-section-providers"
-          >
-            <ProvidersSection />
-          </SettingsCard>
-
-          <SettingsCard
             id="logging"
             active={activeId === "logging"}
             title="Prompt logging"
             description="Which requests keep message bodies. Global toggle, effective state, and full controls."
             testId="settings-section-logging"
           >
-            <WorkspaceLoggingSection canManage />
+            <PromptLogsSettings isOrg={false} canManage />
+            <p className="px-4 pb-4 text-[11px] text-zinc-400">
+              <Link href="/prompt-logs" data-testid="settings-logging-open" className="font-medium text-tollma-600 hover:underline dark:text-tollma-400">
+                Open Prompt Logs exploration
+              </Link>{" "}to browse and filter recorded requests.
+            </p>
+          </SettingsCard>
+
+          <SettingsCard
+            id="privacy"
+            active={activeId === "privacy"}
+            title="Privacy"
+            description="Consent preferences per category. Functional is always on."
+            testId="settings-section-privacy"
+          >
+            <PrivacyConsentsSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="retention"
+            active={activeId === "retention"}
+            title="Data retention"
+            description="How long your data is kept, per category. Blank uses the platform default."
+            testId="settings-section-retention"
+          >
+            <RetentionSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="cookies"
+            active={activeId === "cookies"}
+            title="Cookies"
+            description="Device-local cookie preferences."
+            testId="settings-section-cookies"
+          >
+            <CookiesSection />
+          </SettingsCard>
+
+          <SettingsCard
+            id="data-rights"
+            active={activeId === "data-rights"}
+            title="Your data"
+            description="Export a copy, submit data requests, or head to deletion."
+            testId="settings-section-data-rights"
+          >
+            <DataRightsSection />
           </SettingsCard>
 
           <SettingsCard

@@ -74,39 +74,55 @@ def _seed(db: Session, client, provider, model, *, with_assistant: bool = True):
     return conversation, user_message, assistant
 
 
-def test_edit_message_snapshots_versions(db: Session, client, user_factory, provider_factory, model_factory):
+def test_edit_creates_sibling_leaving_original_untouched(
+    db: Session, client, user_factory, provider_factory, model_factory, fake
+):
+    """Rule B: editing forks a new user sibling; the original is untouched."""
+    from tollms.api.keys.service import ensure_primary_key
+
     user_factory()
     provider = provider_factory()
     model = model_factory(provider["id"])
-    _conversation, user_message, _ = _seed(db, client, provider, model, with_assistant=False)
+    conversation, user_message, _ = _seed(db, client, provider, model, with_assistant=False)
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    key_id = ensure_primary_key(db, user_id).id
 
-    def versions_count() -> int:
-        conv = client.get(f"/api/v1/conversations/{_conversation.id}").json()
-        return next(m["versions_count"] for m in conv["messages"] if m["id"] == str(user_message.id))
-
-    # Never-edited messages report zero versions (the UI hides history).
-    assert versions_count() == 0
-
-    r = client.patch(f"/api/v1/messages/{user_message.id}", json={"content": "second version"})
+    r = client.patch(
+        f"/api/v1/messages/{user_message.id}",
+        params={"key_id": str(key_id)},
+        json={"content": "second version"},
+    )
     assert r.status_code == 200, r.text
     body = r.json()
+    # A NEW user node carries the edit; the edited node is byte-identical.
+    assert body["message"]["id"] != str(user_message.id)
     assert body["message"]["content"] == "second version"
-    assert body["regeneration_started"] is False
-    assert [v["version_number"] for v in body["versions"]] == [1, 2]
-    assert body["versions"][0]["content"] == "first version"
-    assert body["versions"][1]["content"] == "second version"
+    assert body["message"]["parent_message_id"] is None
+    assert body["regeneration_started"] is True
+    assert body["regenerating_message_id"] not in (None, str(user_message.id))
+    assert body["versions"] == []
     assert body["current_version"] == 2
-    # After one edit the original + edit are both snapshotted.
-    assert versions_count() == 2
 
-    history = client.get(f"/api/v1/messages/{user_message.id}/history").json()
-    assert history["current_version"] == 2
-    assert len(history["versions"]) == 2
-    assert history["generations"] == []
+    db.expire_all()
+    assert get_message(db, user_message.id).content == "first version"
 
-    # The edited content is searchable; the old one is gone.
+    # Rule B multi-root: both prompts are roots with service-sequenced versions.
+    siblings = client.get(f"/api/v1/messages/{body['message']['id']}/siblings").json()
+    assert sorted(m["version_number"] for m in siblings) == [1, 2]
+
+    _wait_terminal(db, uuid.UUID(body["regenerating_message_id"]))
+    child = get_message(db, uuid.UUID(body["regenerating_message_id"]))
+    assert child.status == MessageStatus.COMPLETED
+    assert child.content == "answer"
+    assert child.parent_message_id == uuid.UUID(body["message"]["id"])
+
+    # Original subtree untouched: both contents stay searchable.
     assert client.get("/api/v1/search", params={"q": "second version"}).json()["total"] >= 1
-    assert client.get("/api/v1/search", params={"q": "first version"}).json()["total"] == 0
+    assert client.get("/api/v1/search", params={"q": "first version"}).json()["total"] >= 1
+
+    path = client.get(f"/api/v1/conversations/{conversation.id}/path").json()
+    assert [m["id"] for m in path["path"]][-2:] == [body["message"]["id"], body["regenerating_message_id"]]
+    assert path["active_leaf_id"] == body["regenerating_message_id"]
 
 
 def test_edit_message_regenerates_following_response(
@@ -127,12 +143,17 @@ def test_edit_message_regenerates_following_response(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["regeneration_started"] is True
-    assert body["regenerating_message_id"] == str(assistant.id)
+    new_assistant_id = uuid.UUID(body["regenerating_message_id"])
+    assert new_assistant_id != assistant.id
 
-    _wait_terminal(db, assistant.id)
-    refreshed = get_message(db, assistant.id)
+    # Rule A/B: the prior answer is preserved; the new child completes.
+    db.expire_all()
+    assert get_message(db, assistant.id).content == "first answer"
+    _wait_terminal(db, new_assistant_id)
+    refreshed = get_message(db, new_assistant_id)
     assert refreshed.status == MessageStatus.COMPLETED
     assert refreshed.content == "answer"
+    assert refreshed.parent_message_id == uuid.UUID(body["message"]["id"])
 
 
 def test_regeneration_preserves_every_run(
@@ -179,19 +200,28 @@ def test_regeneration_preserves_every_run(
             await active.task
         return result
 
-    asyncio.run(_regen())
+    result = asyncio.run(_regen())
     db.expire_all()
-    regenerated = get_message(db, started.message_id)
+    assert result.message_id != started.message_id
+
+    # Rule A: the original row is never reset; the sibling carries the retry.
+    original = get_message(db, started.message_id)
+    assert original.content == "answer"
+    assert original.status == MessageStatus.COMPLETED
+    regenerated = get_message(db, result.message_id)
     assert regenerated.content == "second answer"
     assert regenerated.status == MessageStatus.COMPLETED
+    assert regenerated.parent_message_id == original.parent_message_id
 
-    runs = client.get(f"/api/v1/messages/{started.message_id}/generations").json()
-    assert [run["generation_number"] for run in runs] == [1, 2]
-    assert runs[0]["content"] == "answer"
-    assert runs[1]["content"] == "second answer"
-    assert runs[1]["is_active"] is True
-    assert runs[0]["is_active"] is False
-    assert runs[1]["total_tokens"] == 10
+    old_runs = client.get(f"/api/v1/messages/{started.message_id}/generations").json()
+    assert [run["generation_number"] for run in old_runs] == [1]
+    assert old_runs[0]["content"] == "answer"
+    assert old_runs[0]["is_active"] is True
+    runs = client.get(f"/api/v1/messages/{result.message_id}/generations").json()
+    assert [run["generation_number"] for run in runs] == [1]
+    assert runs[0]["content"] == "second answer"
+    assert runs[0]["is_active"] is True
+    assert runs[0]["total_tokens"] == 10
 
     # Request logs record the regeneration.
     logs = client.get("/api/v1/request-logs?regenerations_only=true").json()

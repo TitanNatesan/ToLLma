@@ -8,6 +8,7 @@ import { Button, EmptyState, ErrorState, LoadingState, PageContainer, PageHeader
 import { LegalDocViewer } from "@/components/trust/LegalDocViewer";
 import { decorateLegalDocument, findSeedDocument, seedBodyNotice } from "@/components/trust/legalSeed";
 import { getLegalDocument, isNotBuiltError } from "@/services/trust";
+import { useAuthStore } from "@/store/auth";
 
 /**
  * Legal document viewer (Next 16 client-page convention: `use(params)`).
@@ -27,6 +28,9 @@ export default function LegalDocPage({ params }: { params: Promise<{ slug: strin
 
   const doc = detail.data ? decorateLegalDocument(detail.data) : (seed ?? null);
   const fromApi = detail.data !== undefined;
+  // Acceptance recording requires a session: anonymous readers get the
+  // read-only document (their acceptances/me query would 401).
+  const authed = useAuthStore((s) => s.user) !== null;
 
   return (
     <PageContainer
@@ -34,6 +38,7 @@ export default function LegalDocPage({ params }: { params: Promise<{ slug: strin
         <PageHeader
           title={doc?.title ?? "Legal document"}
           subtitle={doc ? `${doc.locale} · version ${doc.version}` : undefined}
+          hideMenu
           actions={
             <Link href="/legal" data-testid="legal-back">
               <Button variant="outline" size="sm" className="gap-1.5">
@@ -69,7 +74,7 @@ export default function LegalDocPage({ params }: { params: Promise<{ slug: strin
           testId="legal-doc-missing"
         />
       ) : (
-        <LegalDocViewer doc={doc} body={detail.data?.body ?? seedBodyNotice(doc)} acceptanceEnabled={fromApi} />
+        <LegalDocViewer doc={doc} body={detail.data?.body ?? seedBodyNotice(doc)} acceptanceEnabled={fromApi && authed} />
       )}
     </PageContainer>
   );

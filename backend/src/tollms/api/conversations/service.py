@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from tollms.api.attachments import service as attachment_service
 from tollms.api.attachments.schemas import AttachmentRead
-from tollms.core.exceptions import NotFoundError, ValidationError
+from tollms.core.exceptions import ConflictError, NotFoundError, ValidationError
 from tollms.services.cache import constants as cache_ttl
 from tollms.services.cache import keys as cache_keys
 from tollms.services.cache.manager import cache_delete_sync, cache_get_sync, cache_set_sync
@@ -212,6 +213,94 @@ def pin_conversation(
     return conv
 
 
+_TREE_WALK_LIMIT = 10_000
+
+
+def next_sibling_version(
+    db: Session, conversation_id: uuid.UUID, parent_id: uuid.UUID | None
+) -> int:
+    """1-based position for a new node under (conversation, parent).
+
+    Counts every row (live or soft-deleted — the sibling unique constraint
+    is not partial), so versions never collide after deletes. Roots
+    (parent None) are service-sequenced per conversation: PostgreSQL treats
+    NULL parents as distinct, so the unique constraint cannot do it.
+    """
+    stmt = select(func.max(Message.version_number)).where(
+        Message.conversation_id == conversation_id
+    )
+    if parent_id is not None:
+        stmt = stmt.where(Message.parent_message_id == parent_id)
+    else:
+        stmt = stmt.where(Message.parent_message_id.is_(None))
+    return int(db.scalar(stmt) or 0) + 1
+
+
+def _sibling_version_conflict(exc: IntegrityError) -> bool:
+    """True when a failed insert lost the sibling-version race.
+
+    Only the sibling unique constraint maps to 409 ConflictError — every
+    other integrity breach (active-assistant backstop, FK, check) re-raises
+    untouched so DB safeguards stay loud.
+    """
+    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    name = getattr(diag, "constraint_name", "") or ""
+    hay = f"{name} {exc.orig!s}" if exc.orig is not None else str(exc)
+    return "uq_messages_sibling_version" in hay
+
+
+def _soft_check_alternation(parent: Message | None, role: Role) -> None:
+    """Alternating user/assistant structure is advisory only — system rows
+    are exempt and violations log instead of raising (soft check)."""
+    if parent is None or role == Role.SYSTEM or parent.role == Role.SYSTEM:
+        return
+    if parent.role == role:
+        logger.warning(
+            "non-alternating insert: %s under %s (conversation %s)",
+            role.value, parent.role.value, parent.conversation_id,
+        )
+
+
+def _resolve_parent(
+    db: Session,
+    conversation_id: uuid.UUID,
+    parent_id: uuid.UUID | None,
+    use_active_leaf: bool,
+    user_id: uuid.UUID | None,
+) -> Message | None:
+    """Explicit parent (same-conversation, 404-oracle) or the live active
+    leaf. New requests always attach to the active leaf — never to a stale
+    inactive branch. A bounded ancestor walk rejects cycles."""
+    if parent_id is not None:
+        parent = get_message(db, parent_id, user_id)
+        if parent.conversation_id != conversation_id:
+            raise NotFoundError(f"message {parent_id} not found")
+    elif use_active_leaf:
+        conv = db.get(Conversation, conversation_id)
+        leaf_id = conv.active_leaf_message_id if conv is not None else None
+        parent = (
+            db.get(Message, leaf_id)
+            if leaf_id is not None else None
+        )
+        if parent is None or parent.is_deleted or parent.conversation_id != conversation_id:
+            parent = None
+    else:
+        return None
+    if parent is None:
+        return None
+    seen = {parent.id}
+    node, depth = parent, 0
+    while node.parent_message_id is not None and depth < _TREE_WALK_LIMIT:
+        if node.parent_message_id in seen:
+            raise ValidationError("message tree contains a cycle")
+        nxt = db.get(Message, node.parent_message_id)
+        if nxt is None or nxt.conversation_id != conversation_id:
+            break
+        seen.add(nxt.id)
+        node, depth = nxt, depth + 1
+    return parent
+
+
 def add_message(
     db: Session,
     conversation_id: uuid.UUID,
@@ -231,10 +320,26 @@ def add_message(
     user_id: uuid.UUID | None = None,
     session_id: str | None = None,
     usage_estimated: bool = False,
+    api_key_id: uuid.UUID | None = None,
+    client_key: str | None = None,
+    parent_message_id: uuid.UUID | None = None,
+    use_active_leaf: bool = True,
 ) -> Message:
+    """Insert one tree node and advance the conversation's active leaf to it.
+
+    Default parenting is the live active leaf (new sends continue the
+    selected branch); pass an explicit parent for siblings, or
+    use_active_leaf=False for a new root. Versioning is max-sibling+1.
+    """
+    parent = _resolve_parent(db, conversation_id, parent_message_id, use_active_leaf, user_id)
+    _soft_check_alternation(parent, role)
     msg = Message(
         user_id=user_id,
         conversation_id=conversation_id,
+        parent_message_id=parent.id if parent is not None else None,
+        version_number=next_sibling_version(
+            db, conversation_id, parent.id if parent is not None else None
+        ),
         role=role,
         content=content,
         provider_id=provider_id,
@@ -245,6 +350,8 @@ def add_message(
         completed_at=completed_at,
         session_id=session_id,
         usage_estimated=usage_estimated,
+        api_key_id=api_key_id,
+        client_key=client_key,
     )
     if usage is not None:
         msg.prompt_tokens, msg.completion_tokens, msg.total_tokens = usage
@@ -255,7 +362,25 @@ def add_message(
     if extra_cost is not None:
         msg.cache_read_cost, msg.cache_write_cost, msg.reasoning_cost = extra_cost
     db.add(msg)
-    db.commit()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # Lost a sibling-version race (read-max-then-insert): adopt 409,
+        # never 500 — the leaf stays where it was, no orphan commit.
+        db.rollback()
+        if _sibling_version_conflict(exc):
+            raise ConflictError("message version conflict, retry the send")
+        raise
+    conv = db.get(Conversation, conversation_id)
+    if conv is not None:
+        conv.active_leaf_message_id = msg.id
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if _sibling_version_conflict(exc):
+            raise ConflictError("message version conflict, retry the send")
+        raise
     db.refresh(msg)
     cache_delete_sync(cache_keys.usage_totals(conversation_id, user_id))
     if content.strip():
@@ -348,6 +473,157 @@ def list_messages(
         .order_by(Message.created_at, Message.id)
     )
     return list(db.scalars(stmt))
+
+
+def active_path(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> list[Message]:
+    """Root-to-leaf chain of the selected branch (Rules C/D).
+
+    Sibling branches never leak in: only parent links from the active leaf
+    are followed. Falls back to the newest message when the leaf is unset
+    or dangling, and stops at deleted/missing parents.
+    """
+    conv = get_conversation(db, conversation_id, user_id)
+    live = list_messages(db, conversation_id, user_id)
+    by_id = {m.id: m for m in live}
+    leaf = by_id.get(conv.active_leaf_message_id) if conv.active_leaf_message_id else None
+    if leaf is None and live:
+        leaf = max(live, key=lambda m: (m.created_at, m.id))
+    if leaf is None:
+        return []
+    chain, seen = [leaf], {leaf.id}
+    while chain[-1].parent_message_id is not None and len(chain) < _TREE_WALK_LIMIT:
+        nxt = by_id.get(chain[-1].parent_message_id)
+        if nxt is None or nxt.id in seen:
+            break
+        seen.add(nxt.id)
+        chain.append(nxt)
+    chain.reverse()
+    return chain
+
+
+def conversation_tree(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> dict:
+    """Every live node with its parent link, plus the selected leaf id."""
+    conv = get_conversation(db, conversation_id, user_id)
+    nodes = [
+        {
+            "id": m.id,
+            "parent_message_id": m.parent_message_id,
+            "role": m.role.value,
+            "version_number": m.version_number,
+            "status": m.status.value,
+            "created_at": m.created_at,
+        }
+        for m in list_messages(db, conversation_id, user_id)
+    ]
+    return {"nodes": nodes, "active_leaf_id": conv.active_leaf_message_id}
+
+
+def conversation_path(
+    db: Session, conversation_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> dict:
+    """Active path (root to leaf) with the selected leaf id."""
+    conv = get_conversation(db, conversation_id, user_id)
+    return {
+        "path": active_path(db, conversation_id, user_id),
+        "active_leaf_id": conv.active_leaf_message_id,
+    }
+
+
+def select_message(
+    db: Session,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+) -> dict:
+    """Switch the active branch (Rule D). Deleted or foreign-conversation
+    nodes 404 — a stale selection never repoints the leaf."""
+    conv = get_conversation(db, conversation_id, user_id)
+    msg = get_message(db, message_id, user_id)
+    if msg.conversation_id != conv.id:
+        raise NotFoundError(f"message {message_id} not found")
+    conv.active_leaf_message_id = msg.id
+    db.commit()
+    db.refresh(conv)
+    return conversation_path(db, conversation_id, user_id)
+
+
+def message_siblings(
+    db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> list[Message]:
+    """Same-conversation, same-parent nodes ordered by version."""
+    msg = get_message(db, message_id, user_id)
+    stmt = select(Message).where(
+        Message.conversation_id == msg.conversation_id,
+        Message.is_deleted.is_(False),
+    )
+    if msg.parent_message_id is not None:
+        stmt = stmt.where(Message.parent_message_id == msg.parent_message_id)
+    else:
+        stmt = stmt.where(Message.parent_message_id.is_(None))
+    return list(
+        db.scalars(
+            stmt.order_by(
+                Message.version_number.asc(),
+                Message.created_at.asc(),
+                Message.id.asc(),
+            )
+        )
+    )
+
+
+def message_children(
+    db: Session, message_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> list[Message]:
+    """Direct replies to a node ordered by version."""
+    msg = get_message(db, message_id, user_id)
+    return list(
+        db.scalars(
+            select(Message)
+            .where(
+                Message.conversation_id == msg.conversation_id,
+                Message.parent_message_id == msg.id,
+                Message.is_deleted.is_(False),
+            )
+            .order_by(
+                Message.version_number.asc(),
+                Message.created_at.asc(),
+                Message.id.asc(),
+            )
+        )
+    )
+
+
+def retarget_leaf_after_delete(
+    db: Session,
+    conversation_id: uuid.UUID,
+    deleted: Message,
+    user_id: uuid.UUID | None = None,
+) -> None:
+    """Move the leaf off a deleted node: nearest live ancestor wins, else
+    the newest live message, else unset. No-op unless the leaf pointed at
+    the deleted node."""
+    conv = db.get(Conversation, conversation_id)
+    if conv is None or conv.active_leaf_message_id != deleted.id:
+        return
+    live = list_messages(db, conversation_id, user_id)
+    live_ids = {m.id for m in live}
+    target: uuid.UUID | None = None
+    cursor, guard = deleted.parent_message_id, 0
+    while cursor is not None and guard < _TREE_WALK_LIMIT:
+        if cursor in live_ids:
+            target = cursor
+            break
+        cur = db.get(Message, cursor)
+        cursor = cur.parent_message_id if cur is not None else None
+        guard += 1
+    if target is None and live:
+        target = max(live, key=lambda m: (m.created_at, m.id)).id
+    conv.active_leaf_message_id = target
+    db.commit()
 
 
 def conversation_read(

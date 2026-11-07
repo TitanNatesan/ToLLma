@@ -29,7 +29,7 @@ export function EmptyState({
       )}
       data-testid={testId}
     >
-      <div className="flex size-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 mb-3 shadow-inner">
+      <div className="flex size-12 items-center justify-center rounded-[var(--radius-lg,20px)] bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 mb-3 shadow-inner">
         <Icon className="size-6" />
       </div>
       <h3 className="text-base font-semibold text-zinc-800 dark:text-zinc-200">

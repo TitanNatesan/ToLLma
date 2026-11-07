@@ -66,7 +66,7 @@ export function UsageCard({
         </div>
 
         <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="rounded bg-zinc-50 p-1.5 dark:bg-zinc-900/50">
+          <div className="rounded-[var(--radius-sm,10px)] bg-zinc-50 p-1.5 dark:bg-zinc-900">
             <div className="flex items-center justify-center gap-0.5 text-[10px] text-zinc-400">
               <ArrowDown className="size-2.5" /> Prompt
             </div>
@@ -75,7 +75,7 @@ export function UsageCard({
             </p>
           </div>
 
-          <div className="rounded bg-zinc-50 p-1.5 dark:bg-zinc-900/50">
+          <div className="rounded-[var(--radius-sm,10px)] bg-zinc-50 p-1.5 dark:bg-zinc-900">
             <div className="flex items-center justify-center gap-0.5 text-[10px] text-zinc-400">
               <ArrowUp className="size-2.5" /> Completion
             </div>
@@ -84,7 +84,7 @@ export function UsageCard({
             </p>
           </div>
 
-          <div className="rounded bg-zinc-100 p-1.5 dark:bg-zinc-800/60">
+          <div className="rounded-[var(--radius-sm,10px)] bg-zinc-100 p-1.5 dark:bg-zinc-800">
             <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Total</div>
             <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
               {fmtTokens(tot)}

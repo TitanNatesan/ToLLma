@@ -196,13 +196,13 @@ test.describe("org invitation & join validation", () => {
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
     await shot(root.page, "02-root-invite-sent");
-    await invited.page.goto("/settings#organizations");
-    await expect(invited.page.getByTestId("settings-org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
+    await invited.page.goto("/organizations/invites");
+    await expect(invited.page.getByTestId("org-invites-page")).toContainText(ORG_NAME, { timeout: 20000 });
     const card = inviteCard(invited.page, state.orgSlug!);
     await expect(card).toBeVisible({ timeout: 20000 });
     await shot(invited.page, "03-invitee-inbox");
     await card.getByRole("button", { name: "Accept" }).click();
-    await expect(card).toHaveCount(0, { timeout: 20000 });
+    await expect(invited.page).toHaveURL(/\/organizations\//, { timeout: 20000 });
     await invited.page.goto("/settings#organizations");
     await expect(invited.page.getByTestId("settings-organizations")).toContainText(ORG_NAME, { timeout: 20000 });
     await shot(invited.page, "04-invitee-joined");
@@ -219,12 +219,12 @@ test.describe("org invitation & join validation", () => {
     await root.page.getByTestId("org-invite-email").fill("existing-reject@test.tollma.ai");
     await root.page.getByTestId("org-invite-submit").click();
     await expect(root.page.getByTestId("org-invite-dialog")).toBeHidden({ timeout: EMAIL_TIMEOUT });
-    await decliner.page.goto("/settings#organizations");
-    await expect(decliner.page.getByTestId("settings-org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
+    await decliner.page.goto("/organizations/invites");
+    await expect(decliner.page.getByTestId("org-invites-page")).toContainText(ORG_NAME, { timeout: 20000 });
     const card = inviteCard(decliner.page, state.orgSlug!);
     await expect(card).toBeVisible({ timeout: 20000 });
     await card.getByRole("button", { name: "Reject" }).click();
-    await expect(card).toHaveCount(0, { timeout: 20000 });
+    await expect(decliner.page).toHaveURL(/\/settings/, { timeout: 20000 });
     await decliner.page.goto("/settings#organizations");
     await expect(decliner.page.getByTestId("settings-organizations")).not.toContainText(ORG_NAME);
     await shot(decliner.page, "05-invitee-declined");
@@ -362,13 +362,13 @@ test.describe("org invitation & join validation", () => {
     await root.page.getByTestId(`org-inv-resend-${invId}`).click();
     await expect(root.page.getByText("fresh link")).toBeVisible({ timeout: EMAIL_TIMEOUT });
     await shot(root.page, "12-resent");
-    // Target accepts with the fresh link via the real inbox UI.
-    await target.page.goto("/settings#organizations");
-    await expect(target.page.getByTestId("settings-org-inbox")).toContainText(ORG_NAME, { timeout: 20000 });
+    // Target accepts with the fresh link via the real invites UI.
+    await target.page.goto("/organizations/invites");
+    await expect(target.page.getByTestId("org-invites-page")).toContainText(ORG_NAME, { timeout: 20000 });
     const card = inviteCard(target.page, state.orgSlug!);
     await expect(card).toBeVisible({ timeout: 20000 });
     await card.getByRole("button", { name: "Accept" }).click();
-    await expect(card).toHaveCount(0, { timeout: 20000 });
+    await expect(target.page).toHaveURL(/\/organizations\//, { timeout: 20000 });
     await root.ctx.close();
     await target.ctx.close();
   });

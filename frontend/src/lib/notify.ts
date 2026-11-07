@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { sileo, type SileoOptions } from "sileo";
+import { sileo, type SileoOptions, type SileoPosition } from "sileo";
 
 /**
  * Central notification API for ToLLma, backed by Sileo.
@@ -18,6 +18,8 @@ export interface NotifyOptions {
   description?: ReactNode;
   action?: NotifyAction;
   duration?: number | null;
+  /** Per-toast screen position; falls back to the user's configured default. */
+  position?: SileoPosition;
   /**
    * High-visibility styling for notifications the user must not miss
    * (e.g. background generation completed / failed). Renders a solid
@@ -47,6 +49,7 @@ function toOptions(message: ReactNode, options?: NotifyOptions, tone?: keyof typ
     title: typeof message === "string" ? message : undefined,
     description: body,
     duration: options?.duration,
+    position: options?.position,
     button: options?.action
       ? { title: options.action.label, onClick: options.action.onClick }
       : undefined,

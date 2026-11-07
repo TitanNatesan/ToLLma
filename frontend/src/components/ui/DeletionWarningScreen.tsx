@@ -111,7 +111,7 @@ export function DeletionWarningScreen() {
       data-testid="deletion-warning-screen"
       className="flex h-screen w-screen items-center justify-center overflow-y-auto bg-zinc-50 px-4 py-8 dark:bg-zinc-950"
     >
-      <div className="w-full max-w-md rounded-xl border border-amber-200 bg-white p-6 shadow-sm dark:border-amber-900 dark:bg-zinc-900">
+      <div className="w-full max-w-md rounded-[var(--radius-xl,26px)] border border-amber-200 bg-white p-6 shadow-sm dark:border-amber-900 dark:bg-zinc-900">
         <div className="flex items-start gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
             <AlertTriangle className="size-5" aria-hidden="true" />
@@ -141,7 +141,7 @@ export function DeletionWarningScreen() {
 
         <div
           data-testid="deletion-warning-details"
-          className="mt-4 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
+          className="mt-4 rounded-[var(--radius-sm,10px)] border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
         >
           <p>
             Your data is retained for 15 days and will be permanently purged after that. You can

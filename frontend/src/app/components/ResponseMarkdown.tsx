@@ -276,9 +276,9 @@ function RichCodeBlock({
   };
 
   return (
-    <div className="group relative my-3 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 text-xs shadow-md">
+    <div className="group relative my-2 overflow-hidden rounded-[var(--radius-sm,8px)] border border-zinc-800 bg-zinc-950 text-xs shadow-md">
       {/* Code Header Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-y-1 border-b border-zinc-800 bg-zinc-900/80 px-3.5 py-1.5 select-none">
+      <div className="flex flex-wrap items-center justify-between gap-y-1 border-b border-zinc-800 bg-zinc-900/80 px-2.5 py-1 select-none">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[11px] font-semibold tracking-wide text-zinc-300">
             {displayLang}
@@ -422,7 +422,7 @@ function RichCodeBlock({
       ) : (
         <pre
           className={cn(
-            "max-h-[480px] overflow-y-auto overflow-x-auto p-3.5 font-mono text-xs leading-relaxed text-zinc-100",
+            "max-h-[480px] overflow-y-auto overflow-x-auto p-2.5 font-mono text-xs leading-relaxed text-zinc-100",
             wrap && "whitespace-pre-wrap break-words",
           )}
         >
@@ -568,9 +568,9 @@ function RichTable({ children }: { children: React.ReactNode }) {
   return (
     <div
       ref={containerRef}
-      className="my-3 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2xs bg-white dark:bg-zinc-950"
+      className="my-2 overflow-hidden rounded-[var(--radius-sm,8px)] border border-zinc-200 dark:border-zinc-800 shadow-2xs bg-white dark:bg-zinc-950"
     >
-      <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50/80 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60 text-xs select-none">
+      <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50/80 px-2.5 py-1 dark:border-zinc-800 dark:bg-zinc-900/60 text-xs select-none">
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
           <Table className="size-3.5 text-zinc-400" />
           <span>Table</span>
@@ -589,8 +589,8 @@ function RichTable({ children }: { children: React.ReactNode }) {
           <span>{copied ? "Copied" : "Copy TSV"}</span>
         </button>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs border-collapse">
+      <div className="m-0 overflow-x-auto">
+        <table className="m-0 w-full text-left text-xs border-collapse">
           {children}
         </table>
       </div>
@@ -667,12 +667,12 @@ export function ResponseMarkdown({
             <RichTable>{children}</RichTable>
           ),
           th: ({ children }) => (
-            <th className="border-b border-zinc-200 bg-zinc-100/60 px-3.5 py-2.5 text-[11px] font-semibold text-zinc-700 uppercase tracking-wider dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
+            <th className="border-b border-zinc-200 bg-zinc-100/60 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 uppercase tracking-wider dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="border-b border-zinc-100 px-3.5 py-2.5 text-xs text-zinc-800 dark:border-zinc-800/40 dark:text-zinc-200">
+            <td className="border-b border-zinc-100 px-2.5 py-1.5 text-xs text-zinc-800 dark:border-zinc-800/40 dark:text-zinc-200">
               {children}
             </td>
           ),

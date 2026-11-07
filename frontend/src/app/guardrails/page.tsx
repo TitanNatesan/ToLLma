@@ -19,11 +19,11 @@ import { OrgContextSidebar } from "@/app/organizations/components/OrgContextSide
 import { SidebarPanelPortal } from "@/components/Sidebar/SidebarPanelPortal";
 import { toast } from "@/lib/notify";
 import { parseApiError, toastApiError } from "@/lib/errors";
-import { useGuardrailMutations, useGuardrails } from "@/hooks/useGuardrails";
+import { useGuardrailMutations, useGuardrails, useGuardrailTriggers } from "@/hooks/useGuardrails";
 import { useOrgs } from "@/hooks/useOrgs";
 import { useOrgStore } from "@/store/org";
 import type { GuardrailPolicy } from "@/services/guardrails";
-import { EMPTY_FILTER, filterPolicies } from "./components/policyLogic";
+import { EMPTY_FILTER, EMPTY_TRIGGER_FILTER, filterPolicies, type TriggerFilterState } from "./components/policyLogic";
 import { GuardrailsTable } from "./components/GuardrailsTable";
 import { GuardrailFormDialog } from "./components/GuardrailFormDialog";
 import { GuardrailEditDrawer } from "./components/GuardrailEditDrawer";
@@ -60,12 +60,17 @@ function GuardrailsPageInner() {
   const canToggle = !isOrg || canOrg("Guardrails.Update");
   const canViewEvents = !isOrg || canOrg("Guardrails.ViewEvents");
 
-  const list = useGuardrails(orgId);
+  const list = useGuardrails(orgId, { enabled: canRead });
   const mut = useGuardrailMutations(orgId);
 
   const [filter, setFilter] = useState(EMPTY_FILTER);
+  const [triggerFilter, setTriggerFilter] = useState<TriggerFilterState>(EMPTY_TRIGGER_FILTER);
+  const [templateQ, setTemplateQ] = useState("");
   const [page, setPage] = useState(0);
   const [tab, setTab] = useState<"policies" | "triggers" | "templates">("policies");
+  // First triggers visit arms the feed; it then stays mounted so tab
+  // switches reuse the cache instead of refetching.
+  const [triggersSeen, setTriggersSeen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<GuardrailPolicy | null>(null);
   const searchParams = useSearchParams();
@@ -88,6 +93,21 @@ function GuardrailsPageInner() {
   const viewing = policyParam ? (policies.find((pl) => pl.id === policyParam) ?? null) : null;
   const [deleteTarget, setDeleteTarget] = useState<GuardrailPolicy | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  const triggerServerFilters = useMemo(
+    () => ({
+      org_id: orgId ?? undefined,
+      policy_id: triggerFilter.policyId || undefined,
+      severity: triggerFilter.severity || undefined,
+      action: triggerFilter.action || undefined,
+      source: triggerFilter.source || undefined,
+    }),
+    [orgId, triggerFilter],
+  );
+  const triggerFeed = useGuardrailTriggers(
+    triggerServerFilters,
+    canViewEvents && (tab === "triggers" || triggersSeen),
+  );
 
   const filtered = useMemo(() => filterPolicies(policies, filter), [policies, filter]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -112,6 +132,7 @@ function GuardrailsPageInner() {
         <EmptyState
           title="Guardrails"
           description="You need the Guardrails.Read permission to view organization guardrails."
+          testId="guardrails-denied"
         />
       </PageContainer>
     );
@@ -137,7 +158,7 @@ function GuardrailsPageInner() {
             type="button"
             role="tab"
             aria-selected={tab === t}
-            onClick={() => setTab(t)}
+            onClick={() => { setTab(t); if (t === "triggers") setTriggersSeen(true); }}
             data-testid={`tab-${t}`}
             className={`rounded-t px-3 py-2 text-xs font-medium capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 ${tab === t ? "border-b-2 border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100" : "text-zinc-500"}`}
           >
@@ -146,49 +167,78 @@ function GuardrailsPageInner() {
         ))}
       </div>
 
+      <SidebarPanelPortal>
+        <OrgContextSidebar heading={tab === "policies" ? "Policy filters" : tab === "triggers" ? "Trigger filters" : "Template filters"} testId="guardrail-sidebar" bare storageKey="guardrail-sidebar-collapsed">
+          {tab === "policies" && (
+            <>
+              <SearchInput value={filter.q} onChange={(e) => { setFilter({ ...filter, q: e.target.value }); setPage(0); }} onClear={() => setFilter({ ...filter, q: "" })} placeholder="Search policies…" data-testid="guardrail-search" />
+              {(["severity", "enforcement", "enabled", "scope"] as const).map((k) => (
+                <Select key={k} value={filter[k]} onChange={(e) => { setFilter({ ...filter, [k]: e.target.value }); setPage(0); }} aria-label={`${k} filter`} data-testid={`guardrail-filter-${k}`}>
+                  <option value="ALL">{k === "enabled" ? "On/Off" : `All ${k}`}</option>
+                  {k === "severity" && ["low", "medium", "high", "critical"].map((v) => <option key={v} value={v}>{v}</option>)}
+                  {k === "enforcement" && ["monitor", "warn", "block"].map((v) => <option key={v} value={v}>{v}</option>)}
+                  {k === "enabled" && [<option key="on" value="on">Enabled</option>, <option key="off" value="off">Disabled</option>]}
+                  {k === "scope" && [<option key="global" value="global">Global</option>, <option key="scoped" value="scoped">Scoped</option>]}
+                </Select>
+              ))}
+              {([
+                ...(filter.q.trim() ? [{ key: "q", label: `Search: ${filter.q.trim()}` }] : []),
+                ...(["severity", "enforcement", "enabled", "scope"] as const)
+                  .filter((k) => filter[k] !== "ALL")
+                  .map((k) => ({ key: k, label: `${k}: ${filter[k]}` })),
+              ].length > 0) && (
+                <div className="flex flex-wrap items-center gap-1.5" data-testid="guardrail-active-filters" aria-live="polite">
+                  {[
+                    ...(filter.q.trim() ? [{ key: "q", label: `Search: ${filter.q.trim()}` }] : []),
+                    ...(["severity", "enforcement", "enabled", "scope"] as const)
+                      .filter((k) => filter[k] !== "ALL")
+                      .map((k) => ({ key: k, label: `${k}: ${filter[k]}` })),
+                  ].map((chip) => (
+                    <button key={chip.key} type="button"
+                      onClick={() => { setFilter(chip.key === "q" ? { ...filter, q: "" } : { ...filter, [chip.key]: "ALL" }); setPage(0); }}
+                      aria-label={`Clear ${chip.key} filter`}
+                      className="rounded-full border border-zinc-200 px-2 py-0.5 text-[11px] text-zinc-600 transition-colors hover:border-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:border-zinc-800 dark:text-zinc-300">
+                      {chip.label} ✕
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => { setFilter(EMPTY_FILTER); setPage(0); }}
+                    data-testid="guardrail-filters-reset"
+                    className="rounded text-[11px] font-medium text-tollma-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:text-tollma-400">
+                    Reset
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+          {tab === "triggers" && (
+            <>
+              <Select value={triggerFilter.policyId} onChange={(e) => setTriggerFilter({ ...triggerFilter, policyId: e.target.value })} aria-label="Policy filter" data-testid="trigger-filter-policy" disabled={!canViewEvents}>
+                <option value="">All policies</option>
+                {policies.map((pl) => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
+              </Select>
+              <Select value={triggerFilter.severity} onChange={(e) => setTriggerFilter({ ...triggerFilter, severity: e.target.value })} aria-label="Severity filter" data-testid="trigger-filter-severity" disabled={!canViewEvents}>
+                <option value="">Severity</option>
+                {["low", "medium", "high", "critical"].map((sv) => <option key={sv} value={sv}>{sv}</option>)}
+              </Select>
+              <Select value={triggerFilter.action} onChange={(e) => setTriggerFilter({ ...triggerFilter, action: e.target.value })} aria-label="Action filter" data-testid="trigger-filter-action" disabled={!canViewEvents}>
+                <option value="">Action</option>
+                {["logged", "warned", "blocked", "allowed"].map((a) => <option key={a} value={a}>{a}</option>)}
+              </Select>
+              <Select value={triggerFilter.source} onChange={(e) => setTriggerFilter({ ...triggerFilter, source: e.target.value })} aria-label="Source filter" data-testid="trigger-filter-source" disabled={!canViewEvents}>
+                <option value="">Source</option>
+                {(["internal", "external"] as const).map((sr) => <option key={sr} value={sr}>{sr}</option>)}
+              </Select>
+              <SearchInput value={triggerFilter.q} onChange={(e) => setTriggerFilter({ ...triggerFilter, q: e.target.value })} onClear={() => setTriggerFilter({ ...triggerFilter, q: "" })} placeholder="Search reason…" aria-label="Search triggers" data-testid="trigger-search" disabled={!canViewEvents} />
+            </>
+          )}
+          {tab === "templates" && (
+            <SearchInput value={templateQ} onChange={(e) => setTemplateQ(e.target.value)} onClear={() => setTemplateQ("")} placeholder="Search templates…" aria-label="Search templates" data-testid="template-search" />
+          )}
+        </OrgContextSidebar>
+      </SidebarPanelPortal>
+
       {tab === "policies" && (
         <div className="flex flex-col gap-4 p-4">
-          <SidebarPanelPortal>
-          <OrgContextSidebar heading="Policy filters" testId="guardrail-sidebar" bare storageKey="guardrail-sidebar-collapsed">
-            <SearchInput value={filter.q} onChange={(e) => { setFilter({ ...filter, q: e.target.value }); setPage(0); }} onClear={() => setFilter({ ...filter, q: "" })} placeholder="Search policies…" data-testid="guardrail-search" />
-            {(["severity", "enforcement", "enabled", "scope"] as const).map((k) => (
-              <Select key={k} value={filter[k]} onChange={(e) => { setFilter({ ...filter, [k]: e.target.value }); setPage(0); }} aria-label={`${k} filter`} data-testid={`guardrail-filter-${k}`}>
-                <option value="ALL">{k === "enabled" ? "On/Off" : `All ${k}`}</option>
-                {k === "severity" && ["low", "medium", "high", "critical"].map((v) => <option key={v} value={v}>{v}</option>)}
-                {k === "enforcement" && ["monitor", "warn", "block"].map((v) => <option key={v} value={v}>{v}</option>)}
-                {k === "enabled" && [<option key="on" value="on">Enabled</option>, <option key="off" value="off">Disabled</option>]}
-                {k === "scope" && [<option key="global" value="global">Global</option>, <option key="scoped" value="scoped">Scoped</option>]}
-              </Select>
-            ))}
-            {([
-              ...(filter.q.trim() ? [{ key: "q", label: `Search: ${filter.q.trim()}` }] : []),
-              ...(["severity", "enforcement", "enabled", "scope"] as const)
-                .filter((k) => filter[k] !== "ALL")
-                .map((k) => ({ key: k, label: `${k}: ${filter[k]}` })),
-            ].length > 0) && (
-              <div className="flex flex-wrap items-center gap-1.5" data-testid="guardrail-active-filters" aria-live="polite">
-                {[
-                  ...(filter.q.trim() ? [{ key: "q", label: `Search: ${filter.q.trim()}` }] : []),
-                  ...(["severity", "enforcement", "enabled", "scope"] as const)
-                    .filter((k) => filter[k] !== "ALL")
-                    .map((k) => ({ key: k, label: `${k}: ${filter[k]}` })),
-                ].map((chip) => (
-                  <button key={chip.key} type="button"
-                    onClick={() => { setFilter(chip.key === "q" ? { ...filter, q: "" } : { ...filter, [chip.key]: "ALL" }); setPage(0); }}
-                    aria-label={`Clear ${chip.key} filter`}
-                    className="rounded-full border border-zinc-200 px-2 py-0.5 text-[11px] text-zinc-600 transition-colors hover:border-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:border-zinc-800 dark:text-zinc-300">
-                    {chip.label} ✕
-                  </button>
-                ))}
-                <button type="button" onClick={() => { setFilter(EMPTY_FILTER); setPage(0); }}
-                  data-testid="guardrail-filters-reset"
-                  className="rounded text-[11px] font-medium text-tollma-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:text-tollma-400">
-                  Reset
-                </button>
-              </div>
-            )}
-          </OrgContextSidebar>
-          </SidebarPanelPortal>
           <div className="min-w-0 flex-1 space-y-3">
           {list.isPending ? (
             <LoadingState message="Loading guardrails…" className="py-12" />
@@ -239,13 +289,13 @@ function GuardrailsPageInner() {
 
       {tab === "triggers" && (
         <div className="p-4">
-          <TriggerHistoryPanel policies={policies} canView={canViewEvents} orgId={orgId} />
+          <TriggerHistoryPanel policies={policies} canView={canViewEvents} orgId={orgId} filters={triggerFilter} onFiltersChange={setTriggerFilter} feed={triggerFeed} />
         </div>
       )}
 
       {tab === "templates" && (
         <div className="p-4">
-          <TemplateGallery orgId={orgId} canCreate={canCreate} />
+          <TemplateGallery orgId={orgId} canCreate={canCreate} search={templateQ} />
         </div>
       )}
 

@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useState, type ComponentType } from "react";
+import { useCallback, useRef, useState, type ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
 import { toast } from "@/lib/notify";
 import { logout } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
 import { Dialog, DialogContent } from "./primitives";
+import { ThemeStudio } from "../theme/ThemeStudio";
 import { useChatStore } from "@/store/chat";
 import { useConversations } from "@/hooks/useChat";
 import { useProviders } from "@/hooks/useRegistry";
@@ -21,6 +22,7 @@ import {
   KeyRound,
   LogOut,
   MessageSquare,
+  Palette,
   Pin,
   Plus,
   ScrollText,
@@ -45,9 +47,9 @@ interface CommandPaletteProps {
 
 const itemCls =
   "flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm outline-none transition-colors " +
-  "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800/80 " +
-  "data-[selected=true]:bg-tollma-50 data-[selected=true]:ring-1 data-[selected=true]:ring-inset data-[selected=true]:ring-tollma-500/30 " +
-  "dark:data-[selected=true]:bg-tollma-950/40";
+  "text-zinc-700 hover:bg-zinc-500/10 dark:text-zinc-200 dark:hover:bg-white/10 " +
+  "data-[selected=true]:bg-tollma-500/10 data-[selected=true]:ring-1 data-[selected=true]:ring-inset data-[selected=true]:ring-tollma-500/30 " +
+  "dark:data-[selected=true]:bg-tollma-400/15";
 
 /** One palette row: icon tile + title/description + optional trailing hint. */
 function PaletteItem({
@@ -71,7 +73,7 @@ function PaletteItem({
 }) {
   return (
     <Command.Item value={value} onSelect={onSelect} className={itemCls} data-testid={testId}>
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-zinc-500/10 dark:bg-white/10">
         <Icon className={cn("size-4 text-zinc-500 dark:text-zinc-400", iconClassName)} aria-hidden />
       </span>
       <span className="min-w-0 flex-1">
@@ -130,6 +132,8 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const { data: convs = [] } = useConversations("");
   const { data: providers = [] } = useProviders();
   const [query, setQuery] = useState("");
+  const [studioOpen, setStudioOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Scope-aware navigation: org workspace shows org sections (permission
   // filtered, same codes as the sidebar) plus the unified pages; personal
@@ -215,27 +219,28 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg overflow-hidden rounded-2xl p-0 shadow-2xl ring-1 ring-zinc-200 dark:ring-zinc-800">
+      <DialogContent overlayClassName="bg-black/30" className="max-w-lg overflow-hidden rounded-2xl p-0">
         <Command
-          className="rounded-2xl bg-white dark:bg-zinc-950"
+          className="rounded-2xl bg-transparent"
           label="Command palette"
           data-testid="command-palette"
         >
-          <div className="flex items-center gap-2 border-b border-zinc-200 px-4 dark:border-zinc-800">
+          <div className="flex items-center gap-2 border-b border-[var(--glass-border)] px-4">
             <CommandIcon className="size-4 shrink-0 text-zinc-400" aria-hidden />
             <Command.Input
+              ref={inputRef}
               value={query}
               onValueChange={setQuery}
               placeholder="Search commands, models, or conversations…"
-              className="flex-1 bg-transparent py-3.5 text-[15px] outline-none placeholder:text-zinc-400"
+              className="flex-1 rounded-md bg-transparent py-3.5 text-[15px] outline-none placeholder:text-zinc-400"
               data-testid="command-palette-input"
             />
-            <kbd className="shrink-0 rounded-md border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800">
+            <kbd className="shrink-0 rounded-md border border-[var(--glass-border)] bg-zinc-500/10 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 dark:bg-white/10">
               Esc
             </kbd>
           </div>
 
-          <Command.List className="max-h-[420px] overflow-y-auto p-2">
+          <Command.List className="max-h-[420px] overflow-y-auto overlay-scroll p-2">
             <Command.Empty className="flex flex-col items-center gap-1 px-4 py-10 text-center">
               <Search className="size-5 text-zinc-300 dark:text-zinc-600" aria-hidden />
               <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">No results found</p>
@@ -280,6 +285,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                   title="Add provider"
                   description="Connect a new provider"
                 />
+                <PaletteItem
+                  value="theme appearance glass transparency blur dark black accent"
+                  onSelect={() => setStudioOpen(true)}
+                  testId="cmd-theme"
+                  icon={Palette}
+                  title="Theme"
+                  description="Customize appearance and glass effects"
+                />
               </div>
             </Command.Group>
 
@@ -301,7 +314,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     type="button"
                     onClick={() => ws.retry()}
                     data-testid="cmd-search-retry"
-                    className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    className="rounded-md border border-[var(--glass-border)] bg-zinc-500/10 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-500/20 dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white/15"
                   >
                     Retry
                   </button>
@@ -421,18 +434,21 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             )}
           </Command.List>
 
-          <div className="flex items-center justify-between border-t border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
+          <div className="flex items-center justify-between border-t border-[var(--glass-border)] px-4 py-2.5">
             <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
               <Sparkles className="size-3 text-zinc-400" aria-hidden />
               <span>ToLLma AI Workspace{isOrg && context.type === "org" ? ` · ${context.orgName}` : ""}</span>
             </div>
             <p className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-400">
-              <span><kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">↑↓</kbd> navigate</span>
-              <span><kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">Enter</kbd> select</span>
-              <span><kbd className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">Esc</kbd> close</span>
+              <span><kbd className="rounded bg-zinc-500/10 px-1 dark:bg-white/10">↑↓</kbd> navigate</span>
+              <span><kbd className="rounded bg-zinc-500/10 px-1 dark:bg-white/10">Enter</kbd> select</span>
+              <span><kbd className="rounded bg-zinc-500/10 px-1 dark:bg-white/10">Esc</kbd> close</span>
             </p>
           </div>
         </Command>
+        {studioOpen ? (
+          <ThemeStudio open onClose={() => setStudioOpen(false)} inputRef={inputRef} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );

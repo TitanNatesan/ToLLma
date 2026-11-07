@@ -34,7 +34,11 @@ import { perfDelta, perfDone, perfSend, perfSnapshot } from "@/lib/perf";
 import { useChatStore } from "@/store/chat";
 import { useSettingsStore } from "@/store/settings";
 import { SearchModal } from "@/components/ui/SearchModal";
-import { useIntelligenceMutations } from "@/hooks/useIntelligence";
+import {
+  useConversationPath,
+  useConversationTree,
+  useIntelligenceMutations,
+} from "@/hooks/useIntelligence";
 import {
   activateGeneration,
   createBranch,
@@ -187,6 +191,8 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   const refreshAll = useCallback((id: string | null) => {
     if (!id) return;
     void qc.invalidateQueries({ queryKey: ["conversation", id] });
+    void qc.invalidateQueries({ queryKey: ["conversation-path", id] });
+    void qc.invalidateQueries({ queryKey: ["conversation-tree", id] });
     void qc.invalidateQueries({ queryKey: ["usage", id] });
     void qc.invalidateQueries({ queryKey: ["conversations"] });
     // Spend/eligibility changed with the generation: refresh key availability
@@ -205,10 +211,37 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     }
   }, []);
 
+  // Branch-aware rendering: the main chat shows the ACTIVE PATH only. The
+  // path endpoint wins when the backend serves it; on 404 (backend mid-build)
+  // the persisted array keeps the chat intact — never blank.
+  const { data: pathData } = useConversationPath(activeId);
+  const { data: treeData } = useConversationTree(activeId);
   const persistedMessages: ChatMessage[] = useMemo(
-    () => conversation?.messages ?? [],
-    [conversation?.messages],
+    () => pathData?.path ?? conversation?.messages ?? [],
+    [pathData, conversation?.messages],
   );
+  // Same-parent version ids per message (one pass over the tree). Messages
+  // without siblings get no entry — their navigators stay hidden.
+  const siblingIdsById = useMemo(() => {
+    const nodes = treeData?.nodes ?? [];
+    const groups = new Map<string, typeof nodes>();
+    for (const n of nodes) {
+      const key = n.parent_message_id ?? "";
+      const g = groups.get(key);
+      if (g) g.push(n);
+      else groups.set(key, [n]);
+    }
+    const out = new Map<string, string[]>();
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      g.sort(
+        (a, b) => a.version_number - b.version_number || (a.created_at < b.created_at ? -1 : 1),
+      );
+      const ids = g.map((n) => n.id);
+      for (const id of ids) out.set(id, ids);
+    }
+    return out;
+  }, [treeData]);
   // Optimistic entries carry backend-issued ids: they overlay (never
   // duplicate) the persisted rows. History itself always comes from the
   // backend. While the overlay is still streaming it wins; once it settles
@@ -798,7 +831,23 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   const { data: chatKeys = [], isPending: keysPending } = useChatKeys();
   const statusLoaded = !providersPending && !keysPending;
   const intelligence = useIntelligenceMutations(activeId);
-  const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation } = intelligence;
+  const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation, select: selectMutation } = intelligence;
+
+  // Branch switch: select endpoint restores the descendant path server-side,
+  // then reload. The composer draft lives in the store and is untouched.
+  const handleSelectBranch = useCallback(
+    (messageId: string) => {
+      if (!activeId || useChatStore.getState().streaming || selectMutation.isPending) return;
+      selectMutation.mutate(
+        { conversationId: activeId, messageId },
+        {
+          onSuccess: () => refreshAll(activeId),
+          onError: (error) => toastApiError(error, { title: "Could not switch version" }),
+        },
+      );
+    },
+    [activeId, selectMutation, refreshAll],
+  );
 
   /**
    * Unified policy denials (403/429 with reason strings) on edit/regenerate:
@@ -1049,6 +1098,9 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
               isStreaming={isStreaming}
               sources={sourcesByMessage.get(m.id)}
               onActivateGeneration={handleActivateGeneration}
+              siblingIds={siblingIdsById.get(m.id)}
+              onSelectSibling={!isOpt && !streaming ? handleSelectBranch : undefined}
+              siblingBusy={selectMutation.isPending}
               // Editing, regenerating, or branching mid-stream would race the
               // live generation: hide the actions until it settles.
               onBranch={!isOpt && !streaming ? handleBranch : undefined}

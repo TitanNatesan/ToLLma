@@ -30,6 +30,7 @@ export default function TrustSubprocessorsPage() {
     <PageContainer
       header={
         <PageHeader
+          hideMenu
           title="Subprocessors"
           subtitle="Third parties that process customer data on our behalf."
         />
@@ -37,7 +38,7 @@ export default function TrustSubprocessorsPage() {
       testId="trust-subprocessors-page"
       maxWidth="max-w-3xl"
     >
-      <Card>
+      <Card surface="solid">
         <CardContent className="pt-4" data-testid="trust-subprocessors">
           {registry.isPending ? (
             <LoadingState message="Loading subprocessor registry…" />

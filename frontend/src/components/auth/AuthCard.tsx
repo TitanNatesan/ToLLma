@@ -17,6 +17,35 @@ interface AuthCardProps {
   initialMode?: "login" | "signup";
 }
 
+
+/** Discreet public legal nav: real registry slugs + the legal center index. */
+function AuthLegalFooter() {
+  const link = "transition-colors hover:text-zinc-300";
+  return (
+    <nav
+      aria-label="Legal"
+      data-testid="auth-legal-footer"
+      className="mt-4 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 border-t border-zinc-800/80 pt-3 text-[11px] text-zinc-500"
+    >
+      <Link href="/legal/terms-of-service" data-testid="auth-legal-terms" className={link}>
+        Terms
+      </Link>
+      <span aria-hidden>·</span>
+      <Link href="/legal/privacy-notice" data-testid="auth-legal-privacy" className={link}>
+        Privacy
+      </Link>
+      <span aria-hidden>·</span>
+      <Link href="/legal/cookie-policy" data-testid="auth-legal-cookies" className={link}>
+        Cookies
+      </Link>
+      <span aria-hidden>·</span>
+      <Link href="/legal" data-testid="auth-legal-center" className={link}>
+        Legal center
+      </Link>
+    </nav>
+  );
+}
+
 export function AuthCard({ initialMode = "login" }: AuthCardProps) {
   const router = useRouter();
   const setUser = useAuthStore((s) => s.setUser);
@@ -273,7 +302,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
         >
           {/* ==================== FRONT: LOGIN CARD ==================== */}
           <div
-            className="relative col-start-1 row-start-1 w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 pt-7 shadow-2xl backdrop-blur-xl [backface-visibility:hidden] sm:p-7"
+            className="relative col-start-1 row-start-1 w-full overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/90 p-6 pt-7 shadow-2xl backdrop-blur-[var(--glass-blur)] [backface-visibility:hidden] sm:p-7"
             style={{
               pointerEvents: isFlipped ? "none" : "auto",
             }}
@@ -316,7 +345,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     title={inviteEmail ? "Email is locked to your invitation" : undefined}
                     id="login-email"
                     data-testid="login-email"
-                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-[var(--radius-sm,8px)] border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
                 {inviteEmail && (
@@ -340,7 +369,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     onKeyUp={onCapsKey}
                     id="login-password"
                     data-testid="login-password"
-                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-[var(--radius-sm,8px)] border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                   <button
                     type="button"
@@ -487,7 +516,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     onChange={(e) => setSignupFullName(e.target.value)}
                     id="signup-name"
                     data-testid="signup-name"
-                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-[var(--radius-sm,8px)] border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
               </div>
@@ -507,7 +536,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     title={inviteEmail ? "Email is locked to your invitation" : undefined}
                     id="signup-email"
                     data-testid="signup-email"
-                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-[var(--radius-sm,8px)] border border-zinc-700 bg-zinc-800/80 pl-9 pr-3 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                 </div>
                 {inviteEmail && (
@@ -533,7 +562,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                     id="signup-password"
                     data-testid="signup-password"
                     aria-describedby="signup-strength"
-                    className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
+                    className="h-10 w-full rounded-[var(--radius-sm,8px)] border border-zinc-700 bg-zinc-800/80 pl-9 pr-10 text-sm text-white placeholder-zinc-500 transition-colors focus:border-tollma-500 focus:outline-none focus:ring-1 focus:ring-tollma-500/50"
                   />
                   <button
                     type="button"
@@ -666,6 +695,12 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
             </div>
           </div>
         </motion.div>
+        {/* Single legal footer below the flip faces: both faces stay mounted
+            in the DOM (backface-visibility only hides visually), so a footer
+            inside each face would duplicate testids and landmarks. */}
+        <div className="mt-3">
+          <AuthLegalFooter />
+        </div>
       </div>
     </main>
   );

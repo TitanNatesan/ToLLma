@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { useGlassStore } from "@/store/glass";
 import type { User } from "@/types";
 
 const TOKEN_KEY = "tollma_access_token";
@@ -81,7 +82,12 @@ export const useAuthStore = create<AuthState>()((set) => ({
   user: null,
   accessToken: getAccessToken(),
   checked: false,
-  setUser: (user) => set({ user }),
+  setUser: (user) => {
+    set({ user });
+    // Per-user theme scoping: switching accounts restores that user's glass
+    // config (or defaults); logout clears back to defaults.
+    useGlassStore.getState().setUser(user?.id ?? null);
+  },
   setAccessToken: (accessToken) => {
     setStoredAccessToken(accessToken);
     set({ accessToken });
@@ -93,6 +99,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
       document.cookie = "tollma_session=; path=/; max-age=0";
     }
     set({ user: null, accessToken: null, checked: true });
+    useGlassStore.getState().setUser(null);
   },
 }));
 

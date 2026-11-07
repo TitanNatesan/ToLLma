@@ -18,7 +18,7 @@ export function SidebarFooter({
 }) {
   return (
     <div
-      className="shrink-0 border-t border-zinc-200 bg-zinc-50/60 px-2.5 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/60"
+      className="shrink-0 border-t border-[var(--glass-border)] bg-[var(--glass-bg)] px-2.5 py-2.5 backdrop-blur-[var(--glass-blur)]"
       data-testid="sidebar-footer"
     >
       <SidebarProfile

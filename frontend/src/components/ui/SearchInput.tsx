@@ -21,8 +21,8 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
           value={value}
           onChange={onChange}
           className={cn(
-            "h-8 w-full rounded-md border border-zinc-200 bg-zinc-50/50 pl-8 pr-7 text-xs transition-colors",
-            "placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:border-zinc-800 dark:bg-zinc-900/60 dark:focus:border-zinc-500",
+            "h-8 w-full rounded-[var(--radius-md,14px)] border border-zinc-200 bg-zinc-50 pl-8 pr-7 text-xs transition-colors",
+            "placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] dark:border-zinc-800 dark:bg-zinc-900 dark:focus:border-zinc-500",
           )}
           {...props}
         />
@@ -30,13 +30,13 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
           <button
             type="button"
             onClick={onClear}
-            className="absolute right-2 rounded text-zinc-400 hover:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tollma-500/60 dark:hover:text-zinc-200"
+            className="absolute right-2 rounded-[var(--radius-sm,10px)] text-zinc-400 hover:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--glass-focus-ring,rgba(6,110,9,0.6))] dark:hover:text-zinc-200"
             aria-label="Clear search"
           >
             <X className="size-3" />
           </button>
         ) : shortcut ? (
-          <kbd className="absolute right-2 rounded border border-zinc-200 bg-zinc-100 px-1 text-[9px] text-zinc-500 font-mono dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-400 pointer-events-none">
+          <kbd className="absolute right-2 rounded-[var(--radius-sm,10px)] border border-zinc-200 bg-zinc-100 px-1 text-[9px] text-zinc-500 font-mono dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-400 pointer-events-none">
             {shortcut}
           </kbd>
         ) : null}

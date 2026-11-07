@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("theme");var d=window.matchMedia("(prefers-color-scheme: dark)").matches;if(t==="dark"||(!t&&d)){document.documentElement.classList.add("dark")}else{document.documentElement.classList.remove("dark")}var v=localStorage.getItem("tollma-accent-vars");if(v){var m=JSON.parse(v);for(var k in m){document.documentElement.style.setProperty(k,m[k])}}var a=localStorage.getItem("tollma-accent");if(a){document.documentElement.setAttribute("data-accent",a)}if(localStorage.getItem("tollma-animations")==="off"){document.documentElement.setAttribute("data-animations","off")}}catch(e){}})();`,
+            __html: `(function(){try{var g=null;try{g=JSON.parse(localStorage.getItem("tollma-glass")||"null")}catch(e){g=null}var ap=g&&((g.state&&g.state.config&&g.state.config.appearance)||(g.config&&g.config.appearance));var t=(ap==="light"||ap==="dark")?ap:localStorage.getItem("theme");var dark=t!=="light"&&(t==="dark"||t==="black"||window.matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",dark);document.documentElement.classList.remove("black");var v=localStorage.getItem("tollma-accent-vars");if(v){var m=JSON.parse(v);for(var k in m){document.documentElement.style.setProperty(k,m[k])}}var a=localStorage.getItem("tollma-accent");if(a){document.documentElement.setAttribute("data-accent",a)}if(localStorage.getItem("tollma-animations")==="off"){document.documentElement.setAttribute("data-animations","off")}}catch(e){}})();`,
           }}
         />
       </head>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Toaster as SileoToaster } from "sileo";
+import { useGlassStore } from "@/store/glass";
 
 /** ToLLma theme is a `dark` class on <html>, not the OS preference. */
 function useDarkMode(): boolean {
@@ -24,25 +25,26 @@ function useDarkMode(): boolean {
  */
 export function Toaster() {
   const dark = useDarkMode();
+  const position = useGlassStore((s) => s.config.notificationPosition);
   return (
     <SileoToaster
       key={dark ? "dark" : "light"}
-      position="bottom-right"
-      theme={dark ? "dark" : "light"}
+      position={position}
+      theme={dark ? "light" : "dark"}
       options={
         dark
           ? {
-              fill: "#18181b",
-              styles: {
-                title: "text-zinc-50!",
-                description: "text-zinc-300!",
-              },
-            }
-          : {
               fill: "#ffffff",
               styles: {
                 title: "text-zinc-900!",
                 description: "text-zinc-600!",
+              },
+            }
+          : {
+              fill: "#18181b",
+              styles: {
+                title: "text-zinc-50!",
+                description: "text-zinc-300!",
               },
             }
       }
