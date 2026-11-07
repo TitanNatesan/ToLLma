@@ -11,6 +11,29 @@ export function siblingIdsFor(nodes: ConversationTreeNode[], messageId: string):
     .map((n) => n.id);
 }
 
+/**
+ * Local viewer-path derivation for the public share page: parent-chain walk
+ * from the leaf back to a root, returned root→leaf. Cycle-safe (a node
+ * already on its own ancestor chain stops the walk) and tolerant of dangling
+ * parents (unknown ids end the path). Empty when the leaf is unknown — the
+ * caller falls back to the owner's active path, then to the flat list.
+ */
+export function pathToLeaf(nodes: ConversationTreeNode[], leafId: string | null | undefined): string[] {
+  if (!leafId) return [];
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  if (!byId.has(leafId)) return [];
+  const reversed: string[] = [];
+  const seen = new Set<string>();
+  let current: string | null = leafId;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    reversed.push(current);
+    const parentId: string | null = byId.get(current)?.parent_message_id ?? null;
+    current = parentId !== null && byId.has(parentId) ? parentId : null;
+  }
+  return reversed.reverse();
+}
+
 export interface FlowPosition {
   id: string;
   depth: number;

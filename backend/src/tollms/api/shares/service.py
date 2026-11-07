@@ -5,7 +5,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from tollms.api.shares.schemas import (
@@ -15,7 +15,7 @@ from tollms.api.shares.schemas import (
 )
 from tollms.core.exceptions import NotFoundError, ValidationError
 from tollms.models.conversation import Conversation
-from tollms.models.message import Message, Role
+from tollms.models.message import Message, MessageStatus, Role
 from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
 from tollms.models.share import ConversationShare
@@ -182,6 +182,10 @@ def _load_public(db: Session, token: str) -> PublicShareRead:
     if conversation is None or conversation.is_deleted:
         raise NotFoundError("conversation not found")
 
+    # Every live branch/root, including failed/cancelled generations (safe
+    # error info only): those stay visible even when they produced no content.
+    # System prompts and soft-deleted rows are never shared. Single query,
+    # strictly scoped to the token's conversation.
     messages = list(
         db.execute(
             select(Message)
@@ -189,9 +193,12 @@ def _load_public(db: Session, token: str) -> PublicShareRead:
                 Message.conversation_id == conversation.id,
                 Message.is_deleted.is_(False),
                 Message.role != Role.SYSTEM,
-                Message.content != "",
+                or_(
+                    Message.content != "",
+                    Message.status.in_([MessageStatus.FAILED, MessageStatus.CANCELLED]),
+                ),
             )
-            .order_by(Message.created_at.asc())
+            .order_by(Message.created_at.asc(), Message.id.asc())
         ).scalars()
     )
     model_name = (
@@ -213,13 +220,33 @@ def _load_public(db: Session, token: str) -> PublicShareRead:
         provider_name=provider_name,
         messages=[
             PublicShareMessage(
+                id=message.id,
+                parent_message_id=message.parent_message_id,
+                version_number=message.version_number,
                 role=message.role.value,
+                status=message.status,
                 content=message.content,
+                error=message.error,
+                error_code=message.error_code,
                 created_at=message.created_at,
                 model_name=model_name if message.role == Role.ASSISTANT else None,
             )
             for message in messages
         ],
+        tree={
+            "nodes": [
+                {
+                    "id": message.id,
+                    "parent_message_id": message.parent_message_id,
+                    "role": message.role.value,
+                    "version_number": message.version_number,
+                    "status": message.status.value,
+                    "created_at": message.created_at,
+                }
+                for message in messages
+            ],
+            "active_leaf_id": conversation.active_leaf_message_id,
+        },
         view_count=share.view_count,
     )
 
@@ -239,9 +266,16 @@ def public_share(db: Session, token: str) -> PublicShareRead:
         if views is None:
             cache_delete_sync(key)
             raise NotFoundError("share link not found")
-        payload = PublicShareRead.model_validate(cached)
-        payload.view_count = views
-        return payload
+        try:
+            payload = PublicShareRead.model_validate(cached)
+        except Exception:
+            # Stale entry from a previous payload shape: drop it and load fresh.
+            logger.warning("share cache entry failed validation, reloading", exc_info=True)
+            cache_delete_sync(key)
+            cached = None
+        else:
+            payload.view_count = views
+            return payload
 
     payload = _load_public(db, token)
     if views is not None:

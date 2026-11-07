@@ -12,40 +12,44 @@ import {
   layoutTree,
   linearTreeFallback,
   nodePreview,
+  pathToLeaf,
   siblingIdsFor,
 } from "./conversationFlowLayout";
+import type { ConversationTreeNode } from "@/types";
+
+export interface ConversationFlowGraphProps {
+  nodes: ConversationTreeNode[];
+  contentById: Map<string, string>;
+  /** Leaf whose root→leaf chain renders highlighted (owner leaf on load,
+   *  viewer selection afterwards on the public page). */
+  selectedLeafId: string | null;
+  onSelectNode?: (messageId: string) => void;
+  disabled?: boolean;
+  /** Scroll the selected leaf into view once per key (conversation/token). */
+  revealKey?: string | null;
+}
 
 /**
- * Conversation Flow graph (spec sections 7-10): top-to-bottom message tree.
- * Roots on top, responses under requests, siblings side by side. Clicking a
- * node selects that branch (select endpoint) and reloads the conversation.
- * Pure SVG edges + HTML buttons — no graph dependency.
+ * Hook-free flow graph: no queries, no mutations, no store. The private chat
+ * wraps it with endpoint selection; the public share page drives it with
+ * local-only state. Pure SVG edges + HTML buttons — no graph dependency.
  */
-export function ConversationFlow({ conversationId }: { conversationId: string | null }) {
-  const streaming = useChatStore((s) => s.streaming);
-  const { data: treeData, isLoading: treeLoading } = useConversationTree(conversationId);
-  const { data: pathData } = useConversationPath(conversationId);
-  const { data: conversation } = useConversation(conversationId);
-  const { select } = useIntelligenceMutations(conversationId);
-
+export function ConversationFlowGraph({
+  nodes,
+  contentById,
+  selectedLeafId,
+  onSelectNode,
+  disabled,
+  revealKey,
+}: ConversationFlowGraphProps) {
   const [zoom, setZoom] = useState(1);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const nodeRefs = useRef(new Map<string, HTMLButtonElement>());
 
-  const persisted = useMemo(() => conversation?.messages ?? [], [conversation?.messages]);
-  const contentById = useMemo(() => new Map(persisted.map((m) => [m.id, m.content])), [persisted]);
-
-  // Tree endpoint mid-build (404) → linear fallback from persisted messages.
-  // Never blank: with no conversation yet, show the empty hint instead.
-  const nodes = useMemo(
-    () => treeData?.nodes ?? (persisted.length > 0 ? linearTreeFallback(persisted) : []),
-    [treeData, persisted],
-  );
-  const onPath = useMemo(() => {
-    if (pathData) return new Set(pathData.path.map((m) => m.id));
-    return new Set(persisted.map((m) => m.id));
-  }, [pathData, persisted]);
-  const activeLeafId = treeData?.active_leaf_id ?? pathData?.active_leaf_id ?? null;
+  // Local parent-chain walk (spec sections 7-10): top-to-bottom message tree.
+  // Roots on top, responses under requests, siblings side by side.
+  const onPath = useMemo(() => new Set(pathToLeaf(nodes, selectedLeafId)), [nodes, selectedLeafId]);
+  const activeLeafId = selectedLeafId;
 
   const layout = useMemo(() => layoutTree(nodes), [nodes]);
   const maxDepth = useMemo(
@@ -57,24 +61,14 @@ export function ConversationFlow({ conversationId }: { conversationId: string | 
   // background refetches never yank the scroll position mid-exploration).
   const shownForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!conversationId || shownForRef.current === conversationId || !activeLeafId) return;
-    shownForRef.current = conversationId;
+    if (!revealKey || shownForRef.current === revealKey || !activeLeafId) return;
+    shownForRef.current = revealKey;
     const t = window.setTimeout(() => {
       nodeRefs.current.get(activeLeafId)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }, 150);
     return () => window.clearTimeout(t);
-  }, [conversationId, activeLeafId]);
+  }, [revealKey, activeLeafId]);
 
-  if (!conversationId) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Open a conversation to see its flow.</p>;
-  }
-  if (treeLoading && nodes.length === 0) {
-    return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400" role="status">
-        Loading flow…
-      </p>
-    );
-  }
   if (nodes.length === 0) {
     return <p className="text-xs text-zinc-500 dark:text-zinc-400">No messages yet — send one to grow the tree.</p>;
   }
@@ -96,11 +90,8 @@ export function ConversationFlow({ conversationId }: { conversationId: string | 
   };
 
   const handleSelect = (messageId: string) => {
-    if (!conversationId || streaming || select.isPending || onPath.has(messageId)) return;
-    select.mutate(
-      { conversationId, messageId },
-      { onError: (error) => toastApiError(error, { title: "Could not switch branch" }) },
-    );
+    if (disabled || onPath.has(messageId)) return;
+    onSelectNode?.(messageId);
   };
 
   return (
@@ -219,7 +210,7 @@ export function ConversationFlow({ conversationId }: { conversationId: string | 
                 }}
                 type="button"
                 onClick={() => handleSelect(node.id)}
-                disabled={streaming || select.isPending}
+                disabled={disabled}
                 title={preview}
                 aria-label={`Select ${isAssistant ? "response" : "request"} ${versionLabel}${status ? `, ${status}` : ""}${isLeaf ? ", active" : ""}`}
                 aria-current={isLeaf ? "true" : undefined}
@@ -268,5 +259,60 @@ export function ConversationFlow({ conversationId }: { conversationId: string | 
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Conversation Flow for the private chat (spec sections 7-10): feeds the
+ * hook-free graph from the tree/path endpoints and routes node clicks
+ * through the select endpoint. Clicking a node selects that branch and
+ * reloads the conversation.
+ */
+export function ConversationFlow({ conversationId }: { conversationId: string | null }) {
+  const streaming = useChatStore((s) => s.streaming);
+  const { data: treeData, isLoading: treeLoading } = useConversationTree(conversationId);
+  const { data: pathData } = useConversationPath(conversationId);
+  const { data: conversation } = useConversation(conversationId);
+  const { select } = useIntelligenceMutations(conversationId);
+
+  const persisted = useMemo(() => conversation?.messages ?? [], [conversation?.messages]);
+  const contentById = useMemo(() => new Map(persisted.map((m) => [m.id, m.content])), [persisted]);
+
+  // Tree endpoint mid-build (404) → linear fallback from persisted messages.
+  // Never blank: with no conversation yet, show the empty hint instead.
+  const nodes = useMemo(
+    () => treeData?.nodes ?? (persisted.length > 0 ? linearTreeFallback(persisted) : []),
+    [treeData, persisted],
+  );
+  const selectedLeafId = treeData?.active_leaf_id ?? pathData?.active_leaf_id ?? null;
+
+  const handleSelect = (messageId: string) => {
+    if (!conversationId || streaming || select.isPending) return;
+    select.mutate(
+      { conversationId, messageId },
+      { onError: (error) => toastApiError(error, { title: "Could not switch branch" }) },
+    );
+  };
+
+  if (!conversationId) {
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Open a conversation to see its flow.</p>;
+  }
+  if (treeLoading && nodes.length === 0) {
+    return (
+      <p className="text-xs text-zinc-500 dark:text-zinc-400" role="status">
+        Loading flow…
+      </p>
+    );
+  }
+
+  return (
+    <ConversationFlowGraph
+      nodes={nodes}
+      contentById={contentById}
+      selectedLeafId={selectedLeafId}
+      onSelectNode={handleSelect}
+      disabled={streaming || select.isPending}
+      revealKey={conversationId}
+    />
   );
 }

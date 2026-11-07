@@ -657,6 +657,16 @@ export interface PublicShareMessage {
   content: string;
   created_at: string;
   model_name: string | null;
+  /** Full-tree contract: identity + branching position. Additive — older
+   *  backends omit every field, so readers must treat undefined as "flat
+   *  list, no navigation". Failed/cancelled nodes surface error/error_code
+   *  only (backend guarantees no sensitive content in these fields). */
+  id?: string | null;
+  parent_message_id?: string | null;
+  version_number?: number | null;
+  status?: MessageStatus | null;
+  error?: string | null;
+  error_code?: string | null;
 }
 
 export interface PublicShare {
@@ -667,6 +677,9 @@ export interface PublicShare {
   provider_name: string | null;
   messages: PublicShareMessage[];
   view_count: number;
+  /** Full-tree contract (parallel backend track). Absent on older backends —
+   *  the public page falls back to the flat message list. */
+  tree?: ConversationTree | null;
 }
 
 export interface BranchInfo {

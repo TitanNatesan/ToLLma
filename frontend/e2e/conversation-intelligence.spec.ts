@@ -112,6 +112,10 @@ test("share link renders a public read-only page without account data", async ({
   await page.getByTestId("conversation-menu").click();
   await page.getByTestId("header-share").click();
   await page.getByTestId("share-create").click();
+  await expect(page.getByTestId("share-confirm")).toContainText(
+    "This link will expose your entire conversation",
+  );
+  await page.getByTestId("share-confirm-mint").click();
   const link = page.getByTestId("share-link");
   await expect(link).toBeVisible({ timeout: 10000 });
   const url = (await link.textContent()) ?? "";

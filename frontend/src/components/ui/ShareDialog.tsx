@@ -28,12 +28,18 @@ export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogP
   const { share, unshare, rotate } = useIntelligenceMutations(conversationId);
   const [expiryHours, setExpiryHours] = useState<number | undefined>(undefined);
   const [copied, setCopied] = useState(false);
+  // Confirmation gate: minting is blocked until the viewer explicitly
+  // accepts the full-history exposure warning below.
+  const [confirming, setConfirming] = useState(false);
 
   const active = shares?.find((item) => item.is_public) ?? null;
   const shareUrl = active ? `${window.location.origin}${active.share_url}` : null;
 
   function handleOpenChange(next: boolean) {
-    if (!next) setCopied(false);
+    if (!next) {
+      setCopied(false);
+      setConfirming(false);
+    }
     onOpenChange(next);
   }
 
@@ -131,24 +137,59 @@ export function ShareDialog({ open, onOpenChange, conversationId }: ShareDialogP
                 </button>
               ))}
             </div>
-            <Button
-              data-testid="share-create"
-              disabled={!conversationId || share.isPending}
-              onClick={() =>
-                conversationId &&
-                share.mutate(
-                  { conversationId, expiresInHours: expiryHours },
-                  {
-                    onSuccess: () => toast.success("Share link created"),
-                    onError: (error) => toastApiError(error, { title: "Could not create link" }),
-                  },
-                )
-              }
-              size="sm"
-              type="button"
-            >
-              <Link2 className="size-3.5" /> Create share link
-            </Button>
+            {confirming ? (
+              <div
+                className="space-y-3 rounded-[var(--radius-md,14px)] border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30"
+                data-testid="share-confirm"
+              >
+                <p className="text-xs leading-relaxed text-amber-900 dark:text-amber-200">
+                  This link will expose your entire conversation, including all branches, edited requests, regenerated responses, and previous versions. Anyone with this link may view this history. Make sure you have not shared sensitive information.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    data-testid="share-confirm-mint"
+                    disabled={!conversationId || share.isPending}
+                    onClick={() =>
+                      conversationId &&
+                      share.mutate(
+                        { conversationId, expiresInHours: expiryHours },
+                        {
+                          onSuccess: () => {
+                            toast.success("Share link created");
+                            setConfirming(false);
+                          },
+                          onError: (error) => toastApiError(error, { title: "Could not create link" }),
+                        },
+                      )
+                    }
+                    size="sm"
+                    type="button"
+                  >
+                    <Link2 className="size-3.5" /> Create link
+                  </Button>
+                  <Button
+                    data-testid="share-confirm-cancel"
+                    disabled={share.isPending}
+                    onClick={() => setConfirming(false)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                data-testid="share-create"
+                disabled={!conversationId || share.isPending}
+                onClick={() => setConfirming(true)}
+                size="sm"
+                type="button"
+              >
+                <Link2 className="size-3.5" /> Create share link
+              </Button>
+            )}
           </div>
         )}
       </DialogContent>
