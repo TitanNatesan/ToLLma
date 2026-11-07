@@ -43,7 +43,7 @@ from tollms.core.exceptions import classify_provider_failure
 from tollms.models.message_history import GenerationRun
 from tollms.models.request_log import RequestStatus
 from tollms.services import request_logs as request_log_engine
-from tollms.services.gateway.costing import CostBreakdown, UsageTokens, calculate, prices_for_model
+from tollms.services.gateway.costing import CostBreakdown, UsageTokens, calculate, is_priced, prices_for_model, pricing_pin
 from tollms.services.model_repository.lookup import find_for_model
 
 logger = logging.getLogger(__name__)
@@ -411,9 +411,10 @@ class GenerationManager:
             logger.warning("generation %s: progress flush failed", spec.generation_id, exc_info=True)
 
     async def _finish_completed(self, db, spec: GenerationSpec, result: ChatResult) -> dict:
-        tokens, breakdown, estimated = self._price(db, spec, result, partial=False)
+        tokens, breakdown, estimated, price_pin, priced = self._price(db, spec, result, partial=False)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None, estimated)
+        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.COMPLETED, None, estimated,
+                                finish_reason=result.finish_reason, pricing_version=price_pin, priced=priced)
         _reconcile_key_policy(spec, completed=True, result=result, tokens=tokens, breakdown=breakdown)
         attachments = self._store_inline_images(db, spec, result)
         await self._cache_write_state(spec, MessageStatus.COMPLETED.value, result.text)
@@ -427,9 +428,10 @@ class GenerationManager:
         reason = active.fail_reason
         status = MessageStatus.FAILED if failed or reason else MessageStatus.CANCELLED
         error = reason if failed else None
-        tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
+        tokens, breakdown, estimated, price_pin, priced = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, status, error, estimated)
+        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, status, error, estimated,
+                                finish_reason=result.finish_reason, pricing_version=price_pin, priced=priced)
         _reconcile_key_policy(spec, completed=False, result=result, tokens=tokens, breakdown=breakdown)
         await self._cache_write_state(spec, status.value, result.text)
         self._invalidate_usage(spec)
@@ -438,9 +440,10 @@ class GenerationManager:
     async def _finish_failed(self, db, spec: GenerationSpec, result: ChatResult, error: str) -> dict:
         classified = classify_provider_failure(RuntimeError(error))
         spec.error_code = classified.code.value
-        tokens, breakdown, estimated = self._price(db, spec, result, partial=True)
+        tokens, breakdown, estimated, price_pin, priced = self._price(db, spec, result, partial=True)
         latency_ms = (datetime.now(timezone.utc) - self._started(db, spec)).total_seconds() * 1000
-        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error, estimated)
+        await self._store_final(db, spec, result.text, tokens, breakdown, latency_ms, MessageStatus.FAILED, error, estimated,
+                                finish_reason=result.finish_reason, pricing_version=price_pin, priced=priced)
         _reconcile_key_policy(spec, completed=False, result=result, tokens=tokens, breakdown=breakdown)
         await self._cache_write_state(spec, MessageStatus.FAILED.value, result.text)
         self._invalidate_usage(spec)
@@ -458,11 +461,12 @@ class GenerationManager:
     def _price(self, db, spec: GenerationSpec, result: ChatResult, *, partial: bool):
         """Provider usage wins; otherwise estimate from text (always estimated
         for partial/cancelled/failed content). Media generations use the
-        media rate card instead of token pricing."""
+        media rate card instead of token pricing. Fourth element is the
+        price valid-as-of pin for the ledger."""
         media = _media_breakdown(spec, partial=partial)
         if media is not None:
             breakdown, estimated = media
-            return UsageTokens(), breakdown, estimated
+            return UsageTokens(), breakdown, estimated, "media-rate-card", True
         estimated = partial
         prompt, completion = result.prompt_tokens, result.completion_tokens
         if not prompt and not completion:
@@ -480,11 +484,14 @@ class GenerationManager:
         except Exception:
             logger.warning("generation %s: repository pricing lookup failed", spec.generation_id, exc_info=True)
             repo = None
-        breakdown = calculate(tokens, prices_for_model(_price_holder(spec), repo))
-        return tokens, breakdown, estimated
+        prices = prices_for_model(_price_holder(spec), repo)
+        breakdown = calculate(tokens, prices)
+        return tokens, breakdown, estimated, pricing_pin(repo), is_priced(prices)
 
     async def _store_final(
-        self, db, spec, text, tokens, breakdown, latency_ms, status, error, estimated: bool = False
+        self, db, spec, text, tokens, breakdown, latency_ms, status, error, estimated: bool = False,
+        finish_reason: str | None = None, pricing_version: str | None = None,
+        priced: bool = True,
     ) -> None:
         try:
             row = db.get(Message, spec.generation_id)
@@ -525,7 +532,12 @@ class GenerationManager:
             await self._promptlog_capture(
                 db, spec, text, tokens,
                 status=_promptlog_status(status, text),
-                latency_ms=latency_ms, estimated=estimated)
+                latency_ms=latency_ms, estimated=estimated,
+                cost=breakdown if priced else None,
+                pricing_version=pricing_version if priced else None,
+                priced=priced,
+                finish_reason=finish_reason,
+                status_message=error if status == MessageStatus.FAILED else None)
             db.commit()
             # Guardrail post: streaming delivery cannot be withheld, so this is
             # audit-only (allow_block=False) — a blocked verdict is still
@@ -538,13 +550,19 @@ class GenerationManager:
 
     async def _promptlog_capture(self, db, spec: GenerationSpec, text: str, tokens,
                              *, status: str, latency_ms: float | None,
-                             estimated: bool = False) -> None:
+                             estimated: bool = False,
+                             cost: CostBreakdown | None = None,
+                             pricing_version: str | None = None,
+                             priced: bool = True,
+                             finish_reason: str | None = None,
+                             status_message: str | None = None) -> None:
         """Immutable ledger write for every terminal generation (completed,
         cancelled-partial, failed). Fail-open: never raises, never touches
         Valkey usage counters, never logs content."""
         try:
             from tollms.services.prompt_logging import queue as promptlog_queue
 
+            trace_id = str(spec.conversation_id or spec.generation_id)
             promptlog_queue.enqueue_post(
                 db, input_text=spec.history_text, output_text=text,
                 user_id=spec.user_id, org_id=spec.org_id,
@@ -553,7 +571,19 @@ class GenerationManager:
                 conversation_id=spec.conversation_id, endpoint="chat",
                 source="internal", request_id=spec.key_request_id,
                 generation_id=spec.generation_id, status=status,
+                trace_id=trace_id,
                 tokens={"prompt": tokens.prompt, "completion": tokens.completion},
+                estimated=estimated,
+                full_tokens={"total": tokens.prompt + tokens.completion,
+                             "cache_read": tokens.cache_read,
+                             "cache_write": tokens.cache_write,
+                             "reasoning": tokens.reasoning},
+                cost=({"input": cost.input_cost, "output": cost.output_cost,
+                       "total": cost.total_cost} if (cost is not None and priced) else None),
+                currency="USD" if (cost is not None and priced) else None,
+                pricing_version=pricing_version if priced else None,
+                finish_reason=finish_reason,
+                status_message=status_message,
                 latency_ms=latency_ms, error_code=spec.error_code,
                 allow_store=True)
         except Exception:

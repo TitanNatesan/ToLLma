@@ -94,6 +94,9 @@ export function RetentionSection() {
     <div data-testid="privacy-retention">
       <p className="pb-1 text-[11px] text-zinc-500 dark:text-zinc-400">
         Blank days use the platform default; “none” skips capture entirely. Organization policy wins on conflict.
+        Two clocks apply to prompt logs: this policy governs category retention and capture veto, while the
+        Logging settings card stamps per-row body expiry at capture time (existing rows keep their old stamp).
+        Bodies expire; metadata rows are kept. Prompt-log rows for other members need PromptLogs.Manage to change.
       </p>
       {CATEGORIES.map(({ category, label, description }) => (
         <RetentionRow key={category} row={byCategory.get(category)} category={category} label={label} description={description} />

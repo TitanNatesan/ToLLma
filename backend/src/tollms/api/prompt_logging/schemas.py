@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +63,24 @@ class LogMeta(BaseModel):
     output_chars: int
     prompt_tokens: int | None
     completion_tokens: int | None
+    # Full usage accounting (NULL = unknown, never 0-filled). Costs are
+    # Decimal (Pydantic serializes losslessly); NULL = unpriced.
+    usage_estimated: bool | None = None
+    total_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    input_cost: Decimal | None = None
+    output_cost: Decimal | None = None
+    total_cost: Decimal | None = None
+    currency: str | None = None
+    pricing_version: str | None = None
+    trace_id: str | None = None
+    session_key: str | None = None
+    finish_reason: str | None = None
+    model_params: dict | None = None
+    level: str | None = None
+    status_message: str | None = None
     latency_ms: float | None
     error_code: str | None
     policy_version: int
@@ -109,3 +128,9 @@ class RetentionRead(BaseModel):
     # Async capture queue health (WS2): depth gauge + last worker error.
     queue_depth: int = 0
     last_error: str | None = None
+    # Drop accounting (M1/alerting): cumulative counters for dashboard alerts.
+    # Alert when dropped_full/dropped_error/zero_check_failed > 0.
+    dropped_full: int = 0
+    dropped_error: int = 0
+    duplicates: int = 0
+    enqueued: int = 0

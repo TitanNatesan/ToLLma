@@ -43,6 +43,13 @@ describe("URL filter sync round-trip", () => {
     q: "req-1",
     from: "2026-10-01T00:00:00.000Z",
     to: "2026-10-02T00:00:00.000Z",
+    trace_id: "tr-1",
+    session_key: "sess-1",
+    level: "error",
+    min_cost: "0.01",
+    max_cost: "1",
+    min_tokens: "10",
+    max_tokens: "1000",
   };
 
   it("round-trips every filter key through URL params", () => {

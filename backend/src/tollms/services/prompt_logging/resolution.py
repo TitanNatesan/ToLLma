@@ -56,7 +56,8 @@ def _zero_retention_applies(
     """F9 mirror for the capture path (services may not import api/*).
 
     Any zero_retention policy at the applicable scope suppresses capture.
-    Fail-open False on error: preserves today's capture behavior.
+    Fail-CLOSED True on error: a DB blip must never capture rows the
+    workspace forbade (privacy over completeness; drops are logged).
     """
     if user_id is None:
         return False
@@ -85,8 +86,15 @@ def _zero_retention_applies(
             return bool(org_rows)
         return False
     except Exception:
-        logger.warning("zero-retention check failed", exc_info=True)
-        return False
+        logger.warning("zero-retention check failed — suppressing capture", exc_info=True)
+        try:
+            from tollms.services.observability.events import incr_counter
+
+            # Counted, not silent: dashboards alert on promptlog.zero_check_failed.
+            incr_counter("promptlog.zero_check_failed")
+        except Exception:
+            pass
+        return True
 
 
 def _live_setting_for_user(db: Session, user_id: uuid.UUID) -> PromptLoggingSetting | None:

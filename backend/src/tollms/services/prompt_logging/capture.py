@@ -54,6 +54,18 @@ def build_row_kwargs(
     latency_ms: float | None = None,
     error_code: str | None = None,
     allow_store: bool = True,
+    # Observability completeness (all optional, NULL = unknown).
+    trace_id: str | None = None,
+    session_key: str | None = None,
+    estimated: bool | None = None,
+    full_tokens: Mapping[str, int] | None = None,
+    cost: Mapping[str, Any] | None = None,
+    currency: str | None = None,
+    pricing_version: str | None = None,
+    finish_reason: str | None = None,
+    model_params: Mapping[str, Any] | None = None,
+    level: str | None = None,
+    status_message: str | None = None,
 ) -> dict[str, Any] | None:
     """Policy resolution + truncation + encryption, synchronously.
 
@@ -104,6 +116,23 @@ def build_row_kwargs(
             output_chars=len(output_text or ""),
             prompt_tokens=(tokens.get("prompt") if tokens else None),
             completion_tokens=(tokens.get("completion") if tokens else None),
+            # Full accounting; NULL = unknown (never 0-filled).
+            usage_estimated=estimated,
+            total_tokens=(full_tokens.get("total") if full_tokens else None),
+            cache_read_tokens=(full_tokens.get("cache_read") if full_tokens else None),
+            cache_write_tokens=(full_tokens.get("cache_write") if full_tokens else None),
+            reasoning_tokens=(full_tokens.get("reasoning") if full_tokens else None),
+            input_cost=(cost.get("input") if cost else None),
+            output_cost=(cost.get("output") if cost else None),
+            total_cost=(cost.get("total") if cost else None),
+            currency=currency,
+            pricing_version=(pricing_version or "")[:128] or None,
+            trace_id=(trace_id or "")[:128] or None,
+            session_key=(session_key or "")[:128] or None,
+            finish_reason=(finish_reason or "")[:64] or None,
+            model_params=dict(model_params) if model_params else None,
+            level=_level_for(status, level),
+            status_message=_scrub_message(status_message),
             latency_ms=latency_ms,
             error_code=(error_code or "")[:64] or None,
             policy_version=setting.version or 1,
@@ -114,6 +143,31 @@ def build_row_kwargs(
     except Exception:
         # Resolution/encryption failure — never content in app logs.
         logger.warning("promptlog build failed", exc_info=True)
+        return None
+
+
+_LEVELS = ("debug", "info", "warning", "error")
+
+
+def _level_for(status: str, level: str | None) -> str:
+    if level in _LEVELS:
+        return level  # type: ignore[return-value]
+    if status == "failed":
+        return "error"
+    if status in ("partial", "cancelled"):
+        return "warning"
+    return "info"
+
+
+def _scrub_message(message: str | None) -> str | None:
+    """Bounded, secret-scrubbed human-readable status. Never raw content."""
+    if not message:
+        return None
+    try:
+        from tollms.services.guardrails.deterministic import redact_text
+
+        return redact_text(message)[:500] or None
+    except Exception:
         return None
 
 

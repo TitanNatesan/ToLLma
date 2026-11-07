@@ -150,12 +150,42 @@ def _require_org_member(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> N
         raise NotFoundError(_RETENTION_NOT_FOUND)
 
 
+# Observability ledger categories: capture policy lives under PromptLogs.*,
+# so a weaker retention gate would let any member veto workspace capture
+# (F-R1). Org writes here require PromptLogs.Manage, reads PromptLogs.Read.
+_OBS_RETENTION_CATEGORIES = frozenset({"prompt_logs", "request_logs", "api_request_logs"})
+
+
+def _require_obs_perm(db: Session, org_id: uuid.UUID, user_id: uuid.UUID, code: str) -> None:
+    """404-oracle perm gate for observability retention. Never 403."""
+    from tollms.api.orgs.common.guards import effective_permissions
+
+    try:
+        perms = effective_permissions(db, org_id, user_id)
+    except Exception:
+        logger.warning("privacy obs perm check failed", exc_info=True)
+        raise NotFoundError(_RETENTION_NOT_FOUND)
+    if code not in perms:
+        raise NotFoundError(_RETENTION_NOT_FOUND)
+
+
 def list_retention(
     db: Session, user_id: uuid.UUID, org_id: uuid.UUID | None = None
 ) -> list[RetentionPolicy]:
-    """Personal policies, or org-scope policies (member-gated 404)."""
+    """Personal policies, or org-scope policies (member-gated 404).
+
+    Observability categories additionally require PromptLogs.Read (F-R1)."""
+    obs_reader = True
     if org_id is not None:
         _require_org_member(db, org_id, user_id)
+        try:
+            from tollms.api.orgs.common.guards import effective_permissions
+
+            perms = effective_permissions(db, org_id, user_id)
+        except Exception:
+            logger.warning("privacy list_retention perm check failed", exc_info=True)
+            raise NotFoundError(_RETENTION_NOT_FOUND)
+        obs_reader = "PromptLogs.Read" in perms or "PromptLogs.Manage" in perms
     try:
         stmt = select(RetentionPolicy).where(RetentionPolicy.is_deleted.is_(False))
         if org_id is not None:
@@ -164,7 +194,11 @@ def list_retention(
             stmt = stmt.where(
                 RetentionPolicy.user_id == user_id, RetentionPolicy.org_id.is_(None)
             )
-        return list(db.execute(stmt.order_by(RetentionPolicy.data_category.asc())).scalars())
+        rows = list(db.execute(stmt.order_by(RetentionPolicy.data_category.asc())).scalars())
+        if org_id is not None and not obs_reader:
+            # Member-readable for other categories; obs rows hidden (F-R1).
+            rows = [r for r in rows if r.data_category not in _OBS_RETENTION_CATEGORIES]
+        return rows
     except (NotFoundError, ValidationError):
         raise
     except Exception:
@@ -173,11 +207,15 @@ def list_retention(
 
 
 def set_retention(db: Session, user_id: uuid.UUID, data: schemas.RetentionSetRequest) -> RetentionPolicy:
-    """Upsert one (scope, category) policy. Org scope requires membership."""
+    """Upsert one (scope, category) policy. Org scope requires membership;
+    observability categories additionally require PromptLogs.Manage (F-R1 —
+    otherwise any member could veto workspace capture via zero_retention)."""
     if data.data_category not in RETENTION_CATEGORIES:
         raise ValidationError(f"unknown data category: {data.data_category}")
     if data.org_id is not None:
         _require_org_member(db, data.org_id, user_id)
+        if data.data_category in _OBS_RETENTION_CATEGORIES:
+            _require_obs_perm(db, data.org_id, user_id, "PromptLogs.Manage")
     try:
         stmt = select(RetentionPolicy).where(
             RetentionPolicy.data_category == data.data_category,

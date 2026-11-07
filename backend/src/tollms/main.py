@@ -28,6 +28,7 @@ from tollms.api.models.router import router as models_router
 from tollms.api.notifications.router import router as notifications_router
 from tollms.api.orgs.router import router as orgs_router
 from tollms.api.prompt_logging.router import router as prompt_logging_router
+from tollms.api.scores.router import router as scores_router
 from tollms.api.providers.router import router as providers_router
 from tollms.api.repository.router import router as repository_router
 from tollms.api.settings.router import router as settings_router
@@ -192,6 +193,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(catalog_router)
     app.include_router(prompt_logging_router)
+    app.include_router(scores_router)
     app.include_router(providers_router)
     app.include_router(models_router)
     app.include_router(repository_router)

@@ -2,10 +2,11 @@
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tollms.db.base import SoftDeleteMixin, TimestampedModel
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from tollms.models.organization import Organization
     from tollms.models.provider import Provider
     from tollms.models.registered_model import AIModel
+    from tollms.models.scores import Score
     from tollms.models.user import User
 
 MODES = ("global", "keys")
@@ -161,6 +163,9 @@ class PromptLog(TimestampedModel):
         Index("ix_prompt_logs_expires", "expires_at"),
         Index("ix_prompt_logs_status", "status"),
         Index("ix_prompt_logs_created", "created_at"),
+        Index("ix_prompt_logs_trace", "trace_id"),
+        Index("ix_prompt_logs_session_key", "session_key"),
+        Index("ix_prompt_logs_generation", "generation_id"),
     )
 
     workspace_type: Mapped[str] = mapped_column(String(16), default="personal", nullable=False)
@@ -191,6 +196,8 @@ class PromptLog(TimestampedModel):
     endpoint: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     source: Mapped[str] = mapped_column(String(16), default="internal", nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Logical link only (no FK): internal rows carry messages.id, public rows
+    # carry a deterministic per-request UUID that references no message row.
     generation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="completed", nullable=False)
     # Encrypted bodies (Fernet via core/crypto). Never raw secrets/headers.
@@ -202,6 +209,31 @@ class PromptLog(TimestampedModel):
     output_chars: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Full usage accounting (Langfuse parity). NULL = unknown/pre-migration —
+    # never backfilled with 0 (an unpriced row must not read as free).
+    usage_estimated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Ledger costs (Decimal, models.dev USD convention). NULL = unpriced.
+    input_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
+    output_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
+    total_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Price valid-as-of pin (repo sync identity); NULL = unknown.
+    pricing_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Cross-plane correlation. Internal: str(conversation_id or generation_id);
+    # public: request_id (uuid4 hex per request). No FK (string, cross-plane).
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # User-settable cross-plane session grouping (public: client-supplied).
+    session_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Generation detail persisted from the in-memory result.
+    finish_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Error diagnostics. level derived from status; status_message scrubbed.
+    level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     policy_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -214,3 +246,4 @@ class PromptLog(TimestampedModel):
     conversation: Mapped["Conversation | None"] = relationship(back_populates="prompt_logs")
     provider: Mapped["Provider | None"] = relationship(back_populates="prompt_logs")
     model: Mapped["AIModel | None"] = relationship(back_populates="prompt_logs")
+    scores: Mapped[list["Score"]] = relationship(back_populates="prompt_log")

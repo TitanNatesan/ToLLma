@@ -9,10 +9,40 @@ quotes an explicit reasoning rate.
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _UNIT = Decimal(1_000_000)
+
+
+def pricing_pin(repo: Any | None) -> str | None:
+    """Price valid-as-of pin for the ledger (Langfuse cost-version parity).
+
+    `models.dev:<repo row updated_at>` when repository-priced,
+    `registered-model` when only provider-model prices applied, None when
+    unknown. History never re-prices: the pin travels with the row.
+    """
+    try:
+        if repo is None:
+            return "registered-model"
+        updated = getattr(repo, "updated_at", None)
+        if updated is not None:
+            return "models.dev:" + updated.isoformat()
+        return "models.dev"
+    except Exception:
+        return None
+
+
+def is_priced(prices: "PriceSet") -> bool:
+    """True when any per-1M rate is nonzero (H1: unpriced rows stay NULL)."""
+    try:
+        return bool(
+            prices.input or prices.output or prices.cache_read
+            or prices.cache_write or prices.reasoning
+        )
+    except Exception:
+        return False
 
 
 @dataclass

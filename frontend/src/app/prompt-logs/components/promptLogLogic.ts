@@ -4,14 +4,14 @@
  * colocated vitest.
  */
 
-import { PROMPT_LOG_STATUSES } from "@/services/promptLogs";
+import { PROMPT_LOG_LEVELS, PROMPT_LOG_STATUSES } from "@/services/promptLogs";
 import type {
   PromptLogPage,
   PromptLogRow,
   PromptLoggingUpdateInput,
 } from "@/services/promptLogs";
 
-export { PROMPT_LOG_STATUSES };
+export { PROMPT_LOG_LEVELS, PROMPT_LOG_STATUSES };
 
 /** Org permission codes (same Group.Code convention as Guardrails.*). */
 export const PROMPT_LOG_PERMS = {
@@ -54,6 +54,13 @@ export interface LogFilter {
   from: string;
   to: string;
   q: string;
+  trace_id: string;
+  session_key: string;
+  level: string;
+  min_cost: string;
+  max_cost: string;
+  min_tokens: string;
+  max_tokens: string;
 }
 
 export const EMPTY_LOG_FILTER: LogFilter = {
@@ -65,6 +72,13 @@ export const EMPTY_LOG_FILTER: LogFilter = {
   from: "",
   to: "",
   q: "",
+  trace_id: "",
+  session_key: "",
+  level: "",
+  min_cost: "",
+  max_cost: "",
+  min_tokens: "",
+  max_tokens: "",
 };
 
 /** True when every filter is at its default (used for the filters-empty state). */
@@ -86,6 +100,13 @@ export function buildLogQuery(f: LogFilter): {
   from?: string;
   to?: string;
   q?: string;
+  trace_id?: string;
+  session_key?: string;
+  level?: string;
+  min_cost?: string;
+  max_cost?: string;
+  min_tokens?: string;
+  max_tokens?: string;
 } {
   const out: Record<string, string> = {};
   const set = (k: string, v: string) => {
@@ -98,6 +119,13 @@ export function buildLogQuery(f: LogFilter): {
   set("model_id", f.model_id);
   set("status", f.status);
   set("q", f.q);
+  set("trace_id", f.trace_id);
+  set("session_key", f.session_key);
+  set("level", f.level);
+  set("min_cost", f.min_cost);
+  set("max_cost", f.max_cost);
+  set("min_tokens", f.min_tokens);
+  set("max_tokens", f.max_tokens);
   // datetime-local carries local wall time: interpret in the browser zone.
   if (f.from.trim()) {
     const iso = datetimeLocalToISO(f.from);
@@ -391,12 +419,20 @@ export const LOG_FILTER_KEYS = [
   "q",
   "from",
   "to",
+  "trace_id",
+  "session_key",
+  "level",
+  "min_cost",
+  "max_cost",
+  "min_tokens",
+  "max_tokens",
 ] as const satisfies ReadonlyArray<keyof LogFilter>;
 
-/** Rebuild the filter bar from URL params (unknown statuses are dropped). */
+/** Rebuild the filter bar from URL params (unknown statuses/levels are dropped). */
 export function filterFromParams(get: (key: string) => string | null): LogFilter {
   const pick = (key: string) => get(key) ?? "";
   const status = pick("status");
+  const level = pick("level");
   return {
     user_id: pick("user_id"),
     key_id: pick("key_id"),
@@ -406,6 +442,13 @@ export function filterFromParams(get: (key: string) => string | null): LogFilter
     q: pick("q"),
     from: pick("from"),
     to: pick("to"),
+    trace_id: pick("trace_id"),
+    session_key: pick("session_key"),
+    level: (PROMPT_LOG_LEVELS as readonly string[]).includes(level) ? level : "",
+    min_cost: pick("min_cost"),
+    max_cost: pick("max_cost"),
+    min_tokens: pick("min_tokens"),
+    max_tokens: pick("max_tokens"),
   };
 }
 
@@ -546,4 +589,78 @@ export function formatEffectiveSummaryWithStates(
   if (keyOverrides > 0) parts.push(`${keyOverrides} key override${keyOverrides === 1 ? "" : "s"}`);
   if (isGlobalLoggingLocked(s)) parts.push("locked by global");
   return parts.filter(Boolean).join(" · ");
+}
+
+/* --- Wave 3: cost display + scores form helpers (pure, unit-tested) --- */
+
+/**
+ * Cost cell text. NULL/empty/NaN costs render as "unpriced" — never "$0.00"
+ * (a missing price is unknown, not free). Compact decimals for sub-cent LLM
+ * pricing (trims trailing zeros, caps at 6dp).
+ */
+export function formatCost(
+  totalCost: string | number | null | undefined,
+  currency?: string | null,
+): string {
+  if (totalCost === null || totalCost === undefined) return "unpriced";
+  const raw = typeof totalCost === "number" ? String(totalCost) : totalCost.trim();
+  if (!raw) return "unpriced";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  const amount = n < 0.01 && n !== 0 ? n.toFixed(6).replace(/0+$/, "").replace(/\.$/, "") : String(Math.round(n * 100) / 100);
+  return currency ? `${amount} ${currency}` : amount;
+}
+
+/** True when the row carries a priced cost (drives the unpriced fallback). */
+export function hasPricedCost(totalCost: string | number | null | undefined): boolean {
+  return formatCost(totalCost) !== "unpriced";
+}
+
+/** Token total: backend total wins, else prompt+completion, else null. */
+export function totalTokensOf(row: {
+  total_tokens?: number | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+}): number | null {
+  if (typeof row.total_tokens === "number") return row.total_tokens;
+  const p = row.prompt_tokens ?? 0;
+  const c = row.completion_tokens ?? 0;
+  if (row.prompt_tokens == null && row.completion_tokens == null) return null;
+  return p + c;
+}
+
+export interface ScoreForm {
+  name: string;
+  data_type: string;
+  value: string;
+  comment: string;
+}
+
+export const EMPTY_SCORE_FORM: ScoreForm = { name: "", data_type: "numeric", value: "", comment: "" };
+
+/** Validate the add-score form; returns the error copy or null when submittable. */
+export function validateScoreForm(f: ScoreForm): string | null {
+  if (!f.name.trim()) return "Give the score a name.";
+  if (f.data_type === "numeric") {
+    if (!f.value.trim()) return "Enter a numeric value.";
+    if (!Number.isFinite(Number(f.value.trim()))) return "Value must be a number for numeric scores.";
+    return null;
+  }
+  if (f.data_type === "categorical" || f.data_type === "boolean") {
+    if (!f.value.trim()) return "Enter a value for this score.";
+    return null;
+  }
+  return "Pick a valid score type.";
+}
+
+/** Human-readable score value (numeric from value_num, rest from value_text). */
+export function scoreValueLabel(s: {
+  data_type: string;
+  value_num: string | number | null;
+  value_text: string | null;
+}): string {
+  if (s.data_type === "numeric") {
+    return s.value_num === null || s.value_num === undefined ? "—" : String(s.value_num);
+  }
+  return s.value_text ?? "—";
 }

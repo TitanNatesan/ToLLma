@@ -43,7 +43,7 @@ function PromptLogsPageInner() {
 
   if (isOrg && !orgs.isPending && !perms.canRead) {
     return (
-      <PageContainer data-testid="prompt-logs-page">
+      <PageContainer testId="prompt-logs-page">
         <EmptyState
           icon={ScrollText}
           title="Prompt logs"
@@ -55,7 +55,7 @@ function PromptLogsPageInner() {
   }
 
   return (
-    <PageContainer data-testid="prompt-logs-page">
+    <PageContainer testId="prompt-logs-page">
       <PageHeader
         title="Prompt Logs"
         subtitle={isOrg ? `Organization logs · ${orgEntry?.name ?? ""}` : "Personal logs"}

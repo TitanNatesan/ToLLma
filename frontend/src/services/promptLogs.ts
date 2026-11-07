@@ -24,6 +24,10 @@ export const PROMPT_LOGS_BASE = "/api/v1/prompt-logs";
 /** Backend-validated log statuses (STATUSES in models/prompt_logging.py). */
 export const PROMPT_LOG_STATUSES = ["completed", "cancelled", "failed", "partial"] as const;
 export type PromptLogStatus = (typeof PROMPT_LOG_STATUSES)[number];
+
+/** Backend-validated log levels (_LEVELS in api/prompt_logging/records.py). */
+export const PROMPT_LOG_LEVELS = ["debug", "info", "warning", "error"] as const;
+export type PromptLogLevel = (typeof PROMPT_LOG_LEVELS)[number];
 export type PromptLogField = "input" | "output";
 
 /** Wire mode: backend MODES is ("global", "keys"). The UI only ever sends
@@ -71,6 +75,25 @@ export interface PromptLoggingUpdateInput {
 }
 
 export interface PromptLogRow {
+  /** Wave 3 observability columns (NULL/unknown on older backends — always optional). */
+  usage_estimated?: boolean | null;
+  total_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
+  /** Decimal-serialized costs (Pydantic emits strings); NULL = unpriced. */
+  input_cost?: string | number | null;
+  output_cost?: string | number | null;
+  total_cost?: string | number | null;
+  currency?: string | null;
+  pricing_version?: string | null;
+  trace_id?: string | null;
+  session_key?: string | null;
+  finish_reason?: string | null;
+  model_params?: Record<string, unknown> | null;
+  level?: string | null;
+  status_message?: string | null;
+  error_code?: string | null;
   id: string;
   request_id: string | null;
   created_at: string;
@@ -132,6 +155,13 @@ export interface PromptLogFilters {
   from?: string;
   to?: string;
   q?: string;
+  trace_id?: string;
+  session_key?: string;
+  level?: string;
+  min_cost?: string | number;
+  max_cost?: string | number;
+  min_tokens?: string | number;
+  max_tokens?: string | number;
   limit?: number;
   cursor?: string;
 }
@@ -142,6 +172,13 @@ function asString(v: unknown): string | null {
 
 function asNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** Decimal-serialized cost: Pydantic emits strings, but tolerate numbers. Never throws. */
+function asDecimal(v: unknown): string | null {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "string" && v.trim() !== "") return v.trim();
+  return null;
 }
 
 function asStringArray(v: unknown): string[] {
@@ -179,6 +216,7 @@ export function normalizeLogRow(raw: unknown): PromptLogRow {
           ...(outputChars > 0 ? ["output" as const] : []),
         ]);
   const keyId = asString(r.key_id) ?? asString(r.api_key_id);
+  const modelParamsRaw = r.model_params;
   return {
     id: asString(r.id) ?? "",
     request_id: asString(r.request_id),
@@ -206,6 +244,26 @@ export function normalizeLogRow(raw: unknown): PromptLogRow {
     input_chars: asNumber(r.input_chars),
     output_chars: asNumber(r.output_chars),
     content_expired: r.content_expired === true,
+    usage_estimated: typeof r.usage_estimated === "boolean" ? r.usage_estimated : null,
+    total_tokens: asNumber(r.total_tokens),
+    cache_read_tokens: asNumber(r.cache_read_tokens),
+    cache_write_tokens: asNumber(r.cache_write_tokens),
+    reasoning_tokens: asNumber(r.reasoning_tokens),
+    input_cost: asDecimal(r.input_cost),
+    output_cost: asDecimal(r.output_cost),
+    total_cost: asDecimal(r.total_cost),
+    currency: asString(r.currency),
+    pricing_version: asString(r.pricing_version),
+    trace_id: asString(r.trace_id),
+    session_key: asString(r.session_key),
+    finish_reason: asString(r.finish_reason),
+    model_params:
+      modelParamsRaw !== null && typeof modelParamsRaw === "object" && !Array.isArray(modelParamsRaw)
+        ? (modelParamsRaw as Record<string, unknown>)
+        : null,
+    level: asString(r.level),
+    status_message: asString(r.status_message),
+    error_code: asString(r.error_code),
   };
 }
 
@@ -394,4 +452,162 @@ export async function purgePromptLogs(
   );
   const count = asNumber(raw?.expired_count) ?? asNumber(raw?.expired) ?? 0;
   return { expired_count: Math.max(0, Math.floor(count)) };
+}
+
+/* --- Wave 3: ledger export + scores (observability) --- */
+
+/** Subset of PromptLogFilters the export endpoint accepts (it has no user/key/provider/q/date legs). */
+export interface PromptLogExportFilters {
+  trace_id?: string;
+  session_key?: string;
+  status?: string;
+  level?: string;
+  min_cost?: string | number;
+  max_cost?: string | number;
+  min_tokens?: string | number;
+  max_tokens?: string | number;
+}
+
+export interface PromptLogExportResult {
+  filename: string;
+  /** Non-null when the server has more pages (X-Next-Cursor). Single-shot download: surface as truncation. */
+  nextCursor: string | null;
+}
+
+/**
+ * Ledger export (CSV/JSONL attachment). Raw fetch like the list: auth rides
+ * Bearer + httpOnly cookies (`credentials: include`), the filename comes from
+ * `Content-Disposition`, and the next-page cursor from `X-Next-Cursor`.
+ */
+export async function exportPromptLogs(
+  filters: PromptLogExportFilters = {},
+  format: "csv" | "jsonl" = "csv",
+  orgId?: string | null,
+): Promise<PromptLogExportResult> {
+  const headers = new Headers();
+  const token = getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(
+    apiUrl(`${PROMPT_LOGS_BASE}/logs/export${qs({ org_id: orgId ?? undefined, format, limit: 1000, ...filters })}`),
+    { cache: "no-store", credentials: "include", headers },
+  );
+  if (res.status === 401) {
+    useAuthStore.getState().reset();
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    let data: unknown = body;
+    try { data = JSON.parse(body); } catch { /* not JSON */ }
+    throw new ApiError(res.status, res.statusText, data, `GET ${PROMPT_LOGS_BASE}/logs/export -> ${res.status}`);
+  }
+  const blob = await res.blob();
+  const match = /filename="?([^";]+)"?/.exec(res.headers.get("content-disposition") ?? "");
+  const filename = match?.[1] ?? `tollma-prompt-logs.${format === "jsonl" ? "jsonl" : "csv"}`;
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(href);
+  return { filename, nextCursor: res.headers.get("X-Next-Cursor") };
+}
+
+/** Score data types (mirror models/scores.py). */
+export const SCORE_DATA_TYPES = ["numeric", "categorical", "boolean"] as const;
+export type ScoreDataType = (typeof SCORE_DATA_TYPES)[number];
+
+export interface ScoreRead {
+  id: string;
+  name: string;
+  data_type: string;
+  value_num: string | number | null;
+  value_text: string | null;
+  trace_id: string | null;
+  prompt_log_id: string | null;
+  session_key: string | null;
+  experiment_id: string | null;
+  source: string;
+  config_name: string | null;
+  comment: string | null;
+  environment: string | null;
+  user_id: string | null;
+  org_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScoreCreateInput {
+  name: string;
+  data_type: ScoreDataType | string;
+  value_num?: number | null;
+  value_text?: string | null;
+  trace_id?: string | null;
+  prompt_log_id?: string | null;
+  session_key?: string | null;
+  comment?: string | null;
+}
+
+export interface ScoreFilters {
+  org_id?: string | null;
+  trace_id?: string | null;
+  prompt_log_id?: string | null;
+  session_key?: string | null;
+  name?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+function asScore(v: unknown): ScoreRead | null {
+  const r = asRecord(v);
+  const id = asString(r.id);
+  if (!id) return null;
+  const num = r.value_num;
+  return {
+    id,
+    name: asString(r.name) ?? "",
+    data_type: asString(r.data_type) ?? "numeric",
+    value_num:
+      typeof num === "number" && Number.isFinite(num) ? num : typeof num === "string" ? num : null,
+    value_text: asString(r.value_text),
+    trace_id: asString(r.trace_id),
+    prompt_log_id: asString(r.prompt_log_id),
+    session_key: asString(r.session_key),
+    experiment_id: asString(r.experiment_id),
+    source: asString(r.source) ?? "human",
+    config_name: asString(r.config_name),
+    comment: asString(r.comment),
+    environment: asString(r.environment),
+    user_id: asString(r.user_id),
+    org_id: asString(r.org_id),
+    created_at: asString(r.created_at) ?? "",
+    updated_at: asString(r.updated_at) ?? "",
+  };
+}
+
+/** List scores for a log/trace (Read-gated server-side; visible wherever the log row is). */
+export async function listScores(filters: ScoreFilters = {}): Promise<ScoreRead[]> {
+  const raw = await apiRequest<unknown>(`/api/v1/scores${qs(filters as Record<string, string | undefined>)}`);
+  const items = asRecord(raw).items;
+  if (!Array.isArray(items)) return [];
+  return items.map(asScore).filter((s): s is ScoreRead => s !== null);
+}
+
+/** Attach a human score to a log/trace. */
+export async function createScore(body: ScoreCreateInput, orgId?: string | null): Promise<ScoreRead> {
+  const raw = await apiRequest<unknown>(`/api/v1/scores${orgQs(orgId ?? undefined)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const score = asScore(raw);
+  if (!score) throw new Error("The server returned an unreadable score.");
+  return score;
+}
+
+/** Delete a score (Manage-gated server-side). */
+export function deleteScore(id: string, orgId?: string | null): Promise<void> {
+  return apiRequest<void>(`/api/v1/scores/${encodeURIComponent(id)}${orgQs(orgId ?? undefined)}`, {
+    method: "DELETE",
+  });
 }

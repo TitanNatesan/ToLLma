@@ -6,6 +6,7 @@ lives in settings.py (workspace policy) and records.py (ledger reads/writes).
 
 from tollms.api.prompt_logging.records import (
     delete_log,
+    export_logs,
     get_log_detail,
     list_logs,
     purge_logs,
@@ -20,6 +21,7 @@ from tollms.api.prompt_logging.settings import (
 
 __all__ = [
     "delete_log",
+    "export_logs",
     "get_log_detail",
     "get_settings",
     "list_logs",

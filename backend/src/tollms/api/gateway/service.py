@@ -55,7 +55,7 @@ from tollms.api.conversations.schemas import ConversationCreate
 from tollms.services.gateway.adapters.base import BaseProviderAdapter, ChatMessage, ChatResult, MediaPart
 from tollms.services.gateway import attachments as attachment_engine
 from tollms.services.gateway import caching as caching_engine
-from tollms.services.gateway.costing import CostBreakdown, UsageTokens, calculate, prices_for_model
+from tollms.services.gateway.costing import CostBreakdown, UsageTokens, calculate, is_priced, prices_for_model, pricing_pin
 from tollms.services.gateway.factory import build_adapter
 from tollms.services.cost_estimator import (
     CostEstimate,
@@ -712,6 +712,13 @@ async def _promptlog_capture(
     tokens=None,
     latency_ms: float | None = None,
     error_code: str | None = None,
+    estimated: bool | None = None,
+    full_tokens=None,
+    cost: CostBreakdown | None = None,
+    priced: bool = True,
+    pricing_version: str | None = None,
+    finish_reason: str | None = None,
+    status_message: str | None = None,
 ) -> None:
     """Prompt-log hook: immutable ledger write, fail-open always. Never raises,
     never touches Valkey usage counters, never logs content.
@@ -732,7 +739,15 @@ async def _promptlog_capture(
             model_id=getattr(model, "id", None),
             conversation_id=conversation_id, endpoint="chat", source="internal",
             request_id=request_id, generation_id=generation_id, status=status,
+            trace_id=str(conversation_id or generation_id or request_id or ""),
             tokens=tokens, latency_ms=latency_ms, error_code=error_code,
+            estimated=estimated, full_tokens=full_tokens,
+            cost=({"input": cost.input_cost, "output": cost.output_cost,
+                   "total": cost.total_cost} if (cost is not None and priced) else None),
+            currency="USD" if (cost is not None and priced) else None,
+            pricing_version=pricing_version if priced else None,
+            finish_reason=finish_reason,
+            status_message=status_message,
             allow_store=True)
     except Exception:
         logger.warning("promptlog hook failed (fail-open)", exc_info=True)
@@ -1074,11 +1089,11 @@ def _assemble_history(rows, model, adapter: BaseProviderAdapter) -> tuple[list[s
 
 def _finalize_usage(
     db: Session, provider, model, history_text: str, result: ChatResult
-) -> tuple[UsageTokens, int, CostBreakdown, bool]:
+) -> tuple[UsageTokens, int, CostBreakdown, bool, str | None, bool]:
     """Estimate missing tokens, then price via CostCalculationService.
 
     Repository pricing wins per-field (per-token, scaled); model prices fill gaps.
-    Returns (tokens, total_tokens, breakdown, estimated).
+    Returns (tokens, total_tokens, breakdown, estimated, pricing_pin, priced).
     """
     estimated = False
     prompt, completion = result.prompt_tokens, result.completion_tokens
@@ -1094,8 +1109,9 @@ def _finalize_usage(
         reasoning=result.reasoning_tokens or 0,
     )
     repo = find_for_model(db, provider.provider_type.value, model.model_id)
-    breakdown = calculate(tokens, prices_for_model(model, repo))
-    return tokens, total, breakdown, estimated
+    prices = prices_for_model(model, repo)
+    breakdown = calculate(tokens, prices)
+    return tokens, total, breakdown, estimated, pricing_pin(repo), is_priced(prices)
 
 
 async def run_chat(
@@ -1171,7 +1187,7 @@ async def run_chat(
         )
         result = await adapter.chat(history)
         latency_ms = (time.monotonic() - start) * 1000
-        tokens, total, breakdown, estimated = _finalize_usage(
+        tokens, total, breakdown, estimated, price_pin, priced = _finalize_usage(
             db, provider, model, "".join(m.content for m in history), result
         )
         usage = (tokens.prompt, tokens.completion, total)
@@ -1275,7 +1291,11 @@ async def run_chat(
             provider=provider, model=model, conversation_id=conv_id,
             request_id=request_id, generation_id=assistant.id, status="completed",
             tokens={"prompt": tokens.prompt, "completion": tokens.completion},
-            latency_ms=latency_ms)
+            latency_ms=latency_ms, estimated=estimated,
+            full_tokens={"total": total, "cache_read": tokens.cache_read,
+                         "cache_write": tokens.cache_write, "reasoning": tokens.reasoning},
+            cost=breakdown, priced=priced, pricing_version=price_pin,
+            finish_reason=result.finish_reason)
         _reconcile_chat_usage(
             db, ctx, provider, model, tokens, breakdown,
             request_id=request_id, org_cap=org_cap,
@@ -1314,7 +1334,7 @@ async def run_chat(
             conversation_id=locals().get("conv_id"),
             request_id=request_id, generation_id=None, status="failed",
             latency_ms=(time.monotonic() - start) * 1000,
-            error_code=classified.code.value)
+            error_code=classified.code.value, status_message=str(e))
         # Durable failure record: no message row exists on this path, so log
         # the attempt itself (unknown usage stays NULL — never fabricated).
         # Never breaks error propagation.

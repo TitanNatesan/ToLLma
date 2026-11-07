@@ -165,6 +165,7 @@ def _purge_user_data(db, user_id: uuid.UUID) -> dict[str, int]:
     from tollms.models.provider import Provider
     from tollms.models.registered_model import AIModel
     from tollms.models.request_log import ExportEvent, RequestLog
+    from tollms.models.security_audit import SecurityAuditEvent
     from tollms.models.usage_aggregate import UsageDailyAggregate
     from tollms.services.api_keys import keys as key_engine
     from tollms.services.gateway.attachments import delete_bytes
@@ -250,6 +251,13 @@ def _purge_user_data(db, user_id: uuid.UUID) -> dict[str, int]:
     notifications = db.execute(
         delete(Notification).where(Notification.user_id == user_id)
     ).rowcount or 0
+    # Audit rows are retained for security forensics but de-identified:
+    # actor attribution is nulled, hashes/ids stay for pattern analysis.
+    audit_anonymized = db.execute(
+        update(SecurityAuditEvent)
+        .where(SecurityAuditEvent.actor_user_id == user_id)
+        .values(actor_user_id=None)
+    ).rowcount or 0
     return {
         "conversations": conversations,
         "attachments": len(paths),
@@ -269,6 +277,7 @@ def _purge_user_data(db, user_id: uuid.UUID) -> dict[str, int]:
         "api_request_logs": api_request_logs,
         "export_events": export_events,
         "notifications": notifications,
+        "security_audit_anonymized": audit_anonymized,
     }
 
 

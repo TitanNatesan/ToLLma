@@ -1,9 +1,13 @@
 """Prompt log records: metadata listing, gated detail, delete, purge, retention."""
 
 import base64
+import csv
+import io
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +20,7 @@ from tollms.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from tollms.services import request_logs as request_log_engine
 from tollms.models.api_key import ApiKey
 from tollms.models.organization import Membership, MembershipState
 from tollms.models.prompt_logging import STATUSES, PromptLog
@@ -23,6 +28,9 @@ from tollms.models.provider import Provider
 from tollms.models.registered_model import AIModel
 
 logger = logging.getLogger(__name__)
+
+_LEVELS = ("debug", "info", "warning", "error")
+MAX_EXPORT_PAGE = 1000
 
 
 def _scope_org(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID,
@@ -174,6 +182,15 @@ def _meta(row: PromptLog, key_name: str | None = None,
         request_id=row.request_id, generation_id=row.generation_id,
         status=row.status, input_chars=row.input_chars, output_chars=row.output_chars,
         prompt_tokens=row.prompt_tokens, completion_tokens=row.completion_tokens,
+        usage_estimated=row.usage_estimated, total_tokens=row.total_tokens,
+        cache_read_tokens=row.cache_read_tokens,
+        cache_write_tokens=row.cache_write_tokens,
+        reasoning_tokens=row.reasoning_tokens, input_cost=row.input_cost,
+        output_cost=row.output_cost, total_cost=row.total_cost,
+        currency=row.currency, pricing_version=row.pricing_version,
+        trace_id=row.trace_id, session_key=row.session_key,
+        finish_reason=row.finish_reason, model_params=row.model_params,
+        level=row.level, status_message=row.status_message,
         latency_ms=row.latency_ms, error_code=row.error_code,
         policy_version=row.policy_version, content_expired=row.content_expired,
         input_truncated=bool(row.input_truncated),
@@ -182,6 +199,38 @@ def _meta(row: PromptLog, key_name: str | None = None,
         fields=fields, duration_ms=duration_ms,
         completed_at=completed_at, key_name=key_name, user_email=user_email,
         provider_name=provider_name, model_name=model_name)
+
+
+def _ledger_filters(stmt, *, trace_id: str | None = None,
+                  session_key: str | None = None,
+                  status: str | None = None, level: str | None = None,
+                  min_cost: Decimal | None = None,
+                  max_cost: Decimal | None = None,
+                  min_tokens: int | None = None,
+                  max_tokens: int | None = None):
+    """AND-composed metadata filters shared by list_logs and export_logs."""
+    if status is not None:
+        if status not in STATUSES:
+            # Truncated: the value is attacker-controlled (query param).
+            raise ValidationError(f"invalid status: {str(status)[:32]!r}")
+        stmt = stmt.where(PromptLog.status == status)
+    if trace_id is not None:
+        stmt = stmt.where(PromptLog.trace_id == trace_id)
+    if session_key is not None:
+        stmt = stmt.where(PromptLog.session_key == session_key)
+    if level is not None:
+        if level not in _LEVELS:
+            raise ValidationError(f"invalid level: {str(level)[:32]!r}")
+        stmt = stmt.where(PromptLog.level == level)
+    if min_cost is not None:
+        stmt = stmt.where(PromptLog.total_cost >= min_cost)
+    if max_cost is not None:
+        stmt = stmt.where(PromptLog.total_cost <= max_cost)
+    if min_tokens is not None:
+        stmt = stmt.where(PromptLog.total_tokens >= min_tokens)
+    if max_tokens is not None:
+        stmt = stmt.where(PromptLog.total_tokens <= max_tokens)
+    return stmt
 
 
 def list_logs(db: Session, caller_id: uuid.UUID, *,
@@ -194,6 +243,13 @@ def list_logs(db: Session, caller_id: uuid.UUID, *,
               date_from: str | None = None,
               date_to: str | None = None,
               q: str | None = None,
+              trace_id: str | None = None,
+              session_key: str | None = None,
+              level: str | None = None,
+              min_cost: Decimal | None = None,
+              max_cost: Decimal | None = None,
+              min_tokens: int | None = None,
+              max_tokens: int | None = None,
               limit: int = 50, cursor: str | None = None):
     """Metadata-only listing, filters AND-composed, stable cursor order."""
     stmt = _scope_stmt(db, caller_id, org_id)
@@ -213,11 +269,11 @@ def list_logs(db: Session, caller_id: uuid.UUID, *,
     if model_id is not None:
         _resolve_model(db, caller_id, org_id, model_id)
         stmt = stmt.where(PromptLog.model_id == model_id)
-    if status is not None:
-        if status not in STATUSES:
-            # Truncated: the value is attacker-controlled (query param).
-            raise ValidationError(f"invalid status: {str(status)[:32]!r}")
-        stmt = stmt.where(PromptLog.status == status)
+    stmt = _ledger_filters(stmt, trace_id=trace_id,
+                           session_key=session_key, status=status,
+                           level=level, min_cost=min_cost,
+                           max_cost=max_cost, min_tokens=min_tokens,
+                           max_tokens=max_tokens)
     start = _parse_time(date_from, "from") if date_from else None
     end = _parse_time(date_to, "to") if date_to else None
     if start is not None:
@@ -300,6 +356,20 @@ def get_log_detail(db: Session, caller_id: uuid.UUID, log_id: uuid.UUID,
     if (row.input_cipher or row.output_cipher) and body_in is None and body_out is None:
         return LogDetail(**meta.model_dump(), input_text=None,
                          output_text=None, content_restricted=True)
+    if org_id is not None:
+        # Bodies leave the vault: org AuditLog row (who/when/row id only,
+        # never body content). Personal scope skips audit (own data).
+        # Fail-closed like the delete/purge paths below.
+        try:
+            _audit(db, org_id, caller_id, "prompt_logs.content_viewed",
+                   log_id=str(log_id))
+            db.commit()
+        except ApplicationException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            raise ApplicationException("prompt log read failed") from exc
     return LogDetail(**meta.model_dump(), input_text=body_in,
                      output_text=body_out, content_restricted=False)
 
@@ -386,4 +456,133 @@ def retention_info(db: Session, caller_id: uuid.UUID, org_id: uuid.UUID | None):
     return RetentionRead(default_days=DEFAULT_RETENTION_DAYS,
                          effective_days=effective, next_run=next_run,
                          queue_depth=int(queue_stats.get("queue_depth") or 0),
-                         last_error=last_error)
+                         last_error=last_error,
+                         dropped_full=int(queue_stats.get("dropped_full") or 0),
+                         dropped_error=int(queue_stats.get("dropped_error") or 0),
+                         duplicates=int(queue_stats.get("duplicates") or 0),
+                         enqueued=int(queue_stats.get("enqueued") or 0))
+
+
+_EXPORT_COLUMNS = (
+    "id", "created_at", "trace_id", "session_key", "endpoint", "source",
+    "status", "level", "prompt_tokens", "completion_tokens", "total_tokens",
+    "cache_read_tokens", "cache_write_tokens", "reasoning_tokens",
+    "input_cost", "output_cost", "total_cost", "currency", "latency_ms",
+    "error_code", "status_message",
+)
+
+
+def _export_row(row: PromptLog) -> dict:
+    """Metadata-only export object. Decrypted bodies are never exported."""
+    return {
+        "id": str(row.id),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "trace_id": _csv_safe(row.trace_id),
+        "session_key": _csv_safe(row.session_key),
+        "endpoint": _csv_safe(row.endpoint),
+        "source": row.source,
+        "status": row.status,
+        "level": row.level,
+        "prompt_tokens": row.prompt_tokens,
+        "completion_tokens": row.completion_tokens,
+        "total_tokens": row.total_tokens,
+        "cache_read_tokens": row.cache_read_tokens,
+        "cache_write_tokens": row.cache_write_tokens,
+        "reasoning_tokens": row.reasoning_tokens,
+        "input_cost": str(row.input_cost) if row.input_cost is not None else None,
+        "output_cost": str(row.output_cost) if row.output_cost is not None else None,
+        "total_cost": str(row.total_cost) if row.total_cost is not None else None,
+        "currency": row.currency,
+        "latency_ms": row.latency_ms,
+        "error_code": _csv_safe(row.error_code),
+        "status_message": _csv_safe(row.status_message),
+    }
+
+
+def _csv_safe(value: str | None) -> str | None:
+    """Formula-injection guard (H2): spreadsheet formulas never start a cell.
+
+    Prefixes a single quote when the value starts with = + - @ tab or CR.
+    Only applied at export serialization — stored rows are untouched.
+    """
+    if not value:
+        return value
+    if value[0] in ("=", "+", "-", "@", "\t", "\r", "\n"):
+        return "'" + value
+    return value
+
+
+def export_logs(db: Session, caller_id: uuid.UUID, *,
+                org_id: uuid.UUID | None = None,
+                format: str = "csv",
+                limit: int = 200, cursor: str | None = None,
+                trace_id: str | None = None,
+                session_key: str | None = None,
+                status: str | None = None,
+                level: str | None = None,
+                min_cost: Decimal | None = None,
+                max_cost: Decimal | None = None,
+                min_tokens: int | None = None,
+                max_tokens: int | None = None):
+    """Server-side cursor-paged metadata export (bodies never leave the vault).
+
+    Scope: personal rows for the owner; org rows require BOTH
+    PromptLogs.Read and Analytics.Export (the latter implies the former per
+    the plan — both are enforced here explicitly). Each call writes one
+    ExportEvent(dataset='prompt_logs') with org/personal attribution in
+    detail. Returns (content, media_type, next_cursor, item_count); the
+    router serves content as an attachment with X-Next-Cursor when set.
+    """
+    if format not in ("csv", "jsonl"):
+        raise ValidationError(f"invalid format: {str(format)[:16]!r}")
+    if org_id is None:
+        stmt = select(PromptLog).where(
+            PromptLog.user_id == caller_id, PromptLog.org_id.is_(None))
+    else:
+        _scope_org(db, caller_id, org_id, "PromptLogs.Read")
+        _scope_org(db, caller_id, org_id, "Analytics.Export")
+        stmt = select(PromptLog).where(PromptLog.org_id == org_id)
+    stmt = _ledger_filters(stmt, trace_id=trace_id, session_key=session_key,
+                           status=status, level=level, min_cost=min_cost,
+                           max_cost=max_cost, min_tokens=min_tokens,
+                           max_tokens=max_tokens)
+    decoded = _decode_cursor(cursor)
+    if decoded is not None:
+        created_at, row_id = decoded
+        stmt = stmt.where((PromptLog.created_at < created_at) |
+                          ((PromptLog.created_at == created_at) &
+                           (PromptLog.id < row_id)))
+    limit = min(max(limit, 1), MAX_EXPORT_PAGE)
+    rows = list(db.scalars(stmt.order_by(
+        PromptLog.created_at.desc(), PromptLog.id.desc()).limit(limit + 1)))
+    next_cursor: str | None = None
+    if len(rows) > limit:
+        last = rows[limit - 1]
+        raw = f"{last.created_at.isoformat()}|{last.id}"
+        next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
+        rows = rows[:limit]
+    objs = [_export_row(row) for row in rows]
+    if format == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(_EXPORT_COLUMNS)
+        for obj in objs:
+            writer.writerow(["" if obj[col] is None else obj[col]
+                             for col in _EXPORT_COLUMNS])
+        content, media_type = buf.getvalue(), "text/csv; charset=utf-8"
+    else:
+        content = "".join(json.dumps(obj, default=str) + "\n" for obj in objs)
+        media_type = "application/x-ndjson"
+    try:
+        request_log_engine.record_export(
+            db, caller_id, "prompt_logs", format, len(objs),
+            detail=f"org_id={org_id}" if org_id is not None else "personal")
+        db.commit()
+    except ApplicationException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.warning("promptlog export audit failed", exc_info=True)
+        raise ApplicationException("prompt log export failed") from exc
+    return content, media_type, next_cursor, len(objs)

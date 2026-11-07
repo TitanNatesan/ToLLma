@@ -60,7 +60,9 @@ from tollms.services.gateway.costing import (
     CostBreakdown,
     UsageTokens,
     calculate,
+    is_priced,
     prices_for_model,
+    pricing_pin,
 )
 from tollms.services.gateway.factory import build_adapter
 from tollms.services.gateway.limits import LimitsDecision, check_request, record_usage
@@ -94,15 +96,22 @@ class ClientMeta:
     request_id: str
     ip_address: str | None = None
     user_agent: str | None = None
+    # Opaque cross-plane session grouping (client-supplied, never auth).
+    session_key: str | None = None
 
 
 def client_meta(request: Request) -> ClientMeta:
     """Build ClientMeta from the incoming request (never trusted for auth)."""
     info = _request_client_meta(request)
+    try:
+        session_key = (request.headers.get("x-tollma-session-key") or "")[:128] or None
+    except Exception:
+        session_key = None
     return ClientMeta(
         request_id=uuid.uuid4().hex,
         ip_address=info.get("ip") or None,
         user_agent=info.get("user_agent") or None,
+        session_key=session_key,
     )
 
 
@@ -303,10 +312,12 @@ def _estimated_cost(db: Session, provider: Provider, model: AIModel, unified: Un
 
 def _finalize_usage(
     db: Session, provider: Provider, model: AIModel, history_text: str, text: str, usage: ChatResult
-) -> tuple[UsageTokens, int, CostBreakdown, bool]:
+) -> tuple[UsageTokens, int, CostBreakdown, bool, str | None, bool]:
     """Estimate missing tokens, then price via the shared cost engine.
 
     Same rules as the internal gateway, minus conversation persistence.
+    Fifth element is the price valid-as-of pin; sixth is priced (H1: unpriced
+    rows persist NULL costs, never zeros).
     """
     estimated = False
     prompt, completion = usage.prompt_tokens, usage.completion_tokens
@@ -322,8 +333,9 @@ def _finalize_usage(
         reasoning=usage.reasoning_tokens or 0,
     )
     repo = find_for_model(db, provider.provider_type.value, model.model_id)
-    breakdown = calculate(tokens, prices_for_model(model, repo))
-    return tokens, total, breakdown, estimated
+    prices = prices_for_model(model, repo)
+    breakdown = calculate(tokens, prices)
+    return tokens, total, breakdown, estimated, pricing_pin(repo), is_priced(prices)
 
 
 # --- logging / usage helpers -----------------------------------------------------
@@ -751,17 +763,38 @@ def _guardrail_post(db: Session, prepared: "_Prepared", text: str, *,
         return "allowed"
 
 
+def _deterministic_generation_id(request_id: str) -> uuid.UUID:
+    """Stable per-request generation id: retries collapse via the ledger UQ."""
+    return uuid.uuid5(uuid.NAMESPACE_URL, "tollma-req:" + (request_id or ""))
+
+
 async def _promptlog_capture(db: Session, prepared: _Prepared, *,
                        input_text: str | None, output_text: str | None,
                        status: str, error_code: str | None = None,
                        latency_ms: float | None = None,
-                       tokens: UsageTokens | None = None) -> None:
+                       tokens: UsageTokens | None = None,
+                       estimated: bool | None = None,
+                       total_tokens: int | None = None,
+                       cost: CostBreakdown | None = None,
+                       pricing_version: str | None = None,
+                       priced: bool = True,
+                       finish_reason: str | None = None,
+                       status_message: str | None = None) -> None:
     """Prompt-log hook: immutable ledger write, fail-open always. Never raises,
     never touches Valkey usage counters, never logs content or raw keys."""
     try:
         from tollms.services.prompt_logging import queue as promptlog_queue
 
         ctx = prepared.ctx
+        unified = prepared.unified
+        params = {
+            k: v for k, v in {
+                "temperature": unified.temperature,
+                "max_tokens": unified.max_tokens,
+                "top_p": unified.top_p,
+                "stop": unified.stop,
+            }.items() if v is not None
+        }
         promptlog_queue.enqueue_post(
             db, input_text=input_text, output_text=output_text,
             user_id=ctx.user_id, org_id=getattr(ctx, "org_id", None),
@@ -771,9 +804,25 @@ async def _promptlog_capture(db: Session, prepared: _Prepared, *,
             provider_id=prepared.provider.id, model_id=prepared.model.id,
             conversation_id=None, endpoint=prepared.unified.endpoint,
             source="external", request_id=prepared.meta.request_id,
-            generation_id=None, status=status,
+            generation_id=_deterministic_generation_id(prepared.meta.request_id),
+            trace_id=prepared.meta.request_id,
+            session_key=getattr(prepared.meta, "session_key", None),
+            status=status,
             tokens=({"prompt": tokens.prompt, "completion": tokens.completion}
                     if tokens is not None else None),
+            estimated=estimated,
+            full_tokens=(
+                {"total": total_tokens, "cache_read": tokens.cache_read,
+                 "cache_write": tokens.cache_write, "reasoning": tokens.reasoning}
+                if tokens is not None else None),
+            cost=(
+                {"input": cost.input_cost, "output": cost.output_cost,
+                 "total": cost.total_cost} if (cost is not None and priced) else None),
+            currency="USD" if (cost is not None and priced) else None,
+            pricing_version=pricing_version if priced else None,
+            finish_reason=finish_reason,
+            model_params=params or None,
+            status_message=status_message,
             latency_ms=latency_ms, error_code=error_code, allow_store=True)
     except Exception:
         logger.warning("public gateway promptlog hook failed", exc_info=True)
@@ -875,7 +924,7 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
             prepared.messages, **_tool_kwargs(prepared.adapter.chat_stream, prepared.unified)
         )
         latency_ms = (time.monotonic() - started) * 1000
-        tokens, total, breakdown, estimated = _finalize_usage(
+        tokens, total, breakdown, estimated, price_pin, priced = _finalize_usage(
             db, prepared.provider, prepared.model, prepared.history_text, result.text, result
         )
         _record_usage(
@@ -908,7 +957,11 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
         text = "[withheld by guardrail policy]" if guard_action == "blocked" else result.text
         await _promptlog_capture(db, prepared, input_text=prepared.history_text,
                            output_text=text, status="completed",
-                           latency_ms=latency_ms, tokens=tokens)
+                           latency_ms=latency_ms, tokens=tokens,
+                           estimated=estimated, total_tokens=total,
+                           cost=breakdown, pricing_version=price_pin,
+                           priced=priced,
+                           finish_reason=result.finish_reason)
         return ChatOutcome(
             request_id=prepared.meta.request_id,
             model_identifier=prepared.unified.model_identifier,
@@ -941,6 +994,7 @@ async def _execute_chat(db: Session, prepared: _Prepared) -> ChatOutcome:
         await _promptlog_capture(db, prepared, input_text=prepared.history_text,
                            output_text="", status="failed",
                            error_code=classified.code.value,
+                           status_message=str(exc),
                            latency_ms=latency_ms)
         # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
         # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
@@ -1053,6 +1107,7 @@ async def _execute_media(db: Session, prepared: _Prepared) -> MediaOutcome:
         await _promptlog_capture(db, prepared, input_text=prepared.unified.prompt or "",
                            output_text="", status="failed",
                            error_code=classified.code.value,
+                           status_message=str(exc),
                            latency_ms=latency_ms)
         # Failure-triggered revalidation: only INVALID_CREDENTIALS / TIMEOUT /
         # MODEL_UNAVAILABLE actually probe (throttled per provider). Never raises.
@@ -1504,7 +1559,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 result.text += chunk.delta
                 for frame in _delta(chunk.delta):
                     yield frame
-        tokens, total, breakdown, estimated = _finalize_usage(
+        tokens, total, breakdown, estimated, price_pin, priced = _finalize_usage(
             db, prepared.provider, prepared.model, prepared.history_text, result.text, result
         )
         _record_usage(
@@ -1533,7 +1588,11 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
         )
         await _promptlog_capture(db, prepared, input_text=prepared.history_text,
                            output_text=result.text, status="completed",
-                           latency_ms=latency_ms, tokens=tokens)
+                           latency_ms=latency_ms, tokens=tokens,
+                           estimated=estimated, total_tokens=total,
+                           cost=breakdown, pricing_version=price_pin,
+                           priced=priced,
+                           finish_reason=result.finish_reason)
         # Guardrail post on streams is audit-only (delivery already happened).
         _guardrail_post(db, prepared, result.text, allow_block=False,
                             tool_calls=result.tool_calls)
@@ -1600,6 +1659,7 @@ async def _stream_chat(prepared: _Prepared, db: Session) -> AsyncIterator[str]:
                 db, prepared, input_text=prepared.history_text,
                 output_text=result.text, status="failed",
                 error_code=classified.code.value,
+                status_message=str(exc),
                 latency_ms=(time.monotonic() - prepared.started) * 1000)
             logged = True
         # Failure-triggered revalidation: prepared.provider is always set here
