@@ -21,6 +21,16 @@ class Role(str, enum.Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    # Compaction summary: a persisted consolidation of covered history on one
+    # branch path (see api/conversations/compaction.py). Stored as a first-class
+    # tree node (parent = compaction-point leaf, version = next sibling) so
+    # history, branch navigation, shares, and exports render it distinctly.
+    # Role-switch audit: history assembly renders summaries as system context
+    # (adapters never see role="summary"); alternation check exempts them;
+    # analytics/usage/share/export paths either filter ASSISTANT explicitly or
+    # render the role generically. Summary rows carry usage/cost internals in
+    # metadata_ only (token columns stay NULL so aggregates never double-count).
+    SUMMARY = "summary"
 
 
 class MessageStatus(str, enum.Enum):

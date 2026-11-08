@@ -117,15 +117,17 @@ def test_tree_and_path_http(db: Session, client, user_factory):
     path = client.get(f"/api/v1/conversations/{conv.id}/path").json()
     assert [m["id"] for m in path["path"]] == [str(u.id), str(a.id)]
 
+    # Selecting an ancestor of the current leaf keeps the tip: the full
+    # conversation below the selection stays shown.
     sel = client.post(
         f"/api/v1/conversations/{conv.id}/select", json={"message_id": str(u.id)}
     ).json()
-    assert sel["active_leaf_id"] == str(u.id)
-    assert [m["id"] for m in sel["path"]] == [str(u.id)]
+    assert sel["active_leaf_id"] == str(a.id)
+    assert [m["id"] for m in sel["path"]] == [str(u.id), str(a.id)]
 
     sibs = client.get(f"/api/v1/messages/{a.id}/siblings").json()
     assert [m["id"] for m in sibs] == [str(a.id)]
     kids = client.get(f"/api/v1/messages/{u.id}/children").json()
     assert [m["id"] for m in kids] == [str(a.id)]
 
-    assert client.get(f"/api/v1/conversations/{conv.id}/tree").json()["active_leaf_id"] == str(u.id)
+    assert client.get(f"/api/v1/conversations/{conv.id}/tree").json()["active_leaf_id"] == str(a.id)

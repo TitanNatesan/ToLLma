@@ -53,6 +53,12 @@ describe("public page read-only hardening", () => {
     expect(publicView).not.toContain("composer");
   });
 
+  it("never scrolls the page: selection stays local viewer state", () => {
+    expect(publicView).not.toContain("scrollIntoView");
+    expect(publicView).not.toContain("scrollMessageToTop");
+    expect(publicView).not.toContain('block: "start"');
+  });
+
   it("reuses the hook-free graph, never the private endpoint-bound wrapper", () => {
     expect(publicView).toContain("ConversationFlowGraph");
     expect(publicView).not.toMatch(/<ConversationFlow[ />]/);

@@ -78,6 +78,20 @@ def _tool_list(value: Any) -> list[dict[str, Any]] | None:
     return tools
 
 
+def _reasoning_level(body: dict) -> str | None:
+    """Composer reasoning level (e.g. "low"/"high"/"none") or None when unset.
+
+    Only the explicit string key is read: sibling raw shapes (`reasoning`,
+    `thinking`, `effort`) stay in `raw` for the capability gate and never
+    reach the adapter as a level."""
+    value = body.get("reasoning_level")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError("reasoning_level must be a string")
+    return value.strip() or None
+
+
 def _content_text(content: Any, field: str) -> str:
     """Flatten wire content (string or part list) into plain text."""
     if content is None:
@@ -148,6 +162,7 @@ def from_openai_chat(payload: Any) -> UnifiedRequest:
         stop=_stop_list(body.get("stop")),
         tools=_tool_list(body.get("tools")),
         tool_choice=body.get("tool_choice"),
+        reasoning_level=_reasoning_level(body),
         raw=dict(body),
         response_format="openai",
     )
@@ -238,6 +253,7 @@ def from_anthropic_messages(payload: Any) -> UnifiedRequest:
         stop=_stop_list(body.get("stop_sequences"), "stop_sequences"),
         tools=_tool_list(body.get("tools")),
         tool_choice=body.get("tool_choice"),
+        reasoning_level=_reasoning_level(body),
         raw=dict(body),
         response_format="anthropic",
     )
@@ -295,6 +311,7 @@ def from_responses(payload: Any) -> UnifiedRequest:
         top_p=_optional_float(body, "top_p"),
         tools=_tool_list(body.get("tools")),
         tool_choice=body.get("tool_choice"),
+        reasoning_level=_reasoning_level(body),
         raw=dict(body),
         response_format="responses",
     )

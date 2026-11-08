@@ -605,6 +605,10 @@ def _prepare(
         )
         raise
     adapter.max_output_tokens = model.max_output_tokens
+    # Composer level reaches the adapter verbatim: "none" stays off (adapters
+    # omit thinking fields for it), real levels enable. The supports_reasoning
+    # gate above already 403s reasoning requests on incapable models.
+    adapter.reasoning_level = unified.reasoning_level
     # Prompt-cache plan, same engine as internal Chat: Bedrock Claude ids get
     # cachePoints when the model declares support; OpenAI gets a stable
     # per-(provider,model) key shared with the internal plane (cross-plane

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ComponentType } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ComponentType } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useAllChatKeyModels, useChatKeys } from "@/hooks/useChatKeys";
@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { fmtCompactTokens, fmtCost, fmtPrice, fmtTokens } from "@/lib/utils";
 import { getModelCapabilities, mediaRates } from "@/app/components/chat/capabilities";
 import { endpointLabel } from "@/app/providers/fields";
+import { buildScopedModels, findScopedModel } from "./chat/scopedModels";
 import { ConversationFlow } from "./chat/ConversationFlow";
 import { logoForProviderType } from "@/services/catalog";
 import { ProviderLogo } from "@/components/ui/ProviderLogo";
@@ -118,6 +119,12 @@ function ContextUsageBar({ used, limit }: { used: number; limit: number }) {
       <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-400">
         <span className="font-mono">{fmtTokens(used)}</span> of{" "}
         <span className="font-mono">{fmtCompactTokens(limit)}</span> context used
+        {" "}(<span data-testid="intelligence-context-pct">{Math.round(pct)}%</span>)
+      </p>
+      <p className="text-[10px] text-zinc-400 dark:text-zinc-500" data-testid="intelligence-compact-hint">
+        {pct >= 20
+          ? "Type /compact in chat to summarize history."
+          : "Compaction unlocks past 20% usage."}
       </p>
     </div>
   );
@@ -148,11 +155,12 @@ export function IntelligencePanel() {
   const { data: usage } = useUsage(activeConversationId);
   const { data: conv } = useConversation(activeConversationId);
 
-  // Scope-correct union (mirrors ChatComposer scopedModels): the personal
+  // Same scope-correct union as the composer (scopedModels.ts): the personal
   // registry never lists org models, so org-key selections resolve here.
-  const model =
-    models.find((m) => m.id === modelId) ??
-    keyEntries.flatMap((e) => e.models ?? []).find((m) => m.id === modelId);
+  // Shared helper — the panel hero and the composer label/validation resolve
+  // identically by construction.
+  const scopedModels = useMemo(() => buildScopedModels(models, keyEntries), [models, keyEntries]);
+  const model = findScopedModel(scopedModels, modelId) ?? undefined;
   const owningOrgId =
     keyEntries.find((e) => (e.models ?? []).some((m) => m.id === modelId))?.key
       .org_id ?? null;
@@ -378,11 +386,6 @@ export function IntelligencePanel() {
               )}
             </Section>
 
-            {/* 1b. Conversation Flow */}
-            <Section title="Conversation Flow" icon={GitBranch} testid="intelligence-flow">
-              <ConversationFlow conversationId={activeConversationId} />
-            </Section>
-
             {/* 2. Limits */}
             {model && (
               <Section title="Limits" icon={Layers} testid="intelligence-limits">
@@ -562,6 +565,11 @@ export function IntelligencePanel() {
                 />
                 <StatRow label="Citations" value={<span className="text-zinc-400">Telemetry Ready</span>} />
               </div>
+            </Section>
+
+            {/* 5. Conversation Flow — last: the branch graph closes the panel. */}
+            <Section title="Conversation Flow" icon={GitBranch} testid="intelligence-flow">
+              <ConversationFlow conversationId={activeConversationId} />
             </Section>
 
             {!provider && !model && (

@@ -1,4 +1,15 @@
-"""Gemini (API key) + Vertex AI (service account) adapters. Same wire shape."""
+"""Gemini (API key) + Vertex AI (service account) adapters. Same wire shape.
+
+Reasoning off ("none"/"default"/unset) deliberately omits thinkingConfig:
+no uniform explicit disable exists across the models served here.
+thinkingBudget 0 disables thinking only where 0 is in range (Gemini 2.5
+Flash); models with a minimum thinking budget (Gemini 2.5 Pro) reject it,
+and includeThoughts=false only hides thought summaries without stopping
+thinking. Model ids are discovery-registered and arbitrary, so per-model
+sniffing is out — off means "not requested", while provider-emitted
+thought parts still render (same always-on display rule as Bedrock
+DeepSeek/MiniMax).
+"""
 
 import asyncio
 import json

@@ -13,8 +13,8 @@ import { MessageView } from "@/app/components/MessageView";
 import { ChatHeader } from "@/app/components/ChatHeader";
 import { deriveSources } from "@/app/components/chat/sources/Sources";
 import { useConversation } from "@/hooks/useChat";
-import { useProviders } from "@/hooks/useRegistry";
-import { useChatKeys } from "@/hooks/useChatKeys";
+import { useModels, useProviders } from "@/hooks/useRegistry";
+import { useAllChatKeyModels, useChatKeys } from "@/hooks/useChatKeys";
 import {
   ApiError,
   cancelGeneration,
@@ -35,12 +35,14 @@ import { useChatStore } from "@/store/chat";
 import { useSettingsStore } from "@/store/settings";
 import { SearchModal } from "@/components/ui/SearchModal";
 import {
+  shouldStallTwinFetch,
   useConversationPath,
   useConversationTree,
   useIntelligenceMutations,
 } from "@/hooks/useIntelligence";
 import {
   activateGeneration,
+  compactConversation,
   createBranch,
   editMessage,
   regenerateMessage,
@@ -52,7 +54,15 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import type { ActiveGeneration, ChatMessage, Conversation as ConversationData, MessageStatus, SearchResult, StreamDone } from "@/types";
+import type { ActiveGeneration, AIModel, ChatMessage, Conversation as ConversationData, MessageStatus, SearchResult, StreamDone, UsageTotals } from "@/types";
+import {
+  compactBusyMessage,
+  compactNoConversationMessage,
+  compactSuccessMessage,
+  compactThresholdMessage,
+  describeCompactFailure,
+  resolveFallbackWindow,
+} from "@/app/components/chat/compact";
 
 /** Sample prompts on the empty state: one click fills the composer via the
  *  draft store + the existing focus event — no new plumbing. */
@@ -201,6 +211,13 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     void qc.invalidateQueries({ queryKey: ["chat-keys"] });
   }, [qc]);
   const abortRef = useRef<AbortController | null>(null);
+  // Manual /compact in flight (single-flight guard lives in the ref so
+  // repeated Enter can't stack requests; state drives the progress banner).
+  const [compacting, setCompacting] = useState(false);
+  const compactingRef = useRef(false);
+  // Auto-compaction runs server-side before the stream starts: subtle hint
+  // while a send awaits its first chunk — cleared by snapshot/delta/done.
+  const [preparing, setPreparing] = useState(false);
   // Draft-send probe: adopts the conversation id by idempotency key when the
   // meta event is missed. Cleared whenever the send settles.
   const probeTimerRef = useRef<number | null>(null);
@@ -214,8 +231,13 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   // Branch-aware rendering: the main chat shows the ACTIVE PATH only. The
   // path endpoint wins when the backend serves it; on 404 (backend mid-build)
   // the persisted array keeps the chat intact — never blank.
-  const { data: pathData } = useConversationPath(activeId);
-  const { data: treeData } = useConversationTree(activeId);
+  // Pause fresh path/tree fetches only while an unpersisted user echo is
+  // present (same rationale as useConversation's streaming pause). Settle
+  // reloads via refresh; every reader shares the predicate (see
+  // shouldStallTwinFetch) so the shared cache keys can't repopulate mid-dup.
+  const stallTwinFetch = shouldStallTwinFetch(streaming, optimisticMessages);
+  const { data: pathData } = useConversationPath(activeId, { paused: stallTwinFetch });
+  const { data: treeData } = useConversationTree(activeId, { paused: stallTwinFetch });
   const persistedMessages: ChatMessage[] = useMemo(
     () => pathData?.path ?? conversation?.messages ?? [],
     [pathData, conversation?.messages],
@@ -314,6 +336,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   /** Terminal state for any watched stream: drop local overlays, reload truth. */
   const finishGeneration = useCallback((convId: string | null, status?: MessageStatus | null, error?: string | null) => {
     setStreaming(false);
+    setPreparing(false);
     setActiveGeneration(null);
     clearOptimistic();
     clearPendingSend();
@@ -366,11 +389,13 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
       }
     },
     onSnapshot: (content) => {
+      setPreparing(false);
       perfSnapshot(content.length);
       const mid = owner.msgId ?? useChatStore.getState().activeGeneration?.messageId;
       if (mid) setOptimisticContent(mid, content);
     },
     onDelta: (d) => {
+      setPreparing(false);
       perfDelta();
       const mid = owner.msgId ?? useChatStore.getState().activeGeneration?.messageId;
       if (mid) updateOptimisticStreaming(mid, d);
@@ -405,6 +430,7 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     onError: (m) => {
       const convId = owner.convId ?? useChatStore.getState().activeConversationId;
       setStreaming(false);
+      setPreparing(false);
       setActiveGeneration(null);
       clearOptimistic();
       clearPendingSend();
@@ -529,6 +555,9 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     })();
 
     setStreaming(true);
+    // Auto-compaction runs server-side before the stream starts: show the
+    // subtle "preparing" hint until the first chunk lands (never a modal).
+    setPreparing(true);
     perfSend();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -725,6 +754,77 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
     refreshAll,
   ]);
 
+  const { data: chatKeys = [], isPending: keysPending } = useChatKeys();
+  const { data: registryModels = [] } = useModels();
+  const { entries: keyEntries } = useAllChatKeyModels(chatKeys);
+  // Scope-correct union (mirrors the composer): personal registry rows plus
+  // every key's eligible models, so org-key selections resolve for the
+  // threshold usage-vs-window copy.
+  const scopedModels = useMemo(() => {
+    const byId = new Map(registryModels.map((m) => [m.id, m]));
+    for (const entry of keyEntries) {
+      for (const km of entry.models ?? []) byId.set(km.id, km);
+    }
+    return [...byId.values()] as AIModel[];
+  }, [registryModels, keyEntries]);
+
+  // Primitive dep for handleCompact: the model the usage belongs to.
+  const compactModelId = conversation?.model_id ?? null;
+
+  /**
+   * Manual compaction entry point (the composer's exact "/compact" command).
+   * Never creates a user message, never touches the LLM: one guarded POST,
+   * then history + usage reload on success. Every failure is a toast with a
+   * retry path (re-enter /compact).
+   */
+  const handleCompact = useCallback(() => {
+    // Single in-flight guard: debounce repeated Enter at the source.
+    if (compactingRef.current) return;
+    const id = activeId ?? useChatStore.getState().activeConversationId;
+    if (!id) {
+      toast.info(compactNoConversationMessage());
+      return;
+    }
+    if (useChatStore.getState().streaming) {
+      toast.info(compactBusyMessage());
+      return;
+    }
+    compactingRef.current = true;
+    setCompacting(true);
+    const loadingId = toast.loading("Compacting conversation history…");
+    void (async () => {
+      try {
+        const result = await compactConversation(id);
+        refreshAll(id);
+        toast.dismiss(loadingId);
+        toast.success(compactSuccessMessage(result), { contrast: true });
+      } catch (error) {
+        toast.dismiss(loadingId);
+        const usage = qc.getQueryData<UsageTotals>(["usage", id]);
+        // Below-threshold fallback pairs live usage with the conversation's
+        // own model window (the panel shows the same pair); the backend's
+        // own message wins whenever it explains. A model mismatch omits the
+        // suffix — never a mixed-model percentage stated as fact.
+        const fallback = compactThresholdMessage(
+          usage?.total_tokens ?? null,
+          resolveFallbackWindow(compactModelId, modelId, scopedModels),
+        );
+        const failure = describeCompactFailure(error, fallback);
+        if (failure.kind === "threshold" || failure.kind === "busy" || failure.kind === "not-found") {
+          toast.info(failure.title, { description: failure.description });
+        } else {
+          toast.error(failure.title, {
+            description: `${failure.description} Re-enter /compact to retry.`,
+            contrast: true,
+          });
+        }
+      } finally {
+        compactingRef.current = false;
+        setCompacting(false);
+      }
+    })();
+  }, [activeId, refreshAll, qc, modelId, scopedModels, compactModelId]);
+
   // Global shortcut actions dispatched by useGlobalShortcuts (Alt+R / Alt+X).
   useEffect(() => {
     function regenerateShortcut() {
@@ -828,7 +928,6 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
   const [searchOpen, setSearchOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const { data: providers = [], isPending: providersPending } = useProviders();
-  const { data: chatKeys = [], isPending: keysPending } = useChatKeys();
   const statusLoaded = !providersPending && !keysPending;
   const intelligence = useIntelligenceMutations(activeId);
   const { edit: editMutation, regenerate: regenerateMutation, branch: branchMutation, activate: activateMutation, select: selectMutation } = intelligence;
@@ -1140,11 +1239,26 @@ export function ChatWorkspace({ conversationId }: { conversationId: string | nul
 
         {/* Composer */}
         <div className="mx-auto w-full max-w-[960px] px-4">
+        {preparing && (
+          <div
+            className="flex items-center justify-center gap-1.5 pb-1 text-[11px] text-zinc-400 dark:text-zinc-500"
+            data-testid="compact-preparing"
+            role="status"
+          >
+            <span
+              className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+            <span>Preparing conversation context…</span>
+          </div>
+        )}
         <ChatComposer
           streaming={streaming}
           continuityKind={continuityKind}
+          compacting={compacting}
           onSend={(t) => send(t, routeIdRef.current ?? activeId)}
           onStop={stop}
+          onCompact={handleCompact}
         />
         </div>
       </main>

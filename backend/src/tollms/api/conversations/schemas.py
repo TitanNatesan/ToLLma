@@ -184,3 +184,18 @@ class ConversationPathRead(BaseModel):
 
 class SelectRequest(BaseModel):
     message_id: uuid.UUID
+
+
+class CompactResponse(BaseModel):
+    """Manual/auto compaction result. Token internals of the covered history
+    stay server-side: only aggregate before/after counts and ratios ship."""
+
+    status: str = "completed"
+    summary_message_id: uuid.UUID
+    tokens_before: int
+    tokens_after: int
+    context_window: int
+    usage_before: float
+    usage_after: float
+    coverage_through_message_id: uuid.UUID
+    trigger: str

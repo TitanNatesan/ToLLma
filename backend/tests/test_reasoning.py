@@ -565,6 +565,22 @@ def test_gemini_omits_thinking_config_when_off_or_unset() -> None:
         assert "generationConfig" not in body
 
 
+def test_gemini_none_pins_omitted_body_no_uniform_disable() -> None:
+    """Pinned: "none" omits thinkingConfig instead of sending a disable.
+
+    thinkingBudget 0 is not a family-wide off switch (valid on 2.5 Flash,
+    rejected where the model enforces a minimum budget, e.g. 2.5 Pro;
+    includeThoughts=false only hides summaries), and model ids are
+    discovery-registered, so per-model sniffing is out. Off means "not
+    requested"; provider-emitted thought parts still render.
+    """
+    bodies = _gemini_bodies(["none"])
+    assert bodies == [{"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}]
+    assert _gemini_bodies(["high"])[0]["generationConfig"]["thinkingConfig"] == {
+        "thinkingBudget": 10000
+    }
+
+
 def test_gemini_image_output_never_combined_with_thinking() -> None:
     """Image models reject thinkingConfig: responseModalities wins even at high."""
     bodies = _gemini_bodies(["high"], image_output=True)
@@ -722,3 +738,321 @@ def test_thinking_duration_persisted_when_interrupted(db, provider_factory, mode
     assert row.status.value == "cancelled"
     assert row.thinking_ms is not None and row.thinking_ms >= 100
     assert row.content == THINK_OPEN  # partial reasoning kept
+
+
+# --- "none" disables thinking on EVERY adapter (mocked wire, no network) -----
+# Each adapter below sends reasoning_level="none" through its REAL request
+# path with a mocked transport; the captured body must carry NO
+# thinking/reasoning fields while staying otherwise valid. A real level in
+# the same test proves the switch still enables (no regression).
+
+def _capture_openai_bodies(adapter_cls, level, **kw):
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        if adapter_cls is OpenAIResponsesAdapter:
+            return _sse_response('data: {"type": "response.completed", "response": {}}')
+        return httpx.Response(200, content=b"data: [DONE]\n\n")
+
+    adapter = adapter_cls(
+        credentials={"api_key": "k"}, model_id="m", reasoning_level=level,
+        transport=_transport(handler), **kw,
+    )
+    _run(adapter)
+    return bodies
+
+
+def test_custom_gateway_none_disables_and_level_enables() -> None:
+    """NVIDIA/Groq/Mistral-style gateways ride the OpenAI-compatible path
+    (ProviderType.CUSTOM -> CustomAdapter == OpenAIChatAdapter)."""
+    from tollms.models.provider import ProviderType
+    from tollms.services.gateway.adapters.openai import CustomAdapter
+    from tollms.services.gateway.factory import adapter_class
+    from types import SimpleNamespace
+
+    assert CustomAdapter is OpenAIChatAdapter
+    assert adapter_class(
+        SimpleNamespace(provider_type=ProviderType.CUSTOM), "chat_completions"
+    ) is OpenAIChatAdapter
+    assert adapter_class(
+        SimpleNamespace(provider_type=ProviderType.OPENAI), "chat_completions"
+    ) is OpenAIChatAdapter
+
+    assert "reasoning_effort" not in _capture_openai_bodies(CustomAdapter, "none")[-1]
+    assert "reasoning_effort" not in _capture_openai_bodies(CustomAdapter, None)[-1]
+    assert _capture_openai_bodies(CustomAdapter, "high")[-1]["reasoning_effort"] == "high"
+
+
+def test_openai_responses_none_disables_and_level_enables() -> None:
+    assert "reasoning" not in _capture_openai_bodies(OpenAIResponsesAdapter, "none")[-1]
+    assert _capture_openai_bodies(OpenAIResponsesAdapter, "high")[-1]["reasoning"] == {
+        "effort": "high", "summary": "auto",
+    }
+
+
+def test_vertex_none_disables_and_level_enables() -> None:
+    """Vertex shares the Gemini wire shape; "none" must send no thinkingConfig."""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return _sse_response(_gemini_item(text="Hi"))
+
+    for level in ("none", "default", None, "high"):
+        adapter = VertexAdapter(
+            credentials={"project_id": "p", "location": "us-central1",
+                          "credentials_json": "{}"},
+            model_id="gemini-x", reasoning_level=level,
+            transport=_transport(handler),
+        )
+        adapter._access_token = lambda: "tok"  # type: ignore[method-assign]
+        _run(adapter)
+    for body in bodies[:3]:
+        assert "thinkingConfig" not in json.dumps(body)
+        assert "generationConfig" not in body
+    assert bodies[3]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 10000}
+
+
+def test_bedrock_none_disables_all_families() -> None:
+    """"none" (and "default"/unset) mean NO thinking fields for every Bedrock
+    family — Claude generations (manual + adaptive-only) and the families
+    that reject the field outright (DeepSeek/MiniMax/Titan)."""
+    families = [
+        BEDROCK_HAIKU,  # manual budget_tokens Claude
+        "global.anthropic.claude-sonnet-5",  # adaptive-only Claude
+        "us.deepseek.r1-v1:0",  # always-on reasoner, rejects the field
+        "minimax.minimax-m2.5",
+        "amazon.titan-text-premier-v1:0",
+    ]
+    for model_id in families:
+        for off in ("none", "default", None):
+            assert bedrock_thinking_fields(model_id, off, 64000) is None, (model_id, off)
+    # No regression: real levels still enable where the family allows.
+    assert bedrock_thinking_fields(BEDROCK_HAIKU, "medium", 64000) == (
+        {"thinking": {"type": "enabled", "budget_tokens": 4096}}, 64000,
+    )
+    assert bedrock_thinking_fields(
+        "global.anthropic.claude-sonnet-5", "ultra", 64000
+    ) == ({"thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}}, None)
+    assert bedrock_thinking_fields("us.deepseek.r1-v1:0", "medium", 4096) is None
+
+
+# --- gateway -> adapter: "none" survives every internal endpoint path --------
+
+def test_validated_reasoning_level_preserves_none_under_catalog_options() -> None:
+    """Catalog reasoning_options must never coerce the explicit off switch
+    into None: "none"/"default" survive verbatim for every option kind."""
+    from types import SimpleNamespace
+
+    from tollms.api.gateway.service import validated_reasoning_level
+
+    catalogs = [
+        {"reasoning_options": [{"type": "effort", "values": ["low", "medium", "high"]}]},
+        {"reasoning_options": [{"type": "budget_tokens", "min": 1024, "max": 32000}]},
+        {"reasoning_options": [{"type": "toggle", "default": "on"}]},
+        {"reasoning_options": []},
+        {},
+    ]
+    for metadata in catalogs:
+        model = SimpleNamespace(metadata_=metadata)
+        assert validated_reasoning_level(model, "none") == "none", metadata
+        assert validated_reasoning_level(model, "default") == "default", metadata
+    # Gating still applies to real levels (never loosened by the fix).
+    effort = SimpleNamespace(
+        metadata_={"reasoning_options": [{"type": "effort", "values": ["low"]}]}
+    )
+    assert validated_reasoning_level(effort, "high") is None
+    assert validated_reasoning_level(effort, "low") == "low"
+
+
+def _run_chat_capture(db, provider_factory, model_factory, monkeypatch, level: str | None):
+    """run_chat (non-streaming path) with a capturing adapter; returns it."""
+    import uuid as _uuid
+
+    from tollms.api.gateway import service as gateway_service
+    from tollms.api.gateway.schemas import ChatRequest
+    from tollms.services.gateway.adapters.base import StreamChunk
+
+    captured: dict = {}
+
+    class CapturingAdapter(OpenAIChatAdapter):
+        async def chat_stream(self, messages):
+            yield StreamChunk(delta="done")
+
+    def fake_build(*args, **kwargs) -> CapturingAdapter:
+        adapter = CapturingAdapter(credentials={"api_key": "k"}, model_id="m")
+        captured["adapter"] = adapter
+        return adapter
+
+    monkeypatch.setattr(gateway_service, "build_adapter", fake_build)
+    p = provider_factory(f"CapChat-{level or 'off'}")
+    m = model_factory(p["id"])
+    asyncio.run(gateway_service.run_chat(
+        db,
+        ChatRequest(
+            provider_id=_uuid.UUID(p["id"]), model_id=_uuid.UUID(m["id"]),
+            message="hi", reasoning_level=level,
+        ),
+    ))
+    return captured["adapter"]
+
+
+def test_gateway_chat_forwards_none_level_to_adapter(
+    db, provider_factory, model_factory, monkeypatch
+) -> None:
+    """Non-streaming chat: "none" reaches the adapter verbatim (never dropped
+    as falsy); a real level still enables."""
+    assert _run_chat_capture(db, provider_factory, model_factory, monkeypatch, "none").reasoning_level == "none"
+    assert _run_chat_capture(db, provider_factory, model_factory, monkeypatch, "high").reasoning_level == "high"
+
+
+def test_gateway_regen_forwards_none_level_to_adapter(
+    db, provider_factory, model_factory, monkeypatch
+) -> None:
+    """Regeneration: reasoning_level flows start_regeneration ->
+    start_child_assistant -> adapter for both off and on."""
+    import uuid as _uuid
+
+    from tollms.api.conversations.service import list_messages
+    from tollms.api.gateway import service as gateway_service
+    from tollms.api.gateway.schemas import ChatRequest
+    from tollms.services import generation as generation_engine
+    from tollms.services.gateway.adapters.base import StreamChunk
+
+    captured: dict = {}
+
+    class CapturingAdapter(OpenAIChatAdapter):
+        async def chat_stream(self, messages):
+            yield StreamChunk(delta="done")
+
+    def fake_build(*args, **kwargs) -> CapturingAdapter:
+        adapter = CapturingAdapter(credentials={"api_key": "k"}, model_id="m")
+        captured["adapter"] = adapter
+        return adapter
+
+    monkeypatch.setattr(gateway_service, "build_adapter", fake_build)
+    p = provider_factory("CapRegen")
+    m = model_factory(p["id"], **{"model_id": "regen-mock", "name": "RegenMock"})
+    req = ChatRequest(
+        provider_id=_uuid.UUID(p["id"]), model_id=_uuid.UUID(m["id"]), message="hi",
+    )
+
+    async def _main(level: str | None):
+        started = await gateway_service.start_generation(db, req)
+        active = generation_engine.manager.get(started.generation_id)
+        assert active is not None and active.task is not None
+        await active.task
+        return started
+
+    started = asyncio.run(_main(None))
+    assistants = [
+        msg for msg in list_messages(db, started.conversation_id)
+        if msg.role.value == "assistant"
+    ]
+    assert len(assistants) == 1 and assistants[0].status.value == "completed"
+
+    async def _regen(level: str | None):
+        db.expire_all()
+        regen = await gateway_service.start_regeneration(
+            db, str(assistants[0].id), reasoning_level=level,
+        )
+        active = generation_engine.manager.get(regen.generation_id)
+        assert active is not None and active.task is not None
+        await active.task
+
+    asyncio.run(_regen("none"))
+    assert captured["adapter"].reasoning_level == "none"
+    asyncio.run(_regen("high"))
+    assert captured["adapter"].reasoning_level == "high"
+
+
+# --- public plane: translators + _prepare forward the level ------------------
+
+def test_public_translators_extract_reasoning_level() -> None:
+    """All three public chat translators read the explicit string key into
+    UnifiedRequest.reasoning_level; unset/blank stay None (off)."""
+    from tollms.core.exceptions import ValidationError as AppValidationError
+    from tollms.services.gateway import translators
+
+    import pytest as _pytest
+
+    openai_body = {"model": "p/m", "messages": [{"role": "user", "content": "hi"}]}
+    assert translators.from_openai_chat(openai_body).reasoning_level is None
+    assert translators.from_openai_chat({**openai_body, "reasoning_level": "none"}).reasoning_level == "none"
+    assert translators.from_openai_chat({**openai_body, "reasoning_level": "high"}).reasoning_level == "high"
+    assert translators.from_openai_chat({**openai_body, "reasoning_level": "  "}).reasoning_level is None
+    with _pytest.raises(AppValidationError):
+        translators.from_openai_chat({**openai_body, "reasoning_level": 5})
+
+    anthropic_body = {
+        "model": "p/m", "max_tokens": 8,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    assert translators.from_anthropic_messages(anthropic_body).reasoning_level is None
+    assert translators.from_anthropic_messages(
+        {**anthropic_body, "reasoning_level": "none"}).reasoning_level == "none"
+
+    responses_body = {"model": "p/m", "input": "hi"}
+    assert translators.from_responses(responses_body).reasoning_level is None
+    assert translators.from_responses(
+        {**responses_body, "reasoning_level": "medium"}).reasoning_level == "medium"
+
+
+def test_public_prepare_propagates_reasoning_level(
+    client, db, user_factory, provider_factory, model_factory, monkeypatch
+) -> None:
+    """End to end over HTTP with a mocked upstream: "none" reaches the
+    adapter with no thinking requested; a real level enables on capable
+    models and 403s on incapable ones."""
+    from tollms.api.public_gateway import service as pg_service
+    from tollms.services.gateway.adapters.base import ChatResult
+
+    user_factory()
+    p = provider_factory("PubReason")
+    model_factory(p["id"])  # supports_reasoning defaults False
+    reasoning_model = model_factory(p["id"], supports_reasoning=True,
+                                    **{"model_id": "reason-model", "name": "Reason"})
+
+    class _Recording:
+        reasoning_level = "unset"
+
+        async def chat(self, messages):
+            return ChatResult(text="Hello world", prompt_tokens=10,
+                              completion_tokens=5, total_tokens=15)
+
+        async def chat_stream(self, messages):
+            from tollms.services.gateway.adapters.base import StreamChunk as _Chunk
+
+            yield _Chunk(delta="Hello world", prompt_tokens=10,
+                         completion_tokens=5, total_tokens=15)
+
+    fake = _Recording()
+    monkeypatch.setattr(pg_service, "build_adapter", lambda *a, **k: fake)
+
+    r = client.post("/api/v1/keys", json={"name": "Reason key"})
+    assert r.status_code == 201, r.text
+    raw, kid = r.json()["raw_key"], r.json()["key"]["id"]
+    headers = {"Authorization": f"Bearer {raw}"}
+    ref = f"{p['name']}/mock-model"
+    reason_ref = f"{p['name']}/reason-model"
+
+    ok = client.post("/v1/chat/completions",
+                     json={"model": ref, "messages": [{"role": "user", "content": "hi"}],
+                           "reasoning_level": "none"},
+                     headers=headers)
+    assert ok.status_code == 200, ok.text
+    assert fake.reasoning_level == "none"
+
+    ok = client.post("/v1/chat/completions",
+                     json={"model": reason_ref, "messages": [{"role": "user", "content": "hi"}],
+                           "reasoning_level": "high"},
+                     headers=headers)
+    assert ok.status_code == 200, ok.text
+    assert fake.reasoning_level == "high"
+
+    denied = client.post("/v1/chat/completions",
+                         json={"model": ref, "messages": [{"role": "user", "content": "hi"}],
+                               "reasoning_level": "high"},
+                         headers=headers)
+    assert denied.status_code == 403, denied.text

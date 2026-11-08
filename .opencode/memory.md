@@ -5045,3 +5045,61 @@ Implementation Summary: backend _load_public returns full live set (FAILED/CANCE
 Files Changed: shares schemas.py + service.py; types/index.ts, conversationFlowLayout.ts (+pathToLeaf), ConversationFlow.tsx (hook-free graph extract), ShareDialog.tsx, share/[token]/page.tsx + PublicConversationView.tsx. Tests: publicSharePath (6), publicShare contracts (7), e2e/public-share.spec.ts (7/7 live).
 Testing Performed: pytest 1334 + 1 pre-existing laya; vitest 372/372; tsc/eslint clean; OpenAPI 305 unique; e2e 7/7 with seeded 10-node fixture (cleaned up); screenshots verified (10 nodes depth 6, active highlight, failed dot, read-only banner).
 Architecture Notes: viewer navigation never touches server leaf (no /public mutations exist); stale-cache shape treated as miss; leaf passed raw (dangling-leaf clamp noted as future).
+
+## 2026-11-08 - Flow card restyle: square icon-only, centered, scroll-to-message, last
+Requirement: 1:1 aspect, centered graph, icon-only nodes, hover tooltips, select scrolls chat to message top, card last in panel.
+Implementation Summary: scroller aspect-square + m-auto safe-centering; nodes 44px icon-only (User/Bot glyph + status dot, NODE_W 148->44/compact 104->36); Tooltip primitive (label+version+status+preview, focus-visible); scrollMessageToTop() reusing MessageView id anchor, motion-aware, called on select onSuccess + pendingScroll retry effect; Flow Section moved after Reasoning & Tooling (shared desktop/mobile component). Public share graph untouched (no-scroll guard tested).
+Files Changed: ConversationFlow.tsx, conversationFlowLayout.ts, ChatSettingsPanel.tsx. Tests: +93 status contracts, +6 public no-scroll guards.
+Testing Performed: tsc/eslint clean; vitest 381/381; live screenshots verified (square centered icon graph, tooltip, active highlight, card last, chat sync).
+Architecture Notes: scroll lives in wrapper handler, shared graph stays behavior-neutral; public view unaffected.
+
+## 2026-11-08 - Select resolves to descendant tip (flow-switch cutoff fix)
+Requirement: selecting a node in Conversation Flow must retrieve the full conversation below; view always runs to the branch tip (ends with a response).
+Root cause: select_message set active_leaf to the selected node exactly, cutting off response descendants.
+Implementation Summary: new _resolve_select_tip in conversations/service.py — keep current leaf if live descendant of selection, else greedy-descend newest live child (version, then created_at/id) to childless tip; failed/cancelled valid tips; 404 semantics unchanged. No schema change.
+Files Changed: backend conversations/service.py (+45); tests updated (tree HTTP assertion) + 6 new tip tests.
+Testing Performed: targeted 20/20, related 34, full pytest 1340 + 1 pre-existing laya; live browser verified (click root request -> full u1/a2/u2/a3 chain, ends with tip response, screenshot).
+Architecture Notes: newest-version-child wins at forks; gateway/shares callers unaffected (leaf read opaquely).
+
+## 2026-11-08 - Model-aware progressive compaction implemented + accepted
+Requirement: auto-compact at >=80% of selected model window pre-send, manual /compact above 20%, persistent SUMMARY nodes, progressive consolidation, branch-safe, share-compatible, full test matrix.
+Implementation Summary: compaction.py (thresholds, window fallback, estimator+media reserves, single context assembly, injectable summarizer, two-phase conv_lock, recursion guard, 409 idempotency/stale); Role.SUMMARY + migration c41d7e2a9b03; ensure_budget in run_chat/_setup_generation/start_child_assistant; POST /compact contract; shares include summaries distinctly with whitelist intact. Frontend: exact /compact parsing, states, preparing hint, summary rendering, panel %/nudge. Reviewer H1-H3/M1-M4 fixed (two-phase lock, media reserves+parity, tail-only ids, INVALID_CONFIGURATION code, sidebar/usage exclusions) + L2/L3 UI fixes.
+Files Changed: compaction.py (new), message.py, schemas/router/service (conversations), gateway/service.py, shares (compat verified), migration; compact.ts (new), ChatComposer, ChatWorkspace, MessageView, ChatSettingsPanel, api.ts, types. Tests: test_compaction.py (38), gaps (11), compact vitest (33), e2e compact (6).
+Testing Performed: pytest 1389 + 1 pre-existing laya pin; vitest 414; tsc/eslint clean; alembic check + OpenAPI 306 unique; e2e compact 6/6 stubbed, branching-flow 7/7 seeded; GO verdict. Live-LLM e2e BLOCKED (no egress).
+Architecture Notes: path-specific summaries (deepest-on-path), originals preserved, single latest in context; fail-closed sends; no long tx across LLM; logs ids/ratios only.
+
+## 2026-11-08 - Compaction production-readiness audit (GO)
+Requirement: evidence-driven audit — provider compat, budget correctness, giant message, multimodal, branching, concurrency, E2E, full regression.
+Implementation Summary: audit-only except 2 verified High fixes — pending media reserve now bytes-aware (base64 IS wire bytes) + tokens_after threads pending media; docstring limits. Mocked transports for OpenAI Chat/Responses, Anthropic, Gemini, Vertex, Bedrock, custom compat: no SUMMARY leaks, order/pairing verified. Real OpenAI smoke (gpt-4o-mini, adapter-level, key shredded after): credentials valid, summary-as-system accepted ("Yes."), real prompt=89 vs estimator ~121 (conservative direction). Giant message stays fail-closed 422 (chunking deliberately not built). E2E compact 5/5 stubbed, branching-flow 7/7 + public-share 7/7 seeded.
+Files Changed: compaction.py (2 fixes + docstring), test_compaction_audit.py (23). No migration (alembic clean).
+Testing Performed: pytest 1412 + 1 pre-existing laya pin; vitest 414; tsc/eslint clean; OpenAPI 306 unique. Tester GO, zero deltas.
+Architecture Notes: media_reserve_for_messages key-policy floor stays base-only (deliberate, quota-gating out of scope); live token-count validation vs reserves needs network (untested).
+
+## 2026-11-08 - First-message double bubble fixed
+Requirement: first user message in a draft conversation rendered twice during streaming.
+Root cause: draft send mounts /c/{id} mid-stream; useConversationPath/useConversationTree were not paused while streaming (unlike useConversation), so their fetch returned the persisted twin into shared cache keys while the opt-user echo was still in store; id-keyed winner-map rendered both. Only first send affected (fresh mount; later sends reuse warm cache).
+Implementation Summary: shouldStallTwinFetch predicate (streaming + live user echo) + paused opt on path/tree hooks, applied at both readers (ChatWorkspace, ConversationFlow); refresh recovery/regenerate unaffected (no user echo).
+Files Changed: hooks/useIntelligence.ts, ChatWorkspace.tsx, ConversationFlow.tsx. Tests: e2e/draft-first-send.spec.ts (failed pre-fix with 2 bubbles, passes post-fix; double-Enter mint=1/stream=1), hooks/__tests__/stallTwinFetch.test.ts.
+Testing Performed: e2e 2/2, vitest 418/418, tsc/eslint clean. Pre-existing failures unchanged (egress-blocked live specs, 2 chat-ux dropdown specs — identical on clean tree).
+Architecture Notes: no content-based dedupe (no client_key on ChatMessage; backend out of scope); settle reloads via refreshAll.
+
+## 2026-11-08 - Composer model reselect after hard refresh fixed
+Requirement: last selected model must stay sendable across hard refresh (no storage wipe).
+Root cause: Send gated on keyId but nothing derived keyId from persisted provider/model; key set only by explicit dropdown pick, so post-reload keyId stayed null while label/panel resolved the model through the registry-inclusive union.
+Implementation Summary: shared scopedModels helpers (registry + key models union, serving-key finder); composer validity from same union; effect re-binds keyless persisted modelId once key data arrives; "still loading" distinct from no-model; panel hero uses same helper.
+Files Changed: chat/scopedModels.ts (new), ChatComposer.tsx, ChatSettingsPanel.tsx. Tests: e2e/composer-reload.spec.ts (failed pre-fix, 2/2 post-fix), scopedModels.test.ts (10).
+Testing Performed: e2e 2/2, vitest 428/428, tsc/eslint clean; adjacent suites green.
+
+## 2026-11-08 - Thinking-None for all providers: implemented + live-verified
+Requirement: every thinking/reasoning model offers None to disable thinking; verify levels + None across providers with supplied creds.
+Implementation Summary: backend — validated_reasoning_level early-return preserves "none" under catalog options; public-plane translators extract + _prepare forwards reasoning_level (thinking now enableable on /v1/*). Frontend — effort/budget branches gain None first (normalize), budget None chip, toggle persists "none" (not null), resolveReasoningValue never null-with-control, shared scopedModels resolution, reload-safe. Gemini explicit-disable ruled NOT-SUPPORTED (no uniform knob; 0 rejected by min-budget models; docstring + pin test instead).
+Files Changed: gateway/service.py, public_gateway/service.py, translators.py, gemini.py (doc), capabilities.ts, ReasoningControl.tsx, ChatComposer.tsx, ChatSettingsPanel.tsx, scopedModels.ts. Tests: test_reasoning.py +9 (43), reasoning vitest, scopedModels (10), e2e reasoning-off (4/4), compact (6/6 stubbed).
+Testing Performed: mocked all 7 adapter kinds PASS; LIVE Bedrock haiku+sonnet PASS (think on low, clean on none; ~$0.0005); minimax/deepseek/OpenWebUI/Gemini-flash think unconditionally (backend correctly sends no thinking fields — inherent); NVIDIA/Groq/Mistral/OpenAI BLOCKED (egress guard / 401 invalid keys / 429); OpenAI key later verified revoked (model-list 401, 0 calls). Full suites green (pytest 1421 + 2 pre-existing env failures, vitest 434/428-wave, tsc/eslint clean). Spend ~$0.0013; zero leftovers; creds shredded.
+Architecture Notes: NVIDIA/Groq/Mistral route via CUSTOM OpenAIChatAdapter (mock-verified); regenerate shortcut reasoningLevel:null pre-existing untouched; never branch on model-id substrings for thinking ranges.
+
+## 2026-11-08 - Final audit: thinking-None production readiness (PASS with documented limits)
+Requirement: read-only audit — 2 failing tests triaged, E2E flow, regression, provider limits.
+Implementation Summary: NO source changes. test_alembic_upgrade_head_on_fresh_db PASSES in-container (prior failure was missing `python` binary in that shell — environmental). test_laya pre-existing version drift (live sidecar laya-td-1.0.0 vs pinned laya-rules-1.0.0; assertion untouched vs HEAD). One real finding: e2e/reasoning-off high-click flaked — root-caused to dev-server route-commit race (instant stubbed stream vs slow / -> /c/:id remount dropping hover state), NOT app logic; fixed test-only with waitForURL+networkidle settle (5/5 now). None payload path asserted green in the same run.
+Files Changed: frontend/e2e/reasoning-off.spec.ts (test-only settle). Note: 43 files were already staged in the index before this audit (not by me); left untouched.
+Testing Performed: test_reasoning.py 44/44; reasoning-off e2e 5/5; composer-reload e2e 3/3; vitest 48 files/434; eslint clean on edited spec.
+Architecture Notes: provider limits stand — explicit off only where API supports (OpenAI effort omit/Anthropic omit/Bedrock omit); Gemini/min-always-on models documented omit-by-design; live OpenAI/Groq/NVIDIA/Mistral BLOCKED (revoked keys/egress/rate-limit), covered by mocked wire tests + prior Bedrock Claude live PASS.

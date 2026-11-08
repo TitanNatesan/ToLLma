@@ -40,6 +40,7 @@ from tollms.models.request_log import RequestStatus
 from tollms.services import request_logs as request_log_engine
 from tollms.models.provider import Provider, ProviderType
 from tollms.models.registered_model import AIModel
+from tollms.api.conversations import compaction as compaction_service
 from tollms.api.conversations.service import (
     active_assistant_message,
     active_path,
@@ -48,7 +49,6 @@ from tollms.api.conversations.service import (
     find_assistant_by_client_key,
     get_conversation,
     get_message,
-    list_messages,
     touch,
 )
 from tollms.api.attachments.schemas import AttachmentRead
@@ -595,9 +595,16 @@ def _enforce_key_model(db: Session, key: ApiKey | None, model_id: uuid.UUID) -> 
         )
 
 
-def _chat_estimate(db: Session, provider: Provider, model: AIModel, text: str) -> tuple[int, Decimal]:
-    """Pre-flight estimate for the key policy: prompt-only tokens + shared pricing."""
-    tokens = max(1, len(text or "") // 4)
+def _chat_estimate(
+    db: Session, provider: Provider, model: AIModel, text: str, media_tokens: int = 0
+) -> tuple[int, Decimal]:
+    """Pre-flight estimate for the key policy: prompt tokens + shared pricing.
+
+    ``media_tokens`` is the base-only reserve over assembled media parts
+    (``compaction_service.media_reserve_for_messages``) — sizes are not
+    available at this layer, so this is a floor, not the bytes-aware figure.
+    """
+    tokens = max(1, len(text or "") // 4) + max(0, media_tokens)
     repo = find_for_model(db, provider.provider_type.value, model.model_id)
     cost = calculate(UsageTokens(prompt=tokens), prices_for_model(model, repo)).total_cost
     return tokens, cost
@@ -797,11 +804,13 @@ def validated_reasoning_level(model: AIModel, level: str | None) -> str | None:
     """
     if not level:
         return None
+    from tollms.services.gateway.adapters.base import REASONING_OFF_LEVELS
+
+    if level in REASONING_OFF_LEVELS:
+        return level  # explicit off survives every catalog option kind below
     options = (model.metadata_ or {}).get("reasoning_options")
     if not isinstance(options, list) or not options:
         return level  # unknown catalog state: legacy adapter clamping applies
-    from tollms.services.gateway.adapters.base import REASONING_OFF_LEVELS
-
     for entry in options:
         if not isinstance(entry, dict):
             continue
@@ -810,8 +819,6 @@ def validated_reasoning_level(model: AIModel, level: str | None) -> str | None:
             values = [v for v in entry.get("values") or [] if isinstance(v, str)]
             if not values:
                 continue
-            if level in REASONING_OFF_LEVELS:
-                return level
             return level if level in values else None
         if kind == "budget_tokens":
             minimum = entry.get("min")
@@ -1045,66 +1052,6 @@ async def _video_fallback(row, data: bytes, model, adapter, transcriber, transpo
     return texts, media
 
 
-def _chat_from_stored(
-    db: Session,
-    stored: list,
-    user_id: uuid.UUID | None,
-    adapter: BaseProviderAdapter,
-    model,
-) -> list[ChatMessage]:
-    """Persisted rows -> provider-bound messages, re-injecting attachments."""
-    grouped = attachment_service.attachments_for_messages(db, [m.id for m in stored], user_id)
-    messages: list[ChatMessage] = []
-    for m in stored:
-        texts, media = _assemble_history(grouped.get(m.id, []), model, adapter)
-        content = "\n\n".join([m.content, *texts]) if texts else m.content
-        messages.append(ChatMessage(role=m.role.value, content=content, media=media))
-    return messages
-
-
-def _history(
-    db: Session,
-    conv_id: uuid.UUID | None,
-    system: str | None,
-    user_id: uuid.UUID | None,
-    adapter: BaseProviderAdapter,
-    model,
-) -> list[ChatMessage]:
-    """Active path (root to selected leaf) -> provider-bound messages.
-
-    Sibling branches never leak into model context; the full log stays
-    readable via list_messages for compatibility.
-    """
-    messages: list[ChatMessage] = []
-    if system:
-        messages.append(ChatMessage(role="system", content=system))
-    if conv_id is None:
-        return messages
-    return messages + _chat_from_stored(
-        db, active_path(db, conv_id, user_id), user_id, adapter, model
-    )
-
-
-def _assemble_history(rows, model, adapter: BaseProviderAdapter) -> tuple[list[str], list[MediaPart]]:
-    """Best-effort history assembly: derived text always, media only when the
-    current adapter renders it. Never raises (a model switch must not 422)."""
-    texts: list[str] = []
-    media: list[MediaPart] = []
-    try:
-        flags = attachment_engine.model_media_flags(model)
-        for row in rows:
-            if row.kind == "document":
-                texts.append(_doc_block(row.filename, row.extracted_text))
-            elif row.kind == "image":
-                if flags["vision"] and adapter.supports_vision:
-                    media.append(_media_part("image", row, attachment_engine.read_bytes(row.storage_path)))
-            elif row.kind in ("audio", "video") and row.extracted_text:
-                texts.append(f'[Attached {row.kind} transcript "{row.filename}":\n{row.extracted_text}]')
-    except Exception:
-        logger.warning("history attachment assembly failed", exc_info=True)
-    return texts, media
-
-
 def _finalize_usage(
     db: Session, provider, model, history_text: str, result: ChatResult
 ) -> tuple[UsageTokens, int, CostBreakdown, bool, str | None, bool]:
@@ -1162,21 +1109,35 @@ async def run_chat(
         adapter.max_output_tokens = model.max_output_tokens
         transcriber = _transcriber(provider, credentials)
         rows = attachment_service.get_many(db, data.attachment_ids, user_id)
-        history = _history(db, data.conversation_id, data.system, user_id, adapter, model)
         texts, media = await _assemble_attachments(
             db, rows=rows, model=model, adapter=adapter,
             transcriber=transcriber, transport=transport, strict=True,
         )
         content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
-        history.append(ChatMessage(role="user", content=content, media=media))
-        history_text = "".join(m.content for m in history)
+        # Summary-aware context: the latest summary substitutes covered history;
+        # at >=80% of the model's window this compacts inline (once) first.
+        ensured = await compaction_service.ensure_budget(
+            db, conv_id=data.conversation_id, user_id=user_id,
+            provider=provider, model=model, adapter=adapter,
+            system=data.system,
+            pending=ChatMessage(role="user", content=content, media=media),
+        )
+        history, history_text = ensured.history, ensured.history_text
+        if ensured.compaction is not None:
+            logger.info(
+                "gateway chat auto-compacted: conv=%s summary=%s",
+                data.conversation_id, ensured.compaction.summary_message_id,
+            )
         if _is_media_model(model):
             media_est = media_cost_estimate(
                 db, provider, model, model.primary_endpoint, media_options(model.primary_endpoint)
             )
             est_tokens, est_cost = max(1, len(history_text) // 4), media_est.estimated_cost
         else:
-            est_tokens, est_cost = _chat_estimate(db, provider, model, history_text)
+            est_tokens, est_cost = _chat_estimate(
+                db, provider, model, history_text,
+                compaction_service.media_reserve_for_messages(history),
+            )
         # Policy gate BEFORE any row creation or provider I/O (raises on deny).
         ctx, org_cap = _enforce_chat_key(
             db, api_key, provider, model,
@@ -1456,9 +1417,10 @@ async def _setup_generation(
     transcriber = _transcriber(provider, credentials)
     rows = attachment_service.get_many(db, data.attachment_ids, user_id)
     # History/reference lookups use the existing conversation only; a new
-    # conversation has no history by construction.
+    # conversation has no history by construction. Stored history is assembled
+    # summary-aware inside the media/chat branches below.
     lookup_conv_id = data.conversation_id
-    history = _history(db, lookup_conv_id, data.system, user_id, adapter, model)
+    history: list[ChatMessage] = []
     media_endpoint = model.primary_endpoint if _is_media_model(model) else None
     media_opts: dict | None = None
     media_cost: CostEstimate | None = None
@@ -1562,7 +1524,19 @@ async def _setup_generation(
             transcriber=transcriber, transport=transport, strict=True,
         )
         content = "\n\n".join([data.message, *texts]) if (data.message or texts) else ""
-        history.append(ChatMessage(role="user", content=content, media=media))
+        # Summary-aware context with inline auto-compact (see run_chat).
+        ensured = await compaction_service.ensure_budget(
+            db, conv_id=lookup_conv_id, user_id=user_id,
+            provider=provider, model=model, adapter=adapter,
+            system=data.system,
+            pending=ChatMessage(role="user", content=content, media=media),
+        )
+        history, history_text = ensured.history, ensured.history_text
+        if ensured.compaction is not None:
+            logger.info(
+                "gateway stream auto-compacted: conv=%s summary=%s",
+                lookup_conv_id, ensured.compaction.summary_message_id,
+            )
         logger.info(
             "gateway stream: provider=%s model=%s conv=%s attachments=%d media=%d",
             provider.provider_type, model.model_id, lookup_conv_id, len(rows), len(media),
@@ -1571,7 +1545,10 @@ async def _setup_generation(
     if media_endpoint is not None and media_cost is not None:
         est_tokens, est_cost = max(1, len(history_text) // 4), media_cost.estimated_cost
     else:
-        est_tokens, est_cost = _chat_estimate(db, provider, model, history_text)
+        est_tokens, est_cost = _chat_estimate(
+            db, provider, model, history_text,
+            compaction_service.media_reserve_for_messages(history),
+        )
     # Policy gate BEFORE row creation (raises 404-oracle/403/429 on deny).
     # Attachment content prep above is not provider I/O for the generation
     # itself; the expensive call and every row happen strictly after this.
@@ -2030,32 +2007,6 @@ async def run_stream(
         yield raw
 
 
-def _history_through(
-    db: Session,
-    target: Message,
-    user_id: uuid.UUID | None,
-    adapter: BaseProviderAdapter,
-    model,
-) -> list[ChatMessage]:
-    """Model context for a child generation: the root-to-target node chain.
-
-    The previous answer never feeds back (the chain stops at the prompt),
-    whether the target sits on the active path or on another branch.
-    """
-    # One query for the conversation, then walk in memory — never O(depth)
-    # sequential db.get calls.
-    by_id = {m.id: m for m in list_messages(db, target.conversation_id, user_id)}
-    chain, seen = [target], {target.id}
-    while chain[-1].parent_message_id is not None and len(chain) < 10_000:
-        nxt = by_id.get(chain[-1].parent_message_id)
-        if nxt is None or nxt.id in seen:
-            break
-        seen.add(nxt.id)
-        chain.append(nxt)
-    chain.reverse()
-    return _chat_from_stored(db, chain, user_id, adapter, model)
-
-
 def _nearest_user_ancestor(
     db: Session, assistant: Message, user_id: uuid.UUID | None
 ) -> Message | None:
@@ -2116,7 +2067,10 @@ def _estimate_and_gate(
         ).estimated_cost
         est_tokens, est_cost = max(1, len(history_text) // 4), regen_est_cost
     else:
-        est_tokens, est_cost = _chat_estimate(db, provider, model, history_text)
+        est_tokens, est_cost = _chat_estimate(
+            db, provider, model, history_text,
+            compaction_service.media_reserve_for_messages(history),
+        )
     request_id = uuid.uuid4().hex
     ctx, org_cap = _enforce_chat_key(
         db, api_key, provider, model,
@@ -2290,10 +2244,21 @@ async def start_child_assistant(
     provider, model = _resolve(db, provider_id, model_id, user_id)
     _enforce_key_model(db, api_key, model.id)
     adapter = _build_chat_adapter(db, provider, model, transport, reasoning_level)
-    history = _history_through(db, prompt_msg, user_id, adapter, model)
-    if not history:
+    chain_rows = compaction_service.chain_rows_through(db, prompt_msg, user_id)
+    if not chain_rows:
         raise ValidationError("no conversation history to regenerate from")
-    history_text = "".join(m.content for m in history)
+    # Summary-aware regeneration context with inline auto-compact.
+    ensured = await compaction_service.ensure_budget(
+        db, conv_id=prompt_msg.conversation_id, user_id=user_id,
+        provider=provider, model=model, adapter=adapter,
+        stored_rows=chain_rows,
+    )
+    history, history_text = ensured.history, ensured.history_text
+    if ensured.compaction is not None:
+        logger.info(
+            "gateway regenerate auto-compacted: conv=%s summary=%s",
+            prompt_msg.conversation_id, ensured.compaction.summary_message_id,
+        )
     request_id, ctx, org_cap = _estimate_and_gate(
         db, api_key, provider, model, history, history_text, user_id, client_ip
     )

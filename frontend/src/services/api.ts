@@ -22,6 +22,7 @@ import type {
   BranchInfo,
   BranchTree,
   ChatMessage,
+  CompactResult,
   Conversation,
   ConversationShare,
   DiscoveryResult,
@@ -284,6 +285,12 @@ export const pinConversation = (id: string, pinned: boolean) =>
   patch<Conversation>(`/api/v1/conversations/${id}/pin`, { pinned });
 export const deleteConversation = (id: string) => del<void>(`/api/v1/conversations/${id}`);
 export const getUsage = (id: string) => get<UsageTotals>(`/api/v1/conversations/${id}/usage`);
+
+/** Manual compaction (spec 9 + 12.7). 200 carries the summary node id and
+ *  token deltas; 422 = below the 20% threshold (message explains); 409 =
+ *  a generation/compaction already owns the conversation; 404 = unknown id. */
+export const compactConversation = (id: string) =>
+  post<CompactResult>(`/api/v1/conversations/${id}/compact`, {});
 
 // --- Gateway streaming (client-side; ReadableStream for stop/abort support) ---
 //

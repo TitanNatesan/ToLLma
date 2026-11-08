@@ -26,6 +26,16 @@ describe("normalizeReasoningLevels", () => {
   });
 });
 
+describe("normalize edge shapes", () => {
+  it("missing metadata (empty) still offers the off switch alone", () => {
+    expect(normalizeReasoningLevels([])).toEqual(["none"]);
+  });
+
+  it("single-level sets keep none first", () => {
+    expect(normalizeReasoningLevels(["high"])).toEqual(["none", "high"]);
+  });
+});
+
 describe("cycleReasoningLevel (click)", () => {
   it("follows None → Low → Medium → High → None", () => {
     expect(cycleReasoningLevel(LEVELS, REASONING_OFF_LEVEL)).toBe("low");
@@ -60,5 +70,24 @@ describe("stepReasoningLevel (wheel/keyboard)", () => {
 
   it("yields null without levels", () => {
     expect(stepReasoningLevel([], "low", 1)).toBeNull();
+  });
+});
+
+describe("cycle/step with none across shapes", () => {
+  const SINGLE = ["none", "high"];
+
+  it("single-level ring includes none", () => {
+    expect(cycleReasoningLevel(SINGLE, "none")).toBe("high");
+    expect(cycleReasoningLevel(SINGLE, "high")).toBe("none");
+    expect(stepReasoningLevel(SINGLE, "high", 1)).toBe("high");
+    expect(stepReasoningLevel(SINGLE, "none", -1)).toBe("none");
+    expect(stepReasoningLevel(SINGLE, "none", 1)).toBe("high");
+    expect(stepReasoningLevel(SINGLE, "high", -1)).toBe("none");
+  });
+
+  it("null (no stored level) starts at the off switch", () => {
+    expect(cycleReasoningLevel(LEVELS, null)).toBe("low");
+    expect(stepReasoningLevel(LEVELS, null, 1)).toBe("low");
+    expect(stepReasoningLevel(LEVELS, null, -1)).toBe("none");
   });
 });

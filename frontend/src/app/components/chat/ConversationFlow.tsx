@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Crosshair, Minus, Plus, RotateCcw, User } from "lucide-react";
-import { Button } from "@/components/ui/primitives";
+import { Button, Tooltip } from "@/components/ui/primitives";
 import { useConversation } from "@/hooks/useChat";
-import { useConversationPath, useConversationTree, useIntelligenceMutations } from "@/hooks/useIntelligence";
+import { shouldStallTwinFetch, useConversationPath, useConversationTree, useIntelligenceMutations } from "@/hooks/useIntelligence";
 import { useChatStore } from "@/store/chat";
 import { toastApiError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -30,9 +30,28 @@ export interface ConversationFlowGraphProps {
 }
 
 /**
+ * Scroll a chat message to the top of the viewport. Reuses the existing
+ * MessageView anchor (id={message.id}) — no extra data attribute needed.
+ * Returns false when the element is not rendered yet so the caller can retry
+ * after the conversation reload lands. Honors prefers-reduced-motion.
+ */
+export function scrollMessageToTop(messageId: string): boolean {
+  if (typeof document === "undefined") return false;
+  const element = document.getElementById(messageId);
+  if (!element) return false;
+  const reduce =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  element.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+  return true;
+}
+
+/**
  * Hook-free flow graph: no queries, no mutations, no store. The private chat
  * wraps it with endpoint selection; the public share page drives it with
  * local-only state. Pure SVG edges + HTML buttons — no graph dependency.
+ * Behavior-neutral: no chat scrolling here — the private wrapper owns that.
  */
 export function ConversationFlowGraph({
   nodes,
@@ -154,11 +173,11 @@ export function ConversationFlowGraph({
 
       <div
         ref={scrollerRef}
-        className="max-h-[420px] overflow-auto rounded-md border border-zinc-100 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/40"
+        className="flex aspect-square overflow-auto rounded-md border border-zinc-100 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/40"
         data-testid="flow-scroller"
       >
         <div
-          className="relative"
+          className="relative m-auto shrink-0"
           style={{
             width: Math.max(layout.width * zoom, 1),
             height: Math.max(layout.height * zoom, 1),
@@ -201,59 +220,68 @@ export function ConversationFlowGraph({
             const preview = nodePreview(node, contentById);
             const siblings = siblingIdsFor(nodes, node.id);
             const versionLabel = siblings.length > 1 ? `${siblings.indexOf(node.id) + 1}/${siblings.length}` : `v${node.version_number}`;
+            const roleLabel = isAssistant ? "Response" : "Request";
+            const versionText =
+              siblings.length > 1
+                ? `${siblings.indexOf(node.id) + 1} of ${siblings.length}`
+                : `v${node.version_number}`;
             return (
-              <button
+              <Tooltip
                 key={node.id}
-                ref={(el) => {
-                  if (el) nodeRefs.current.set(node.id, el);
-                  else nodeRefs.current.delete(node.id);
-                }}
-                type="button"
-                onClick={() => handleSelect(node.id)}
-                disabled={disabled}
-                title={preview}
-                aria-label={`Select ${isAssistant ? "response" : "request"} ${versionLabel}${status ? `, ${status}` : ""}${isLeaf ? ", active" : ""}`}
-                aria-current={isLeaf ? "true" : undefined}
-                data-testid={`flow-node-${node.id}`}
-                data-active={isActive ? "true" : "false"}
-                className={cn(
-                  "absolute flex items-center gap-1 rounded-lg border px-1.5 py-1 text-left transition-opacity",
-                  layout.compact ? "text-[10px]" : "text-[11px]",
-                  isActive
-                    ? "border-tollma-500 bg-white shadow-xs dark:bg-zinc-900"
-                    : "border-zinc-200 bg-white/70 opacity-55 hover:opacity-90 dark:border-zinc-700 dark:bg-zinc-900/70",
-                  isLeaf && "ring-2 ring-tollma-500",
-                )}
-                style={{
-                  left: pos.x * zoom,
-                  top: pos.y * zoom,
-                  width: layout.nodeWidth * zoom,
-                  height: 44 * zoom,
-                }}
+                content={
+                  <span className="block max-w-56 text-left">
+                    <span className="block font-semibold">{`${roleLabel} ${versionText}`}</span>
+                    <span className="block opacity-75">{status ? `Status: ${status}` : "Status: unknown"}</span>
+                    <span className="block">{preview}</span>
+                  </span>
+                }
               >
-                {isAssistant ? (
-                  <Bot className="size-3.5 shrink-0 text-violet-500" aria-hidden="true" />
-                ) : (
-                  <User className="size-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
-                )}
-                <span className="min-w-0 flex-1 truncate font-medium text-zinc-700 dark:text-zinc-200">
-                  {isAssistant ? "Response" : "Request"} <span className="font-mono">{versionLabel}</span>
-                </span>
-                <span
-                  aria-hidden="true"
-                  title={status || "unknown"}
+                <button
+                  ref={(el) => {
+                    if (el) nodeRefs.current.set(node.id, el);
+                    else nodeRefs.current.delete(node.id);
+                  }}
+                  type="button"
+                  onClick={() => handleSelect(node.id)}
+                  disabled={disabled}
+                  aria-label={`Select ${roleLabel.toLowerCase()} ${versionLabel}${status ? `, ${status}` : ""}${isLeaf ? ", active" : ""}`}
+                  aria-current={isLeaf ? "true" : undefined}
+                  data-testid={`flow-node-${node.id}`}
+                  data-active={isActive ? "true" : "false"}
                   className={cn(
-                    "size-2 shrink-0 rounded-full",
-                    status === "failed"
-                      ? "bg-red-500"
-                      : status === "cancelled"
-                        ? "bg-amber-500"
-                        : status === "running" || status === "queued"
-                          ? "animate-pulse motion-reduce:animate-none bg-tollma-500"
-                          : "bg-zinc-300 dark:bg-zinc-600",
+                    "absolute flex items-center justify-center rounded-lg border transition-opacity",
+                    isActive
+                      ? "border-tollma-500 bg-white shadow-xs dark:bg-zinc-900"
+                      : "border-zinc-200 bg-white/70 opacity-55 hover:opacity-90 dark:border-zinc-700 dark:bg-zinc-900/70",
+                    isLeaf && "ring-2 ring-tollma-500",
                   )}
-                />
-              </button>
+                  style={{
+                    left: pos.x * zoom,
+                    top: pos.y * zoom,
+                    width: layout.nodeWidth * zoom,
+                    height: 44 * zoom,
+                  }}
+                >
+                  {isAssistant ? (
+                    <Bot className="size-4 shrink-0 text-violet-500" aria-hidden="true" />
+                  ) : (
+                    <User className="size-4 shrink-0 text-zinc-500" aria-hidden="true" />
+                  )}
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "absolute bottom-1 right-1 size-2 rounded-full",
+                      status === "failed"
+                        ? "bg-red-500"
+                        : status === "cancelled"
+                          ? "bg-amber-500"
+                          : status === "running" || status === "queued"
+                            ? "animate-pulse motion-reduce:animate-none bg-tollma-500"
+                            : "bg-zinc-300 dark:bg-zinc-600",
+                    )}
+                  />
+                </button>
+              </Tooltip>
             );
           })}
         </div>
@@ -270,8 +298,12 @@ export function ConversationFlowGraph({
  */
 export function ConversationFlow({ conversationId }: { conversationId: string | null }) {
   const streaming = useChatStore((s) => s.streaming);
-  const { data: treeData, isLoading: treeLoading } = useConversationTree(conversationId);
-  const { data: pathData } = useConversationPath(conversationId);
+  const optimisticMessages = useChatStore((s) => s.optimisticMessages);
+  // Same stall as the message list: these queries share its cache keys, so an
+  // unpaused fetch here would repopulate the twin the list just suppressed.
+  const stallTwinFetch = shouldStallTwinFetch(streaming, optimisticMessages);
+  const { data: treeData, isLoading: treeLoading } = useConversationTree(conversationId, { paused: stallTwinFetch });
+  const { data: pathData } = useConversationPath(conversationId, { paused: stallTwinFetch });
   const { data: conversation } = useConversation(conversationId);
   const { select } = useIntelligenceMutations(conversationId);
 
@@ -286,11 +318,28 @@ export function ConversationFlow({ conversationId }: { conversationId: string | 
   );
   const selectedLeafId = treeData?.active_leaf_id ?? pathData?.active_leaf_id ?? null;
 
+  // The select endpoint resolves server-side first; the message may only
+  // render once the invalidated conversation reload lands, so a missed
+  // immediate scroll retries on the next persisted update.
+  const pendingScrollRef = useRef<string | null>(null);
+  useEffect(() => {
+    const target = pendingScrollRef.current;
+    if (!target || !persisted.some((m) => m.id === target)) return;
+    if (scrollMessageToTop(target)) pendingScrollRef.current = null;
+  }, [persisted]);
+
   const handleSelect = (messageId: string) => {
     if (!conversationId || streaming || select.isPending) return;
+    pendingScrollRef.current = messageId;
     select.mutate(
       { conversationId, messageId },
-      { onError: (error) => toastApiError(error, { title: "Could not switch branch" }) },
+      {
+        onSuccess: () => scrollMessageToTop(messageId),
+        onError: (error) => {
+          pendingScrollRef.current = null;
+          toastApiError(error, { title: "Could not switch branch" });
+        },
+      },
     );
   };
 

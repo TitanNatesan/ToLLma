@@ -30,6 +30,19 @@ export function useConversationSearch(query: string, filters: { providerId?: str
   });
 }
 
+/**
+ * Stall fresh path/tree fetches while an unpersisted user echo is live.
+ * The draft send adopts /c/{id} while streaming: a mount fetch would return
+ * the persisted twin of the still-present echo — same content under a
+ * backend id vs the `opt-` id — and the winner-map would render both.
+ * Refresh recovery has no echo (overlays don't survive reload), so its
+ * fetches still proceed. Pure (vitest-covered) so every message-list reader
+ * pauses on exactly the same condition.
+ */
+export function shouldStallTwinFetch(streaming: boolean, optimistic: Array<{ role: string }>): boolean {
+  return streaming && optimistic.some((m) => m.role === "user");
+}
+
 function noRetryOnMissing(count: number, error: unknown): boolean {
   const status = (error as { status?: number }).status;
   if (status === 404 || status === 422) return false;
@@ -37,22 +50,26 @@ function noRetryOnMissing(count: number, error: unknown): boolean {
 }
 
 /** Message-level tree (spec 7-10). 404s while the backend is mid-build: the
- *  caller falls back to the persisted conversation array, never a blank chat. */
-export function useConversationTree(conversationId: string | null) {
+ *  caller falls back to the persisted conversation array, never a blank chat.
+ *  `paused` mirrors useConversation's streaming pause: a fresh mount fetch
+ *  mid-stream would return the persisted twin of the optimistic echo (same
+ *  content, backend id vs `opt-` id) and render it twice. */
+export function useConversationTree(conversationId: string | null, opts?: { paused?: boolean }) {
   return useQuery({
     queryKey: ["conversation-tree", conversationId],
     queryFn: () => getConversationTree(conversationId as string),
-    enabled: Boolean(conversationId),
+    enabled: Boolean(conversationId) && !opts?.paused,
     retry: noRetryOnMissing,
   });
 }
 
-/** Active path root→leaf (spec 7-10). Same 404 tolerance as the tree. */
-export function useConversationPath(conversationId: string | null) {
+/** Active path root→leaf (spec 7-10). Same 404 tolerance as the tree.
+ *  `paused` mirrors useConversation's streaming pause (see tree). */
+export function useConversationPath(conversationId: string | null, opts?: { paused?: boolean }) {
   return useQuery({
     queryKey: ["conversation-path", conversationId],
     queryFn: () => getConversationPath(conversationId as string),
-    enabled: Boolean(conversationId),
+    enabled: Boolean(conversationId) && !opts?.paused,
     retry: noRetryOnMissing,
   });
 }

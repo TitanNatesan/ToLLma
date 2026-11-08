@@ -59,16 +59,16 @@ describe("getReasoningControl effort", () => {
     const control = getReasoningControl(
       withOptions([{ type: "effort", values: ["low", "high", "ultra"], default: "high" }]),
     );
-    expect(control).toEqual({ kind: "effort", levels: ["low", "high", "ultra"], defaultLevel: "high" });
+    expect(control).toEqual({ kind: "effort", levels: ["none", "low", "high", "ultra"], defaultLevel: "high" });
   });
 
   it("nulls the default when it is not one of the values", () => {
     expect(
       getReasoningControl(withOptions([{ type: "effort", values: ["low", "high"], default: "ultra" }])),
-    ).toEqual({ kind: "effort", levels: ["low", "high"], defaultLevel: null });
+    ).toEqual({ kind: "effort", levels: ["none", "low", "high"], defaultLevel: null });
     expect(
       getReasoningControl(withOptions([{ type: "effort", values: ["low", "high"] }])),
-    ).toEqual({ kind: "effort", levels: ["low", "high"], defaultLevel: null });
+    ).toEqual({ kind: "effort", levels: ["none", "low", "high"], defaultLevel: null });
   });
 
   it("skips effort entries with empty values and falls through", () => {
@@ -78,13 +78,16 @@ describe("getReasoningControl effort", () => {
         { type: "effort", values: ["a"], default: "a" },
       ]),
     );
-    expect(control).toEqual({ kind: "effort", levels: ["a"], defaultLevel: "a" });
+    expect(control).toEqual({ kind: "effort", levels: ["none", "a"], defaultLevel: "a" });
   });
 
-  it("never invents none: verbatim levels only", () => {
+  it("always offers none first, keeping catalog order and deduping", () => {
     const control = getReasoningControl(withOptions([{ type: "effort", values: ["x"] }]));
-    expect(control?.kind).toBe("effort");
-    if (control?.kind === "effort") expect(control.levels).not.toContain("none");
+    expect(control).toEqual({ kind: "effort", levels: ["none", "x"], defaultLevel: null });
+    const duped = getReasoningControl(
+      withOptions([{ type: "effort", values: ["low", "none", "high", "low"], default: "high" }]),
+    );
+    expect(duped).toEqual({ kind: "effort", levels: ["none", "low", "high"], defaultLevel: "high" });
   });
 });
 
@@ -119,6 +122,7 @@ describe("getReasoningControl budget", () => {
       withOptions([{ type: "budget_tokens", min: 1024, max: 8192 }]),
     );
     if (control?.kind !== "budget") throw new Error("expected budget control");
+    expect(isReasoningValueValid(control, "none")).toBe(true);
     expect(isReasoningValueValid(control, "1024")).toBe(true);
     expect(isReasoningValueValid(control, "8192")).toBe(true);
     expect(isReasoningValueValid(control, "1023")).toBe(false);
@@ -145,6 +149,7 @@ describe("getReasoningControl toggle", () => {
     const control = getReasoningControl(withOptions([{ type: "toggle", default: "high" }]));
     if (control?.kind !== "toggle") throw new Error("expected toggle control");
     expect(isReasoningValueValid(control, "high")).toBe(true);
+    expect(isReasoningValueValid(control, "none")).toBe(true);
     expect(isReasoningValueValid(control, "low")).toBe(false);
     expect(isReasoningValueValid(control, "")).toBe(false);
   });
@@ -176,7 +181,7 @@ describe("null vs undefined vs unknown types", () => {
         { type: "effort", values: ["a", "b"], default: "a" },
       ]),
     );
-    expect(control).toEqual({ kind: "effort", levels: ["a", "b"], defaultLevel: "a" });
+    expect(control).toEqual({ kind: "effort", levels: ["none", "a", "b"], defaultLevel: "a" });
     expect(
       getReasoningControl(withOptions([{ type: "nope" } as unknown as ReasoningOption])),
     ).toBeNull();
@@ -190,34 +195,82 @@ describe("isReasoningValueValid / resolveReasoningValue", () => {
     );
     if (!control || control.kind !== "effort") throw new Error("expected effort control");
     expect(isReasoningValueValid(control, "low")).toBe(true);
+    expect(isReasoningValueValid(control, "none")).toBe(true);
     expect(isReasoningValueValid(control, "medium")).toBe(false);
   });
 
-  it("resolve keeps a valid stored value, else default, else null", () => {
+  it("resolve keeps a valid stored value, else default, else the off switch", () => {
     const caps = getModelCapabilities(
       withOptions([{ type: "effort", values: ["low", "high"], default: "low" }]),
     );
     expect(resolveReasoningValue(caps, "high", "low")).toBe("high");
+    expect(resolveReasoningValue(caps, "none", "low")).toBe("none");
     expect(resolveReasoningValue(caps, "nope", "high")).toBe("high");
     expect(resolveReasoningValue(caps, "nope", "nope")).toBe("low");
+    expect(resolveReasoningValue(caps, "nope", "none")).toBe("none");
     expect(resolveReasoningValue(caps, null, null)).toBe("low");
     expect(resolveReasoningValue(getModelCapabilities(withOptions(null)), "high", "low")).toBeNull();
   });
 
-  it("budget resolve falls back to the catalog default", () => {
+  it("budget resolve falls back to the catalog default, honoring an explicit none", () => {
     const caps = getModelCapabilities(
       withOptions([{ type: "budget_tokens", min: 1, max: 10, default: "5" }]),
     );
     expect(resolveReasoningValue(caps, "7", null)).toBe("7");
+    expect(resolveReasoningValue(caps, "none", null)).toBe("none");
     expect(resolveReasoningValue(caps, "99", null)).toBe("5");
+    expect(resolveReasoningValue(caps, "99", "none")).toBe("none");
     expect(resolveReasoningValue(caps, null, "7")).toBe("5");
+    // No catalog default: fresh resolves to the explicit off switch, not null,
+    // so the budget display and the send payload agree.
+    const noDefault = getModelCapabilities(
+      withOptions([{ type: "budget_tokens", min: 1, max: 10 }]),
+    );
+    expect(resolveReasoningValue(noDefault, null, null)).toBe("none");
   });
 
-  it("null stored value resolves to the model default (sendable as off only via null)", () => {
+  it("empty selection resolves to the model default, or the off switch without one", () => {
     const caps = getModelCapabilities(
       withOptions([{ type: "effort", values: ["low"], default: "low" }]),
     );
     expect(resolveReasoningValue(caps, null, null)).toBe("low");
     expect(defaultReasoningLevel(caps)).toBe("low");
+    // Effort without a catalog default is explicitly off (never null), so a
+    // fresh model shows None and sends "none".
+    const noDefault = getModelCapabilities(withOptions([{ type: "effort", values: ["low"] }]));
+    expect(resolveReasoningValue(noDefault, null, null)).toBe("none");
+    expect(defaultReasoningLevel(noDefault)).toBeNull();
+  });
+
+  it("toggle resolves to the on value or the explicit off switch, never null", () => {
+    const caps = getModelCapabilities(withOptions([{ type: "toggle", default: "high" }]));
+    expect(resolveReasoningValue(caps, "high", null)).toBe("high");
+    expect(resolveReasoningValue(caps, "none", "high")).toBe("none");
+    expect(resolveReasoningValue(caps, null, "high")).toBe("high");
+    expect(resolveReasoningValue(caps, null, "none")).toBe("none");
+    expect(resolveReasoningValue(caps, null, null)).toBe("none");
+    expect(defaultReasoningLevel(caps)).toBeNull();
+  });
+});
+
+describe("per-model thinking levels (model switch)", () => {
+  it("each model resolves its own stored level independently", () => {
+    const effort = getModelCapabilities(
+      withOptions([{ type: "effort", values: ["low", "high"], default: "low" }]),
+    );
+    const budget = getModelCapabilities(
+      withOptions([{ type: "budget_tokens", min: 1, max: 10, default: "5" }]),
+    );
+    // Model A set to off, model B set to an on-level: switching preserves both.
+    expect(resolveReasoningValue(effort, "none", null)).toBe("none");
+    expect(resolveReasoningValue(budget, "7", null)).toBe("7");
+    // A stale stored level (catalog changed since) falls back without leaking
+    // into the other model.
+    expect(resolveReasoningValue(effort, "ultra", "high")).toBe("high");
+    expect(resolveReasoningValue(budget, "ultra", null)).toBe("5");
+    // Displayed positions follow the resolved level: none is the first stop.
+    if (effort.reasoningControl?.kind !== "effort") throw new Error("expected effort control");
+    expect(effort.reasoningControl.levels.indexOf("none")).toBe(0);
+    expect(effort.reasoningControl.levels.indexOf(resolveReasoningValue(effort, "none", null) as string)).toBe(0);
   });
 });

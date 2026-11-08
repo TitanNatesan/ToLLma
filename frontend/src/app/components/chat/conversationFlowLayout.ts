@@ -52,8 +52,10 @@ export interface FlowLayout {
   compact: boolean;
 }
 
-const NODE_W = 148;
-const NODE_W_COMPACT = 104;
+// Icon-only nodes: small square glyphs (User/Bot) with the status dot —
+// labels live in the tooltip + accessible name, not the node body.
+const NODE_W = 44;
+const NODE_W_COMPACT = 36;
 const NODE_H = 44;
 const GAP_X = 16;
 const GAP_Y = 56;

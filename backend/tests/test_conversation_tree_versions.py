@@ -101,10 +101,11 @@ def test_select_request_and_response_versions_restore_correct_path(db: Session, 
     res = conv_service.select_message(db, conv.id, u2.id, user_id)
     assert [m.id for m in res["path"]] == [r1.id, a1.id, u2.id]
 
-    # Same via HTTP: path reflects the selected leaf, siblings stay out.
+    # Same via HTTP: selecting an ancestor of the current leaf keeps the
+    # tip — siblings stay out, descendants below the selection stay shown.
     sel = client.post(f"/api/v1/conversations/{conv.id}/select", json={"message_id": str(a1.id)}).json()
-    assert sel["active_leaf_id"] == str(a1.id)
-    assert [m["id"] for m in sel["path"]] == [str(r1.id), str(a1.id)]
+    assert sel["active_leaf_id"] == str(u2.id)
+    assert [m["id"] for m in sel["path"]] == [str(r1.id), str(a1.id), str(u2.id)]
 
 
 def test_new_message_attaches_to_active_leaf_not_inactive_branch(db: Session, client, user_factory):
@@ -359,5 +360,126 @@ def test_select_deleted_message_404_leaf_unchanged(db: Session, client, user_fac
 
     with pytest.raises(NotFoundError):
         conv_service.select_message(db, conv.id, a1.id, user_id)
+    db.expire_all()
+    assert conv_service.conversation_tree(db, conv.id, user_id)["active_leaf_id"] == leaf_before
+
+
+def test_select_request_descends_to_response_tip(db: Session, client, user_factory):
+    """Selecting a request lands the leaf on its response child — the view never ends at the request."""
+    user_factory()
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    conv = _seed_conv(db, user_id)
+
+    u = add_message(db, conv.id, Role.USER, "q", user_id=user_id, use_active_leaf=False)
+    a = add_message(db, conv.id, Role.ASSISTANT, "a", user_id=user_id,
+                    parent_message_id=u.id, use_active_leaf=False)
+    # Park the leaf off-branch so the select must descend instead of keep.
+    r2 = add_message(db, conv.id, Role.USER, "other root", user_id=user_id, use_active_leaf=False)
+    assert conv_service.conversation_tree(db, conv.id, user_id)["active_leaf_id"] == r2.id
+
+    res = conv_service.select_message(db, conv.id, u.id, user_id)
+    assert res["active_leaf_id"] == a.id
+    assert [m.id for m in res["path"]] == [u.id, a.id]
+
+
+def test_select_ancestor_of_current_leaf_keeps_tip(db: Session, client, user_factory):
+    """Selecting an ancestor of what is viewed keeps the leaf — the full path below stays shown."""
+    user_factory()
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    conv = _seed_conv(db, user_id)
+
+    u = add_message(db, conv.id, Role.USER, "q", user_id=user_id, use_active_leaf=False)
+    a = add_message(db, conv.id, Role.ASSISTANT, "a", user_id=user_id,
+                    parent_message_id=u.id, use_active_leaf=False)
+    before = conv_service.conversation_tree(db, conv.id, user_id)["active_leaf_id"]
+    assert before == a.id
+
+    res = conv_service.select_message(db, conv.id, u.id, user_id)
+    assert res["active_leaf_id"] == before
+    assert [m.id for m in res["path"]] == [u.id, a.id]
+
+
+def test_select_inactive_branch_descends_to_deepest_tip(db: Session, client, user_factory):
+    """Selecting a node whose inactive branch runs several levels deep lands on the deepest tip."""
+    user_factory()
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    conv = _seed_conv(db, user_id)
+
+    u = add_message(db, conv.id, Role.USER, "q", user_id=user_id, use_active_leaf=False)
+    a1 = add_message(db, conv.id, Role.ASSISTANT, "a1", user_id=user_id,
+                     parent_message_id=u.id, use_active_leaf=False)
+    a2 = add_message(db, conv.id, Role.ASSISTANT, "a2", user_id=user_id,
+                     parent_message_id=u.id, use_active_leaf=False)
+    u2 = add_message(db, conv.id, Role.USER, "follow-up", user_id=user_id,
+                     parent_message_id=a1.id, use_active_leaf=False)
+    a3 = add_message(db, conv.id, Role.ASSISTANT, "deep tip", user_id=user_id,
+                     parent_message_id=u2.id, use_active_leaf=False)
+    conv_service.select_message(db, conv.id, a2.id, user_id)
+
+    res = conv_service.select_message(db, conv.id, a1.id, user_id)
+    assert res["active_leaf_id"] == a3.id
+    assert [m.id for m in res["path"]] == [u.id, a1.id, u2.id, a3.id]
+
+
+def test_select_descend_newest_version_child_wins(db: Session, client, user_factory):
+    """Greedy per-level descent: the newest-version child wins even when an older sibling has a deeper subtree."""
+    user_factory()
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    conv = _seed_conv(db, user_id)
+
+    u = add_message(db, conv.id, Role.USER, "q", user_id=user_id, use_active_leaf=False)
+    c1 = add_message(db, conv.id, Role.ASSISTANT, "older", user_id=user_id,
+                     parent_message_id=u.id, use_active_leaf=False)
+    add_message(db, conv.id, Role.USER, "deep below older", user_id=user_id,
+                parent_message_id=c1.id, use_active_leaf=False)
+    c2 = add_message(db, conv.id, Role.ASSISTANT, "newer childless", user_id=user_id,
+                     parent_message_id=u.id, use_active_leaf=False)
+    assert (c1.version_number, c2.version_number) == (1, 2)
+    # Park the leaf off-branch so the select must descend instead of keep.
+    r2 = add_message(db, conv.id, Role.USER, "other root", user_id=user_id, use_active_leaf=False)
+    assert conv_service.conversation_tree(db, conv.id, user_id)["active_leaf_id"] == r2.id
+
+    res = conv_service.select_message(db, conv.id, u.id, user_id)
+    assert res["active_leaf_id"] == c2.id
+    assert [m.id for m in res["path"]] == [u.id, c2.id]
+
+
+def test_select_failed_childless_node_is_tip(db: Session, client, user_factory):
+    """A FAILED response with no children is a valid tip — selecting it lands there."""
+    user_factory()
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    conv = _seed_conv(db, user_id)
+
+    u = add_message(db, conv.id, Role.USER, "q", user_id=user_id, use_active_leaf=False)
+    failed = add_message(db, conv.id, Role.ASSISTANT, "boom", user_id=user_id,
+                         status=MessageStatus.FAILED,
+                         parent_message_id=u.id, use_active_leaf=False)
+    r2 = add_message(db, conv.id, Role.USER, "other root", user_id=user_id, use_active_leaf=False)
+    assert conv_service.conversation_tree(db, conv.id, user_id)["active_leaf_id"] == r2.id
+
+    res = conv_service.select_message(db, conv.id, failed.id, user_id)
+    assert res["active_leaf_id"] == failed.id
+    assert [m.id for m in res["path"]] == [u.id, failed.id]
+
+
+def test_select_deleted_request_404_leaf_unchanged(db: Session, client, user_factory):
+    """Selecting a soft-deleted request 404s and never moves the leaf."""
+    from tollms.api.messages import service as msg_service
+
+    user_factory()
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
+    conv = _seed_conv(db, user_id)
+
+    u = add_message(db, conv.id, Role.USER, "q", user_id=user_id, use_active_leaf=False)
+    add_message(db, conv.id, Role.ASSISTANT, "a", user_id=user_id,
+                parent_message_id=u.id, use_active_leaf=False)
+    r2 = add_message(db, conv.id, Role.USER, "other root", user_id=user_id, use_active_leaf=False)
+    msg_service.delete_message(db, u.id, user_id)
+    db.expire_all()
+    leaf_before = conv_service.conversation_tree(db, conv.id, user_id)["active_leaf_id"]
+    assert leaf_before == r2.id
+
+    with pytest.raises(NotFoundError):
+        conv_service.select_message(db, conv.id, u.id, user_id)
     db.expire_all()
     assert conv_service.conversation_tree(db, conv.id, user_id)["active_leaf_id"] == leaf_before

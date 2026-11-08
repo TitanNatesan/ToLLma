@@ -11,6 +11,7 @@ import { useSettingsStore } from "@/store/settings";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useAllChatKeyModels, useChatKeys, type KeyModelsEntry } from "@/hooks/useChatKeys";
 import { Button } from "@/components/ui";
+import { isCompactCommand } from "./compact";
 import { ModelSelectorMenu } from "./ModelSelectorMenu";
 import { cn } from "@/lib/utils";
 import { policyDenialCopy, uploadChatAttachment } from "@/services/api";
@@ -38,8 +39,9 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
+import { buildScopedModels, findScopedModel, findServingKeyEntry } from "./scopedModels";
 import { useModelCapabilities } from "./hooks/useModelCapabilities";
-import { cycleReasoningLevel } from "./reasoningLevels";
+import { REASONING_OFF_LEVEL, cycleReasoningLevel } from "./reasoningLevels";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -65,8 +67,13 @@ interface ChatComposerProps {
    *  Informational only: the backend auto-resolves the edit reference, so
    *  this never touches the send payload. */
   continuityKind?: "image" | "video" | null;
+  /** Manual-compaction in flight (workspace-owned). Routes /compact while
+   *  showing progress; ordinary sends stay untouched. */
+  compacting?: boolean;
   onSend: (payload: ChatSendPayload) => void;
   onStop: () => void;
+  /** Exact "/compact" command (no user message, no LLM call). */
+  onCompact?: () => void;
 }
 
 interface Rejection {
@@ -107,7 +114,7 @@ function KeyNotice({
   );
 }
 
-export function ChatComposer({ streaming, disabled = false, continuityKind = null, onSend, onStop }: ChatComposerProps) {
+export function ChatComposer({ streaming, disabled = false, continuityKind = null, compacting = false, onSend, onStop, onCompact }: ChatComposerProps) {
   const {
     providerId,
     modelId,
@@ -128,17 +135,10 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
   // All keys' models at once: powers the unified key-grouped dropdown and
   // keyboard cycling. Single-key views below derive from this map.
   const { entries: keyEntries, isPending: keyEntriesPending } = useAllChatKeyModels(chatKeys);
-  // Scope-correct model union: personal registry rows plus every key's
-  // eligible models (full ModelRead rows, same shape). Org models never
-  // appear in the personal-only listing, so every id lookup below must
-  // use this union — never the registry alone.
-  const scopedModels = useMemo(() => {
-    const byId = new Map(models.map((m) => [m.id, m]));
-    for (const entry of keyEntries) {
-      for (const km of entry.models ?? []) byId.set(km.id, km);
-    }
-    return [...byId.values()];
-  }, [models, keyEntries]);
+  // Scope-correct model union (shared with the Intelligence panel — see
+  // scopedModels.ts): every id lookup below uses this, never the registry
+  // alone, so the composer label and validation resolve identically.
+  const scopedModels = useMemo(() => buildScopedModels(models, keyEntries), [models, keyEntries]);
   // Provider ids the session may validly reference: personal registry
   // plus every key-eligible model's provider (org providers included).
   const scopedProviderIds = useMemo(() => {
@@ -182,7 +182,12 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
     !!continuityKind && !continuityDismissed[activeConversationId ?? ""];
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const ready = !!providerId && !!modelId && !!keyId && !keyProblem && !disabled;
+  // Validity shares the panel/label resolution: the persisted model must
+  // exist in the scoped union, not just in the store. Loading key data is a
+  // transient state (keysLoading), distinct from genuinely having no model.
+  const resolvedModel = useMemo(() => findScopedModel(scopedModels, modelId), [scopedModels, modelId]);
+  const keysLoading = keysPending || keyEntriesPending;
+  const ready = !!providerId && !!resolvedModel && !!keyId && !keyProblem && !disabled;
   const uploading = attachments.some((a) => a.status === "uploading");
   const router = useRouter();
 
@@ -231,6 +236,21 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
       action: { label: "Manage API keys", onClick: () => router.push("/api-keys") },
     });
   }, [keysPending, chatKeys, keyId, setKey, router]);
+
+  // Post-reload reconciliation: a persisted model with no key yet (pre-BYOK
+  // selection, or the store rehydrating before the key list) re-binds to the
+  // key that serves it once key data arrives. Sets — never clears — ids.
+  useEffect(() => {
+    if (keysPending || keyEntriesPending || keyProblem || !modelId || keyId) return;
+    const candidate = findServingKeyEntry(keyEntries, modelId);
+    if (!candidate) return;
+    setKey(candidate.key.id);
+    const full = findScopedModel(scopedModels, modelId);
+    if (full && full.provider_id !== providerId) {
+      setProvider(full.provider_id);
+      setModel(full.id);
+    }
+  }, [keysPending, keyEntriesPending, keyProblem, modelId, keyId, keyEntries, scopedModels, providerId, setKey, setProvider, setModel]);
 
   // Model eligibility follows the key: a model valid under the previous key
   // (or a stale persisted id) must not survive under a key that forbids it.
@@ -339,7 +359,7 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
       const control = caps.reasoningControl;
       if (!control || !modelId) return;
       if (control.kind === "toggle") {
-        setThinkingLevel(modelId, reasoningLevel === control.onValue ? null : control.onValue);
+        setThinkingLevel(modelId, reasoningLevel === control.onValue ? REASONING_OFF_LEVEL : control.onValue);
         return;
       }
       if (control.kind !== "effort") return;
@@ -495,9 +515,26 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
   }
 
   function handleSend() {
+    // Exact "/compact" command: never a user message, never an LLM call.
+    // Runs before every guard (even the streaming one) so an active
+    // generation reports busy instead of sending "/compact" as chat text.
+    if (isCompactCommand(draft)) {
+      setDraft("");
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+      }
+      onCompact?.();
+      return;
+    }
     const text = draft.trim();
     const readyFiles = readyAttachments(attachments);
     if ((!text && readyFiles.length === 0) || uploading || streaming) return;
+    if (keysLoading) {
+      toast.info("Models are still loading", {
+        description: "Your selection is being restored — try sending again in a moment.",
+      });
+      return;
+    }
     if (!keyId) {
       toast.error("Select a model to send", {
         description: "Pick a model above — its API key is selected automatically.",
@@ -761,6 +798,19 @@ export function ChatComposer({ streaming, disabled = false, continuityKind = nul
         </div>
       )}
       {keyBanner}
+      {compacting && (
+        <div
+          className="mb-2 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
+          data-testid="compact-status"
+          role="status"
+        >
+          <span
+            className="size-3 shrink-0 animate-pulse rounded-full bg-tollma-500 motion-reduce:animate-none"
+            aria-hidden="true"
+          />
+          <span>Compacting conversation history…</span>
+        </div>
+      )}
 
       <PromptInput
         onSubmit={(event) => {

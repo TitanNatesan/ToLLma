@@ -162,7 +162,9 @@ export interface AIModel {
   updated_at: string;
 }
 
-export type Role = "system" | "user" | "assistant";
+// "summary" nodes arrive from the compaction endpoint (spec 9 + 12.7).
+// Optional on old backends: MessageView treats unknown roles as assistant-shaped.
+export type Role = "system" | "user" | "assistant" | "summary";
 
 export type MessageStatus = "queued" | "running" | "completed" | "cancelled" | "failed";
 
@@ -261,6 +263,22 @@ export interface UsageTotals {
   cache_savings?: string;
   by_model: UsageBreakdown[];
   by_provider: UsageBreakdown[];
+}
+
+/** POST /api/v1/conversations/{id}/compact result (spec 9 + 12.7 contract).
+ *  All numeric/context fields tolerate absence: old backends 404 before a
+ *  body ever exists, and partial rollouts may omit the window. */
+export interface CompactResult {
+  status: string;
+  summary_message_id: string | null;
+  tokens_before: number | null;
+  tokens_after: number | null;
+  context_window: number | null;
+  usage_before: number | null;
+  usage_after: number | null;
+  coverage_through_message_id: string | null;
+  /** "auto" | "manual" — absent on older responses, readers default to manual. */
+  trigger?: string | null;
 }
 
 export interface RepositoryLookup {

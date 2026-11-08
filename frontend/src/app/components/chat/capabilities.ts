@@ -200,8 +200,10 @@ function isBudgetString(value: string, min: number, max: number | null): boolean
 }
 
 /** First recognized reasoning_options entry wins; unknown future types are
- *  skipped, empty values fall through — never invent a control. Effort uses
- *  the provided values verbatim ("none" only when the catalog says so). */
+ *  skipped, empty values fall through — never invent a control. Effort keeps
+ *  the catalog values verbatim in order with the "none" off switch first
+ *  (the gateway accepts it even when unlisted, so every effort model offers
+ *  the explicit off option without catalog changes). */
 export function getReasoningControl(model: AIModel | null | undefined): ReasoningControl {
   if (!model) return null;
   const raw = rawReasoningOptions(model);
@@ -230,7 +232,7 @@ export function getReasoningControl(model: AIModel | null | undefined): Reasonin
       const def = typeof entry.default === "string" && values.includes(entry.default)
         ? entry.default
         : null;
-      return { kind: "effort", levels: values, defaultLevel: def };
+      return { kind: "effort", levels: normalizeReasoningLevels(values), defaultLevel: def };
     }
     if (entry.type === "budget_tokens") {
       const min =
@@ -257,8 +259,11 @@ export function getReasoningControl(model: AIModel | null | undefined): Reasonin
 }
 
 /** Gate before send/display: only values the model's control supports.
- *  Null (empty/disabled) is always sendable — the gateway treats it as off. */
+ *  "none" is valid for every kind — it is the explicit off switch the UI
+ *  offers on all reasoning controls (the gateway maps it to off for effort,
+ *  budget, and toggle alike, even when the catalog never lists it). */
 export function isReasoningValueValid(control: NonNullable<ReasoningControl>, value: string): boolean {
+  if (value === REASONING_OFF_LEVEL) return true;
   switch (control.kind) {
     case "effort":
       return control.levels.includes(value);
@@ -270,9 +275,11 @@ export function isReasoningValueValid(control: NonNullable<ReasoningControl>, va
 }
 
 /** Keep a stored value when the model still supports it; otherwise fall back
- *  to the provided default (user preference for effort, catalog default) or
- *  empty. Never auto-picks beyond that. Output is always valid-or-null, so
- *  the send path can use it directly. */
+ *  to the user preference, the catalog default, or the off switch — never
+ *  null while a control exists, so the displayed state and the send payload
+ *  always agree ("none" means reasoning disabled, never "unspecified"). Null
+ *  only means "no control / hide", decided by the caller from
+ *  reasoningControl itself. */
 export function resolveReasoningValue(
   caps: ModelCapabilities,
   stored: string | null,
@@ -283,10 +290,14 @@ export function resolveReasoningValue(
   if (stored !== null && isReasoningValueValid(control, stored)) return stored;
   if (control.kind === "effort") {
     if (preferred && control.levels.includes(preferred)) return preferred;
-    return control.defaultLevel;
+    return control.defaultLevel ?? REASONING_OFF_LEVEL;
   }
-  if (control.kind === "budget") return control.defaultValue;
-  return null;
+  if (control.kind === "budget") {
+    if (preferred === REASONING_OFF_LEVEL) return REASONING_OFF_LEVEL;
+    return control.defaultValue ?? REASONING_OFF_LEVEL;
+  }
+  if (preferred === control.onValue || preferred === REASONING_OFF_LEVEL) return preferred;
+  return REASONING_OFF_LEVEL;
 }
 
 /** Default reasoning selection: first level that is not the off switch

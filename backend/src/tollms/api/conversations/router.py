@@ -9,8 +9,10 @@ from tollms.core.deps import get_db
 from tollms.core.security import require_active_user
 from tollms.models.user import User
 from tollms.api.conversations import service
+from tollms.api.conversations import compaction
 from tollms.api.conversations.schemas import (
     BranchCreateRequest,
+    CompactResponse,
     BranchListRead,
     BranchRead,
     ConversationCreate,
@@ -133,6 +135,18 @@ def path(conversation_id: uuid.UUID, db: Session = Depends(get_db), user: User =
         path=service.message_reads(db, result["path"], user.id),
         active_leaf_id=result["active_leaf_id"],
     )
+
+
+@router.post(
+    "/{conversation_id}/compact",
+    response_model=CompactResponse,
+    operation_id="compact_conversation",
+)
+async def compact(
+    conversation_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require_active_user)
+) -> CompactResponse:
+    """Progressive compaction: consolidate the active path into a summary node."""
+    return await compaction.compact_request(db, conversation_id, user.id)
 
 
 @router.post("/{conversation_id}/select", response_model=ConversationPathRead)

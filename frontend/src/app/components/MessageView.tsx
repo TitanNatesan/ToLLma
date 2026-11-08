@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  FileText,
   GitBranch,
   History,
   OctagonX,
@@ -49,7 +50,8 @@ import type { OptimisticMessage } from "@/store/chat";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { useModels, useProviders } from "@/hooks/useRegistry";
 import { useAllChatKeyModels, useChatKeys } from "@/hooks/useChatKeys";
-import { Button, Textarea } from "@/components/ui/primitives";
+import { Badge, Button, Textarea } from "@/components/ui/primitives";
+import { getSummaryTrigger } from "./chat/compact";
 import { fmtCost, stripTrailingZeros } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 
@@ -402,9 +404,16 @@ function MessageViewInner({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const role = message.role as "user" | "assistant" | "system";
-  const isUser = role === "user";
   const msg = message as ChatMessage;
+  const role = message.role as "user" | "assistant" | "system" | "summary";
+  const isUser = role === "user";
+  // Summary nodes (compaction endpoint) render assistant-shaped so tree
+  // interactions (version selectors, actions) pass through unchanged.
+  const isSummary = role === "summary";
+  const [summaryExpanded, setSummaryExpanded] = useState(true);
+  const summaryTrigger = isSummary
+    ? getSummaryTrigger(msg.metadata as Record<string, unknown> | undefined)
+    : null;
   const costEstimated = msg.usage_estimated === true;
   const costAmount = formatCost(msg.total_cost ?? null);
   const costStr = costAmount ? `${costAmount}${costEstimated ? " est." : ""}` : null;
@@ -491,11 +500,11 @@ function MessageViewInner({
           aria-hidden="true"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 text-xs font-bold text-white shadow-xs"
         >
-          <Sparkles className="size-3.5" />
+          {isSummary ? <FileText className="size-3.5" /> : <Sparkles className="size-3.5" />}
         </div>
       )}
 
-      <Message className="min-w-0 flex-1" from={role}>
+      <Message className="min-w-0 flex-1" from={isSummary ? "assistant" : role}>
         <MessageHeaderMeta
           cost={costStr}
           costTooltip={costTitle}
@@ -605,6 +614,44 @@ function MessageViewInner({
             )
           ) : (
             <>
+              {isSummary && (
+                <div
+                  className="mb-1.5 flex flex-wrap items-center gap-1.5"
+                  data-testid={`summary-header-${message.id}`}
+                >
+                  <Badge variant="secondary" className="gap-1">
+                    <FileText className="size-3" aria-hidden="true" />
+                    Summary
+                  </Badge>
+                  {summaryTrigger && (
+                    <Badge
+                      variant="outline"
+                      data-testid={`summary-trigger-${message.id}`}
+                      title={summaryTrigger === "auto" ? "Created automatically" : "Created by /compact"}
+                    >
+                      {summaryTrigger === "auto" ? "Auto" : "Manual"}
+                    </Badge>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setSummaryExpanded((v) => !v)}
+                    aria-expanded={summaryExpanded}
+                    aria-controls={`summary-body-${message.id}`}
+                    data-testid={`summary-toggle-${message.id}`}
+                    className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200/60 hover:text-zinc-800 focus-visible:outline-2 focus-visible:outline-tollma-500 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100"
+                  >
+                    {summaryExpanded ? "Show less" : "Show more"}
+                    <ChevronDown
+                      className={`size-3 transition-transform motion-reduce:transition-none ${summaryExpanded ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
+              )}
+              <div
+                className={isSummary && !summaryExpanded ? "hidden" : undefined}
+                {...(isSummary ? { id: `summary-body-${message.id}`, "data-testid": `summary-body-${message.id}` } : {})}
+              >
               {toolCalls?.map((tool, index) => <ToolCall key={index} {...tool} />)}
 
               {mediaKind ? (
@@ -671,6 +718,7 @@ function MessageViewInner({
               ) : null}
 
               <Sources sources={sources} />
+              </div>
 
               {/* Generation pager lives below the content, next to the
                   message actions, so it never covers the response head.

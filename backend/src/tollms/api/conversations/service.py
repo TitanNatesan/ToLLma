@@ -118,12 +118,14 @@ def list_conversations(
         next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
         rows = rows[:lim]
     # Transient count (serialized as message_count) so clients can hide drafts.
+    # SUMMARY nodes are bookkeeping, not chat history — excluded.
     counts = dict(
         db.execute(
             select(Message.conversation_id, func.count(Message.id))
             .where(
                 Message.conversation_id.in_([c.id for c in rows] or [None]),
                 Message.is_deleted.is_(False),
+                Message.role != Role.SUMMARY,
             )
             .group_by(Message.conversation_id)
         ).all()
@@ -250,9 +252,9 @@ def _sibling_version_conflict(exc: IntegrityError) -> bool:
 
 
 def _soft_check_alternation(parent: Message | None, role: Role) -> None:
-    """Alternating user/assistant structure is advisory only — system rows
-    are exempt and violations log instead of raising (soft check)."""
-    if parent is None or role == Role.SYSTEM or parent.role == Role.SYSTEM:
+    """Alternating user/assistant structure is advisory only — system and
+    summary rows are exempt and violations log instead of raising (soft check)."""
+    if parent is None or role in (Role.SYSTEM, Role.SUMMARY) or parent.role in (Role.SYSTEM, Role.SUMMARY):
         return
     if parent.role == role:
         logger.warning(
@@ -533,19 +535,64 @@ def conversation_path(
     }
 
 
+def _resolve_select_tip(
+    db: Session, conv: Conversation, msg: Message, user_id: uuid.UUID | None
+) -> Message:
+    """Tip node a select lands on (Rules C/D): the view always runs to a
+    branch tip so a selected request keeps its response below it.
+
+    - Current leaf is a live descendant of the selection (bounded
+      parent-chain walk): keep it — the full conversation below the
+      selection is already shown.
+    - Else descend from the selection: at each level the newest live child
+      wins (max version_number, tie-break max (created_at, id)) until a
+      childless node. Failed/cancelled nodes are valid tips.
+    Only live nodes participate; cycles stop the walk."""
+    live = list_messages(db, conv.id, user_id)
+    by_id = {m.id: m for m in live}
+    current = by_id.get(conv.active_leaf_message_id) if conv.active_leaf_message_id else None
+    if current is not None:
+        seen = {current.id}
+        node, depth = current, 0
+        while node.id != msg.id and node.parent_message_id is not None and depth < _TREE_WALK_LIMIT:
+            nxt = by_id.get(node.parent_message_id)
+            if nxt is None or nxt.id in seen:
+                break
+            seen.add(nxt.id)
+            node, depth = nxt, depth + 1
+        if node.id == msg.id:
+            return current
+    kids: dict[uuid.UUID | None, list[Message]] = {}
+    for m in live:
+        kids.setdefault(m.parent_message_id, []).append(m)
+    tip, seen_ids, depth = msg, {msg.id}, 0
+    while depth < _TREE_WALK_LIMIT:
+        nxt = max(
+            (c for c in kids.get(tip.id, []) if c.id not in seen_ids),
+            key=lambda m: (m.version_number, m.created_at, m.id),
+            default=None,
+        )
+        if nxt is None:
+            return tip
+        seen_ids.add(nxt.id)
+        tip, depth = nxt, depth + 1
+    return tip
+
+
 def select_message(
     db: Session,
     conversation_id: uuid.UUID,
     message_id: uuid.UUID,
     user_id: uuid.UUID | None = None,
 ) -> dict:
-    """Switch the active branch (Rule D). Deleted or foreign-conversation
-    nodes 404 — a stale selection never repoints the leaf."""
+    """Switch the active branch (Rule D), landing on the selected node's
+    descendant tip. Deleted or foreign-conversation nodes 404 — a stale
+    selection never repoints the leaf."""
     conv = get_conversation(db, conversation_id, user_id)
     msg = get_message(db, message_id, user_id)
     if msg.conversation_id != conv.id:
         raise NotFoundError(f"message {message_id} not found")
-    conv.active_leaf_message_id = msg.id
+    conv.active_leaf_message_id = _resolve_select_tip(db, conv, msg, user_id).id
     db.commit()
     db.refresh(conv)
     return conversation_path(db, conversation_id, user_id)
@@ -727,13 +774,15 @@ def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTota
         ).where(*scope)
     ).one()
     by_model = [
-        ModelUsageBreakdown(
-            model_id=r[0], model_name=r[1] or "unknown model",
-            prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
-            total_tokens=int(r[4]), total_cost=r[5],
-            cache_read_tokens=int(r[6]), cache_write_tokens=int(r[7]),
-        )
-        for r in db.execute(
+        breakdown
+        for breakdown in (
+            ModelUsageBreakdown(
+                model_id=r[0], model_name=r[1] or "unknown model",
+                prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
+                total_tokens=int(r[4]), total_cost=r[5],
+                cache_read_tokens=int(r[6]), cache_write_tokens=int(r[7]),
+            )
+            for r in db.execute(
             select(
                 Message.model_id, AIModel.name,
                 func.coalesce(func.sum(Message.prompt_tokens), 0),
@@ -756,7 +805,11 @@ def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTota
                 AIModel.cache_write_price,
             )
             .order_by(func.coalesce(func.sum(Message.total_cost), 0).desc())
+            )
         )
+        # Zero-total groups (e.g. a model carrying only NULL-usage summary
+        # rows) are noise — drop them. Media-cost groups keep nonzero cost.
+        if breakdown.total_tokens or breakdown.total_cost
     ]
     # Net cache savings: reads bill below input, writes bill at a premium.
     # Only counted when the model publishes the relevant rate (else 0).
@@ -785,12 +838,14 @@ def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTota
         if write_price and input_price:
             cache_savings += Decimal(write_tokens) * (Decimal(input_price) - Decimal(write_price)) / _MILLION
     by_provider = [
-        ProviderUsageBreakdown(
-            provider_id=r[0], provider_name=r[1] or "unknown provider",
-            prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
-            total_tokens=int(r[4]), total_cost=r[5],
-        )
-        for r in db.execute(
+        breakdown
+        for breakdown in (
+            ProviderUsageBreakdown(
+                provider_id=r[0], provider_name=r[1] or "unknown provider",
+                prompt_tokens=int(r[2]), completion_tokens=int(r[3]),
+                total_tokens=int(r[4]), total_cost=r[5],
+            )
+            for r in db.execute(
             select(
                 Message.provider_id, Provider.name,
                 func.coalesce(func.sum(Message.prompt_tokens), 0),
@@ -802,7 +857,10 @@ def _usage_totals_uncached(db: Session, conversation_id: uuid.UUID) -> UsageTota
             .where(*scope)
             .group_by(Message.provider_id, Provider.name)
             .order_by(func.coalesce(func.sum(Message.total_cost), 0).desc())
+            )
         )
+        # Same zero-total filter as by_model above.
+        if breakdown.total_tokens or breakdown.total_cost
     ]
     return UsageTotals(
         prompt_tokens=int(row[0]),
