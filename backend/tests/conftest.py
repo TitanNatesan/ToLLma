@@ -92,6 +92,20 @@ def _flush_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_summarizer_global():
+    """Suite-wide summarizer hygiene: compaction's injectable summarizer is
+    module-global mutable state, and per-file reset fixtures are opt-in — one
+    forgetful module would silently redirect every later summary through its
+    fake. Resetting here (pre- and post-test) makes cross-module isolation
+    the default instead of a per-file convention."""
+    from tollms.api.conversations import compaction
+
+    compaction.reset_summarizer()
+    yield
+    compaction.reset_summarizer()
+
+
+@pytest.fixture(autouse=True)
 def _generation_test_sessions(db: Session):
     """Background generation tasks must write to the test database, not the
     real one: bind the generation engine to the test engine for each test."""

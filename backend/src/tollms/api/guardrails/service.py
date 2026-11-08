@@ -524,7 +524,23 @@ def clone_policy(db: Session, caller_id: uuid.UUID, policy_id: uuid.UUID,
             applies_external=a.applies_external)
             for a in src.assignments if not a.is_deleted],
     )
-    return create_policy(db, caller_id, data)
+    policy = create_policy(db, caller_id, data)
+    # Evaluators are part of the policy: a clone without them silently
+    # weakens the copy (e.g. a laya-backed block becomes deterministic-only).
+    for src_eval in (src.evaluators or []):
+        if src_eval.is_deleted:
+            continue
+        db.add(GuardrailEvaluatorConfig(
+            policy_id=policy.id, evaluator_type=src_eval.evaluator_type,
+            provider_id=src_eval.provider_id, model_ref=src_eval.model_ref,
+            credentials_encrypted=src_eval.credentials_encrypted,
+            operation=src_eval.operation, timeout_ms=src_eval.timeout_ms,
+            threshold=src_eval.threshold))
+    if any(not e.is_deleted for e in (src.evaluators or [])):
+        policy.version = (policy.version or 1) + 1
+        db.commit()
+        db.refresh(policy)
+    return policy
 
 
 def set_enabled(db: Session, caller_id: uuid.UUID, policy_id: uuid.UUID,
@@ -868,8 +884,10 @@ def create_evaluator(db: Session, caller_id: uuid.UUID, policy_id: uuid.UUID,
         model_ref=data.model_ref, credentials_encrypted=encrypted,
         operation=data.operation, timeout_ms=data.timeout_ms, threshold=data.threshold)
     db.add(config)
+    policy.version = (policy.version or 1) + 1
     db.commit()
     db.refresh(config)
+    db.refresh(policy)
     return config
 
 
@@ -899,6 +917,9 @@ def patch_evaluator(db: Session, caller_id: uuid.UUID, evaluator_id: uuid.UUID,
         config.credentials_encrypted = _validated_encrypted(
             config.evaluator_type, data.credentials,
             data.credentials.get("base_url"))
+    policy = db.get(GuardrailPolicy, config.policy_id)
+    if policy is not None:
+        policy.version = (policy.version or 1) + 1
     db.commit()
     db.refresh(config)
     return config
@@ -927,6 +948,9 @@ def delete_evaluator(db: Session, caller_id: uuid.UUID, evaluator_id: uuid.UUID,
     config = _get_evaluator(db, caller_id, evaluator_id, org_id)
     config.is_deleted, config.deleted_at = True, datetime.now(timezone.utc)
     config.deleted_by = caller_id
+    policy = db.get(GuardrailPolicy, config.policy_id)
+    if policy is not None:
+        policy.version = (policy.version or 1) + 1
     db.commit()
 
 

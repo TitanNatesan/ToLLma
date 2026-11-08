@@ -148,7 +148,9 @@ def regenerate_share(db: Session, user_id: uuid.UUID | None, share_id: uuid.UUID
 
 def _bump_view_count(db: Session, token: str) -> int | None:
     """Best-effort view counter for one public read. Active shares only;
-    returns the new count, or None when the link is gone/inactive/expired.
+    returns the new count, or None when the link is gone/inactive/expired
+    or its conversation is gone/deleted (fail-closed so a cached payload
+    can never outlive a delete inside the lookup TTL).
     Never raises: counter failures must not block the read."""
     try:
         share = db.execute(
@@ -157,6 +159,9 @@ def _bump_view_count(db: Session, token: str) -> int | None:
         if share is None or not share.is_public:
             return None
         if share.expires_at is not None and share.expires_at <= datetime.now(timezone.utc):
+            return None
+        conversation = db.get(Conversation, share.conversation_id)
+        if conversation is None or conversation.is_deleted:
             return None
         share.view_count += 1
         db.commit()

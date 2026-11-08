@@ -526,12 +526,25 @@ def build_transcript(prev_summary: Message | None, uncovered: list[Message]) -> 
 
 
 async def _default_summarizer(adapter, instruction: str, transcript: str) -> str:
-    result = await adapter.chat(
-        [
-            ChatMessage(role="system", content=instruction),
-            ChatMessage(role="user", content=transcript),
-        ]
-    )
+    # Summaries never buy thinking: the auto path reuses the caller's
+    # adapter, whose level (e.g. high) would otherwise ride the summary
+    # request — wasted reasoning tokens, and a 400 on models that reject
+    # thinking alongside images. Forced off for this call only; the
+    # caller's level is restored, so normal generations are unaffected.
+    # getattr-guarded: the seam also accepts duck-typed test adapters.
+    previous = getattr(adapter, "reasoning_level", None)
+    if previous is not None:
+        adapter.reasoning_level = None
+    try:
+        result = await adapter.chat(
+            [
+                ChatMessage(role="system", content=instruction),
+                ChatMessage(role="user", content=transcript),
+            ]
+        )
+    finally:
+        if previous is not None:
+            adapter.reasoning_level = previous
     text = (result.text or "").strip()
     if not text:
         raise ValidationError("summarization produced no content")
@@ -578,6 +591,10 @@ def _build_adapter(provider: Provider, model: AIModel):
 
     adapter = build_adapter(provider, model, decrypted_credentials(provider), None)
     adapter.max_output_tokens = model.max_output_tokens
+    # Manual summaries never carry thinking (matches the forced-off auto
+    # path in _default_summarizer): None is the factory default today;
+    # stated explicitly so a future factory-level default can't leak in.
+    adapter.reasoning_level = None
     return adapter
 
 

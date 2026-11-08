@@ -149,20 +149,31 @@ async def _run_evaluator(etype: str, config, text: str, timeout_ms: int) -> dict
         from tollms.services.guardrails import laya as laya_engine
 
         cats = _wanted_categories(config)
-        return await laya_engine.evaluate(text, cats, timeout_ms=timeout_ms)
-    if etype == "openai_moderation":
+        result = await laya_engine.evaluate(text, cats, timeout_ms=timeout_ms)
+    elif etype == "openai_moderation":
         from tollms.services.guardrails import openai_moderation as mod_engine
         from tollms.core.crypto import decrypt
 
         creds = _decrypt_config(config)
-        return await mod_engine.evaluate(text, creds, timeout_ms=timeout_ms)
-    if etype == "jev":
+        result = await mod_engine.evaluate(text, creds, timeout_ms=timeout_ms)
+    elif etype == "jev":
         from tollms.services.guardrails import jev as jev_engine
 
         creds = _decrypt_config(config)
-        return await jev_engine.evaluate(text, creds, _wanted_categories(config),
-                                         timeout_ms=timeout_ms)
-    raise ValueError(f"unknown evaluator type: {etype}")
+        result = await jev_engine.evaluate(text, creds, _wanted_categories(config),
+                                           timeout_ms=timeout_ms)
+    else:
+        raise ValueError(f"unknown evaluator type: {etype}")
+    # Defense in depth: the engines coerce unknown verdicts to allow at the
+    # source, but a misbehaving/future evaluator must never crash the shared
+    # path with a KeyError (which failure_action=block would turn into a
+    # block on garbage). Coerce here so every evaluator behaves alike.
+    if result.get("verdict") not in ("allow", "warn", "block"):
+        logger.warning("guardrail evaluator %s returned unknown verdict; coerced to allow",
+                       etype)
+        result = dict(result)
+        result["verdict"] = "allow"
+    return result
 
 
 def _selected_categories(policy: GuardrailPolicy) -> set[str] | None:

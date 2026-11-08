@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from tollms.api.shares import service
 from tollms.api.shares.schemas import PublicShareRead, ShareCreate, ShareRead, ShareUpdate
 from tollms.core.deps import get_db
-from tollms.core.security import get_current_user, require_active_user
+from tollms.core.security import require_active_user
 from tollms.models.user import User
 
 router = APIRouter(prefix="/api/v1/shares", tags=["shares"])

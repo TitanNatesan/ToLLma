@@ -605,10 +605,17 @@ def _prepare(
         )
         raise
     adapter.max_output_tokens = model.max_output_tokens
-    # Composer level reaches the adapter verbatim: "none" stays off (adapters
-    # omit thinking fields for it), real levels enable. The supports_reasoning
-    # gate above already 403s reasoning requests on incapable models.
-    adapter.reasoning_level = unified.reasoning_level
+    # Composer level, constrained exactly like the internal plane: the catalog
+    # gate (`validated_reasoning_level`) collapses levels the model does not
+    # offer to None (off) instead of the adapter's medium/high fallback, and
+    # Gemini/Vertex rows without supports_reasoning stay off (they 400 on
+    # thinkingConfig). "none"/"default" survive verbatim everywhere.
+    from tollms.api.gateway.service import validated_reasoning_level as _validated_level
+    from tollms.models.provider import ProviderType as _ProviderType
+    _level = _validated_level(model, unified.reasoning_level)
+    if provider.provider_type in (_ProviderType.GEMINI, _ProviderType.VERTEX_AI) and not model.supports_reasoning:
+        _level = None
+    adapter.reasoning_level = _level
     # Prompt-cache plan, same engine as internal Chat: Bedrock Claude ids get
     # cachePoints when the model declares support; OpenAI gets a stable
     # per-(provider,model) key shared with the internal plane (cross-plane
